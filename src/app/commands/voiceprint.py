@@ -67,7 +67,7 @@ def list_command(
         typer.echo("No voiceprints recorded.")
         return
     for row in rows:
-        typer.echo(f"{row.name}: {row.sample_count} sample(s)")
+        typer.echo(f"[{row.speaker_id}] {row.name}: {row.sample_count} sample(s)")
 
 
 @app.command("embed")
@@ -101,20 +101,21 @@ def embed_command(
 
 @app.command("show")
 def show_command(
-    name: str = typer.Argument(..., metavar="NAME"),
+    speaker: str = typer.Argument(..., metavar="SPEAKER"),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
 ) -> None:
-    """Show voiceprint samples for one speaker name."""
+    """Show voiceprint samples for one speaker name or id."""
     db_path = get_voiceprint_db_path(store_dir)
-    rows = run_with_cli_errors(lambda: list_voiceprint_samples(name, db_path))
+    rows = run_with_cli_errors(lambda: list_voiceprint_samples(speaker, db_path))
     typer.echo(f"Database: {db_path}")
     if not rows:
-        typer.echo(f"No voiceprint samples found for: {name}")
+        typer.echo(f"No voiceprint samples found for: {speaker}")
         raise typer.Exit(code=1)
     for index, row in enumerate(rows, start=1):
         start = format_ms_timestamp(row.source_begin_time_ms)
         end = format_ms_timestamp(row.source_end_time_ms)
         typer.echo(f"[{index}] {row.speaker_name} | {row.project_id} | speaker {row.project_speaker_id}")
+        typer.echo(f"  speaker_id: {row.speaker_id}")
         typer.echo(f"  sample_id: {row.sample_id}")
         typer.echo(f"  clip: {row.clip_path}")
         typer.echo(f"  time: {start} - {end}")
@@ -124,14 +125,14 @@ def show_command(
 
 @app.command("play")
 def play_command(
-    name: str = typer.Argument(..., metavar="NAME"),
+    speaker: str = typer.Argument(..., metavar="SPEAKER"),
     sample: int = typer.Option(1, "--sample", "-s", min=1),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
     """Play one numbered voiceprint sample."""
     db_path = get_voiceprint_db_path(store_dir)
-    row = run_with_cli_errors(lambda: _select_sample(name, sample, db_path))
+    row = run_with_cli_errors(lambda: _select_sample(speaker, sample, db_path))
     command = _play_command(row.clip_path)
     if dry_run:
         typer.echo(" ".join(command))
@@ -141,7 +142,7 @@ def play_command(
 
 @app.command("delete-sample")
 def delete_sample_command(
-    name: str = typer.Argument(..., metavar="NAME"),
+    speaker: str = typer.Argument(..., metavar="SPEAKER"),
     sample: int = typer.Option(..., "--sample", "-s", min=1),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     keep_clip: bool = typer.Option(False, "--keep-clip"),
@@ -149,26 +150,26 @@ def delete_sample_command(
     """Delete one numbered voiceprint sample and its WAV file."""
     db_path = get_voiceprint_db_path(store_dir)
     deleted = run_with_cli_errors(
-        lambda: delete_voiceprint_sample(name, sample, db_path=db_path, delete_clip=not keep_clip)
+        lambda: delete_voiceprint_sample(speaker, sample, db_path=db_path, delete_clip=not keep_clip)
     )
     _echo_deleted_sample(deleted.clip_path, deleted.clip_deleted, kept=keep_clip)
 
 
 @app.command("delete-speaker")
 def delete_speaker_command(
-    name: str = typer.Argument(..., metavar="NAME"),
+    speaker: str = typer.Argument(..., metavar="SPEAKER"),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     keep_clips: bool = typer.Option(False, "--keep-clips"),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
     """Delete one speaker and all of their voiceprint samples."""
-    if not yes and not typer.confirm(f"Delete all voiceprint samples for {name}?"):
-        raise typer.Exit(code=1)
     db_path = get_voiceprint_db_path(store_dir)
+    if not yes and not typer.confirm(f"Delete all voiceprint samples for {_speaker_label(speaker, db_path)}?"):
+        raise typer.Exit(code=1)
     deleted = run_with_cli_errors(
-        lambda: delete_voiceprint_speaker(name, db_path=db_path, delete_clips=not keep_clips)
+        lambda: delete_voiceprint_speaker(speaker, db_path=db_path, delete_clips=not keep_clips)
     )
-    typer.echo(f"Deleted speaker: {name}")
+    typer.echo(f"Deleted speaker: {deleted[0].speaker_name} (id {deleted[0].speaker_id})")
     for item in deleted:
         _echo_deleted_sample(item.clip_path, item.clip_deleted, kept=keep_clips)
 
@@ -202,22 +203,39 @@ def _echo_capture_summary(summary: VoiceprintCaptureSummary) -> None:
             typer.echo(f"  - {clip.path}")
 
 
-def _select_sample(name: str, sample: int, db_path: Path) -> VoiceprintSampleRow:
+def _select_sample(speaker: str, sample: int, db_path: Path) -> VoiceprintSampleRow:
     """
     Select one sample for CLI playback.
 
     Args:
-        name: Speaker name.
+        speaker: Speaker name or speaker id.
         sample: One-based sample number.
         db_path: SQLite database path.
 
     Returns:
         Selected sample row.
     """
-    rows = list_voiceprint_samples(name, db_path)
+    rows = list_voiceprint_samples(speaker, db_path)
     if sample < 1 or sample > len(rows):
-        raise IndexError(f"Sample {sample} is out of range for {name}. Available: {len(rows)}.")
+        raise IndexError(f"Sample {sample} is out of range for {speaker}. Available: {len(rows)}.")
     return rows[sample - 1]
+
+
+def _speaker_label(speaker: str, db_path: Path) -> str:
+    """
+    Return a confirmation label for a speaker reference.
+
+    Args:
+        speaker: Speaker name or speaker id.
+        db_path: SQLite database path.
+
+    Returns:
+        Human-readable confirmation label.
+    """
+    rows = run_with_cli_errors(lambda: list_voiceprint_samples(speaker, db_path))
+    if not rows:
+        return speaker
+    return f"{rows[0].speaker_name} (id {rows[0].speaker_id})"
 
 
 def _play_command(path: Path) -> list[str]:

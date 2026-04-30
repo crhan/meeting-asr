@@ -40,12 +40,17 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert manifest.speakers["voiceprints"]["sample_count"] == 2
 
     list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
-    show_result = runner.invoke(app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)])
+    speaker_id = _speaker_id_from_list(list_result.output, "欧丁")
+    show_result = runner.invoke(app, ["voiceprint", "show", speaker_id, "--store-dir", str(store_dir)])
+    show_by_name_result = runner.invoke(app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)])
 
     assert list_result.exit_code == 0
     assert "欧丁: 1 sample(s)" in list_result.output
+    assert f"[{speaker_id}] 欧丁: 1 sample(s)" in list_result.output
     assert show_result.exit_code == 0
+    assert show_by_name_result.exit_code == 0
     assert "[1] 欧丁" in show_result.output
+    assert f"speaker_id: {speaker_id}" in show_result.output
     assert "sample_id:" in show_result.output
     assert manifest.project_id in show_result.output
     assert "clip_001.wav" in show_result.output
@@ -191,11 +196,16 @@ def test_voiceprint_delete_speaker_removes_all_samples(
     )
     clip_path = store_dir / "clips" / load_manifest(project_dir).project_id / "speaker_1" / "clip_001.wav"
 
-    result = runner.invoke(app, ["voiceprint", "delete-speaker", "敬悦", "--store-dir", str(store_dir), "--yes"])
+    speaker_id = _speaker_id_from_list(
+        runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)]).output,
+        "敬悦",
+    )
+
+    result = runner.invoke(app, ["voiceprint", "delete-speaker", speaker_id, "--store-dir", str(store_dir), "--yes"])
     list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
 
     assert result.exit_code == 0
-    assert "Deleted speaker: 敬悦" in result.output
+    assert f"Deleted speaker: 敬悦 (id {speaker_id})" in result.output
     assert not clip_path.exists()
     assert "敬悦" not in list_result.output
     assert "欧丁: 1 sample(s)" in list_result.output
@@ -317,3 +327,13 @@ def _fake_extract_audio_clip(
 def _fake_embed_audio_file(path: Path, *, provider: str | None, endpoint: str | None) -> list[float]:
     """Return deterministic vectors based on the speaker path."""
     return [0.0, 1.0] if "speaker_1" in str(path) else [1.0, 0.0]
+
+
+def _speaker_id_from_list(output: str, name: str) -> str:
+    """Extract a speaker id from ``voiceprint list`` output."""
+    suffix = f"] {name}:"
+    for line in output.splitlines():
+        if suffix not in line:
+            continue
+        return line.split("]", maxsplit=1)[0].removeprefix("[")
+    raise AssertionError(f"speaker not found in list output: {name}")
