@@ -57,6 +57,7 @@ meeting-asr project speakers inspect
 meeting-asr project speakers preview
 meeting-asr project speakers apply
 meeting-asr transcript show
+meeting-asr voiceprint capture
 ```
 
 `project create` 会复制源视频到 `source/`，后续命令只需要项目目录，不需要再次传视频路径。
@@ -69,6 +70,23 @@ meeting-asr transcript list
 meeting-asr transcript show
 meeting-asr transcript path --kind srt
 meeting-asr transcript open --kind named
+```
+
+声纹是跨项目数据，不写在单个 project 里。默认存放位置遵循 XDG：
+
+```text
+~/.local/share/meeting-asr/voiceprints/
+  voiceprints.sqlite
+  clips/<project-id>/speaker_<id>/clip_001.wav
+```
+
+常用命令：
+
+```bash
+meeting-asr voiceprint capture
+meeting-asr voiceprint list
+meeting-asr voiceprint show "欧丁"
+meeting-asr voiceprint path
 ```
 
 ## 输出结构

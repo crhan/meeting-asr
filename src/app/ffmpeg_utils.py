@@ -61,6 +61,85 @@ def extract_audio_to_wav(input_path: str | Path, output_path: str | Path) -> Pat
     return extract_audio_for_asr(input_path, output_path, audio_format="wav")
 
 
+def extract_audio_clip(
+    input_path: str | Path,
+    output_path: str | Path,
+    *,
+    start_seconds: float,
+    duration_seconds: float,
+) -> Path:
+    """
+    Extract one mono 16kHz s16 WAV clip from local media.
+
+    Args:
+        input_path: Local video or audio file.
+        output_path: Output WAV path.
+        start_seconds: Clip start time in seconds.
+        duration_seconds: Clip duration in seconds.
+
+    Returns:
+        Output path.
+    """
+    _validate_audio_clip_times(start_seconds, duration_seconds)
+    source = Path(input_path).expanduser().resolve()
+    output = Path(output_path).expanduser().resolve()
+    if not source.exists():
+        raise FileNotFoundError(f"Input media file does not exist: {source}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _run_ffmpeg(_audio_clip_command(source, output, start_seconds, duration_seconds))
+    return output
+
+
+def _validate_audio_clip_times(start_seconds: float, duration_seconds: float) -> None:
+    """
+    Validate clip timing.
+
+    Args:
+        start_seconds: Clip start time in seconds.
+        duration_seconds: Clip duration in seconds.
+    """
+    if start_seconds < 0:
+        raise ValueError("start_seconds must be >= 0.")
+    if duration_seconds <= 0:
+        raise ValueError("duration_seconds must be > 0.")
+
+
+def _audio_clip_command(source: Path, output: Path, start_seconds: float, duration_seconds: float) -> list[str]:
+    """
+    Build an ffmpeg command for one reference clip.
+
+    Args:
+        source: Source media path.
+        output: Output WAV path.
+        start_seconds: Clip start time in seconds.
+        duration_seconds: Clip duration in seconds.
+
+    Returns:
+        ffmpeg command.
+    """
+    return [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{start_seconds:.3f}",
+        "-i",
+        str(source),
+        "-t",
+        f"{duration_seconds:.3f}",
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-sample_fmt",
+        "s16",
+        str(output),
+    ]
+
+
 def _run_ffmpeg(command: list[str]) -> None:
     """Run ffmpeg and surface readable errors."""
     try:

@@ -1,0 +1,444 @@
+"""SQLite registry for speaker voiceprint references."""
+
+from __future__ import annotations
+
+import hashlib
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+from app.config import get_data_dir
+
+SCHEMA_VERSION = 1
+VOICEPRINT_STORE_DIR = "voiceprints"
+VOICEPRINT_DB_FILENAME = "voiceprints.sqlite"
+VOICEPRINT_CLIPS_DIR = "clips"
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS voiceprint_speakers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  normalized_name TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS voiceprint_samples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  speaker_id INTEGER NOT NULL REFERENCES voiceprint_speakers(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL,
+  project_path TEXT NOT NULL,
+  project_speaker_id INTEGER NOT NULL,
+  source_path TEXT NOT NULL,
+  clip_path TEXT NOT NULL UNIQUE,
+  clip_rel_path TEXT NOT NULL,
+  clip_sha256 TEXT NOT NULL,
+  source_begin_time_ms INTEGER NOT NULL,
+  source_end_time_ms INTEGER NOT NULL,
+  clip_begin_time_ms INTEGER NOT NULL,
+  clip_end_time_ms INTEGER NOT NULL,
+  transcript_text TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS voiceprint_embeddings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sample_id INTEGER NOT NULL REFERENCES voiceprint_samples(id) ON DELETE CASCADE,
+  model TEXT NOT NULL,
+  dimension INTEGER NOT NULL,
+  vector BLOB NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(sample_id, model)
+);
+
+CREATE INDEX IF NOT EXISTS idx_voiceprint_samples_speaker
+  ON voiceprint_samples(speaker_id);
+CREATE INDEX IF NOT EXISTS idx_voiceprint_samples_project
+  ON voiceprint_samples(project_id);
+CREATE INDEX IF NOT EXISTS idx_voiceprint_samples_sha256
+  ON voiceprint_samples(clip_sha256);
+"""
+
+UPSERT_SAMPLE_SQL = """
+INSERT INTO voiceprint_samples (
+  speaker_id, project_id, project_path, project_speaker_id,
+  source_path, clip_path, clip_rel_path, clip_sha256,
+  source_begin_time_ms, source_end_time_ms, clip_begin_time_ms,
+  clip_end_time_ms, transcript_text, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(clip_path) DO UPDATE SET
+  speaker_id = excluded.speaker_id,
+  project_id = excluded.project_id,
+  project_path = excluded.project_path,
+  project_speaker_id = excluded.project_speaker_id,
+  source_path = excluded.source_path,
+  clip_rel_path = excluded.clip_rel_path,
+  clip_sha256 = excluded.clip_sha256,
+  source_begin_time_ms = excluded.source_begin_time_ms,
+  source_end_time_ms = excluded.source_end_time_ms,
+  clip_begin_time_ms = excluded.clip_begin_time_ms,
+  clip_end_time_ms = excluded.clip_end_time_ms,
+  transcript_text = excluded.transcript_text,
+  updated_at = excluded.updated_at
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceprintSampleRow:
+    """Stored voiceprint sample row."""
+
+    speaker_name: str
+    project_id: str
+    project_speaker_id: int
+    clip_path: Path
+    clip_rel_path: str
+    clip_sha256: str
+    source_begin_time_ms: int
+    source_end_time_ms: int
+    transcript_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceprintSpeakerRow:
+    """Stored speaker summary row."""
+
+    name: str
+    sample_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class StoredVoiceprintSample:
+    """Voiceprint sample passed to SQLite storage."""
+
+    speaker_name: str
+    project_id: str
+    project_path: Path
+    project_speaker_id: int
+    source_path: Path
+    clip_path: Path
+    clip_rel_path: str
+    source_begin_time_ms: int
+    source_end_time_ms: int
+    clip_begin_time_ms: int
+    clip_end_time_ms: int
+    transcript_text: str
+
+
+def get_default_voiceprint_db_path() -> Path:
+    """
+    Return the default global voiceprint database path.
+
+    Returns:
+        XDG-compliant SQLite path.
+    """
+    return get_default_voiceprint_store_dir() / VOICEPRINT_DB_FILENAME
+
+
+def get_default_voiceprint_store_dir() -> Path:
+    """
+    Return the default global voiceprint store directory.
+
+    Returns:
+        XDG-compliant voiceprint store directory.
+    """
+    return get_data_dir() / VOICEPRINT_STORE_DIR
+
+
+def get_voiceprint_clip_dir(store_dir: Path | None = None) -> Path:
+    """
+    Return the clip directory for a voiceprint store.
+
+    Args:
+        store_dir: Optional voiceprint store directory.
+
+    Returns:
+        Voiceprint clip directory.
+    """
+    return _resolve_store_dir(store_dir) / VOICEPRINT_CLIPS_DIR
+
+
+def get_voiceprint_db_path(store_dir: Path | None = None) -> Path:
+    """
+    Return the SQLite path for a voiceprint store.
+
+    Args:
+        store_dir: Optional voiceprint store directory.
+
+    Returns:
+        SQLite database path.
+    """
+    return _resolve_store_dir(store_dir) / VOICEPRINT_DB_FILENAME
+
+
+def store_voiceprint_samples(samples: list[StoredVoiceprintSample], db_path: Path | None = None) -> Path:
+    """
+    Store voiceprint sample metadata in SQLite.
+
+    Args:
+        samples: Samples to record.
+        db_path: Optional SQLite path.
+
+    Returns:
+        SQLite database path.
+    """
+    database_path = _resolve_db_path(db_path)
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        for sample in samples:
+            _upsert_sample(connection, sample)
+    return database_path
+
+
+def list_voiceprint_speakers(db_path: Path | None = None) -> list[VoiceprintSpeakerRow]:
+    """
+    List speakers stored in the voiceprint registry.
+
+    Args:
+        db_path: Optional SQLite path.
+
+    Returns:
+        Speaker summary rows.
+    """
+    database_path = _resolve_db_path(db_path)
+    if not database_path.exists():
+        return []
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        rows = connection.execute(
+            """
+            SELECT speakers.name, COUNT(samples.id) AS sample_count
+            FROM voiceprint_speakers AS speakers
+            LEFT JOIN voiceprint_samples AS samples ON samples.speaker_id = speakers.id
+            GROUP BY speakers.id
+            ORDER BY speakers.name
+            """
+        ).fetchall()
+    return [VoiceprintSpeakerRow(str(row["name"]), int(row["sample_count"])) for row in rows]
+
+
+def list_voiceprint_samples(name: str, db_path: Path | None = None) -> list[VoiceprintSampleRow]:
+    """
+    List samples for one speaker name.
+
+    Args:
+        name: Speaker name.
+        db_path: Optional SQLite path.
+
+    Returns:
+        Voiceprint sample rows.
+    """
+    database_path = _resolve_db_path(db_path)
+    if not database_path.exists():
+        return []
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        rows = connection.execute(
+            """
+            SELECT speakers.name, samples.project_id, samples.project_speaker_id,
+                   samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
+                   samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.transcript_text
+            FROM voiceprint_samples AS samples
+            JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
+            WHERE speakers.normalized_name = ?
+            ORDER BY samples.project_id, samples.source_begin_time_ms
+            """,
+            (_normalize_name(name),),
+        ).fetchall()
+    return [_sample_row(row) for row in rows]
+
+
+def _resolve_db_path(db_path: Path | None) -> Path:
+    """
+    Resolve the database path.
+
+    Args:
+        db_path: Optional SQLite path.
+
+    Returns:
+        Absolute database path.
+    """
+    return (db_path or get_default_voiceprint_db_path()).expanduser().resolve()
+
+
+def _resolve_store_dir(store_dir: Path | None) -> Path:
+    """
+    Resolve a voiceprint store directory.
+
+    Args:
+        store_dir: Optional voiceprint store directory.
+
+    Returns:
+        Absolute store directory.
+    """
+    return (store_dir or get_default_voiceprint_store_dir()).expanduser().resolve()
+
+
+def _configure_connection(connection: sqlite3.Connection) -> None:
+    """
+    Configure SQLite connection behavior.
+
+    Args:
+        connection: SQLite connection.
+    """
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+
+
+def _ensure_schema(connection: sqlite3.Connection) -> None:
+    """
+    Ensure the voiceprint SQLite schema exists.
+
+    Args:
+        connection: SQLite connection.
+    """
+    connection.executescript(SCHEMA_SQL)
+    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
+def _upsert_sample(connection: sqlite3.Connection, sample: StoredVoiceprintSample) -> None:
+    """
+    Upsert one voiceprint sample.
+
+    Args:
+        connection: SQLite connection.
+        sample: Sample metadata to store.
+    """
+    now = _now_iso()
+    speaker_id = _upsert_speaker(connection, sample.speaker_name, now)
+    connection.execute(UPSERT_SAMPLE_SQL, _sample_values(sample, speaker_id, now))
+
+
+def _sample_values(sample: StoredVoiceprintSample, speaker_id: int, now: str) -> tuple[object, ...]:
+    """
+    Build SQLite values for one voiceprint sample.
+
+    Args:
+        sample: Sample metadata.
+        speaker_id: Stored speaker id.
+        now: Current timestamp.
+
+    Returns:
+        Values for ``UPSERT_SAMPLE_SQL``.
+    """
+    return (
+        speaker_id,
+        sample.project_id,
+        str(sample.project_path.expanduser().resolve()),
+        sample.project_speaker_id,
+        str(sample.source_path.expanduser().resolve()),
+        str(sample.clip_path.expanduser().resolve()),
+        sample.clip_rel_path,
+        _sha256_file(sample.clip_path),
+        sample.source_begin_time_ms,
+        sample.source_end_time_ms,
+        sample.clip_begin_time_ms,
+        sample.clip_end_time_ms,
+        sample.transcript_text,
+        now,
+        now,
+    )
+
+
+def _upsert_speaker(connection: sqlite3.Connection, name: str, now: str) -> int:
+    """
+    Upsert one speaker by normalized name.
+
+    Args:
+        connection: SQLite connection.
+        name: Speaker display name.
+        now: Current timestamp.
+
+    Returns:
+        Stored speaker id.
+    """
+    normalized = _normalize_name(name)
+    connection.execute(
+        """
+        INSERT INTO voiceprint_speakers (name, normalized_name, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(normalized_name) DO UPDATE SET
+          name = excluded.name,
+          updated_at = excluded.updated_at
+        """,
+        (name, normalized, now, now),
+    )
+    row = connection.execute(
+        "SELECT id FROM voiceprint_speakers WHERE normalized_name = ?",
+        (normalized,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(f"Failed to store voiceprint speaker: {name}")
+    return int(row["id"])
+
+
+def _sample_row(row: sqlite3.Row) -> VoiceprintSampleRow:
+    """
+    Convert a SQLite row to a sample dataclass.
+
+    Args:
+        row: SQLite row.
+
+    Returns:
+        Voiceprint sample row.
+    """
+    return VoiceprintSampleRow(
+        speaker_name=str(row["name"]),
+        project_id=str(row["project_id"]),
+        project_speaker_id=int(row["project_speaker_id"]),
+        clip_path=Path(str(row["clip_path"])),
+        clip_rel_path=str(row["clip_rel_path"]),
+        clip_sha256=str(row["clip_sha256"]),
+        source_begin_time_ms=int(row["source_begin_time_ms"]),
+        source_end_time_ms=int(row["source_end_time_ms"]),
+        transcript_text=str(row["transcript_text"]),
+    )
+
+
+def _normalize_name(name: str) -> str:
+    """
+    Normalize a speaker name for identity matching.
+
+    Args:
+        name: Speaker name.
+
+    Returns:
+        Normalized name.
+    """
+    normalized = " ".join(name.strip().split()).casefold()
+    if not normalized:
+        raise ValueError("Speaker name must not be empty.")
+    return normalized
+
+
+def _sha256_file(path: Path) -> str:
+    """
+    Hash a voiceprint clip without loading it all into memory.
+
+    Args:
+        path: Clip path.
+
+    Returns:
+        SHA-256 hex digest.
+    """
+    digest = hashlib.sha256()
+    with path.open("rb") as source_file:
+        for chunk in iter(lambda: source_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _now_iso() -> str:
+    """
+    Return the current local timestamp.
+
+    Returns:
+        ISO timestamp.
+    """
+    return datetime.now().astimezone().isoformat(timespec="seconds")

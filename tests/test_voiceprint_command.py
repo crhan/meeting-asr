@@ -1,0 +1,133 @@
+"""Tests for cross-project voiceprint commands."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from typer.testing import CliRunner
+
+from app.cli import app
+from app.project_manager import create_project, load_manifest
+
+runner = CliRunner()
+
+
+def test_voiceprint_capture_writes_xdg_store_and_sqlite(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Capture should store WAV clips outside the project and index them in SQLite."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+
+    result = runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
+
+    manifest = load_manifest(project_dir)
+    assert result.exit_code == 0
+    assert "Captured voiceprint samples: 2" in result.output
+    assert (store_dir / "voiceprints.sqlite").exists()
+    assert (store_dir / "clips" / manifest.project_id / "speaker_0" / "clip_001.wav").exists()
+    assert not (project_dir / "speakers" / "voiceprints").exists()
+    assert manifest.speakers["voiceprints"]["sample_count"] == 2
+
+    list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
+    show_result = runner.invoke(app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)])
+
+    assert list_result.exit_code == 0
+    assert "欧丁: 1 sample(s)" in list_result.output
+    assert show_result.exit_code == 0
+    assert manifest.project_id in show_result.output
+    assert "clip_001.wav" in show_result.output
+
+
+def test_voiceprint_capture_dry_run_does_not_write_store(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Dry-run should plan global paths without writing clips or SQLite."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+
+    result = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Planned voiceprint samples: 2" in result.output
+    assert not (store_dir / "voiceprints.sqlite").exists()
+    assert not (store_dir / "clips").exists()
+
+
+def test_voiceprint_path_prints_xdg_paths(tmp_path: Path) -> None:
+    """Path command should expose store, database, and clip roots."""
+    store_dir = tmp_path / "voiceprints"
+
+    result = runner.invoke(app, ["voiceprint", "path", "--store-dir", str(store_dir)])
+
+    assert result.exit_code == 0
+    assert f"Store: {store_dir.resolve()}" in result.output
+    assert f"Database: {store_dir.resolve() / 'voiceprints.sqlite'}" in result.output
+    assert f"Clips: {store_dir.resolve() / 'clips'}" in result.output
+
+
+def _sample_project(tmp_path: Path) -> Path:
+    """Create a minimal project for voiceprint tests."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "project"
+    create_project(
+        source,
+        title="Demo",
+        projects_dir=tmp_path,
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    return project_dir
+
+
+def _write_named_speaker_inputs(project_dir: Path) -> None:
+    """Write normalized transcript and speaker mapping fixtures."""
+    sentences = {
+        "full_text": "大家好。收到。",
+        "detected_speakers": [0, 1],
+        "sentences": [
+            {"begin_time_ms": 0, "end_time_ms": 1000, "text": "短句。", "speaker_id": 0, "sentence_id": 1},
+            {"begin_time_ms": 2000, "end_time_ms": 8000, "text": "这是一段更适合作为样本的话。", "speaker_id": 0, "sentence_id": 2},
+            {"begin_time_ms": 9000, "end_time_ms": 12000, "text": "收到，我补充一下。", "speaker_id": 1, "sentence_id": 3},
+        ],
+    }
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(sentences, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (project_dir / "speakers" / "speaker_map.json").write_text(
+        json.dumps({"0": "欧丁", "1": "敬悦"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _fake_extract_audio_clip(input_path: Path, output_path: Path, *, start_seconds: float, duration_seconds: float) -> Path:
+    """Write a fake WAV payload for tests."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = f"{input_path}:{start_seconds:.3f}:{duration_seconds:.3f}".encode()
+    output_path.write_bytes(payload)
+    return output_path

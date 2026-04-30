@@ -88,7 +88,29 @@ meeting-asr project speakers apply
 输入过 `/more` 后，可以在下一次提示里按上方向键召回 `/more`。
 如果要脚本化执行，仍可使用 `--map 0=欧丁 --map 1=敬悦`。
 
-## 6. 最终文件
+## 6. 记录跨项目声纹
+
+声纹库是跨项目的，不放在当前 project 目录。默认存放位置遵循 XDG：
+`~/.local/share/meeting-asr/voiceprints/`。
+
+```bash
+meeting-asr voiceprint capture
+meeting-asr voiceprint list
+meeting-asr voiceprint show "欧丁"
+meeting-asr voiceprint path
+```
+
+`capture` 会从当前 project 的 `asr/sentences.json` 和
+`speakers/speaker_map.json` 选择每个 speaker 的参考片段，WAV 写入
+`voiceprints/clips/`，索引写入 `voiceprints/voiceprints.sqlite`。
+
+如果只想看会切哪些片段，不写文件和数据库：
+
+```bash
+meeting-asr voiceprint capture --dry-run
+```
+
+## 7. 最终文件
 
 直接查看结果：
 

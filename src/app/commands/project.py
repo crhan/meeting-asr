@@ -251,6 +251,8 @@ def speakers_apply(
     typer.echo("")
     typer.echo("Next steps:")
     typer.echo("  meeting-asr project speakers preview")
+    typer.echo("  meeting-asr transcript show")
+    typer.echo("  meeting-asr voiceprint capture")
     typer.echo(f"  open {_shell_quote_path(transcript_path)}")
 
 

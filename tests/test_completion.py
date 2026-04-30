@@ -42,9 +42,11 @@ def test_profile_script_adds_cli_path() -> None:
 
 def test_bash_completion_runtime_uses_command_tree() -> None:
     """Runtime completion should include nested commands and options."""
+    root_commands = _bash_complete("meeting-asr ", 1)
     project_commands = _bash_complete("meeting-asr project ", 2)
     transcribe_options = _bash_complete("meeting-asr project transcribe --", 3)
 
+    assert "voiceprint" in root_commands
     assert "transcribe" in project_commands
     assert "speakers" in project_commands
     assert "--oss-upload" in transcribe_options

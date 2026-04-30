@@ -168,6 +168,7 @@ def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     assert mapping == {"0": "欧丁", "1": "敬悦"}
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
     assert "meeting-asr project speakers preview" in result.output
+    assert "meeting-asr voiceprint capture" in result.output
     assert f"open {transcript_path.resolve()}" in result.output
 
 
