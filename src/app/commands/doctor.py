@@ -224,15 +224,27 @@ def _voiceprint_problem(*, required: bool, detail: str) -> CheckResult:
     prompt = _fix_prompt(
         "voiceprint-embedding",
         detail,
-        (
-            "Configure the AnalyticDB voiceprint embedding service endpoint. Use the AI application host from "
-            "AnalyticDB voiceprint retrieval, not a Tongyi vision embedding model name: "
-            "`meeting-asr config set voiceprint.embedding_endpoint "
-            "\"http://<adb-ai-app-host>:8100/audio/embedding\"`. Then verify OSS and voiceprint config."
-        ),
+        _voiceprint_endpoint_fix(),
         "meeting-asr doctor --require-oss --require-voiceprint-embedding",
     )
     return CheckResult("voiceprint-embedding", status, detail, prompt)
+
+
+def _voiceprint_endpoint_fix() -> str:
+    """
+    Return actionable guidance for obtaining the voiceprint endpoint.
+
+    Returns:
+        Repair guidance for the AnalyticDB voiceprint endpoint.
+    """
+    return (
+        "Do not install this locally. The endpoint comes from the AnalyticDB MySQL voiceprint retrieval "
+        "service, which is invite-only. If it is not enabled, submit an Alibaba Cloud support ticket. "
+        "After the service or AI application is available, open the AnalyticDB MySQL console, select the "
+        "target cluster, go to AI Application > Application Management > Call Information, copy the call "
+        "address or host, and configure `meeting-asr config set voiceprint.embedding_endpoint "
+        "\"http://<addr>:8100/audio/embedding\"`. This is not a Tongyi vision embedding model name."
+    )
 
 
 def _check_oss_access(*, upload_probe: bool) -> CheckResult:

@@ -103,7 +103,9 @@ def _embed_audio_with_bailian(path: Path, endpoint: str | None) -> list[float]:
     if not resolved_endpoint:
         raise ValueError(
             "voiceprint.embedding_endpoint is required for Bailian voiceprint embedding. "
-            "Configure the AnalyticDB voiceprint service URL with "
+            "This is not a local install or a Tongyi vision model name. "
+            "Get the address from AnalyticDB MySQL voiceprint retrieval or AI Application call information, "
+            "then configure it with "
             '`meeting-asr config set voiceprint.embedding_endpoint "http://<adb-ai-app-host>:8100/audio/embedding"` '
             "or pass `--endpoint`."
         )

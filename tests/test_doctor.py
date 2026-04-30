@@ -28,6 +28,8 @@ def test_doctor_warns_when_voiceprint_endpoint_is_missing(
     assert "warn voiceprint-embedding: voiceprint.embedding_endpoint is not configured" in result.output
     assert "Repair prompts:" in result.output
     assert "meeting-asr config set voiceprint.embedding_endpoint" in result.output
+    assert "Do not install this locally" in result.output
+    assert "Application Management > Call Information" in result.output
 
 
 def test_doctor_can_require_voiceprint_embedding_config(

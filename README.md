@@ -38,9 +38,17 @@ meeting-asr config set voiceprint.embedding_endpoint "http://<adb-ai-app-host>:8
 meeting-asr doctor --require-oss --require-voiceprint-embedding
 ```
 
-`voiceprint.embedding_endpoint` 是 AnalyticDB 声纹检索/AI 应用提供的音频 embedding
-服务地址，形状应为 `http://<adb-ai-app-host>:8100/audio/embedding`。它不是
-`tongyi-embedding-vision-*` 这类视觉多模态模型名。
+`voiceprint.embedding_endpoint` 不是本机要安装的东西，也不是
+`tongyi-embedding-vision-*` 这类视觉多模态模型名。它是 AnalyticDB MySQL
+声纹检索服务暴露的音频 embedding API 地址，官方 API 形状是
+`http://addr:8100/audio/embedding`。
+
+这个地址从 AnalyticDB 来：
+
+1. 声纹检索当前是邀测能力；如果你的 AnalyticDB 集群没有开通，先提交阿里云工单联系技术支持。
+2. 开通或部署完成后，进入 AnalyticDB MySQL 控制台，选择目标地域和集群。
+3. 在左侧进入 `AI 应用`，打开 `应用管理`，查看目标应用服务的 `调用信息`。
+4. 从调用信息里拿到调用地址或 host，配置成 `http://<addr>:8100/audio/embedding`。
 
 `doctor` 遇到 fail/warn 会输出 `Repair prompts`，这段可以直接交给大模型继续修复。
 
@@ -104,7 +112,8 @@ meeting-asr voiceprint path
 这种匿名 label 的人会跳过。`show` 会显示样本编号，`play` 和 `delete-sample`
 都按这个编号精确操作。
 
-声纹 embedding 默认走百炼/AnalyticDB 声纹检索 endpoint。生成 embedding 后，可以匹配新项目：
+声纹 embedding 默认走百炼/AnalyticDB 声纹检索 endpoint。这个 endpoint 必须先按上面的
+AnalyticDB 控制台调用信息配置好。生成 embedding 后，可以匹配新项目：
 
 ```bash
 meeting-asr doctor --require-oss --require-voiceprint-embedding
