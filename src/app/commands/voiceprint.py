@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import shlex
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Optional
 
 from rich import box
@@ -276,6 +277,27 @@ def _echo_capture_summary(summary: VoiceprintCaptureSummary) -> None:
         typer.echo(f"{speaker.name} (speaker {speaker.speaker_id}): {len(speaker.clips)} sample(s)")
         for clip in speaker.clips:
             typer.echo(f"  - {clip.path}")
+    if not summary.dry_run and summary.sample_count:
+        typer.echo("")
+        typer.echo("Next steps:")
+        typer.echo(f"  {_voiceprint_embed_command(summary.store_dir)}")
+        typer.echo("  meeting-asr voiceprint list")
+
+
+def _voiceprint_embed_command(store_dir: Path) -> str:
+    """
+    Build the next embedding command after capture.
+
+    Args:
+        store_dir: Store directory used by capture.
+
+    Returns:
+        Copyable voiceprint embed command.
+    """
+    default_store_dir = get_voiceprint_db_path().parent
+    if store_dir.expanduser().resolve() == default_store_dir:
+        return "meeting-asr voiceprint embed"
+    return f"meeting-asr voiceprint embed --store-dir {shlex.quote(str(store_dir))}"
 
 
 def _select_sample(speaker: str, sample: int, db_path: Path) -> VoiceprintSampleRow:

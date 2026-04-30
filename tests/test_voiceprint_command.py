@@ -34,6 +34,9 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     manifest = load_manifest(project_dir)
     assert result.exit_code == 0
     assert "Captured voiceprint samples: 2" in result.output
+    assert "Next steps:" in result.output
+    assert f"meeting-asr voiceprint embed --store-dir {store_dir.resolve()}" in result.output
+    assert "meeting-asr voiceprint list" in result.output
     assert (store_dir / "voiceprints.sqlite").exists()
     assert (store_dir / "clips" / manifest.project_id / "speaker_0" / "clip_001.wav").exists()
     assert not (project_dir / "speakers" / "voiceprints").exists()
@@ -245,6 +248,8 @@ def test_voiceprint_capture_dry_run_does_not_write_store(
 
     assert result.exit_code == 0
     assert "Planned voiceprint samples: 2" in result.output
+    assert "Next steps:" not in result.output
+    assert "meeting-asr voiceprint embed" not in result.output
     assert not (store_dir / "voiceprints.sqlite").exists()
     assert not (store_dir / "clips").exists()
 
