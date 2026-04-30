@@ -83,12 +83,13 @@ def preview_start_seconds(sentences_json: Path, speaker_id: int | None, padding_
     return max(0.0, start_ms / 1000.0 - float(padding_seconds))
 
 
-def render_speaker_summary(summary: SpeakerSummary) -> str:
+def render_speaker_summary(summary: SpeakerSummary, mapped_name: str | None = None) -> str:
     """
     Render one speaker summary.
 
     Args:
         summary: Speaker summary.
+        mapped_name: Optional human speaker name.
 
     Returns:
         Terminal text.
@@ -99,6 +100,8 @@ def render_speaker_summary(summary: SpeakerSummary) -> str:
         f"  First seen: {format_ms_timestamp(summary.first_begin_time_ms)}",
         "  Samples:",
     ]
+    if mapped_name:
+        lines.insert(1, f"  Name: {mapped_name}")
     for segment in summary.sample_segments:
         start = format_ms_timestamp(segment.begin_time_ms)
         end = format_ms_timestamp(segment.end_time_ms)

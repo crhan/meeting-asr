@@ -149,6 +149,21 @@ def test_apply_project_speakers_writes_project_outputs(tmp_path: Path) -> None:
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
 
 
+def test_project_speakers_inspect_shows_mapped_names(tmp_path: Path) -> None:
+    """Speaker inspect should show human names after speaker apply."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    apply_project_speakers(project_dir, {0: "欧丁", 1: "敬悦"})
+
+    result = runner.invoke(app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"])
+
+    assert result.exit_code == 0
+    assert "Speaker A (speaker_id=0)" in result.output
+    assert "Name: 欧丁" in result.output
+    assert "Speaker B (speaker_id=1)" in result.output
+    assert "Name: 敬悦" in result.output
+
+
 def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     """Speaker apply should support the human review flow."""
     project_dir = _sample_project(tmp_path)

@@ -194,10 +194,11 @@ def speakers_inspect(
     if not summaries:
         typer.echo("No detected speakers found in the transcript.")
         raise typer.Exit(code=1)
+    speaker_mapping = run_with_cli_errors(lambda: _load_existing_speaker_mapping(project_dir))
     for index, summary in enumerate(summaries):
         if index:
             typer.echo("")
-        typer.echo(render_speaker_summary(summary))
+        typer.echo(render_speaker_summary(summary, mapped_name=speaker_mapping.get(summary.speaker_id)))
 
 
 @speakers_app.command("preview")
