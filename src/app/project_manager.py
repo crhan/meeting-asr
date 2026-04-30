@@ -132,6 +132,26 @@ class ProjectPaths:
         return self.root / "speakers"
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectListItem:
+    """One project row shown by ``meeting-asr project list``."""
+
+    project_dir: Path
+    project_id: str
+    title: str
+    status: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectListResult:
+    """Projects discovered below one projects parent directory."""
+
+    projects_dir: Path
+    projects: list[ProjectListItem]
+
+
 @dataclass(slots=True)
 class ProjectTranscribeOptions:
     """Options for transcribing a project."""
@@ -238,6 +258,41 @@ def project_paths(project_dir: Path) -> ProjectPaths:
         Project paths.
     """
     return ProjectPaths(root=project_dir.expanduser().resolve())
+
+
+def list_projects(projects_dir: Path | None) -> ProjectListResult:
+    """
+    List project manifests below a projects parent directory.
+
+    Args:
+        projects_dir: Optional projects parent directory. Defaults to XDG data.
+
+    Returns:
+        Resolved projects parent directory and project summaries sorted newest first.
+    """
+    root = _projects_parent_dir(projects_dir)
+    if not root.exists():
+        return ProjectListResult(root, [])
+    if not root.is_dir():
+        raise NotADirectoryError(f"Projects directory is not a directory: {root}")
+
+    projects: list[ProjectListItem] = []
+    for candidate in root.iterdir():
+        if not candidate.is_dir() or not (candidate / "project.json").is_file():
+            continue
+        manifest = load_manifest(candidate)
+        projects.append(
+            ProjectListItem(
+                project_dir=candidate.resolve(),
+                project_id=manifest.project_id,
+                title=manifest.title,
+                status=manifest.status,
+                created_at=manifest.created_at,
+                updated_at=manifest.updated_at,
+            )
+        )
+    projects.sort(key=lambda project: (project.created_at, project.project_id), reverse=True)
+    return ProjectListResult(root, projects)
 
 
 def ensure_project_dirs(project_dir: Path) -> ProjectPaths:
@@ -445,8 +500,23 @@ def _resolve_project_root(
     """Resolve the directory for a new project."""
     if project_dir is not None:
         return project_dir.expanduser().resolve()
-    base_dir = projects_dir.expanduser().resolve() if projects_dir else get_default_projects_dir().resolve()
+    base_dir = _projects_parent_dir(projects_dir)
     return (base_dir / f"{created_at[:10].replace('-', '')}_{_slugify(title or source.stem)}").resolve()
+
+
+def _projects_parent_dir(projects_dir: Path | None) -> Path:
+    """
+    Resolve the parent directory used for project creation and listing.
+
+    Args:
+        projects_dir: Optional projects parent directory.
+
+    Returns:
+        Absolute projects parent directory.
+    """
+    if projects_dir is not None:
+        return projects_dir.expanduser().resolve()
+    return get_default_projects_dir().resolve()
 
 
 def _create_project_dirs(root: Path) -> None:

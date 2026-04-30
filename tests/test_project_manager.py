@@ -82,6 +82,72 @@ def test_project_create_output_quotes_copyable_cd_command(tmp_path: Path) -> Non
     assert "meeting-asr project status ." not in result.output
 
 
+def test_project_list_command_reads_default_projects_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project list should use the same XDG parent as project create."""
+    data_home = tmp_path / "data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    create_project(
+        source,
+        title="Demo",
+        projects_dir=None,
+        project_dir=None,
+        meeting_time=None,
+        hash_source=False,
+    )
+    projects_dir = data_home / "meeting-asr" / "projects"
+    project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
+
+    result = runner.invoke(app, ["project", "list"])
+
+    assert result.exit_code == 0
+    assert f"Projects: {projects_dir.resolve()}" in result.output
+    assert "Demo" in result.output
+    assert "created" in result.output
+    assert str(project_dir.resolve()) in result.output
+
+
+def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:
+    """Project list should scan the requested projects parent only."""
+    projects_dir = tmp_path / "projects"
+    ignored_dir = projects_dir / "not-a-project"
+    ignored_dir.mkdir(parents=True)
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = projects_dir / "demo"
+    create_project(
+        source,
+        title="Demo",
+        projects_dir=projects_dir,
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+
+    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
+
+    assert result.exit_code == 0
+    assert f"Projects: {projects_dir.resolve()}" in result.output
+    assert "Demo" in result.output
+    assert str(project_dir.resolve()) in result.output
+    assert "not-a-project" not in result.output
+
+
+def test_project_list_command_handles_empty_projects_dir(tmp_path: Path) -> None:
+    """Project list should treat a missing projects parent as empty."""
+    projects_dir = tmp_path / "missing"
+
+    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
+
+    assert result.exit_code == 0
+    assert f"Projects: {projects_dir.resolve()}" in result.output
+    assert "No projects found." in result.output
+
+
 def test_project_status_command_reads_manifest(tmp_path: Path) -> None:
     """The project status command should expose key manifest fields."""
     project_dir = _sample_project(tmp_path)

@@ -57,6 +57,12 @@ meeting-asr project status
 ```
 
 默认项目目录遵循 XDG：`~/.local/share/meeting-asr/projects`。
+列出默认项目目录：
+
+```bash
+meeting-asr project list
+meeting-asr project list --projects-dir "/path/to/projects"
+```
 
 ## 4. 转写
 

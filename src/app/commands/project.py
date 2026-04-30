@@ -22,10 +22,12 @@ from app.completion_helpers import (
 from app.config import get_default_projects_dir
 from app.models import SentenceSegment, TranscriptResult
 from app.project_manager import (
+    ProjectListItem,
     ProjectTranscribeOptions,
     apply_project_speakers,
     create_project,
     init_project_git,
+    list_projects,
     load_manifest,
     parse_mapping_items,
     prepare_project_audio,
@@ -161,6 +163,15 @@ def run(
         summary.detected_speaker_count,
         summary.sentence_count,
     )
+
+
+@app.command("list")
+def list_command(
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+) -> None:
+    """List projects under the default or specified projects directory."""
+    result = run_with_cli_errors(lambda: list_projects(projects_dir))
+    _echo_project_list(result.projects_dir, result.projects)
 
 
 @app.command("status")
@@ -356,6 +367,25 @@ def _echo_transcribe_summary(project_dir: Path, task_id: str, speaker_count: int
     typer.echo(f"  cd {_shell_quote_path(project_dir)}")
     typer.echo("  meeting-asr project speakers inspect")
     typer.echo("  meeting-asr project speakers preview")
+
+
+def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> None:
+    """
+    Print project list rows.
+
+    Args:
+        projects_dir: Resolved projects parent directory.
+        projects: Project rows to print.
+    """
+    typer.echo(f"Projects: {projects_dir}")
+    if not projects:
+        typer.echo("No projects found.")
+        return
+    for project in projects:
+        typer.echo(
+            f"- {project.created_at} | {project.status} | {project.project_id} | "
+            f"{project.title} | {project.project_dir}"
+        )
 
 
 def _echo_project_created(project_dir: Path, manifest) -> None:
