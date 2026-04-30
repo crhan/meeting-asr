@@ -4,10 +4,13 @@
 
 ```bash
 meeting-asr doctor --require-oss
+meeting-asr doctor --require-oss --require-voiceprint-embedding
 meeting-asr doctor --oss-upload-probe
 ```
 
 `--require-oss` 只检查配置是否存在；`--oss-upload-probe` 会上传一个极小文本对象，签 URL 读回，再删除。
+`--require-voiceprint-embedding` 会同时要求 OSS 配置和声纹 embedding endpoint。`doctor`
+遇到 fail/warn 会输出 `Repair prompts`，可以直接交给大模型继续修复。
 
 配置上传目录 7 天过期删除：
 
@@ -110,12 +113,16 @@ meeting-asr voiceprint path
 `embed` 默认调用百炼/AnalyticDB 声纹检索的音频 embedding endpoint。先配置 endpoint：
 
 ```bash
-meeting-asr config set voiceprint.embedding_endpoint "http://<addr>:8100/audio/embedding"
+meeting-asr config set voiceprint.embedding_endpoint "http://<adb-ai-app-host>:8100/audio/embedding"
 ```
+
+这里的 endpoint 是 AnalyticDB 声纹检索/AI 应用提供的音频 embedding 服务地址，不是
+`tongyi-embedding-vision-*` 视觉多模态 embedding 模型名。
 
 然后生成 embedding 并匹配新项目：
 
 ```bash
+meeting-asr doctor --require-oss --require-voiceprint-embedding
 meeting-asr voiceprint embed
 meeting-asr project speakers match
 meeting-asr project speakers match --apply

@@ -34,9 +34,15 @@ meeting-asr config set oss.access_key_secret "<your-oss-access-key-secret>"
 meeting-asr config set oss.bucket_name "<your-bucket>"
 meeting-asr config set oss.region "<your-region>"
 meeting-asr config set oss.endpoint "<your-oss-endpoint>"
-meeting-asr config set voiceprint.embedding_endpoint "http://<addr>:8100/audio/embedding"
-meeting-asr doctor --require-oss
+meeting-asr config set voiceprint.embedding_endpoint "http://<adb-ai-app-host>:8100/audio/embedding"
+meeting-asr doctor --require-oss --require-voiceprint-embedding
 ```
+
+`voiceprint.embedding_endpoint` 是 AnalyticDB 声纹检索/AI 应用提供的音频 embedding
+服务地址，形状应为 `http://<adb-ai-app-host>:8100/audio/embedding`。它不是
+`tongyi-embedding-vision-*` 这类视觉多模态模型名。
+
+`doctor` 遇到 fail/warn 会输出 `Repair prompts`，这段可以直接交给大模型继续修复。
 
 ## 主流程
 
@@ -101,6 +107,8 @@ meeting-asr voiceprint path
 声纹 embedding 默认走百炼/AnalyticDB 声纹检索 endpoint。生成 embedding 后，可以匹配新项目：
 
 ```bash
+meeting-asr doctor --require-oss --require-voiceprint-embedding
+meeting-asr voiceprint embed
 meeting-asr project speakers match
 meeting-asr project speakers match --apply
 ```

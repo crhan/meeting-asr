@@ -101,7 +101,12 @@ def _embed_audio_with_bailian(path: Path, endpoint: str | None) -> list[float]:
     settings = load_settings(require_oss=True)
     resolved_endpoint = endpoint or settings.voiceprint_embedding_endpoint
     if not resolved_endpoint:
-        raise ValueError("voiceprint.embedding_endpoint is required for Bailian voiceprint embedding.")
+        raise ValueError(
+            "voiceprint.embedding_endpoint is required for Bailian voiceprint embedding. "
+            "Configure the AnalyticDB voiceprint service URL with "
+            '`meeting-asr config set voiceprint.embedding_endpoint "http://<adb-ai-app-host>:8100/audio/embedding"` '
+            "or pass `--endpoint`."
+        )
     audio_url = _upload_embedding_audio(path)
     response = requests.post(
         resolved_endpoint,
