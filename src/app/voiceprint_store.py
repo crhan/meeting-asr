@@ -112,6 +112,10 @@ class VoiceprintSpeakerRow:
     speaker_id: int
     name: str
     sample_count: int
+    project_count: int
+    embedded_sample_count: int
+    embedding_model_count: int
+    updated_at: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,14 +243,20 @@ def list_voiceprint_speakers(db_path: Path | None = None) -> list[VoiceprintSpea
         _ensure_schema(connection)
         rows = connection.execute(
             """
-            SELECT speakers.id, speakers.name, COUNT(samples.id) AS sample_count
+            SELECT speakers.id, speakers.name,
+                   COUNT(DISTINCT samples.id) AS sample_count,
+                   COUNT(DISTINCT samples.project_id) AS project_count,
+                   COUNT(DISTINCT embeddings.sample_id) AS embedded_sample_count,
+                   COUNT(DISTINCT embeddings.model) AS embedding_model_count,
+                   MAX(samples.updated_at) AS updated_at
             FROM voiceprint_speakers AS speakers
             LEFT JOIN voiceprint_samples AS samples ON samples.speaker_id = speakers.id
+            LEFT JOIN voiceprint_embeddings AS embeddings ON embeddings.sample_id = samples.id
             GROUP BY speakers.id
             ORDER BY speakers.name
             """
         ).fetchall()
-    return [VoiceprintSpeakerRow(int(row["id"]), str(row["name"]), int(row["sample_count"])) for row in rows]
+    return [_speaker_row(row) for row in rows]
 
 
 def list_voiceprint_samples(speaker: str, db_path: Path | None = None) -> list[VoiceprintSampleRow]:
@@ -600,15 +610,21 @@ def _speaker_by_id(connection: sqlite3.Connection, speaker_id: int) -> Voiceprin
     """
     row = connection.execute(
         """
-        SELECT speakers.id, speakers.name, COUNT(samples.id) AS sample_count
+        SELECT speakers.id, speakers.name,
+               COUNT(DISTINCT samples.id) AS sample_count,
+               COUNT(DISTINCT samples.project_id) AS project_count,
+               COUNT(DISTINCT embeddings.sample_id) AS embedded_sample_count,
+               COUNT(DISTINCT embeddings.model) AS embedding_model_count,
+               MAX(samples.updated_at) AS updated_at
         FROM voiceprint_speakers AS speakers
         LEFT JOIN voiceprint_samples AS samples ON samples.speaker_id = speakers.id
+        LEFT JOIN voiceprint_embeddings AS embeddings ON embeddings.sample_id = samples.id
         WHERE speakers.id = ?
         GROUP BY speakers.id
         """,
         (speaker_id,),
     ).fetchone()
-    return _speaker_row(row)
+    return _optional_speaker_row(row)
 
 
 def _speaker_by_name(connection: sqlite3.Connection, name: str) -> VoiceprintSpeakerRow | None:
@@ -624,30 +640,36 @@ def _speaker_by_name(connection: sqlite3.Connection, name: str) -> VoiceprintSpe
     """
     row = connection.execute(
         """
-        SELECT speakers.id, speakers.name, COUNT(samples.id) AS sample_count
+        SELECT speakers.id, speakers.name,
+               COUNT(DISTINCT samples.id) AS sample_count,
+               COUNT(DISTINCT samples.project_id) AS project_count,
+               COUNT(DISTINCT embeddings.sample_id) AS embedded_sample_count,
+               COUNT(DISTINCT embeddings.model) AS embedding_model_count,
+               MAX(samples.updated_at) AS updated_at
         FROM voiceprint_speakers AS speakers
         LEFT JOIN voiceprint_samples AS samples ON samples.speaker_id = speakers.id
+        LEFT JOIN voiceprint_embeddings AS embeddings ON embeddings.sample_id = samples.id
         WHERE speakers.normalized_name = ?
         GROUP BY speakers.id
         """,
         (_normalize_name(name),),
     ).fetchone()
-    return _speaker_row(row)
+    return _optional_speaker_row(row)
 
 
-def _speaker_row(row: sqlite3.Row | None) -> VoiceprintSpeakerRow | None:
+def _optional_speaker_row(row: sqlite3.Row | None) -> VoiceprintSpeakerRow | None:
     """
-    Convert a SQLite row to a speaker dataclass.
+    Convert an optional SQLite row to a speaker dataclass.
 
     Args:
-        row: SQLite row.
+        row: Optional SQLite row.
 
     Returns:
         Speaker row, or ``None``.
     """
     if row is None:
         return None
-    return VoiceprintSpeakerRow(int(row["id"]), str(row["name"]), int(row["sample_count"]))
+    return _speaker_row(row)
 
 
 def _parse_speaker_id(speaker: str) -> int | None:
@@ -689,6 +711,28 @@ def _sample_row(row: sqlite3.Row) -> VoiceprintSampleRow:
         source_begin_time_ms=int(row["source_begin_time_ms"]),
         source_end_time_ms=int(row["source_end_time_ms"]),
         transcript_text=str(row["transcript_text"]),
+    )
+
+
+def _speaker_row(row: sqlite3.Row) -> VoiceprintSpeakerRow:
+    """
+    Convert a SQLite row to a speaker summary dataclass.
+
+    Args:
+        row: SQLite row.
+
+    Returns:
+        Voiceprint speaker summary row.
+    """
+    updated_at = row["updated_at"]
+    return VoiceprintSpeakerRow(
+        speaker_id=int(row["id"]),
+        name=str(row["name"]),
+        sample_count=int(row["sample_count"]),
+        project_count=int(row["project_count"]),
+        embedded_sample_count=int(row["embedded_sample_count"]),
+        embedding_model_count=int(row["embedding_model_count"]),
+        updated_at=str(updated_at) if updated_at is not None else None,
     )
 
 

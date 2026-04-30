@@ -120,6 +120,7 @@ meeting-asr voiceprint path
 `speakers/speaker_map.json` 选择已确认姓名的 speaker 参考片段，WAV 写入
 `voiceprints/clips/`，索引写入 `voiceprints/voiceprints.sqlite`。
 仍然是 `Speaker A`、`Speaker C` 这种匿名 label 的人会跳过，不进入声纹库。
+`list` 会显示 speaker ID，并按 speaker 汇总样本数、项目数和 embedding 覆盖率。
 
 `embed` 默认使用本地 `local-speechbrain` provider。先安装本地声纹依赖：
 

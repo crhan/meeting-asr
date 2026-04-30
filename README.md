@@ -141,9 +141,10 @@ meeting-asr voiceprint path
 ```
 
 `voiceprint capture` 只记录已确认姓名的 speaker；仍是 `Speaker A`、`Speaker C`
-这种匿名 label 的人会跳过。`voiceprint list` 会显示 speaker ID；`show`、
-`play`、`delete-sample` 和 `delete-speaker` 可用姓名或 ID 引用同一个人。
-`show` 会显示样本编号，`play` 和 `delete-sample` 都按这个编号精确操作。
+这种匿名 label 的人会跳过。`voiceprint list` 会显示 speaker ID，并按 speaker
+汇总样本数、项目数和 embedding 覆盖率；`show`、`play`、`delete-sample` 和
+`delete-speaker` 可用姓名或 ID 引用同一个人。`show` 会显示样本编号，`play` 和
+`delete-sample` 都按这个编号精确操作。
 
 声纹 embedding 默认走 `local-speechbrain`。生成 embedding 后，可以匹配新项目：
 

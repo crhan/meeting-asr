@@ -45,8 +45,12 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     show_by_name_result = runner.invoke(app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)])
 
     assert list_result.exit_code == 0
-    assert "欧丁: 1 sample(s)" in list_result.output
-    assert f"[{speaker_id}] 欧丁: 1 sample(s)" in list_result.output
+    assert "Speakers: 2 | Samples: 2 | Embedded samples: 0/2" in list_result.output
+    assert speaker_id.isdecimal()
+    assert "ID" in list_result.output
+    assert "Speaker" in list_result.output
+    assert "Embedded" in list_result.output
+    assert "欧丁" in list_result.output
     assert show_result.exit_code == 0
     assert show_by_name_result.exit_code == 0
     assert "[1] 欧丁" in show_result.output
@@ -78,7 +82,8 @@ def test_voiceprint_capture_skips_anonymous_speaker_labels(
     assert "Captured voiceprint samples: 1" in result.output
     assert (store_dir / "clips" / manifest.project_id / "speaker_0" / "clip_001.wav").exists()
     assert not (store_dir / "clips" / manifest.project_id / "speaker_2").exists()
-    assert "欧丁: 1 sample(s)" in list_result.output
+    assert "Speakers: 1 | Samples: 1 | Embedded samples: 0/1" in list_result.output
+    assert "欧丁" in list_result.output
     assert "Speaker C" not in list_result.output
 
 
@@ -121,6 +126,7 @@ def test_voiceprint_embed_stores_sample_embeddings(
     )
 
     result = runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
+    list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
     embeddings = list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, get_voiceprint_db_path(store_dir))
 
     assert result.exit_code == 0
@@ -128,6 +134,7 @@ def test_voiceprint_embed_stores_sample_embeddings(
     assert f"Model: {LOCAL_SPEECHBRAIN_MODEL}" in result.output
     assert "Embedded: 2" in result.output
     assert len(embeddings) == 2
+    assert "Embedded samples: 2/2" in list_result.output
 
 
 def test_voiceprint_embed_uses_configured_provider_model(
@@ -208,7 +215,8 @@ def test_voiceprint_delete_speaker_removes_all_samples(
     assert f"Deleted speaker: 敬悦 (id {speaker_id})" in result.output
     assert not clip_path.exists()
     assert "敬悦" not in list_result.output
-    assert "欧丁: 1 sample(s)" in list_result.output
+    assert "Speakers: 1 | Samples: 1 | Embedded samples: 0/1" in list_result.output
+    assert "欧丁" in list_result.output
 
 
 def test_voiceprint_capture_dry_run_does_not_write_store(
@@ -331,9 +339,13 @@ def _fake_embed_audio_file(path: Path, *, provider: str | None, endpoint: str | 
 
 def _speaker_id_from_list(output: str, name: str) -> str:
     """Extract a speaker id from ``voiceprint list`` output."""
-    suffix = f"] {name}:"
     for line in output.splitlines():
-        if suffix not in line:
+        if name not in line:
             continue
-        return line.split("]", maxsplit=1)[0].removeprefix("[")
+        columns = [column.strip() for column in line.split("|")]
+        if len(columns) >= 2 and columns[1] == name and columns[0].isdecimal():
+            return columns[0]
+        cells = line.split()
+        if cells and cells[0].isdecimal():
+            return cells[0]
     raise AssertionError(f"speaker not found in list output: {name}")

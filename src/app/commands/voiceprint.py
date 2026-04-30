@@ -7,6 +7,9 @@ import shutil
 import subprocess
 from typing import Optional
 
+from rich import box
+from rich.console import Console
+from rich.table import Table
 import typer
 
 from app.cli_errors import run_with_cli_errors
@@ -21,6 +24,7 @@ from app.voiceprint_store import (
     list_voiceprint_samples,
     list_voiceprint_speakers,
     VoiceprintSampleRow,
+    VoiceprintSpeakerRow,
 )
 from app.voiceprint_embedding import embed_voiceprint_samples
 from app.voiceprints import VoiceprintCaptureSummary, capture_voiceprints
@@ -66,8 +70,7 @@ def list_command(
     if not rows:
         typer.echo("No voiceprints recorded.")
         return
-    for row in rows:
-        typer.echo(f"[{row.speaker_id}] {row.name}: {row.sample_count} sample(s)")
+    _echo_voiceprint_speaker_table(rows)
 
 
 @app.command("embed")
@@ -183,6 +186,78 @@ def path_command(
     typer.echo(f"Store: {db_path.parent}")
     typer.echo(f"Database: {db_path}")
     typer.echo(f"Clips: {get_voiceprint_clip_dir(store_dir)}")
+
+
+def _echo_voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> None:
+    """
+    Print voiceprint speakers as a compact summary table.
+
+    Args:
+        rows: Speaker summary rows.
+    """
+    sample_total = sum(row.sample_count for row in rows)
+    embedded_total = sum(row.embedded_sample_count for row in rows)
+    typer.echo(f"Speakers: {len(rows)} | Samples: {sample_total} | Embedded samples: {embedded_total}/{sample_total}")
+    _voiceprint_table_console().print(_voiceprint_speaker_table(rows))
+
+
+def _voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> Table:
+    """
+    Build the voiceprint speaker summary table.
+
+    Args:
+        rows: Speaker summary rows.
+
+    Returns:
+        Rich table ready to print.
+    """
+    table = Table(box=box.ASCII, show_edge=False, pad_edge=False)
+    table.add_column("ID", justify="right", no_wrap=True)
+    table.add_column("Speaker")
+    table.add_column("Samples", justify="right", no_wrap=True)
+    table.add_column("Projects", justify="right", no_wrap=True)
+    table.add_column("Embedded", justify="right", no_wrap=True)
+    table.add_column("Models", justify="right", no_wrap=True)
+    table.add_column("Updated", no_wrap=True)
+    for row in rows:
+        table.add_row(
+            str(row.speaker_id),
+            row.name,
+            str(row.sample_count),
+            str(row.project_count),
+            f"{row.embedded_sample_count}/{row.sample_count}",
+            str(row.embedding_model_count),
+            _format_updated_at(row.updated_at),
+        )
+    return table
+
+
+def _voiceprint_table_console() -> Console:
+    """
+    Build the stdout console used for voiceprint tables.
+
+    Returns:
+        Rich console instance.
+    """
+    return Console(highlight=False, color_system=None)
+
+
+def _format_updated_at(value: str | None) -> str:
+    """
+    Format an ISO timestamp for table display.
+
+    Args:
+        value: Optional ISO timestamp.
+
+    Returns:
+        Compact timestamp or ``-`` when absent.
+    """
+    if not value:
+        return "-"
+    date_text, separator, time_text = value.partition("T")
+    if not separator:
+        return value
+    return f"{date_text} {time_text[:8]}"
 
 
 def _echo_capture_summary(summary: VoiceprintCaptureSummary) -> None:
