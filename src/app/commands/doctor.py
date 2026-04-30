@@ -6,6 +6,7 @@ import importlib.util
 import shutil
 import subprocess
 import sys
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -67,8 +68,7 @@ def command(
     ]
     if check_oss_access or oss_upload_probe:
         checks.append(_check_oss_access(upload_probe=oss_upload_probe))
-    for check in checks:
-        typer.echo(f"{check.status:4} {check.name}: {check.detail}")
+    _echo_checks(checks)
     _echo_fix_prompts(checks)
     if any(check.failed for check in checks):
         raise typer.Exit(code=1)
@@ -237,13 +237,19 @@ def _voiceprint_endpoint_fix() -> str:
     Returns:
         Repair guidance for the AnalyticDB voiceprint endpoint.
     """
-    return (
-        "Do not install this locally. The endpoint comes from the AnalyticDB MySQL voiceprint retrieval "
-        "service, which is invite-only. If it is not enabled, submit an Alibaba Cloud support ticket. "
-        "After the service or AI application is available, open the AnalyticDB MySQL console, select the "
-        "target cluster, go to AI Application > Application Management > Call Information, copy the call "
-        "address or host, and configure `meeting-asr config set voiceprint.embedding_endpoint "
-        "\"http://<addr>:8100/audio/embedding\"`. This is not a Tongyi vision embedding model name."
+    return "\n".join(
+        [
+            "Do not install this locally.",
+            "Endpoint source: AnalyticDB MySQL voiceprint retrieval service, which is invite-only.",
+            "If it is not enabled, submit an Alibaba Cloud support ticket.",
+            "After the service or AI application is available, open the AnalyticDB MySQL console.",
+            "Select the target cluster.",
+            "Go to AI Application > Application Management > Call Information.",
+            "Copy the call address or host.",
+            "Configure:",
+            'meeting-asr config set voiceprint.embedding_endpoint "http://<addr>:8100/audio/embedding"',
+            "This is not a Tongyi vision embedding model name.",
+        ]
     )
 
 
@@ -309,6 +315,42 @@ def _format_oss_error(exc: Any) -> str:
     return f"OSS request failed: status={getattr(exc, 'status', None)}, code={getattr(exc, 'code', None)}"
 
 
+def _echo_checks(checks: list[CheckResult]) -> None:
+    """
+    Print a readable diagnostic report.
+
+    Args:
+        checks: Diagnostic results.
+
+    Returns:
+        None.
+    """
+    ok_count = sum(1 for check in checks if check.status == "ok")
+    warn_count = sum(1 for check in checks if check.status == "warn")
+    fail_count = sum(1 for check in checks if check.status == "fail")
+    typer.echo("Meeting-ASR Doctor")
+    typer.echo(f"Summary: {ok_count} ok, {warn_count} warn, {fail_count} fail")
+    typer.echo("")
+    typer.echo("Checks:")
+    for check in checks:
+        _echo_check(check)
+
+
+def _echo_check(check: CheckResult) -> None:
+    """
+    Print one check with wrapped detail.
+
+    Args:
+        check: Diagnostic result.
+
+    Returns:
+        None.
+    """
+    typer.echo(f"  {check.status.upper():5} {check.name}")
+    for line in _format_detail_lines(check.detail):
+        typer.echo(f"        {line}")
+
+
 def _echo_fix_prompts(checks: list[CheckResult]) -> None:
     """
     Print repair prompts for failed or warning checks.
@@ -323,10 +365,12 @@ def _echo_fix_prompts(checks: list[CheckResult]) -> None:
     if not problem_checks:
         return
     typer.echo("")
-    typer.echo("Repair prompts:")
+    typer.echo("Repair Prompts:")
     for check in problem_checks:
-        typer.echo(f"[{check.name}]")
-        typer.echo(check.fix_prompt)
+        typer.echo(f"  {check.name}")
+        typer.echo("    Prompt:")
+        for line in _wrap_text(check.fix_prompt or "", width=78):
+            typer.echo(f"      {line}")
 
 
 def _fix_prompt(check_name: str, detail: str, fix: str, verify: str) -> str:
@@ -342,13 +386,68 @@ def _fix_prompt(check_name: str, detail: str, fix: str, verify: str) -> str:
     Returns:
         Prompt text safe to print in terminal output.
     """
-    return (
-        "Prompt: You are fixing `meeting-asr doctor` output. "
-        f"Check `{check_name}` reported: {detail}. "
-        f"Repair: {fix} "
-        f"Verify with `{verify}`. "
-        "Do not print or commit secrets."
+    return "\n".join(
+        [
+            "You are fixing `meeting-asr doctor` output.",
+            f"Problem: `{check_name}` reported: {detail}.",
+            "Repair:",
+            fix,
+            "Verify:",
+            verify,
+            "Do not print or commit secrets.",
+        ]
     )
+
+
+def _format_detail_lines(detail: str) -> list[str]:
+    """
+    Split semicolon-heavy detail text before wrapping.
+
+    Args:
+        detail: Check detail text.
+
+    Returns:
+        Wrapped detail lines.
+    """
+    lines: list[str] = []
+    for part in detail.split("; "):
+        lines.extend(_wrap_text(part, width=86))
+    return lines
+
+
+def _wrap_text(value: str, *, width: int) -> list[str]:
+    """
+    Wrap terminal text while preserving explicit line breaks.
+
+    Args:
+        value: Text to wrap.
+        width: Maximum line width before indentation.
+
+    Returns:
+        Wrapped lines, never empty.
+    """
+    lines: list[str] = []
+    for raw_line in value.splitlines() or [""]:
+        if _looks_like_command(raw_line):
+            lines.append(raw_line)
+            continue
+        wrapped = textwrap.wrap(raw_line, width=width, break_long_words=False, break_on_hyphens=False)
+        lines.extend(wrapped or [""])
+    return lines
+
+
+def _looks_like_command(value: str) -> bool:
+    """
+    Return whether a prompt line should stay copyable as one command.
+
+    Args:
+        value: Raw prompt line.
+
+    Returns:
+        True when the line looks like a shell command.
+    """
+    stripped = value.strip()
+    return stripped.startswith(("meeting-asr ", "uv ", "brew ", "python "))
 
 
 def _find_iina_cli() -> str | None:

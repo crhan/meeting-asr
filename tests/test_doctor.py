@@ -25,8 +25,11 @@ def test_doctor_warns_when_voiceprint_endpoint_is_missing(
     result = runner.invoke(app, ["doctor"])
 
     assert result.exit_code == 0
-    assert "warn voiceprint-embedding: voiceprint.embedding_endpoint is not configured" in result.output
-    assert "Repair prompts:" in result.output
+    assert "Meeting-ASR Doctor" in result.output
+    assert "Summary: 5 ok, 1 warn, 0 fail" in result.output
+    assert "  WARN  voiceprint-embedding" in result.output
+    assert "voiceprint.embedding_endpoint is not configured" in result.output
+    assert "Repair Prompts:" in result.output
     assert "meeting-asr config set voiceprint.embedding_endpoint" in result.output
     assert "Do not install this locally" in result.output
     assert "Application Management > Call Information" in result.output
@@ -52,7 +55,9 @@ def test_doctor_can_require_voiceprint_embedding_config(
     result = runner.invoke(app, ["doctor", "--require-voiceprint-embedding"])
 
     assert result.exit_code == 1
-    assert "fail voiceprint-embedding: voiceprint.embedding_endpoint is not configured" in result.output
+    assert "Summary: 5 ok, 0 warn, 1 fail" in result.output
+    assert "  FAIL  voiceprint-embedding" in result.output
+    assert "voiceprint.embedding_endpoint is not configured" in result.output
     assert "meeting-asr doctor --require-oss --require-voiceprint-embedding" in result.output
 
 
@@ -77,8 +82,10 @@ def test_doctor_accepts_voiceprint_embedding_endpoint(
     result = runner.invoke(app, ["doctor", "--require-voiceprint-embedding"])
 
     assert result.exit_code == 0
-    assert "ok   voiceprint-embedding: provider=bailian" in result.output
-    assert "Repair prompts:" not in result.output
+    assert "Summary: 6 ok, 0 warn, 0 fail" in result.output
+    assert "  OK    voiceprint-embedding" in result.output
+    assert "provider=bailian" in result.output
+    assert "Repair Prompts:" not in result.output
 
 
 def _prepare_doctor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
