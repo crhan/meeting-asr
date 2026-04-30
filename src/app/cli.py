@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import typer
+from typer.completion import completion_init
 
 from app.commands import audio, completion, config, doctor, oss, project
+
+completion_init()
 
 app = typer.Typer(
     add_completion=False,

@@ -17,7 +17,25 @@ meeting-asr oss lifecycle set --prefix meeting-asr/ --days 7
 
 这个规则按对象年龄删除，不是按最后访问时间删除。阿里云 OSS 的 last-access lifecycle 不能删除对象。
 
-## 2. 创建项目
+## 2. Shell Completion
+
+安装补全：
+
+```bash
+meeting-asr completion install zsh
+```
+
+支持 `bash`、`zsh`、`fish`、`powershell` 和 `pwsh` 安装。只想查看脚本时：
+
+```bash
+meeting-asr completion zsh
+meeting-asr completion bash
+```
+
+补全由 CLI 命令树动态生成，会覆盖子命令、选项，以及配置 key、OSS 上传模式、
+音频格式等有限值。
+
+## 3. 创建项目
 
 ```bash
 meeting-asr project create "/path/to/meeting.mp4" \
@@ -35,7 +53,7 @@ meeting-asr project status
 
 默认项目目录遵循 XDG：`~/.local/share/meeting-asr/projects`。
 
-## 3. 转写
+## 4. 转写
 
 如果 OSS 已配置，默认使用 private OSS signed URL：
 
@@ -51,7 +69,7 @@ meeting-asr project transcribe \
   --oss-upload false
 ```
 
-## 4. 人工确认 speaker
+## 5. 人工确认 speaker
 
 ```bash
 meeting-asr project speakers inspect
@@ -69,7 +87,7 @@ meeting-asr project speakers apply \
   --map 3=墨泪
 ```
 
-## 5. 最终文件
+## 6. 最终文件
 
 - `exports/transcript.txt`：纯文本
 - `exports/transcript_speakers.txt`：匿名 speaker 文本

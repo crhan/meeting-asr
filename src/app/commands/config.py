@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 
 from app.cli_errors import run_with_cli_errors
+from app.completion_helpers import complete_config_key
 from app.config import (
     CONFIG_KEYS,
     get_config_path,
@@ -42,7 +43,11 @@ def keys() -> None:
 
 @app.command("set")
 def set_command(
-    key: str = typer.Argument(..., help="Config key, for example dashscope.api_key."),
+    key: str = typer.Argument(
+        ...,
+        help="Config key, for example dashscope.api_key.",
+        autocompletion=complete_config_key,
+    ),
     value: str = typer.Argument(..., help="Config value."),
 ) -> None:
     """Set one global config value."""
@@ -51,7 +56,9 @@ def set_command(
 
 
 @app.command("unset")
-def unset_command(key: str = typer.Argument(..., help="Config key to remove.")) -> None:
+def unset_command(
+    key: str = typer.Argument(..., help="Config key to remove.", autocompletion=complete_config_key),
+) -> None:
     """Unset one global config value."""
     normalized_key, written_path = run_with_cli_errors(lambda: unset_config_value(key))
     typer.echo(f"Unset {normalized_key} in {written_path}")

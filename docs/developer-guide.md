@@ -26,7 +26,15 @@ uv run meeting-asr completion zsh >/tmp/meeting-asr.zsh
 zsh -n /tmp/meeting-asr.zsh
 uv run meeting-asr completion bash >/tmp/meeting-asr.bash
 bash -n /tmp/meeting-asr.bash
+env _MEETING_ASR_COMPLETE=complete_bash \
+  COMP_WORDS='meeting-asr project transcribe --' \
+  COMP_CWORD=3 \
+  uv run meeting-asr
 ```
+
+注意：根 CLI 关闭了 Typer 的 `add_completion`，所以必须在启动时调用
+`completion_init()`。否则生成的 completion 脚本看似存在，但运行时可能出现
+`plain,xxx` 前缀或 shell 指令顺序不匹配。
 
 ## 设计边界
 

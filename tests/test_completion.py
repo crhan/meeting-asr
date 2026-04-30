@@ -7,27 +7,77 @@ import shutil
 import subprocess
 
 import pytest
+from typer.testing import CliRunner
 
+from app.cli import app
 from app.commands.completion import (
+    CompletionShell,
     _bash_script,
     _csh_script,
-    _zsh_profile_script,
+    _fish_script,
+    _install_completion,
+    _profile_script,
     _zsh_script,
 )
+
+runner = CliRunner()
 
 
 def test_completion_scripts_include_project_commands() -> None:
     """Completion scripts should expose project workflow commands."""
-    assert "doctor config project audio oss completion" in _bash_script()
-    assert "project" in _zsh_script()
+    assert "_MEETING_ASR_COMPLETE=complete_bash" in _bash_script()
+    assert "_MEETING_ASR_COMPLETE=complete_zsh" in _zsh_script()
+    assert "_MEETING_ASR_COMPLETE=complete_fish" in _fish_script()
     assert "n/project/" in _csh_script()
+    assert "n/speakers/" in _csh_script()
 
 
-def test_zsh_profile_script_adds_cli_path() -> None:
+def test_profile_script_adds_cli_path() -> None:
     """Installed zsh fragment should prepend the binary directory."""
-    script = _zsh_profile_script(Path("/tmp/meeting-asr-bin"))
+    script = _profile_script(CompletionShell.zsh, Path("/tmp/meeting-asr-bin"))
 
-    assert 'export PATH="/tmp/meeting-asr-bin:$PATH"' in script
+    assert "export PATH=/tmp/meeting-asr-bin:$PATH" in script
+    assert "_MEETING_ASR_COMPLETE=complete_zsh" in script
+
+
+def test_bash_completion_runtime_uses_command_tree() -> None:
+    """Runtime completion should include nested commands and options."""
+    project_commands = _bash_complete("meeting-asr project ", 2)
+    transcribe_options = _bash_complete("meeting-asr project transcribe --", 3)
+
+    assert "transcribe" in project_commands
+    assert "speakers" in project_commands
+    assert "--oss-upload" in transcribe_options
+    assert "--audio-format" in transcribe_options
+    assert all(not item.startswith("plain,") for item in project_commands)
+
+
+def test_bash_completion_runtime_includes_value_completions() -> None:
+    """Runtime completion should expose finite parameter values."""
+    upload_modes = _bash_complete("meeting-asr project transcribe --oss-upload ", 4)
+    config_keys = _bash_complete("meeting-asr config set dash", 3)
+    install_shells = _bash_complete("meeting-asr completion install ", 3)
+
+    assert upload_modes == ["auto", "true", "false"]
+    assert "dashscope.api_key" in config_keys
+    assert "dashscope.base_url" in config_keys
+    assert "zsh" in install_shells
+    assert "csh" not in install_shells
+
+
+def test_install_completion_writes_target(tmp_path: Path) -> None:
+    """Completion install should write a shell fragment without touching rc files."""
+    target = tmp_path / "meeting-asr.zsh"
+    result = _install_completion(
+        shell=CompletionShell.zsh,
+        target=target,
+        bin_dir=tmp_path / "bin",
+        update_rc=False,
+    )
+
+    assert result.target_path == target.resolve()
+    assert result.rc_updated is False
+    assert "_MEETING_ASR_COMPLETE=complete_zsh" in target.read_text(encoding="utf-8")
 
 
 def test_generated_bash_script_has_valid_syntax(tmp_path: Path) -> None:
@@ -48,3 +98,19 @@ def test_generated_zsh_script_has_valid_syntax(tmp_path: Path) -> None:
     path = tmp_path / "meeting-asr.zsh"
     path.write_text(_zsh_script(), encoding="utf-8")
     subprocess.run([zsh, "-n", str(path)], check=True)
+
+
+def _bash_complete(comp_words: str, comp_cword: int) -> list[str]:
+    """Run Bash-style completion through the Typer test runner."""
+    result = runner.invoke(
+        app,
+        [],
+        env={
+            "_MEETING_ASR_COMPLETE": "complete_bash",
+            "COMP_WORDS": comp_words,
+            "COMP_CWORD": str(comp_cword),
+        },
+        prog_name="meeting-asr",
+    )
+    assert result.exit_code == 0
+    return result.output.splitlines()

@@ -18,6 +18,9 @@ meeting-asr completion install zsh
 exec zsh
 ```
 
+`completion install` 支持 `bash`、`zsh`、`fish`、`powershell` 和 `pwsh`；也可以用
+`meeting-asr completion zsh` 这类命令直接输出补全脚本。
+
 配置遵循 XDG Base Directory：
 
 - 配置文件：`$XDG_CONFIG_HOME/meeting-asr/config.json`，默认 `~/.config/meeting-asr/config.json`

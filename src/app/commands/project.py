@@ -10,6 +10,7 @@ from typing import Optional
 import typer
 
 from app.cli_errors import run_with_cli_errors
+from app.completion_helpers import complete_audio_format, complete_model, complete_oss_upload_mode
 from app.config import get_default_projects_dir
 from app.project_manager import (
     ProjectTranscribeOptions,
@@ -59,7 +60,7 @@ def create(
 @app.command("prepare")
 def prepare(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    audio_format: str = typer.Option("flac", "--audio-format"),
+    audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
 ) -> None:
     """Extract project audio without starting cloud transcription."""
     configure_logging()
@@ -72,13 +73,13 @@ def transcribe(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     speaker_count: Optional[int] = typer.Option(None, "--speaker-count", min=1),
     language: Optional[str] = typer.Option("zh,en", "--language"),
-    model: str = typer.Option("fun-asr", "--model"),
-    oss_upload: str = typer.Option("auto", "--oss-upload"),
+    model: str = typer.Option("fun-asr", "--model", autocompletion=complete_model),
+    oss_upload: str = typer.Option("auto", "--oss-upload", autocompletion=complete_oss_upload_mode),
     file_url: Optional[str] = typer.Option(None, "--file-url"),
     generate_srt: bool = typer.Option(True, "--generate-srt/--no-generate-srt"),
     timestamp_alignment: bool = typer.Option(True, "--timestamp-alignment/--no-timestamp-alignment"),
     disfluency_removal: bool = typer.Option(False, "--disfluency-removal/--no-disfluency-removal"),
-    audio_format: str = typer.Option("flac", "--audio-format"),
+    audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
 ) -> None:
     """Transcribe a project and write structured artifacts."""
     configure_logging()
@@ -111,10 +112,10 @@ def run(
     meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
     speaker_count: Optional[int] = typer.Option(None, "--speaker-count", min=1),
     language: Optional[str] = typer.Option("zh,en", "--language"),
-    model: str = typer.Option("fun-asr", "--model"),
-    oss_upload: str = typer.Option("auto", "--oss-upload"),
+    model: str = typer.Option("fun-asr", "--model", autocompletion=complete_model),
+    oss_upload: str = typer.Option("auto", "--oss-upload", autocompletion=complete_oss_upload_mode),
     file_url: Optional[str] = typer.Option(None, "--file-url"),
-    audio_format: str = typer.Option("flac", "--audio-format"),
+    audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
 ) -> None:
     """Create a project and run the default transcription workflow."""
     configure_logging()
