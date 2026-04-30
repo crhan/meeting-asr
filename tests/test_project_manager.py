@@ -253,6 +253,39 @@ def test_project_speakers_inspect_shows_mapped_names(tmp_path: Path) -> None:
     assert "Name: 敬悦" in result.output
 
 
+def test_project_speakers_inspect_shows_voiceprint_matches(tmp_path: Path) -> None:
+    """Speaker inspect should show accepted voiceprint match suggestions."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    (project_dir / "speakers" / "speaker_matches.json").write_text(
+        json.dumps(
+            {
+                "provider": "local-speechbrain",
+                "model": "speechbrain-spkrec-ecapa-voxceleb",
+                "threshold": 0.75,
+                "matches": [
+                    {
+                        "speaker_id": 1,
+                        "label": "Speaker B",
+                        "name": "敬悦",
+                        "score": 0.775052,
+                        "accepted": True,
+                        "sample_count": 23,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"])
+
+    assert result.exit_code == 0
+    assert "Speaker B (speaker_id=1)" in result.output
+    assert "Voiceprint match: 敬悦 score=0.775 accepted" in result.output
+
+
 def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     """Speaker apply should support the human review flow."""
     project_dir = _sample_project(tmp_path)

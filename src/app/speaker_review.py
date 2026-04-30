@@ -83,13 +83,18 @@ def preview_start_seconds(sentences_json: Path, speaker_id: int | None, padding_
     return max(0.0, start_ms / 1000.0 - float(padding_seconds))
 
 
-def render_speaker_summary(summary: SpeakerSummary, mapped_name: str | None = None) -> str:
+def render_speaker_summary(
+    summary: SpeakerSummary,
+    mapped_name: str | None = None,
+    match_summary: str | None = None,
+) -> str:
     """
     Render one speaker summary.
 
     Args:
         summary: Speaker summary.
         mapped_name: Optional human speaker name.
+        match_summary: Optional voiceprint match summary.
 
     Returns:
         Terminal text.
@@ -102,6 +107,9 @@ def render_speaker_summary(summary: SpeakerSummary, mapped_name: str | None = No
     ]
     if mapped_name:
         lines.insert(1, f"  Name: {mapped_name}")
+    if match_summary:
+        insert_index = 2 if mapped_name else 1
+        lines.insert(insert_index, f"  Voiceprint match: {match_summary}")
     for segment in summary.sample_segments:
         start = format_ms_timestamp(segment.begin_time_ms)
         end = format_ms_timestamp(segment.end_time_ms)

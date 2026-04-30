@@ -275,10 +275,17 @@ def speakers_inspect(
         typer.echo("No detected speakers found in the transcript.")
         raise typer.Exit(code=1)
     speaker_mapping = run_with_cli_errors(lambda: _load_existing_speaker_mapping(project_dir))
+    speaker_matches = run_with_cli_errors(lambda: _load_speaker_match_summaries(project_dir))
     for index, summary in enumerate(summaries):
         if index:
             typer.echo("")
-        typer.echo(render_speaker_summary(summary, mapped_name=speaker_mapping.get(summary.speaker_id)))
+        typer.echo(
+            render_speaker_summary(
+                summary,
+                mapped_name=speaker_mapping.get(summary.speaker_id),
+                match_summary=speaker_matches.get(summary.speaker_id),
+            )
+        )
 
 
 @speakers_app.command("preview")
@@ -741,3 +748,59 @@ def _load_speaker_match_defaults(project_dir: Path) -> dict[int, str]:
         for item in matches
         if item.get("accepted") and item.get("name") is not None
     }
+
+
+def _load_speaker_match_summaries(project_dir: Path) -> dict[int, str]:
+    """
+    Load speaker match results for inspect output.
+
+    Args:
+        project_dir: Project root.
+
+    Returns:
+        Speaker id to display-safe match summary.
+    """
+    match_path = project_paths(project_dir).speakers_dir / "speaker_matches.json"
+    if not match_path.exists():
+        return {}
+    payload = json.loads(match_path.read_text(encoding="utf-8"))
+    matches = payload.get("matches", [])
+    return {
+        int(item["speaker_id"]): _speaker_match_summary(item)
+        for item in matches
+        if isinstance(item, dict) and "speaker_id" in item
+    }
+
+
+def _speaker_match_summary(item: dict[str, object]) -> str:
+    """
+    Format one voiceprint match row for humans.
+
+    Args:
+        item: Raw match JSON item.
+
+    Returns:
+        Short match summary.
+    """
+    name = str(item.get("name") or "unknown")
+    status = "accepted" if item.get("accepted") else "review"
+    score = _safe_float(item.get("score"))
+    if score is None:
+        return f"{name} {status}"
+    return f"{name} score={score:.3f} {status}"
+
+
+def _safe_float(value: object) -> float | None:
+    """
+    Convert a JSON value to float when possible.
+
+    Args:
+        value: Raw JSON value.
+
+    Returns:
+        Float value, or ``None`` when conversion fails.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
