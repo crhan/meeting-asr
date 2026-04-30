@@ -3,12 +3,30 @@
 from __future__ import annotations
 
 from pathlib import Path
+import warnings
 from uuid import uuid4
 
 from app.config import Settings, load_settings
 
 SIGNED_URL_EXPIRES_SECONDS = 24 * 60 * 60
-DEFAULT_OSS_PREFIX = "fun-asr/uploads"
+DEFAULT_OSS_PREFIX = "meeting-asr/uploads"
+
+
+def import_oss2():
+    """
+    Import oss2 while hiding a dependency SyntaxWarning on Python 3.14.
+
+    Returns:
+        Imported ``oss2`` module.
+    """
+    warnings.filterwarnings(
+        "ignore",
+        category=SyntaxWarning,
+        message=r".*invalid escape sequence.*",
+    )
+    import oss2
+
+    return oss2
 
 
 def build_oss_bucket(settings: Settings):
@@ -21,7 +39,7 @@ def build_oss_bucket(settings: Settings):
     Returns:
         ``oss2.Bucket`` instance.
     """
-    import oss2
+    oss2 = import_oss2()
 
     missing = [
         name

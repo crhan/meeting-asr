@@ -166,7 +166,13 @@ def _segment_from_payload(payload: dict[str, Any], fallback_id: int) -> Sentence
     end = _to_int(payload.get("end_time") or payload.get("end_time_ms") or payload.get("stop_time"))
     speaker = _optional_int(payload.get("speaker_id"))
     sentence_id = _optional_int(payload.get("sentence_id") or payload.get("id")) or fallback_id
-    return SentenceSegment(begin_time_ms=begin, end_time_ms=max(end, begin), text=text, speaker_id=speaker, sentence_id=sentence_id)
+    return SentenceSegment(
+        begin_time_ms=begin,
+        end_time_ms=max(end, begin),
+        text=text,
+        speaker_id=speaker,
+        sentence_id=sentence_id,
+    )
 
 
 def _find_text(raw_json: dict[str, Any]) -> str | None:

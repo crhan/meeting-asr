@@ -1,0 +1,175 @@
+"""Tests for project lifecycle helpers."""
+
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+
+import pytest
+import typer
+from typer.testing import CliRunner
+
+from app.cli import app
+from app.project_manager import (
+    _parse_project_oss_upload,
+    apply_project_speakers,
+    create_project,
+    init_project_git,
+    load_manifest,
+    resolve_project_source_path,
+)
+
+runner = CliRunner()
+
+
+def test_create_project_writes_manifest_and_copies_source(tmp_path: Path) -> None:
+    """Project creation should establish the directory boundary."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "projects" / "supplier-ai"
+
+    create_project(
+        source,
+        title="供应商管理AI治理",
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time="2026-04-29T15:07:42+08:00",
+        hash_source=True,
+    )
+
+    loaded = load_manifest(project_dir)
+    copied_source = project_dir / "source" / "meeting.mp4"
+    assert copied_source.read_bytes() == b"fake video"
+    assert loaded.source.path == "source/meeting.mp4"
+    assert loaded.source.original_path == str(source.resolve())
+    assert resolve_project_source_path(project_dir, loaded) == copied_source.resolve()
+    assert loaded.source.sha256 is not None
+
+
+def test_project_create_command_defaults_to_xdg_data_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project creation without --projects-dir should use XDG data home."""
+    data_home = tmp_path / "data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+
+    result = runner.invoke(app, ["project", "create", str(source), "--title", "Demo"])
+
+    project_dirs = [path for path in (data_home / "meeting-asr" / "projects").iterdir() if path.is_dir()]
+    assert result.exit_code == 0
+    assert len(project_dirs) == 1
+    assert "Project created." in result.output
+    assert f"cd {project_dirs[0].resolve()}" in result.output
+    assert "meeting-asr project transcribe ." in result.output
+
+
+def test_project_create_output_quotes_copyable_cd_command(tmp_path: Path) -> None:
+    """Project creation output should be pasteable when paths contain spaces."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "project with space"
+
+    result = runner.invoke(app, ["project", "create", str(source), "--project-dir", str(project_dir)])
+
+    assert result.exit_code == 0
+    assert f"cd '{project_dir.resolve()}'" in result.output
+    assert "meeting-asr project status ." in result.output
+
+
+def test_project_status_command_reads_manifest(tmp_path: Path) -> None:
+    """The project status command should expose key manifest fields."""
+    project_dir = _sample_project(tmp_path)
+
+    result = runner.invoke(app, ["project", "status", str(project_dir)])
+
+    assert result.exit_code == 0
+    assert "Title: Demo" in result.output
+    assert "Source: source/meeting.mp4" in result.output
+
+
+def test_legacy_absolute_source_path_still_resolves(tmp_path: Path) -> None:
+    """Older manifests may point to an absolute external source."""
+    source = tmp_path / "old.mp4"
+    source.write_bytes(b"old video")
+    project_dir = _sample_project(tmp_path)
+    manifest_path = project_dir / "project.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["source"]["path"] = str(source.resolve())
+    payload["source"].pop("original_path", None)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert resolve_project_source_path(project_dir, load_manifest(project_dir)) == source.resolve()
+
+
+def test_top_level_transcribe_command_is_not_registered() -> None:
+    """Transcription must go through project lifecycle."""
+    result = runner.invoke(app, ["transcribe", "meeting.mp4"])
+
+    assert result.exit_code != 0
+    assert "No such command" in result.output
+
+
+def test_project_oss_upload_rejects_unknown_value() -> None:
+    """Invalid upload modes should fail early."""
+    with pytest.raises(typer.BadParameter, match="auto, true, or false"):
+        _parse_project_oss_upload("maybe", file_url=None)
+
+
+def test_apply_project_speakers_writes_project_outputs(tmp_path: Path) -> None:
+    """Speaker naming should stay inside speakers/ and exports/."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+
+    mapping_path, transcript_path, srt_path = apply_project_speakers(project_dir, {0: "欧丁"})
+
+    assert mapping_path == project_dir / "speakers" / "speaker_map.json"
+    assert transcript_path == project_dir / "exports" / "transcript_named.txt"
+    assert srt_path == project_dir / "exports" / "subtitle_named.srt"
+    assert "欧丁" in transcript_path.read_text(encoding="utf-8")
+
+
+def test_project_git_init_writes_safe_ignore_file(tmp_path: Path) -> None:
+    """Optional Git tracking should ignore heavy generated artifacts."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    project_dir = _sample_project(tmp_path)
+
+    gitignore_path = init_project_git(project_dir)
+
+    content = gitignore_path.read_text(encoding="utf-8")
+    assert "source/" in content
+    assert "audio/" in content
+
+
+def _sample_project(tmp_path: Path) -> Path:
+    """Create a minimal project for tests."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "project"
+    create_project(
+        source,
+        title="Demo",
+        projects_dir=tmp_path,
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    return project_dir
+
+
+def _write_sample_sentences(path: Path) -> None:
+    """Write a normalized sentences.json fixture."""
+    payload = {
+        "full_text": "大家好。收到。",
+        "detected_speakers": [0, 1],
+        "sentences": [
+            {"begin_time_ms": 0, "end_time_ms": 1000, "text": "大家好。", "speaker_id": 0, "sentence_id": 1},
+            {"begin_time_ms": 1200, "end_time_ms": 1800, "text": "收到。", "speaker_id": 1, "sentence_id": 2},
+        ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
