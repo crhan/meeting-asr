@@ -217,7 +217,7 @@ def speakers_preview(
     )
     command = build_preview_command(
         video=resolve_project_source_path(paths.root, manifest),
-        subtitle=paths.exports_dir / "subtitle.srt",
+        subtitle=_preferred_project_srt(paths),
         start_seconds=start_seconds,
     )
     if dry_run:
@@ -248,6 +248,10 @@ def speakers_apply(
     typer.echo(f"Mapping written to: {mapping_path}")
     typer.echo(f"Named transcript written to: {transcript_path}")
     typer.echo(f"Named subtitle written to: {srt_path}")
+    typer.echo("")
+    typer.echo("Next steps:")
+    typer.echo("  meeting-asr project speakers preview")
+    typer.echo(f"  open {_shell_quote_path(transcript_path)}")
 
 
 @speakers_app.command("compare-srt")

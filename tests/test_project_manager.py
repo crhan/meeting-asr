@@ -167,6 +167,8 @@ def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     assert "Name for Speaker B" in result.output
     assert mapping == {"0": "欧丁", "1": "敬悦"}
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
+    assert "meeting-asr project speakers preview" in result.output
+    assert f"open {transcript_path.resolve()}" in result.output
 
 
 def test_project_speakers_apply_can_show_more_samples(tmp_path: Path) -> None:
@@ -185,6 +187,31 @@ def test_project_speakers_apply_can_show_more_samples(tmp_path: Path) -> None:
     assert "More samples for Speaker A" in result.output
     assert "再补一句。" in result.output
     assert mapping == {"0": "欧丁", "1": "敬悦"}
+
+
+def test_project_speakers_preview_prefers_named_subtitle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Preview after speaker naming should use the named subtitle."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    (project_dir / "exports").mkdir(exist_ok=True)
+    (project_dir / "exports" / "subtitle.srt").write_text("anonymous", encoding="utf-8")
+    (project_dir / "exports" / "subtitle_named.srt").write_text("named", encoding="utf-8")
+    captured: dict[str, Path] = {}
+
+    def fake_build_preview_command(*, video: Path, subtitle: Path, start_seconds: float) -> list[str]:
+        captured["subtitle"] = subtitle
+        return ["player", str(subtitle)]
+
+    monkeypatch.setattr("app.commands.project.build_preview_command", fake_build_preview_command)
+
+    result = runner.invoke(app, ["project", "speakers", "preview", str(project_dir), "--dry-run"])
+
+    assert result.exit_code == 0
+    assert captured["subtitle"] == project_dir.resolve() / "exports" / "subtitle_named.srt"
+    assert "subtitle_named.srt" in result.output
 
 
 def test_project_git_init_writes_safe_ignore_file(tmp_path: Path) -> None:
