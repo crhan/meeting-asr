@@ -46,6 +46,32 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert "clip_001.wav" in show_result.output
 
 
+def test_voiceprint_capture_skips_anonymous_speaker_labels(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Anonymous fallback labels should not become voiceprint identities."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
+    _write_partially_named_speaker_inputs(project_dir)
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+
+    result = runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
+
+    manifest = load_manifest(project_dir)
+    list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
+
+    assert result.exit_code == 0
+    assert "Captured voiceprint samples: 1" in result.output
+    assert (store_dir / "clips" / manifest.project_id / "speaker_0" / "clip_001.wav").exists()
+    assert not (store_dir / "clips" / manifest.project_id / "speaker_2").exists()
+    assert "欧丁: 1 sample(s)" in list_result.output
+    assert "Speaker C" not in list_result.output
+
+
 def test_voiceprint_capture_dry_run_does_not_write_store(
     monkeypatch,
     tmp_path: Path,
@@ -121,6 +147,26 @@ def _write_named_speaker_inputs(project_dir: Path) -> None:
     )
     (project_dir / "speakers" / "speaker_map.json").write_text(
         json.dumps({"0": "欧丁", "1": "敬悦"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _write_partially_named_speaker_inputs(project_dir: Path) -> None:
+    """Write a transcript where one speaker still has the anonymous fallback name."""
+    sentences = {
+        "full_text": "大家好。还有一个人。",
+        "detected_speakers": [0, 2],
+        "sentences": [
+            {"begin_time_ms": 0, "end_time_ms": 3000, "text": "我是欧丁。", "speaker_id": 0, "sentence_id": 1},
+            {"begin_time_ms": 4000, "end_time_ms": 7000, "text": "这个人还没有确认。", "speaker_id": 2, "sentence_id": 2},
+        ],
+    }
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(sentences, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (project_dir / "speakers" / "speaker_map.json").write_text(
+        json.dumps({"0": "欧丁", "2": "Speaker C"}, ensure_ascii=False),
         encoding="utf-8",
     )
 

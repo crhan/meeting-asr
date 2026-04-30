@@ -101,8 +101,9 @@ meeting-asr voiceprint path
 ```
 
 `capture` 会从当前 project 的 `asr/sentences.json` 和
-`speakers/speaker_map.json` 选择每个 speaker 的参考片段，WAV 写入
+`speakers/speaker_map.json` 选择已确认姓名的 speaker 参考片段，WAV 写入
 `voiceprints/clips/`，索引写入 `voiceprints/voiceprints.sqlite`。
+仍然是 `Speaker A`、`Speaker C` 这种匿名 label 的人会跳过，不进入声纹库。
 
 如果只想看会切哪些片段，不写文件和数据库：
 

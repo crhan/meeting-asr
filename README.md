@@ -89,6 +89,9 @@ meeting-asr voiceprint show "欧丁"
 meeting-asr voiceprint path
 ```
 
+`voiceprint capture` 只记录已确认姓名的 speaker；仍是 `Speaker A`、`Speaker C`
+这种匿名 label 的人会跳过。
+
 ## 输出结构
 
 ```text

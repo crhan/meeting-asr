@@ -105,7 +105,10 @@ def capture_voiceprints(
         padding_seconds,
     )
     if not speakers:
-        raise RuntimeError("No speaker segments are available for voiceprint capture.")
+        raise RuntimeError(
+            "No named speaker segments are available for voiceprint capture. "
+            "Run meeting-asr project speakers apply and enter real names."
+        )
     if not dry_run:
         _persist_voiceprint_capture(paths.root, manifest, source, speakers, resolved_store_dir, db_path)
     return VoiceprintCaptureSummary(resolved_store_dir, db_path, clip_dir, speakers, dry_run)
@@ -196,7 +199,7 @@ def _build_voiceprint_speakers(
     padding_seconds: float,
 ) -> list[VoiceprintSpeaker]:
     """
-    Select reference clips for all speakers in the transcript.
+    Select reference clips for all identified speakers in the transcript.
 
     Args:
         clip_dir: Global voiceprint clip directory.
@@ -213,12 +216,31 @@ def _build_voiceprint_speakers(
     speakers: list[VoiceprintSpeaker] = []
     grouped = _speaker_segments_by_id(result)
     for speaker_id in sorted(grouped):
+        name = _identified_speaker_name(speaker_id, mapping)
+        if name is None:
+            continue
         selected = _select_segments(grouped[speaker_id], sample_count)
         clips = _build_clips(clip_dir, project_id, speaker_id, selected, max_seconds, padding_seconds)
         if clips:
-            name = mapping.get(speaker_id, speaker_id_to_label(speaker_id))
             speakers.append(VoiceprintSpeaker(speaker_id, name, clips))
     return speakers
+
+
+def _identified_speaker_name(speaker_id: int, mapping: dict[int, str]) -> str | None:
+    """
+    Return a human name only when the speaker is actually identified.
+
+    Args:
+        speaker_id: Speaker id.
+        mapping: Speaker id to mapped name.
+
+    Returns:
+        Human name, or ``None`` for anonymous fallback labels.
+    """
+    name = mapping.get(speaker_id, "").strip()
+    if not name or name == speaker_id_to_label(speaker_id):
+        return None
+    return name
 
 
 def _speaker_segments_by_id(result: TranscriptResult) -> dict[int, list[SentenceSegment]]:
