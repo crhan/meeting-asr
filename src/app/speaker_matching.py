@@ -155,8 +155,6 @@ def _match_context(
 def _known_speaker_vectors(store_dir: Path | None, model: str) -> dict[str, list[float]]:
     """Load averaged known speaker vectors."""
     embeddings = list_voiceprint_embeddings(model, get_voiceprint_db_path(store_dir))
-    if not embeddings:
-        raise RuntimeError(f"No voiceprint embeddings found for model {model}. Run meeting-asr voiceprint embed first.")
     grouped: dict[str, list[list[float]]] = defaultdict(list)
     for row in embeddings:
         grouped[row.speaker_name].append(row.vector)
@@ -180,6 +178,9 @@ def _match_speaker_groups(
     matches: list[SpeakerMatch] = []
     speaker_groups = sorted(_segments_by_speaker(segments).items())
     emit_progress(progress, "Matching project speakers", total=len(speaker_groups), completed=0)
+    if not known:
+        emit_progress(progress, "No voiceprint embeddings found; writing review-only matches")
+        return _unknown_speaker_matches(speaker_groups)
     for speaker_id, speaker_segments in speaker_groups:
         emit_progress(progress, f"Matching {speaker_id_to_label(speaker_id)}")
         vector = _probe_speaker_vector(
@@ -207,6 +208,29 @@ def _match_speaker_groups(
         )
         emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)}", advance=1)
     return matches
+
+
+def _unknown_speaker_matches(speaker_groups: list[tuple[int, list[SentenceSegment]]]) -> list[SpeakerMatch]:
+    """
+    Build review-only match rows when the voiceprint library is empty.
+
+    Args:
+        speaker_groups: Speaker id and transcript segments.
+
+    Returns:
+        Unknown, non-accepted match rows.
+    """
+    return [
+        SpeakerMatch(
+            speaker_id,
+            speaker_id_to_label(speaker_id),
+            None,
+            0.0,
+            False,
+            len(speaker_segments),
+        )
+        for speaker_id, speaker_segments in speaker_groups
+    ]
 
 
 def _segments_by_speaker(segments: list[SentenceSegment]) -> dict[int, list[SentenceSegment]]:

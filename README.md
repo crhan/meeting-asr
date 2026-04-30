@@ -13,7 +13,7 @@ uv run meeting-asr --help
 安装成可直接运行的命令：
 
 ```bash
-uv tool install --editable . --force
+uv tool install --python 3.14 --force .
 meeting-asr completion install zsh
 exec zsh
 ```
@@ -27,7 +27,7 @@ uv sync --extra local-voiceprint
 如果是 `uv tool install` 安装方式：
 
 ```bash
-uv tool install --editable ".[local-voiceprint]" --force
+uv tool install --python 3.14 --force --reinstall --refresh-package meeting-asr ".[local-voiceprint]"
 ```
 
 `completion install` 支持 `bash`、`zsh`、`fish`、`powershell` 和 `pwsh`；也可以用
@@ -98,10 +98,11 @@ meeting-asr project list
 cd "<Project created 输出的路径>"
 meeting-asr project transcribe
 meeting-asr project speakers inspect
-meeting-asr project speakers preview
 meeting-asr project speakers apply
+meeting-asr project speakers preview
 meeting-asr project transcript show
 meeting-asr voiceprint capture
+meeting-asr voiceprint embed
 ```
 
 `project create` 会复制源视频到 `source/`，后续命令只需要项目目录，不需要再次传视频路径。
@@ -109,6 +110,29 @@ meeting-asr voiceprint capture
 `project list` 默认列出 XDG 项目目录，也可以用 `--projects-dir` 指定项目父目录。
 交互式终端会在 stderr 显示 Rich 进度；脚本、管道和测试输出保持纯文本。需要关闭时加
 `--no-progress`。
+
+Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speaker_matches.json`，
+不改转写结果；`speakers apply` 才会把自动候选和人工输入合并，写入
+`speakers/speaker_map.json`、`exports/transcript_named.txt` 和
+`exports/subtitle_named.srt`。
+
+如果已经有声纹库，在 `inspect` 前先跑：
+
+```bash
+meeting-asr project speakers match
+```
+
+推荐流程：
+
+1. 已有声纹库时，先跑 `meeting-asr project speakers match`。
+2. 用 `meeting-asr project speakers inspect` 查看每个 speaker 的样例和声纹建议。
+3. 跑 `meeting-asr project speakers apply`。已 accepted 的 match 会作为默认值，直接回车确认；未匹配的人手动输入姓名；不确定就输入 `/more` 继续看样例。
+4. 用 `meeting-asr project speakers preview` 复核带名字的字幕。
+5. 确认无误后跑 `meeting-asr voiceprint capture && meeting-asr voiceprint embed`，把新确认的人补进跨项目声纹库。
+
+`meeting-asr project speakers match --apply` 只是快捷路径：它只会应用已 accepted
+的匹配，适合你确定自动结果已经足够时使用；如果还有未匹配的人，应使用交互式
+`speakers apply` 补足。
 
 转写结果属于 project，用 project 子命令查看：
 
@@ -152,7 +176,8 @@ meeting-asr voiceprint path
 meeting-asr doctor --require-voiceprint-embedding
 meeting-asr voiceprint embed
 meeting-asr project speakers match
-meeting-asr project speakers match --apply
+meeting-asr project speakers inspect
+meeting-asr project speakers apply
 ```
 
 如果要临时对比阿里云 provider，不改全局配置也可以传参数：

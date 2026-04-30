@@ -73,6 +73,31 @@ def test_project_speakers_match_can_apply_matches(
     assert "敬悦" in transcript
 
 
+def test_project_speakers_match_allows_empty_voiceprint_library(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Empty voiceprint stores should produce review-only unknown matches."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "empty-voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    monkeypatch.setattr("app.speaker_matching.embed_audio_file", _raise_unexpected_embedding)
+
+    result = runner.invoke(
+        app,
+        ["project", "speakers", "match", str(project_dir), "--store-dir", str(store_dir)],
+    )
+
+    payload = json.loads((project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert "Speaker A -> unknown  score=0.000  review" in result.output
+    assert "Speaker B -> unknown  score=0.000  review" in result.output
+    assert payload["matches"][0]["name"] is None
+    assert payload["matches"][0]["accepted"] is False
+    assert payload["matches"][0]["score"] == 0.0
+    assert not (project_dir / "tmp" / "voiceprint_match").exists()
+
+
 def _sample_project(tmp_path: Path) -> Path:
     """Create a minimal project for speaker matching tests."""
     source = tmp_path / "meeting.mp4"
@@ -130,3 +155,8 @@ def _fake_extract_audio_clip(
 def _fake_embed_audio_file(path: Path, *, provider: str | None, endpoint: str | None) -> list[float]:
     """Return deterministic vectors based on speaker id in the path."""
     return [0.0, 1.0] if "speaker_1" in str(path) else [1.0, 0.0]
+
+
+def _raise_unexpected_embedding(path: Path, *, provider: str | None, endpoint: str | None) -> list[float]:
+    """Fail when an empty voiceprint library tries to embed project probes."""
+    raise AssertionError(f"Unexpected embedding call for {path}.")
