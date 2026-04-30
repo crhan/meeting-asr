@@ -115,11 +115,11 @@ meeting-asr voiceprint capture --dry-run
 直接查看结果：
 
 ```bash
-meeting-asr transcript list
-meeting-asr transcript show
-meeting-asr transcript show --kind plain
-meeting-asr transcript path --kind srt
-meeting-asr transcript open --kind named
+meeting-asr project transcript list
+meeting-asr project transcript show
+meeting-asr project transcript show --kind plain
+meeting-asr project transcript path --kind srt
+meeting-asr project transcript open --kind named
 ```
 
 - `exports/transcript.txt`：纯文本

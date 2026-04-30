@@ -10,6 +10,7 @@ from typing import Optional
 
 import typer
 
+from app.commands import transcript as transcript_commands
 from app.cli_errors import run_with_cli_errors
 from app.completion_helpers import complete_audio_format, complete_model, complete_oss_upload_mode
 from app.config import get_default_projects_dir
@@ -34,6 +35,7 @@ from app.utils import configure_logging, format_ms_timestamp, safe_write_text
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
 speakers_app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
 app.add_typer(speakers_app, name="speakers", help="Review and name project speakers.")
+app.add_typer(transcript_commands.app, name="transcript", help="View project transcript artifacts.")
 
 MORE_SAMPLES_COMMAND = "/more"
 
@@ -252,7 +254,7 @@ def speakers_apply(
     typer.echo("")
     typer.echo("Next steps:")
     typer.echo("  meeting-asr project speakers preview")
-    typer.echo("  meeting-asr transcript show")
+    typer.echo("  meeting-asr project transcript show")
     typer.echo("  meeting-asr voiceprint capture")
     typer.echo(f"  open {_shell_quote_path(transcript_path)}")
 

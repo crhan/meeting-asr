@@ -12,12 +12,12 @@ from app.project_manager import create_project
 runner = CliRunner()
 
 
-def test_transcript_show_prefers_named_output(tmp_path: Path) -> None:
-    """Auto mode should show the most human-readable transcript."""
+def test_project_transcript_show_prefers_named_output(tmp_path: Path) -> None:
+    """Project-scoped transcript command should show generated project output."""
     project_dir = _sample_project(tmp_path)
     _write_transcript_outputs(project_dir)
 
-    result = runner.invoke(app, ["transcript", "show", str(project_dir)])
+    result = runner.invoke(app, ["project", "transcript", "show", str(project_dir)])
 
     assert result.exit_code == 0
     assert result.output == "欧丁: 你好\n"
@@ -28,7 +28,7 @@ def test_transcript_path_prefers_named_srt(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path)
     _write_transcript_outputs(project_dir)
 
-    result = runner.invoke(app, ["transcript", "path", str(project_dir), "--kind", "srt"])
+    result = runner.invoke(app, ["project", "transcript", "path", str(project_dir), "--kind", "srt"])
 
     assert result.exit_code == 0
     assert result.output.strip() == str(project_dir / "exports" / "subtitle_named.srt")
@@ -39,7 +39,7 @@ def test_transcript_list_shows_available_artifacts(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path)
     _write_transcript_outputs(project_dir)
 
-    result = runner.invoke(app, ["transcript", "list", str(project_dir)])
+    result = runner.invoke(app, ["project", "transcript", "list", str(project_dir)])
 
     assert result.exit_code == 0
     assert "named:" in result.output
@@ -52,10 +52,18 @@ def test_transcript_show_can_select_plain_output(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path)
     _write_transcript_outputs(project_dir)
 
-    result = runner.invoke(app, ["transcript", "show", str(project_dir), "--kind", "plain"])
+    result = runner.invoke(app, ["project", "transcript", "show", str(project_dir), "--kind", "plain"])
 
     assert result.exit_code == 0
     assert result.output == "纯文本\n"
+
+
+def test_top_level_transcript_command_is_not_registered() -> None:
+    """Transcript viewing should live under project scope."""
+    result = runner.invoke(app, ["transcript", "show"])
+
+    assert result.exit_code != 0
+    assert "No such command" in result.output
 
 
 def _sample_project(tmp_path: Path) -> Path:

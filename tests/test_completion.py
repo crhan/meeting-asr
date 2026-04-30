@@ -48,6 +48,7 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
 
     assert "voiceprint" in root_commands
     assert "transcribe" in project_commands
+    assert "transcript" in project_commands
     assert "speakers" in project_commands
     assert "--oss-upload" in transcribe_options
     assert "--audio-format" in transcribe_options
