@@ -1,0 +1,9 @@
+{
+  "dashscope.api_key": "",
+  "dashscope.base_url": "https://dashscope.aliyuncs.com/api/v1",
+  "oss.access_key_id": "",
+  "oss.access_key_secret": "",
+  "oss.bucket_name": "",
+  "oss.region": "",
+  "oss.endpoint": ""
+}
