@@ -8,7 +8,9 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from app.cli import app
+from app.config import save_config_values
 from app.project_manager import create_project, load_manifest
+from app.voiceprint_embedding import BAILIAN_VOICEPRINT_MODEL, LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
 
 runner = CliRunner()
@@ -84,9 +86,15 @@ def test_voiceprint_play_dry_run_prints_clip_command(
     store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
     _write_named_speaker_inputs(project_dir)
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
-    runner.invoke(app, ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)])
+    runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
 
-    result = runner.invoke(app, ["voiceprint", "play", "欧丁", "--sample", "1", "--store-dir", str(store_dir), "--dry-run"])
+    result = runner.invoke(
+        app,
+        ["voiceprint", "play", "欧丁", "--sample", "1", "--store-dir", str(store_dir), "--dry-run"],
+    )
 
     assert result.exit_code == 0
     assert "clip_001.wav" in result.output
@@ -102,13 +110,44 @@ def test_voiceprint_embed_stores_sample_embeddings(
     _write_named_speaker_inputs(project_dir)
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
     monkeypatch.setattr("app.voiceprint_embedding.embed_audio_file", _fake_embed_audio_file)
-    runner.invoke(app, ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)])
+    runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
 
     result = runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
-    embeddings = list_voiceprint_embeddings("bailian-audio-embedding", get_voiceprint_db_path(store_dir))
+    embeddings = list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, get_voiceprint_db_path(store_dir))
 
     assert result.exit_code == 0
+    assert "Provider: local-speechbrain" in result.output
+    assert f"Model: {LOCAL_SPEECHBRAIN_MODEL}" in result.output
     assert "Embedded: 2" in result.output
+    assert len(embeddings) == 2
+
+
+def test_voiceprint_embed_uses_configured_provider_model(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Embedding should resolve provider defaults from global config."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    save_config_values({"voiceprint.embedding_provider": "bailian"})
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+    monkeypatch.setattr("app.voiceprint_embedding.embed_audio_file", _fake_embed_audio_file)
+    runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
+
+    result = runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
+    embeddings = list_voiceprint_embeddings(BAILIAN_VOICEPRINT_MODEL, get_voiceprint_db_path(store_dir))
+
+    assert result.exit_code == 0
+    assert "Provider: bailian" in result.output
+    assert f"Model: {BAILIAN_VOICEPRINT_MODEL}" in result.output
     assert len(embeddings) == 2
 
 
@@ -121,7 +160,10 @@ def test_voiceprint_delete_sample_removes_row_and_clip(
     store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
     _write_named_speaker_inputs(project_dir)
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
-    runner.invoke(app, ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)])
+    runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
     clip_path = store_dir / "clips" / load_manifest(project_dir).project_id / "speaker_0" / "clip_001.wav"
 
     result = runner.invoke(app, ["voiceprint", "delete-sample", "欧丁", "--sample", "1", "--store-dir", str(store_dir)])
@@ -143,7 +185,10 @@ def test_voiceprint_delete_speaker_removes_all_samples(
     store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
     _write_named_speaker_inputs(project_dir)
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
-    runner.invoke(app, ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)])
+    runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
     clip_path = store_dir / "clips" / load_manifest(project_dir).project_id / "speaker_1" / "clip_001.wav"
 
     result = runner.invoke(app, ["voiceprint", "delete-speaker", "敬悦", "--store-dir", str(store_dir), "--yes"])
@@ -255,7 +300,13 @@ def _write_partially_named_speaker_inputs(project_dir: Path) -> None:
     )
 
 
-def _fake_extract_audio_clip(input_path: Path, output_path: Path, *, start_seconds: float, duration_seconds: float) -> Path:
+def _fake_extract_audio_clip(
+    input_path: Path,
+    output_path: Path,
+    *,
+    start_seconds: float,
+    duration_seconds: float,
+) -> Path:
     """Write a fake WAV payload for tests."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = f"{input_path}:{start_seconds:.3f}:{duration_seconds:.3f}".encode()

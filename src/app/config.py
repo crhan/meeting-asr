@@ -11,6 +11,7 @@ from typing import Any
 APP_CONFIG_DIR = "meeting-asr"
 CONFIG_FILENAME = "config.json"
 DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
+DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER = "local-speechbrain"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +37,7 @@ class Settings:
     oss_region: str | None = None
     oss_endpoint: str | None = None
     voiceprint_embedding_endpoint: str | None = None
-    voiceprint_embedding_provider: str = "bailian"
+    voiceprint_embedding_provider: str = DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER
     config_path: Path | None = None
 
 
@@ -49,7 +50,12 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ConfigKey("oss.region", "oss_region", "OSS_REGION"),
     ConfigKey("oss.endpoint", "oss_endpoint", "OSS_ENDPOINT"),
     ConfigKey("voiceprint.embedding_endpoint", "voiceprint_embedding_endpoint", "VOICEPRINT_EMBEDDING_ENDPOINT"),
-    ConfigKey("voiceprint.embedding_provider", "voiceprint_embedding_provider", "VOICEPRINT_EMBEDDING_PROVIDER", default="bailian"),
+    ConfigKey(
+        "voiceprint.embedding_provider",
+        "voiceprint_embedding_provider",
+        "VOICEPRINT_EMBEDDING_PROVIDER",
+        default=DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER,
+    ),
 )
 
 _KEYS_BY_NAME = {item.name: item for item in CONFIG_KEYS}
@@ -75,6 +81,16 @@ def get_data_dir() -> Path:
         ``$XDG_DATA_HOME/meeting-asr`` or fallback.
     """
     return _xdg_base_dir("XDG_DATA_HOME", Path.home() / ".local" / "share") / APP_CONFIG_DIR
+
+
+def get_cache_dir() -> Path:
+    """
+    Return the XDG-compliant global cache directory.
+
+    Returns:
+        ``$XDG_CACHE_HOME/meeting-asr`` or fallback.
+    """
+    return _xdg_base_dir("XDG_CACHE_HOME", Path.home() / ".cache") / APP_CONFIG_DIR
 
 
 def get_default_projects_dir() -> Path:
@@ -183,19 +199,20 @@ def normalize_config_key(key: str) -> str:
     raise ValueError(f"Unsupported config key: {key}. Supported keys: {supported}")
 
 
-def load_settings(*, require_oss: bool = False) -> Settings:
+def load_settings(*, require_oss: bool = False, require_dashscope: bool = True) -> Settings:
     """
     Load runtime settings from global config and process environment.
 
     Args:
         require_oss: Whether OSS values must be present.
+        require_dashscope: Whether the DashScope API key must be present.
 
     Returns:
         Runtime settings.
     """
     values = load_config_values()
     return Settings(
-        dashscope_api_key=_read_value(values, "dashscope.api_key", required=True) or "",
+        dashscope_api_key=_read_value(values, "dashscope.api_key", required=require_dashscope) or "",
         dashscope_base_url=_read_value(values, "dashscope.base_url", required=False) or DEFAULT_DASHSCOPE_BASE_URL,
         oss_access_key_id=_read_value(values, "oss.access_key_id", required=require_oss),
         oss_access_key_secret=_read_value(values, "oss.access_key_secret", required=require_oss),
@@ -203,7 +220,10 @@ def load_settings(*, require_oss: bool = False) -> Settings:
         oss_region=_read_value(values, "oss.region", required=require_oss),
         oss_endpoint=_read_value(values, "oss.endpoint", required=require_oss),
         voiceprint_embedding_endpoint=_read_value(values, "voiceprint.embedding_endpoint", required=False),
-        voiceprint_embedding_provider=_read_value(values, "voiceprint.embedding_provider", required=False) or "bailian",
+        voiceprint_embedding_provider=(
+            _read_value(values, "voiceprint.embedding_provider", required=False)
+            or DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER
+        ),
         config_path=get_config_path(),
     )
 

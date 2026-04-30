@@ -10,6 +10,7 @@ from typing import Optional
 import typer
 
 from app.cli_errors import run_with_cli_errors
+from app.completion_helpers import complete_voiceprint_model, complete_voiceprint_provider
 from app.utils import format_ms_timestamp
 from app.voiceprint_store import (
     delete_voiceprint_sample,
@@ -20,7 +21,7 @@ from app.voiceprint_store import (
     list_voiceprint_speakers,
     VoiceprintSampleRow,
 )
-from app.voiceprint_embedding import DEFAULT_VOICEPRINT_MODEL, embed_voiceprint_samples
+from app.voiceprint_embedding import embed_voiceprint_samples
 from app.voiceprints import VoiceprintCaptureSummary, capture_voiceprints
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
@@ -67,9 +68,9 @@ def list_command(
 @app.command("embed")
 def embed_command(
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    provider: Optional[str] = typer.Option(None, "--provider"),
+    provider: Optional[str] = typer.Option(None, "--provider", autocompletion=complete_voiceprint_provider),
     endpoint: Optional[str] = typer.Option(None, "--endpoint"),
-    model: str = typer.Option(DEFAULT_VOICEPRINT_MODEL, "--model"),
+    model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
     rebuild: bool = typer.Option(False, "--rebuild"),
 ) -> None:
     """Generate embeddings for stored voiceprint samples."""
@@ -83,6 +84,7 @@ def embed_command(
         )
     )
     typer.echo(f"Database: {summary.db_path}")
+    typer.echo(f"Provider: {summary.provider}")
     typer.echo(f"Model: {summary.model}")
     typer.echo(f"Embedded: {summary.embedded_count}")
     typer.echo(f"Skipped: {summary.skipped_count}")

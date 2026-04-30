@@ -18,6 +18,18 @@ meeting-asr completion install zsh
 exec zsh
 ```
 
+如果要使用默认的本地声纹 embedding provider，安装本地声纹依赖：
+
+```bash
+uv sync --extra local-voiceprint
+```
+
+如果是 `uv tool install` 安装方式：
+
+```bash
+uv tool install --editable ".[local-voiceprint]" --force
+```
+
 `completion install` 支持 `bash`、`zsh`、`fish`、`powershell` 和 `pwsh`；也可以用
 `meeting-asr completion zsh` 这类命令直接输出补全脚本。
 
@@ -34,6 +46,22 @@ meeting-asr config set oss.access_key_secret "<your-oss-access-key-secret>"
 meeting-asr config set oss.bucket_name "<your-bucket>"
 meeting-asr config set oss.region "<your-region>"
 meeting-asr config set oss.endpoint "<your-oss-endpoint>"
+meeting-asr config set voiceprint.embedding_provider "local-speechbrain"
+meeting-asr doctor --require-voiceprint-embedding
+```
+
+声纹 embedding 支持多个 provider：
+
+```bash
+meeting-asr config set voiceprint.embedding_provider "local-speechbrain"
+meeting-asr config set voiceprint.embedding_provider "bailian"
+```
+
+`local-speechbrain` 是默认值，使用本地 SpeechBrain ECAPA speaker embedding 模型，不依赖阿里云声纹服务。
+`bailian` 保留为阿里云 AnalyticDB 声纹检索 provider，申请开通后再配置 endpoint：
+
+```bash
+meeting-asr config set voiceprint.embedding_provider "bailian"
 meeting-asr config set voiceprint.embedding_endpoint "http://<adb-ai-app-host>:8100/audio/embedding"
 meeting-asr doctor --require-oss --require-voiceprint-embedding
 ```
@@ -112,14 +140,20 @@ meeting-asr voiceprint path
 这种匿名 label 的人会跳过。`show` 会显示样本编号，`play` 和 `delete-sample`
 都按这个编号精确操作。
 
-声纹 embedding 默认走百炼/AnalyticDB 声纹检索 endpoint。这个 endpoint 必须先按上面的
-AnalyticDB 控制台调用信息配置好。生成 embedding 后，可以匹配新项目：
+声纹 embedding 默认走 `local-speechbrain`。生成 embedding 后，可以匹配新项目：
 
 ```bash
-meeting-asr doctor --require-oss --require-voiceprint-embedding
+meeting-asr doctor --require-voiceprint-embedding
 meeting-asr voiceprint embed
 meeting-asr project speakers match
 meeting-asr project speakers match --apply
+```
+
+如果要临时对比阿里云 provider，不改全局配置也可以传参数：
+
+```bash
+meeting-asr voiceprint embed --provider bailian --rebuild
+meeting-asr project speakers match --provider bailian
 ```
 
 ## 输出结构

@@ -5,5 +5,7 @@
   "oss.access_key_secret": "",
   "oss.bucket_name": "",
   "oss.region": "",
-  "oss.endpoint": ""
+  "oss.endpoint": "",
+  "voiceprint.embedding_provider": "local-speechbrain",
+  "voiceprint.embedding_endpoint": ""
 }

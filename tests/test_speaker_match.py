@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from app.cli import app
 from app.project_manager import create_project
+from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 
 runner = CliRunner()
 
@@ -22,7 +23,10 @@ def test_project_speakers_match_writes_suggestions(
     store_dir = tmp_path / "voiceprints"
     _write_named_speaker_inputs(project_dir)
     _patch_audio_embedding(monkeypatch)
-    runner.invoke(app, ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)])
+    runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
     runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
 
     result = runner.invoke(
@@ -32,10 +36,14 @@ def test_project_speakers_match_writes_suggestions(
 
     payload = json.loads((project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8"))
     assert result.exit_code == 0
+    assert "Provider: local-speechbrain" in result.output
+    assert f"Model: {LOCAL_SPEECHBRAIN_MODEL}" in result.output
     assert "Speaker A -> 欧丁" in result.output
     assert "Speaker B -> 敬悦" in result.output
     assert payload["matches"][0]["name"] == "欧丁"
     assert payload["matches"][0]["accepted"] is True
+    assert payload["provider"] == "local-speechbrain"
+    assert payload["model"] == LOCAL_SPEECHBRAIN_MODEL
 
 
 def test_project_speakers_match_can_apply_matches(
@@ -47,7 +55,10 @@ def test_project_speakers_match_can_apply_matches(
     store_dir = tmp_path / "voiceprints"
     _write_named_speaker_inputs(project_dir)
     _patch_audio_embedding(monkeypatch)
-    runner.invoke(app, ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)])
+    runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
     runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
 
     result = runner.invoke(
@@ -103,7 +114,13 @@ def _patch_audio_embedding(monkeypatch) -> None:
     monkeypatch.setattr("app.speaker_matching.embed_audio_file", _fake_embed_audio_file)
 
 
-def _fake_extract_audio_clip(input_path: Path, output_path: Path, *, start_seconds: float, duration_seconds: float) -> Path:
+def _fake_extract_audio_clip(
+    input_path: Path,
+    output_path: Path,
+    *,
+    start_seconds: float,
+    duration_seconds: float,
+) -> Path:
     """Write a fake clip payload."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(f"{input_path}:{start_seconds}:{duration_seconds}".encode())

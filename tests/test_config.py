@@ -8,7 +8,15 @@ import pytest
 from typer.testing import CliRunner
 
 from app.cli import app
-from app.config import get_config_path, get_default_projects_dir, load_settings, save_config_values, set_config_value
+from app.config import (
+    DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER,
+    get_cache_dir,
+    get_config_path,
+    get_default_projects_dir,
+    load_settings,
+    save_config_values,
+    set_config_value,
+)
 
 runner = CliRunner()
 
@@ -25,6 +33,13 @@ def test_default_projects_dir_uses_xdg_data_home(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
 
     assert get_default_projects_dir() == tmp_path / "meeting-asr" / "projects"
+
+
+def test_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Global model caches should follow XDG_CACHE_HOME."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    assert get_cache_dir() == tmp_path / "meeting-asr"
 
 
 def test_relative_xdg_data_home_falls_back_to_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -44,6 +59,22 @@ def test_load_settings_reads_global_config(monkeypatch: pytest.MonkeyPatch, tmp_
 
     assert settings.dashscope_api_key == "config-key"
     assert settings.dashscope_base_url == "https://dashscope.aliyuncs.com/api/v1"
+    assert settings.voiceprint_embedding_provider == DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER
+
+
+def test_load_settings_can_read_voiceprint_config_without_dashscope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Local voiceprint provider config should not require DashScope credentials."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _clear_runtime_env(monkeypatch)
+    save_config_values({"voiceprint.embedding_provider": "local-speechbrain"})
+
+    settings = load_settings(require_dashscope=False)
+
+    assert settings.dashscope_api_key == ""
+    assert settings.voiceprint_embedding_provider == "local-speechbrain"
 
 
 def test_process_env_overrides_global_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

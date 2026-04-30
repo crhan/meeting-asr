@@ -9,7 +9,7 @@ from typing import Any
 
 import requests
 
-from app.config import load_settings
+from app.config import get_cache_dir, load_settings
 from app.uploader import upload_file_to_oss
 from app.voiceprint_store import (
     get_voiceprint_db_path,
@@ -18,8 +18,26 @@ from app.voiceprint_store import (
     upsert_voiceprint_embedding,
 )
 
-DEFAULT_VOICEPRINT_MODEL = "bailian-audio-embedding"
-DEFAULT_VOICEPRINT_PROVIDER = "bailian"
+VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN = "local-speechbrain"
+VOICEPRINT_PROVIDER_BAILIAN = "bailian"
+DEFAULT_VOICEPRINT_PROVIDER = VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
+LOCAL_SPEECHBRAIN_MODEL = "speechbrain-spkrec-ecapa-voxceleb"
+BAILIAN_VOICEPRINT_MODEL = "bailian-audio-embedding"
+SUPPORTED_VOICEPRINT_PROVIDERS = (VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN, VOICEPRINT_PROVIDER_BAILIAN)
+
+_PROVIDER_ALIASES = {
+    "speechbrain": VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
+    "local": VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
+    "local-speechbrain": VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
+    "bailian": VOICEPRINT_PROVIDER_BAILIAN,
+    "aliyun": VOICEPRINT_PROVIDER_BAILIAN,
+    "adb": VOICEPRINT_PROVIDER_BAILIAN,
+}
+_DEFAULT_MODELS = {
+    VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN: LOCAL_SPEECHBRAIN_MODEL,
+    VOICEPRINT_PROVIDER_BAILIAN: BAILIAN_VOICEPRINT_MODEL,
+}
+_SPEECHBRAIN_CLASSIFIER: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +45,7 @@ class VoiceprintEmbedSummary:
     """Summary for embedding stored voiceprint samples."""
 
     db_path: Path
+    provider: str
     model: str
     embedded_count: int
     skipped_count: int
@@ -37,7 +56,7 @@ def embed_voiceprint_samples(
     store_dir: Path | None,
     provider: str | None,
     endpoint: str | None,
-    model: str,
+    model: str | None,
     rebuild: bool,
 ) -> VoiceprintEmbedSummary:
     """
@@ -53,19 +72,55 @@ def embed_voiceprint_samples(
     Returns:
         Embedding summary.
     """
+    resolved_provider, resolved_model = resolve_voiceprint_embedding_options(provider=provider, model=model)
     db_path = get_voiceprint_db_path(store_dir)
     samples = list_all_voiceprint_samples(db_path)
-    embedded_ids = set() if rebuild else list_embedded_sample_ids(model, db_path)
+    embedded_ids = set() if rebuild else list_embedded_sample_ids(resolved_model, db_path)
     embedded_count = 0
     skipped_count = 0
     for sample in samples:
         if sample.sample_id in embedded_ids:
             skipped_count += 1
             continue
-        vector = embed_audio_file(sample.clip_path, provider=provider, endpoint=endpoint)
-        upsert_voiceprint_embedding(sample.sample_id, model, vector, db_path)
+        vector = embed_audio_file(sample.clip_path, provider=resolved_provider, endpoint=endpoint)
+        upsert_voiceprint_embedding(sample.sample_id, resolved_model, vector, db_path)
         embedded_count += 1
-    return VoiceprintEmbedSummary(db_path, model, embedded_count, skipped_count)
+    return VoiceprintEmbedSummary(db_path, resolved_provider, resolved_model, embedded_count, skipped_count)
+
+
+def resolve_voiceprint_embedding_options(*, provider: str | None, model: str | None) -> tuple[str, str]:
+    """
+    Resolve provider and model names from CLI options plus global config.
+
+    Args:
+        provider: Optional provider override.
+        model: Optional model storage key override.
+
+    Returns:
+        Normalized provider and model storage key.
+    """
+    resolved_provider = resolve_voiceprint_provider(provider)
+    return resolved_provider, model or _DEFAULT_MODELS[resolved_provider]
+
+
+def resolve_voiceprint_provider(provider: str | None) -> str:
+    """
+    Resolve a provider override or global provider config.
+
+    Args:
+        provider: Optional provider override.
+
+    Returns:
+        Normalized provider name.
+    """
+    if provider is None:
+        settings = load_settings(require_oss=False, require_dashscope=False)
+        provider = settings.voiceprint_embedding_provider
+    normalized = _PROVIDER_ALIASES.get(provider.strip().lower())
+    if normalized is None:
+        supported = ", ".join(SUPPORTED_VOICEPRINT_PROVIDERS)
+        raise ValueError(f"Unsupported voiceprint embedding provider: {provider}. Supported providers: {supported}")
+    return normalized
 
 
 def embed_audio_file(path: Path, *, provider: str | None, endpoint: str | None) -> list[float]:
@@ -80,11 +135,101 @@ def embed_audio_file(path: Path, *, provider: str | None, endpoint: str | None) 
     Returns:
         Embedding vector.
     """
-    settings = load_settings(require_oss=False)
-    normalized_provider = (provider or settings.voiceprint_embedding_provider).strip().lower()
-    if normalized_provider != DEFAULT_VOICEPRINT_PROVIDER:
-        raise ValueError(f"Unsupported voiceprint embedding provider: {provider}")
+    normalized_provider = resolve_voiceprint_provider(provider)
+    if normalized_provider == VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN:
+        return _embed_audio_with_local_speechbrain(path)
     return _embed_audio_with_bailian(path, endpoint)
+
+
+def _embed_audio_with_local_speechbrain(path: Path) -> list[float]:
+    """
+    Generate one embedding with the local SpeechBrain ECAPA model.
+
+    Args:
+        path: Local WAV clip.
+
+    Returns:
+        Embedding vector.
+    """
+    classifier = _load_speechbrain_classifier()
+    embedding = classifier.encode_file(str(path))
+    return _flatten_embedding(embedding)
+
+
+def _load_speechbrain_classifier() -> Any:
+    """
+    Load and cache the local SpeechBrain speaker encoder.
+
+    Returns:
+        SpeechBrain EncoderClassifier instance.
+    """
+    global _SPEECHBRAIN_CLASSIFIER
+    if _SPEECHBRAIN_CLASSIFIER is not None:
+        return _SPEECHBRAIN_CLASSIFIER
+    try:
+        from speechbrain.inference.speaker import EncoderClassifier
+    except ImportError:
+        try:
+            from speechbrain.pretrained import EncoderClassifier  # type: ignore[no-redef]
+        except ImportError as exc:
+            raise RuntimeError(_speechbrain_install_message()) from exc
+    _SPEECHBRAIN_CLASSIFIER = EncoderClassifier.from_hparams(
+        source="speechbrain/spkrec-ecapa-voxceleb",
+        savedir=str(get_cache_dir() / "models" / "speechbrain" / "spkrec-ecapa-voxceleb"),
+    )
+    return _SPEECHBRAIN_CLASSIFIER
+
+
+def _speechbrain_install_message() -> str:
+    """
+    Return the local provider dependency installation message.
+
+    Returns:
+        Actionable install message.
+    """
+    return (
+        "local-speechbrain voiceprint embedding requires optional dependencies. "
+        "Install them with `uv sync --extra local-voiceprint` in the repo, or reinstall the tool with "
+        '`uv tool install --editable ".[local-voiceprint]" --force`.'
+    )
+
+
+def _flatten_embedding(embedding: Any) -> list[float]:
+    """
+    Convert a tensor-like embedding into a plain vector.
+
+    Args:
+        embedding: Tensor-like object returned by SpeechBrain.
+
+    Returns:
+        Embedding vector.
+    """
+    if hasattr(embedding, "detach"):
+        embedding = embedding.detach()
+    if hasattr(embedding, "cpu"):
+        embedding = embedding.cpu()
+    if hasattr(embedding, "squeeze"):
+        embedding = embedding.squeeze()
+    values = embedding.tolist() if hasattr(embedding, "tolist") else embedding
+    return [float(item) for item in _flatten_values(values)]
+
+
+def _flatten_values(values: Any) -> list[float]:
+    """
+    Flatten nested list-like numeric values.
+
+    Args:
+        values: Numeric scalar or nested list-like values.
+
+    Returns:
+        Flat numeric list.
+    """
+    if isinstance(values, list):
+        flattened: list[float] = []
+        for item in values:
+            flattened.extend(_flatten_values(item))
+        return flattened
+    return [float(values)]
 
 
 def _embed_audio_with_bailian(path: Path, endpoint: str | None) -> list[float]:

@@ -12,7 +12,13 @@ import typer
 
 from app.commands import transcript as transcript_commands
 from app.cli_errors import run_with_cli_errors
-from app.completion_helpers import complete_audio_format, complete_model, complete_oss_upload_mode
+from app.completion_helpers import (
+    complete_audio_format,
+    complete_model,
+    complete_oss_upload_mode,
+    complete_voiceprint_model,
+    complete_voiceprint_provider,
+)
 from app.config import get_default_projects_dir
 from app.models import SentenceSegment, TranscriptResult
 from app.project_manager import (
@@ -32,7 +38,6 @@ from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
 from app.speaker_review import build_preview_command, preview_start_seconds, render_speaker_summary
 from app.srt_compare import build_report, parse_srt
 from app.utils import configure_logging, format_ms_timestamp, safe_write_text
-from app.voiceprint_embedding import DEFAULT_VOICEPRINT_MODEL
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
 speakers_app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
@@ -265,9 +270,9 @@ def speakers_apply(
 def speakers_match(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    provider: Optional[str] = typer.Option(None, "--provider"),
+    provider: Optional[str] = typer.Option(None, "--provider", autocompletion=complete_voiceprint_provider),
     endpoint: Optional[str] = typer.Option(None, "--endpoint"),
-    model: str = typer.Option(DEFAULT_VOICEPRINT_MODEL, "--model"),
+    model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
     threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
     sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
@@ -377,6 +382,7 @@ def _echo_match_summary(summary: SpeakerMatchSummary) -> None:
         summary: Match summary.
     """
     typer.echo(f"Matches written to: {summary.match_path}")
+    typer.echo(f"Provider: {summary.provider}")
     typer.echo(f"Model: {summary.model}")
     typer.echo(f"Threshold: {summary.threshold:.3f}")
     for match in summary.matches:

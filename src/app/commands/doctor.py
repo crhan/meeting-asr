@@ -17,6 +17,12 @@ import typer
 
 from app.config import load_settings
 from app.uploader import build_oss_bucket, import_oss2
+from app.voiceprint_embedding import (
+    LOCAL_SPEECHBRAIN_MODEL,
+    SUPPORTED_VOICEPRINT_PROVIDERS,
+    VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
+    resolve_voiceprint_provider,
+)
 
 
 @dataclass(slots=True)
@@ -57,7 +63,7 @@ def command(
     Returns:
         None.
     """
-    effective_require_oss = require_oss or check_oss_access or oss_upload_probe or require_voiceprint_embedding
+    effective_require_oss = require_oss or check_oss_access or oss_upload_probe
     checks = [
         _check_python(),
         _check_python_packages(require_oss=effective_require_oss),
@@ -172,23 +178,77 @@ def _check_voiceprint_embedding_settings(*, required: bool) -> CheckResult:
         Diagnostic check result for voiceprint embedding config.
     """
     try:
-        settings = load_settings(require_oss=False)
+        settings = load_settings(require_oss=False, require_dashscope=False)
     except ValueError as exc:
         detail = f"skipped because base config is invalid: {exc}"
         return CheckResult("voiceprint-embedding", "warn", detail)
-    provider = settings.voiceprint_embedding_provider.strip().lower()
-    if provider != "bailian":
+    try:
+        provider = resolve_voiceprint_provider(settings.voiceprint_embedding_provider)
+    except ValueError as exc:
+        return _voiceprint_problem(required=required, detail=str(exc), fix=_provider_config_fix())
+    if provider == VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN:
+        return _check_local_speechbrain(required=required)
+    return _check_bailian_voiceprint_settings(required=required)
+
+
+def _check_local_speechbrain(*, required: bool) -> CheckResult:
+    """
+    Check local SpeechBrain provider dependencies.
+
+    Args:
+        required: Whether missing dependencies should fail.
+
+    Returns:
+        Diagnostic check result.
+    """
+    missing = _missing_optional_modules(("speechbrain", "torch", "torchaudio"))
+    if missing:
+        detail = f"provider=local-speechbrain; missing optional packages: {', '.join(missing)}"
         return _voiceprint_problem(
             required=required,
-            detail=f"unsupported provider={settings.voiceprint_embedding_provider}; supported: bailian",
+            detail=detail,
+            fix=_local_speechbrain_fix(),
+            verify="meeting-asr doctor --require-voiceprint-embedding",
         )
+    detail = f"provider=local-speechbrain; model={LOCAL_SPEECHBRAIN_MODEL}; dependencies installed"
+    return CheckResult("voiceprint-embedding", "ok", detail)
+
+
+def _check_bailian_voiceprint_settings(*, required: bool) -> CheckResult:
+    """
+    Check Bailian/AnalyticDB voiceprint provider config.
+
+    Args:
+        required: Whether missing config should fail.
+
+    Returns:
+        Diagnostic check result.
+    """
+    try:
+        settings = load_settings(require_oss=required, require_dashscope=required)
+    except ValueError as exc:
+        return _voiceprint_problem(required=required, detail=str(exc), fix=_bailian_endpoint_fix())
     endpoint = settings.voiceprint_embedding_endpoint
     if not endpoint:
-        return _voiceprint_problem(required=required, detail="voiceprint.embedding_endpoint is not configured")
+        detail = "provider=bailian; voiceprint.embedding_endpoint is not configured"
+        return _voiceprint_problem(required=required, detail=detail, fix=_bailian_endpoint_fix())
     endpoint_problem = _validate_voiceprint_endpoint(endpoint)
     if endpoint_problem:
-        return _voiceprint_problem(required=required, detail=endpoint_problem)
+        return _voiceprint_problem(required=required, detail=endpoint_problem, fix=_bailian_endpoint_fix())
     return CheckResult("voiceprint-embedding", "ok", f"provider=bailian; endpoint={endpoint}")
+
+
+def _missing_optional_modules(modules: tuple[str, ...]) -> list[str]:
+    """
+    Return optional modules that are not importable.
+
+    Args:
+        modules: Module names to check.
+
+    Returns:
+        Missing module names.
+    """
+    return [module for module in modules if importlib.util.find_spec(module) is None]
 
 
 def _validate_voiceprint_endpoint(endpoint: str) -> str | None:
@@ -209,13 +269,21 @@ def _validate_voiceprint_endpoint(endpoint: str) -> str | None:
     return None
 
 
-def _voiceprint_problem(*, required: bool, detail: str) -> CheckResult:
+def _voiceprint_problem(
+    *,
+    required: bool,
+    detail: str,
+    fix: str,
+    verify: str = "meeting-asr doctor --require-oss --require-voiceprint-embedding",
+) -> CheckResult:
     """
     Build a voiceprint embedding problem result.
 
     Args:
         required: Whether the problem should fail the command.
         detail: Human-readable problem detail.
+        fix: Repair guidance.
+        verify: Verification command.
 
     Returns:
         Diagnostic result with an agent repair prompt.
@@ -224,13 +292,50 @@ def _voiceprint_problem(*, required: bool, detail: str) -> CheckResult:
     prompt = _fix_prompt(
         "voiceprint-embedding",
         detail,
-        _voiceprint_endpoint_fix(),
-        "meeting-asr doctor --require-oss --require-voiceprint-embedding",
+        fix,
+        verify,
     )
     return CheckResult("voiceprint-embedding", status, detail, prompt)
 
 
-def _voiceprint_endpoint_fix() -> str:
+def _provider_config_fix() -> str:
+    """
+    Return actionable guidance for fixing provider selection.
+
+    Returns:
+        Repair guidance for provider config.
+    """
+    providers = ", ".join(SUPPORTED_VOICEPRINT_PROVIDERS)
+    return "\n".join(
+        [
+            f"Supported providers: {providers}.",
+            "Configure:",
+            "meeting-asr config set voiceprint.embedding_provider local-speechbrain",
+            "or:",
+            "meeting-asr config set voiceprint.embedding_provider bailian",
+        ]
+    )
+
+
+def _local_speechbrain_fix() -> str:
+    """
+    Return actionable guidance for local SpeechBrain setup.
+
+    Returns:
+        Repair guidance for local SpeechBrain provider.
+    """
+    return "\n".join(
+        [
+            "Install local voiceprint dependencies.",
+            "In the repository:",
+            "uv sync --extra local-voiceprint",
+            "For uv tool installs:",
+            'uv tool install --editable ".[local-voiceprint]" --force',
+        ]
+    )
+
+
+def _bailian_endpoint_fix() -> str:
     """
     Return actionable guidance for obtaining the voiceprint endpoint.
 
@@ -240,6 +345,9 @@ def _voiceprint_endpoint_fix() -> str:
     return "\n".join(
         [
             "Do not install this locally.",
+            "Set any missing DashScope and OSS config reported above.",
+            "Configure provider first:",
+            "meeting-asr config set voiceprint.embedding_provider bailian",
             "Endpoint source: AnalyticDB MySQL voiceprint retrieval service, which is invite-only.",
             "If it is not enabled, submit an Alibaba Cloud support ticket.",
             "After the service or AI application is available, open the AnalyticDB MySQL console.",

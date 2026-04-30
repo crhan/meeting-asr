@@ -10,10 +10,16 @@ from pathlib import Path
 from app.ffmpeg_utils import extract_audio_clip
 from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
-from app.project_manager import ProjectManifest, ensure_project_dirs, load_manifest, resolve_project_source_path, save_manifest
+from app.project_manager import (
+    ProjectManifest,
+    ensure_project_dirs,
+    load_manifest,
+    resolve_project_source_path,
+    save_manifest,
+)
 from app.speaker_labeling import load_transcript_result
 from app.utils import safe_write_json
-from app.voiceprint_embedding import DEFAULT_VOICEPRINT_MODEL, embed_audio_file
+from app.voiceprint_embedding import embed_audio_file, resolve_voiceprint_embedding_options
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
 
 
@@ -34,6 +40,7 @@ class SpeakerMatchSummary:
     """Project speaker match summary."""
 
     match_path: Path
+    provider: str
     model: str
     threshold: float
     matches: list[SpeakerMatch]
@@ -53,6 +60,8 @@ class _MatchContext:
     source: Path
     segments: list[SentenceSegment]
     known: dict[str, list[float]]
+    provider: str
+    model: str
 
 
 def match_project_speakers(
@@ -61,7 +70,7 @@ def match_project_speakers(
     store_dir: Path | None,
     provider: str | None,
     endpoint: str | None,
-    model: str,
+    model: str | None,
     threshold: float,
     sample_count: int,
     max_seconds: float,
@@ -84,13 +93,13 @@ def match_project_speakers(
     Returns:
         Match summary.
     """
-    context = _match_context(project_dir, store_dir, model)
+    context = _match_context(project_dir, store_dir, provider, model)
     matches = _match_speaker_groups(
         context.project_root,
         context.source,
         context.segments,
         context.known,
-        provider,
+        context.provider,
         endpoint,
         threshold,
         sample_count,
@@ -98,24 +107,31 @@ def match_project_speakers(
         padding_seconds,
     )
     match_path = context.project_root / "speakers" / "speaker_matches.json"
-    safe_write_json(match_path, _matches_payload(model, threshold, matches))
+    safe_write_json(match_path, _matches_payload(context.provider, context.model, threshold, matches))
     context.manifest.speakers["matches"] = "speakers/speaker_matches.json"
     save_manifest(context.project_root, context.manifest)
-    return SpeakerMatchSummary(match_path, model, threshold, matches)
+    return SpeakerMatchSummary(match_path, context.provider, context.model, threshold, matches)
 
 
-def _match_context(project_dir: Path, store_dir: Path | None, model: str) -> _MatchContext:
+def _match_context(
+    project_dir: Path,
+    store_dir: Path | None,
+    provider: str | None,
+    model: str | None,
+) -> _MatchContext:
     """
     Build shared project and voiceprint context.
 
     Args:
         project_dir: Project root.
         store_dir: Optional voiceprint store directory.
-        model: Embedding model key.
+        provider: Embedding provider.
+        model: Optional embedding model key.
 
     Returns:
         Context for matching.
     """
+    resolved_provider, resolved_model = resolve_voiceprint_embedding_options(provider=provider, model=model)
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(paths.root)
     result = load_transcript_result(paths.asr_dir / "sentences.json")
@@ -124,7 +140,9 @@ def _match_context(project_dir: Path, store_dir: Path | None, model: str) -> _Ma
         manifest,
         resolve_project_source_path(paths.root, manifest),
         result.sentences,
-        _known_speaker_vectors(store_dir, model),
+        _known_speaker_vectors(store_dir, resolved_model),
+        resolved_provider,
+        resolved_model,
     )
 
 
@@ -154,10 +172,29 @@ def _match_speaker_groups(
     """Match all speakers in a project transcript."""
     matches: list[SpeakerMatch] = []
     for speaker_id, speaker_segments in sorted(_segments_by_speaker(segments).items()):
-        vector = _probe_speaker_vector(project_root, source, speaker_id, speaker_segments, provider, endpoint, sample_count, max_seconds, padding_seconds)
+        vector = _probe_speaker_vector(
+            project_root,
+            source,
+            speaker_id,
+            speaker_segments,
+            provider,
+            endpoint,
+            sample_count,
+            max_seconds,
+            padding_seconds,
+        )
         name, score = _best_match(vector, known)
         accepted = name is not None and score >= threshold
-        matches.append(SpeakerMatch(speaker_id, speaker_id_to_label(speaker_id), name if accepted else None, score, accepted, len(speaker_segments)))
+        matches.append(
+            SpeakerMatch(
+                speaker_id,
+                speaker_id_to_label(speaker_id),
+                name if accepted else None,
+                score,
+                accepted,
+                len(speaker_segments),
+            )
+        )
     return matches
 
 
@@ -203,7 +240,13 @@ def _probe_clip_path(project_root: Path, speaker_id: int, index: int) -> Path:
     return project_root / "tmp" / "voiceprint_match" / f"speaker_{speaker_id}" / f"clip_{index:03d}.wav"
 
 
-def _write_probe_clip(source: Path, output: Path, segment: SentenceSegment, max_seconds: float, padding_seconds: float) -> None:
+def _write_probe_clip(
+    source: Path,
+    output: Path,
+    segment: SentenceSegment,
+    max_seconds: float,
+    padding_seconds: float,
+) -> None:
     """Extract one probe clip."""
     padding_ms = int(round(padding_seconds * 1000))
     max_ms = int(round(max_seconds * 1000))
@@ -249,9 +292,10 @@ def _cosine(left: list[float], right: list[float]) -> float:
     return sum(left[index] * right[index] for index in range(len(left)))
 
 
-def _matches_payload(model: str, threshold: float, matches: list[SpeakerMatch]) -> dict[str, object]:
+def _matches_payload(provider: str, model: str, threshold: float, matches: list[SpeakerMatch]) -> dict[str, object]:
     """Build JSON payload for match results."""
     return {
+        "provider": provider,
         "model": model,
         "threshold": threshold,
         "matches": [
