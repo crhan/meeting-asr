@@ -86,7 +86,6 @@ meeting-asr project transcribe \
 ## 5. 自动匹配 + 人工确认 speaker
 
 ```bash
-# 已有声纹库时先跑；首次使用可跳过
 meeting-asr project speakers match
 meeting-asr project speakers inspect
 meeting-asr project speakers apply
@@ -97,9 +96,7 @@ meeting-asr project transcript show
 
 这一步的核心原则：`match` 只给建议，`apply` 才真正写名字。
 
-如果这是第一次使用，还没有任何声纹库，可以先跳过 `match`，直接从
-`inspect` 和 `apply` 开始人工标注。已有声纹库时，`match` 会给当前 project
-的 speaker 生成候选：
+`match` 会给当前 project 的 speaker 生成候选：
 
 ```bash
 meeting-asr project speakers match

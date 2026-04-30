@@ -116,15 +116,12 @@ Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speak
 `speakers/speaker_map.json`、`exports/transcript_named.txt` 和
 `exports/subtitle_named.srt`。
 
-如果已经有声纹库，在 `inspect` 前先跑：
-
-```bash
-meeting-asr project speakers match
-```
+没有声纹库也可以跑 `speakers match`；这时所有 speaker 都会是
+`unknown score=0.000 review`。这不是错误，只表示当前声纹库没有可匹配的人。
 
 推荐流程：
 
-1. 已有声纹库时，先跑 `meeting-asr project speakers match`。
+1. 先跑 `meeting-asr project speakers match`。有声纹库时会生成候选；没有声纹库时会生成全 unknown 的 review 结果。
 2. 用 `meeting-asr project speakers inspect` 查看每个 speaker 的样例和声纹建议。
 3. 跑 `meeting-asr project speakers apply`。已 accepted 的 match 会作为默认值，直接回车确认；未匹配的人手动输入姓名；不确定就输入 `/more` 继续看样例。
 4. 用 `meeting-asr project speakers preview` 复核带名字的字幕。
