@@ -42,6 +42,8 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert list_result.exit_code == 0
     assert "欧丁: 1 sample(s)" in list_result.output
     assert show_result.exit_code == 0
+    assert "[1] 欧丁" in show_result.output
+    assert "sample_id:" in show_result.output
     assert manifest.project_id in show_result.output
     assert "clip_001.wav" in show_result.output
 
@@ -70,6 +72,67 @@ def test_voiceprint_capture_skips_anonymous_speaker_labels(
     assert not (store_dir / "clips" / manifest.project_id / "speaker_2").exists()
     assert "欧丁: 1 sample(s)" in list_result.output
     assert "Speaker C" not in list_result.output
+
+
+def test_voiceprint_play_dry_run_prints_clip_command(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Play should target one numbered clip without modifying the store."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+    runner.invoke(app, ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)])
+
+    result = runner.invoke(app, ["voiceprint", "play", "欧丁", "--sample", "1", "--store-dir", str(store_dir), "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "clip_001.wav" in result.output
+
+
+def test_voiceprint_delete_sample_removes_row_and_clip(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Deleting one sample should remove its row and exact WAV file."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+    runner.invoke(app, ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)])
+    clip_path = store_dir / "clips" / load_manifest(project_dir).project_id / "speaker_0" / "clip_001.wav"
+
+    result = runner.invoke(app, ["voiceprint", "delete-sample", "欧丁", "--sample", "1", "--store-dir", str(store_dir)])
+    show_result = runner.invoke(app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)])
+
+    assert result.exit_code == 0
+    assert "Deleted sample:" in result.output
+    assert "clip file: deleted" in result.output
+    assert not clip_path.exists()
+    assert show_result.exit_code == 1
+
+
+def test_voiceprint_delete_speaker_removes_all_samples(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Deleting one speaker should remove its rows and exact WAV files."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+    runner.invoke(app, ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)])
+    clip_path = store_dir / "clips" / load_manifest(project_dir).project_id / "speaker_1" / "clip_001.wav"
+
+    result = runner.invoke(app, ["voiceprint", "delete-speaker", "敬悦", "--store-dir", str(store_dir), "--yes"])
+    list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
+
+    assert result.exit_code == 0
+    assert "Deleted speaker: 敬悦" in result.output
+    assert not clip_path.exists()
+    assert "敬悦" not in list_result.output
+    assert "欧丁: 1 sample(s)" in list_result.output
 
 
 def test_voiceprint_capture_dry_run_does_not_write_store(

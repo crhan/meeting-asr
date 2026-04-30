@@ -89,6 +89,7 @@ ON CONFLICT(clip_path) DO UPDATE SET
 class VoiceprintSampleRow:
     """Stored voiceprint sample row."""
 
+    sample_id: int
     speaker_name: str
     project_id: str
     project_speaker_id: int
@@ -106,6 +107,16 @@ class VoiceprintSpeakerRow:
 
     name: str
     sample_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class DeletedVoiceprintSample:
+    """Deleted voiceprint sample result."""
+
+    sample_id: int
+    speaker_name: str
+    clip_path: Path
+    clip_deleted: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,7 +251,7 @@ def list_voiceprint_samples(name: str, db_path: Path | None = None) -> list[Voic
         _ensure_schema(connection)
         rows = connection.execute(
             """
-            SELECT speakers.name, samples.project_id, samples.project_speaker_id,
+            SELECT samples.id, speakers.name, samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
                    samples.transcript_text
@@ -252,6 +263,64 @@ def list_voiceprint_samples(name: str, db_path: Path | None = None) -> list[Voic
             (_normalize_name(name),),
         ).fetchall()
     return [_sample_row(row) for row in rows]
+
+
+def delete_voiceprint_sample(
+    name: str,
+    sample_number: int,
+    *,
+    db_path: Path | None = None,
+    delete_clip: bool = True,
+) -> DeletedVoiceprintSample:
+    """
+    Delete one numbered sample for a speaker.
+
+    Args:
+        name: Speaker name.
+        sample_number: One-based sample number from ``list_voiceprint_samples``.
+        db_path: Optional SQLite path.
+        delete_clip: Whether to delete the WAV file.
+
+    Returns:
+        Deleted sample summary.
+    """
+    rows = list_voiceprint_samples(name, db_path)
+    row = _select_sample_number(rows, sample_number, name)
+    database_path = _resolve_db_path(db_path)
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        connection.execute("DELETE FROM voiceprint_samples WHERE id = ?", (row.sample_id,))
+        _delete_empty_speaker(connection, name)
+    return _deleted_sample(row, delete_clip)
+
+
+def delete_voiceprint_speaker(
+    name: str,
+    *,
+    db_path: Path | None = None,
+    delete_clips: bool = True,
+) -> list[DeletedVoiceprintSample]:
+    """
+    Delete one speaker and all of their samples.
+
+    Args:
+        name: Speaker name.
+        db_path: Optional SQLite path.
+        delete_clips: Whether to delete WAV files.
+
+    Returns:
+        Deleted sample summaries.
+    """
+    rows = list_voiceprint_samples(name, db_path)
+    if not rows:
+        raise LookupError(f"No voiceprint samples found for: {name}")
+    database_path = _resolve_db_path(db_path)
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        connection.execute("DELETE FROM voiceprint_speakers WHERE normalized_name = ?", (_normalize_name(name),))
+    return [_deleted_sample(row, delete_clips) for row in rows]
 
 
 def _resolve_db_path(db_path: Path | None) -> Path:
@@ -389,6 +458,7 @@ def _sample_row(row: sqlite3.Row) -> VoiceprintSampleRow:
         Voiceprint sample row.
     """
     return VoiceprintSampleRow(
+        sample_id=int(row["id"]),
         speaker_name=str(row["name"]),
         project_id=str(row["project_id"]),
         project_speaker_id=int(row["project_speaker_id"]),
@@ -399,6 +469,77 @@ def _sample_row(row: sqlite3.Row) -> VoiceprintSampleRow:
         source_end_time_ms=int(row["source_end_time_ms"]),
         transcript_text=str(row["transcript_text"]),
     )
+
+
+def _select_sample_number(rows: list[VoiceprintSampleRow], sample_number: int, name: str) -> VoiceprintSampleRow:
+    """
+    Select one sample by one-based display number.
+
+    Args:
+        rows: Samples in display order.
+        sample_number: One-based sample number.
+        name: Speaker name for error messages.
+
+    Returns:
+        Selected sample row.
+    """
+    if sample_number < 1 or sample_number > len(rows):
+        raise IndexError(f"Sample {sample_number} is out of range for {name}. Available: {len(rows)}.")
+    return rows[sample_number - 1]
+
+
+def _delete_empty_speaker(connection: sqlite3.Connection, name: str) -> None:
+    """
+    Delete a speaker row if it no longer owns samples.
+
+    Args:
+        connection: SQLite connection.
+        name: Speaker name.
+    """
+    normalized = _normalize_name(name)
+    row = connection.execute(
+        """
+        SELECT speakers.id, COUNT(samples.id) AS sample_count
+        FROM voiceprint_speakers AS speakers
+        LEFT JOIN voiceprint_samples AS samples ON samples.speaker_id = speakers.id
+        WHERE speakers.normalized_name = ?
+        GROUP BY speakers.id
+        """,
+        (normalized,),
+    ).fetchone()
+    if row is not None and int(row["sample_count"]) == 0:
+        connection.execute("DELETE FROM voiceprint_speakers WHERE id = ?", (int(row["id"]),))
+
+
+def _deleted_sample(row: VoiceprintSampleRow, delete_clip: bool) -> DeletedVoiceprintSample:
+    """
+    Delete a clip file when requested and return a summary.
+
+    Args:
+        row: Deleted database row.
+        delete_clip: Whether to delete the clip file.
+
+    Returns:
+        Deleted sample summary.
+    """
+    clip_deleted = _delete_clip_file(row.clip_path) if delete_clip else False
+    return DeletedVoiceprintSample(row.sample_id, row.speaker_name, row.clip_path, clip_deleted)
+
+
+def _delete_clip_file(path: Path) -> bool:
+    """
+    Delete one clip file without touching parent directories.
+
+    Args:
+        path: Clip path.
+
+    Returns:
+        Whether a file was deleted.
+    """
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
 
 
 def _normalize_name(name: str) -> str:

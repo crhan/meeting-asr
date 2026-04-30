@@ -97,6 +97,7 @@ meeting-asr project speakers apply
 meeting-asr voiceprint capture
 meeting-asr voiceprint list
 meeting-asr voiceprint show "欧丁"
+meeting-asr voiceprint play "欧丁" --sample 1
 meeting-asr voiceprint path
 ```
 
@@ -110,6 +111,15 @@ meeting-asr voiceprint path
 ```bash
 meeting-asr voiceprint capture --dry-run
 ```
+
+删除样本或整个人：
+
+```bash
+meeting-asr voiceprint delete-sample "欧丁" --sample 1
+meeting-asr voiceprint delete-speaker "欧丁" --yes
+```
+
+先用 `voiceprint show "欧丁"` 看样本编号，再用同一个编号播放或删除。
 
 ## 7. 最终文件
 

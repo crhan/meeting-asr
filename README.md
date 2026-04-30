@@ -86,11 +86,15 @@ meeting-asr project transcript open --kind named
 meeting-asr voiceprint capture
 meeting-asr voiceprint list
 meeting-asr voiceprint show "欧丁"
+meeting-asr voiceprint play "欧丁" --sample 1
+meeting-asr voiceprint delete-sample "欧丁" --sample 1
+meeting-asr voiceprint delete-speaker "欧丁" --yes
 meeting-asr voiceprint path
 ```
 
 `voiceprint capture` 只记录已确认姓名的 speaker；仍是 `Speaker A`、`Speaker C`
-这种匿名 label 的人会跳过。
+这种匿名 label 的人会跳过。`show` 会显示样本编号，`play` 和 `delete-sample`
+都按这个编号精确操作。
 
 ## 输出结构
 
