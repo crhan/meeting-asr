@@ -20,6 +20,7 @@ from app.voiceprint_store import (
     list_voiceprint_speakers,
     VoiceprintSampleRow,
 )
+from app.voiceprint_embedding import DEFAULT_VOICEPRINT_MODEL, embed_voiceprint_samples
 from app.voiceprints import VoiceprintCaptureSummary, capture_voiceprints
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
@@ -61,6 +62,30 @@ def list_command(
         return
     for row in rows:
         typer.echo(f"{row.name}: {row.sample_count} sample(s)")
+
+
+@app.command("embed")
+def embed_command(
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    provider: Optional[str] = typer.Option(None, "--provider"),
+    endpoint: Optional[str] = typer.Option(None, "--endpoint"),
+    model: str = typer.Option(DEFAULT_VOICEPRINT_MODEL, "--model"),
+    rebuild: bool = typer.Option(False, "--rebuild"),
+) -> None:
+    """Generate embeddings for stored voiceprint samples."""
+    summary = run_with_cli_errors(
+        lambda: embed_voiceprint_samples(
+            store_dir=store_dir,
+            provider=provider,
+            endpoint=endpoint,
+            model=model,
+            rebuild=rebuild,
+        )
+    )
+    typer.echo(f"Database: {summary.db_path}")
+    typer.echo(f"Model: {summary.model}")
+    typer.echo(f"Embedded: {summary.embedded_count}")
+    typer.echo(f"Skipped: {summary.skipped_count}")
 
 
 @app.command("show")

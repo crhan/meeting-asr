@@ -35,6 +35,8 @@ class Settings:
     oss_bucket_name: str | None = None
     oss_region: str | None = None
     oss_endpoint: str | None = None
+    voiceprint_embedding_endpoint: str | None = None
+    voiceprint_embedding_provider: str = "bailian"
     config_path: Path | None = None
 
 
@@ -46,6 +48,8 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ConfigKey("oss.bucket_name", "oss_bucket_name", "OSS_BUCKET_NAME"),
     ConfigKey("oss.region", "oss_region", "OSS_REGION"),
     ConfigKey("oss.endpoint", "oss_endpoint", "OSS_ENDPOINT"),
+    ConfigKey("voiceprint.embedding_endpoint", "voiceprint_embedding_endpoint", "VOICEPRINT_EMBEDDING_ENDPOINT"),
+    ConfigKey("voiceprint.embedding_provider", "voiceprint_embedding_provider", "VOICEPRINT_EMBEDDING_PROVIDER", default="bailian"),
 )
 
 _KEYS_BY_NAME = {item.name: item for item in CONFIG_KEYS}
@@ -198,6 +202,8 @@ def load_settings(*, require_oss: bool = False) -> Settings:
         oss_bucket_name=_read_value(values, "oss.bucket_name", required=require_oss),
         oss_region=_read_value(values, "oss.region", required=require_oss),
         oss_endpoint=_read_value(values, "oss.endpoint", required=require_oss),
+        voiceprint_embedding_endpoint=_read_value(values, "voiceprint.embedding_endpoint", required=False),
+        voiceprint_embedding_provider=_read_value(values, "voiceprint.embedding_provider", required=False) or "bailian",
         config_path=get_config_path(),
     )
 

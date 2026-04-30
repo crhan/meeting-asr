@@ -28,9 +28,11 @@ from app.project_manager import (
     transcribe_project,
 )
 from app.speaker_labeling import build_speaker_summaries, load_transcript_result
+from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
 from app.speaker_review import build_preview_command, preview_start_seconds, render_speaker_summary
 from app.srt_compare import build_report, parse_srt
 from app.utils import configure_logging, format_ms_timestamp, safe_write_text
+from app.voiceprint_embedding import DEFAULT_VOICEPRINT_MODEL
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
 speakers_app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
@@ -259,6 +261,39 @@ def speakers_apply(
     typer.echo(f"  open {_shell_quote_path(transcript_path)}")
 
 
+@speakers_app.command("match")
+def speakers_match(
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    provider: Optional[str] = typer.Option(None, "--provider"),
+    endpoint: Optional[str] = typer.Option(None, "--endpoint"),
+    model: str = typer.Option(DEFAULT_VOICEPRINT_MODEL, "--model"),
+    threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
+    sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
+    max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
+    padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
+    apply_matches: bool = typer.Option(False, "--apply"),
+) -> None:
+    """Match project speakers against the cross-project voiceprint library."""
+    summary = run_with_cli_errors(
+        lambda: match_project_speakers(
+            project_dir,
+            store_dir=store_dir,
+            provider=provider,
+            endpoint=endpoint,
+            model=model,
+            threshold=threshold,
+            sample_count=sample_count,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+        )
+    )
+    _echo_match_summary(summary)
+    if apply_matches and summary.accepted_mapping:
+        run_with_cli_errors(lambda: apply_project_speakers(project_dir, summary.accepted_mapping))
+        typer.echo("Applied accepted speaker matches.")
+
+
 @speakers_app.command("compare-srt")
 def speakers_compare_srt(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
@@ -334,6 +369,22 @@ def _echo_project_created(project_dir: Path, manifest) -> None:
     typer.echo("  meeting-asr project status")
 
 
+def _echo_match_summary(summary: SpeakerMatchSummary) -> None:
+    """
+    Print speaker match results.
+
+    Args:
+        summary: Match summary.
+    """
+    typer.echo(f"Matches written to: {summary.match_path}")
+    typer.echo(f"Model: {summary.model}")
+    typer.echo(f"Threshold: {summary.threshold:.3f}")
+    for match in summary.matches:
+        name = match.name or "unknown"
+        status = "accepted" if match.accepted else "review"
+        typer.echo(f"{match.label} -> {name}  score={match.score:.3f}  {status}")
+
+
 def _shell_quote_path(path: Path) -> str:
     """Quote a path so users can paste it into POSIX shells."""
     return shlex.quote(str(path.expanduser().resolve()))
@@ -400,13 +451,14 @@ def _prompt_speaker_mappings(project_dir: Path, result: TranscriptResult, *, sam
     typer.echo("Enter a name for each speaker. Type /more to show more samples.")
     typer.echo("Press Enter to keep the default label.")
     existing = _load_existing_speaker_mapping(project_dir)
+    matched = _load_speaker_match_defaults(project_dir)
     segments = _speaker_segments_by_id(result)
     resolved: dict[int, str] = {}
     for index, summary in enumerate(summaries):
         if index:
             typer.echo("")
         typer.echo(render_speaker_summary(summary))
-        default_name = existing.get(summary.speaker_id, summary.anonymous_label)
+        default_name = existing.get(summary.speaker_id) or matched.get(summary.speaker_id) or summary.anonymous_label
         resolved[summary.speaker_id] = _prompt_speaker_name(
             speaker_label=summary.anonymous_label,
             default_name=default_name,
@@ -567,3 +619,25 @@ def _load_existing_speaker_mapping(project_dir: Path) -> dict[int, str]:
         return {}
     payload = json.loads(map_path.read_text(encoding="utf-8"))
     return {int(key): str(value) for key, value in payload.items()}
+
+
+def _load_speaker_match_defaults(project_dir: Path) -> dict[int, str]:
+    """
+    Load accepted speaker match suggestions as prompt defaults.
+
+    Args:
+        project_dir: Project root.
+
+    Returns:
+        Speaker id to matched speaker name.
+    """
+    match_path = project_paths(project_dir).speakers_dir / "speaker_matches.json"
+    if not match_path.exists():
+        return {}
+    payload = json.loads(match_path.read_text(encoding="utf-8"))
+    matches = payload.get("matches", [])
+    return {
+        int(item["speaker_id"]): str(item["name"])
+        for item in matches
+        if item.get("accepted") and item.get("name") is not None
+    }

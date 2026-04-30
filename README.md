@@ -34,6 +34,7 @@ meeting-asr config set oss.access_key_secret "<your-oss-access-key-secret>"
 meeting-asr config set oss.bucket_name "<your-bucket>"
 meeting-asr config set oss.region "<your-region>"
 meeting-asr config set oss.endpoint "<your-oss-endpoint>"
+meeting-asr config set voiceprint.embedding_endpoint "http://<addr>:8100/audio/embedding"
 meeting-asr doctor --require-oss
 ```
 
@@ -84,6 +85,7 @@ meeting-asr project transcript open --kind named
 
 ```bash
 meeting-asr voiceprint capture
+meeting-asr voiceprint embed
 meeting-asr voiceprint list
 meeting-asr voiceprint show "欧丁"
 meeting-asr voiceprint play "欧丁" --sample 1
@@ -95,6 +97,13 @@ meeting-asr voiceprint path
 `voiceprint capture` 只记录已确认姓名的 speaker；仍是 `Speaker A`、`Speaker C`
 这种匿名 label 的人会跳过。`show` 会显示样本编号，`play` 和 `delete-sample`
 都按这个编号精确操作。
+
+声纹 embedding 默认走百炼/AnalyticDB 声纹检索 endpoint。生成 embedding 后，可以匹配新项目：
+
+```bash
+meeting-asr project speakers match
+meeting-asr project speakers match --apply
+```
 
 ## 输出结构
 

@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from app.cli import app
 from app.project_manager import create_project, load_manifest
+from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
 
 runner = CliRunner()
 
@@ -89,6 +90,26 @@ def test_voiceprint_play_dry_run_prints_clip_command(
 
     assert result.exit_code == 0
     assert "clip_001.wav" in result.output
+
+
+def test_voiceprint_embed_stores_sample_embeddings(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Embedding should store one vector per captured sample."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+    monkeypatch.setattr("app.voiceprint_embedding.embed_audio_file", _fake_embed_audio_file)
+    runner.invoke(app, ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)])
+
+    result = runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
+    embeddings = list_voiceprint_embeddings("bailian-audio-embedding", get_voiceprint_db_path(store_dir))
+
+    assert result.exit_code == 0
+    assert "Embedded: 2" in result.output
+    assert len(embeddings) == 2
 
 
 def test_voiceprint_delete_sample_removes_row_and_clip(
@@ -240,3 +261,8 @@ def _fake_extract_audio_clip(input_path: Path, output_path: Path, *, start_secon
     payload = f"{input_path}:{start_seconds:.3f}:{duration_seconds:.3f}".encode()
     output_path.write_bytes(payload)
     return output_path
+
+
+def _fake_embed_audio_file(path: Path, *, provider: str | None, endpoint: str | None) -> list[float]:
+    """Return deterministic vectors based on the speaker path."""
+    return [0.0, 1.0] if "speaker_1" in str(path) else [1.0, 0.0]

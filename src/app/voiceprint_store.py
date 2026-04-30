@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import struct
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -59,6 +60,8 @@ CREATE INDEX IF NOT EXISTS idx_voiceprint_samples_project
   ON voiceprint_samples(project_id);
 CREATE INDEX IF NOT EXISTS idx_voiceprint_samples_sha256
   ON voiceprint_samples(clip_sha256);
+CREATE INDEX IF NOT EXISTS idx_voiceprint_embeddings_model
+  ON voiceprint_embeddings(model);
 """
 
 UPSERT_SAMPLE_SQL = """
@@ -107,6 +110,17 @@ class VoiceprintSpeakerRow:
 
     name: str
     sample_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceprintEmbeddingRow:
+    """Stored voiceprint embedding row."""
+
+    sample_id: int
+    speaker_name: str
+    clip_path: Path
+    model: str
+    vector: list[float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +277,105 @@ def list_voiceprint_samples(name: str, db_path: Path | None = None) -> list[Voic
             (_normalize_name(name),),
         ).fetchall()
     return [_sample_row(row) for row in rows]
+
+
+def list_all_voiceprint_samples(db_path: Path | None = None) -> list[VoiceprintSampleRow]:
+    """
+    List all stored voiceprint samples.
+
+    Args:
+        db_path: Optional SQLite path.
+
+    Returns:
+        All voiceprint sample rows.
+    """
+    database_path = _resolve_db_path(db_path)
+    if not database_path.exists():
+        return []
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        rows = connection.execute(
+            """
+            SELECT samples.id, speakers.name, samples.project_id, samples.project_speaker_id,
+                   samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
+                   samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.transcript_text
+            FROM voiceprint_samples AS samples
+            JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
+            ORDER BY speakers.name, samples.project_id, samples.source_begin_time_ms
+            """
+        ).fetchall()
+    return [_sample_row(row) for row in rows]
+
+
+def list_embedded_sample_ids(model: str, db_path: Path | None = None) -> set[int]:
+    """
+    List sample ids that already have an embedding for a model.
+
+    Args:
+        model: Embedding model key.
+        db_path: Optional SQLite path.
+
+    Returns:
+        Embedded sample ids.
+    """
+    database_path = _resolve_db_path(db_path)
+    if not database_path.exists():
+        return set()
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        rows = connection.execute("SELECT sample_id FROM voiceprint_embeddings WHERE model = ?", (model,)).fetchall()
+    return {int(row["sample_id"]) for row in rows}
+
+
+def upsert_voiceprint_embedding(sample_id: int, model: str, vector: list[float], db_path: Path | None = None) -> None:
+    """
+    Store one voiceprint embedding.
+
+    Args:
+        sample_id: Voiceprint sample id.
+        model: Embedding model key.
+        vector: Embedding vector.
+        db_path: Optional SQLite path.
+    """
+    database_path = _resolve_db_path(db_path)
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        connection.execute(
+            """
+            INSERT INTO voiceprint_embeddings (sample_id, model, dimension, vector, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(sample_id, model) DO UPDATE SET
+              dimension = excluded.dimension,
+              vector = excluded.vector,
+              created_at = excluded.created_at
+            """,
+            (sample_id, model, len(vector), _pack_vector(vector), _now_iso()),
+        )
+
+
+def list_voiceprint_embeddings(model: str, db_path: Path | None = None) -> list[VoiceprintEmbeddingRow]:
+    """
+    List stored embeddings for a model.
+
+    Args:
+        model: Embedding model key.
+        db_path: Optional SQLite path.
+
+    Returns:
+        Embedding rows.
+    """
+    database_path = _resolve_db_path(db_path)
+    if not database_path.exists():
+        return []
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        rows = connection.execute(_embedding_rows_sql(), (model,)).fetchall()
+    return [_embedding_row(row) for row in rows]
 
 
 def delete_voiceprint_sample(
@@ -469,6 +582,73 @@ def _sample_row(row: sqlite3.Row) -> VoiceprintSampleRow:
         source_end_time_ms=int(row["source_end_time_ms"]),
         transcript_text=str(row["transcript_text"]),
     )
+
+
+def _embedding_rows_sql() -> str:
+    """
+    Return SQL for joined embedding rows.
+
+    Returns:
+        SQL query.
+    """
+    return """
+        SELECT samples.id AS sample_id, speakers.name, samples.clip_path,
+               embeddings.model, embeddings.vector
+        FROM voiceprint_embeddings AS embeddings
+        JOIN voiceprint_samples AS samples ON samples.id = embeddings.sample_id
+        JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
+        WHERE embeddings.model = ?
+        ORDER BY speakers.name, samples.project_id, samples.source_begin_time_ms
+    """
+
+
+def _embedding_row(row: sqlite3.Row) -> VoiceprintEmbeddingRow:
+    """
+    Convert a SQLite row to an embedding dataclass.
+
+    Args:
+        row: SQLite row.
+
+    Returns:
+        Voiceprint embedding row.
+    """
+    return VoiceprintEmbeddingRow(
+        sample_id=int(row["sample_id"]),
+        speaker_name=str(row["name"]),
+        clip_path=Path(str(row["clip_path"])),
+        model=str(row["model"]),
+        vector=_unpack_vector(bytes(row["vector"])),
+    )
+
+
+def _pack_vector(vector: list[float]) -> bytes:
+    """
+    Pack a float vector for SQLite storage.
+
+    Args:
+        vector: Embedding vector.
+
+    Returns:
+        Binary float payload.
+    """
+    if not vector:
+        raise ValueError("Embedding vector must not be empty.")
+    return struct.pack(f"<{len(vector)}f", *[float(item) for item in vector])
+
+
+def _unpack_vector(payload: bytes) -> list[float]:
+    """
+    Unpack a float vector from SQLite storage.
+
+    Args:
+        payload: Binary float payload.
+
+    Returns:
+        Embedding vector.
+    """
+    if len(payload) % 4 != 0:
+        raise ValueError("Embedding vector payload is not float32-aligned.")
+    return list(struct.unpack(f"<{len(payload) // 4}f", payload))
 
 
 def _select_sample_number(rows: list[VoiceprintSampleRow], sample_number: int, name: str) -> VoiceprintSampleRow:

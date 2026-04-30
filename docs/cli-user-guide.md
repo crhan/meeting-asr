@@ -95,6 +95,7 @@ meeting-asr project speakers apply
 
 ```bash
 meeting-asr voiceprint capture
+meeting-asr voiceprint embed
 meeting-asr voiceprint list
 meeting-asr voiceprint show "欧丁"
 meeting-asr voiceprint play "欧丁" --sample 1
@@ -105,6 +106,20 @@ meeting-asr voiceprint path
 `speakers/speaker_map.json` 选择已确认姓名的 speaker 参考片段，WAV 写入
 `voiceprints/clips/`，索引写入 `voiceprints/voiceprints.sqlite`。
 仍然是 `Speaker A`、`Speaker C` 这种匿名 label 的人会跳过，不进入声纹库。
+
+`embed` 默认调用百炼/AnalyticDB 声纹检索的音频 embedding endpoint。先配置 endpoint：
+
+```bash
+meeting-asr config set voiceprint.embedding_endpoint "http://<addr>:8100/audio/embedding"
+```
+
+然后生成 embedding 并匹配新项目：
+
+```bash
+meeting-asr voiceprint embed
+meeting-asr project speakers match
+meeting-asr project speakers match --apply
+```
 
 如果只想看会切哪些片段，不写文件和数据库：
 

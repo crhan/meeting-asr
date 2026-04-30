@@ -95,5 +95,7 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "OSS_BUCKET_NAME",
         "OSS_REGION",
         "OSS_ENDPOINT",
+        "VOICEPRINT_EMBEDDING_ENDPOINT",
+        "VOICEPRINT_EMBEDDING_PROVIDER",
     ):
         monkeypatch.delenv(name, raising=False)
