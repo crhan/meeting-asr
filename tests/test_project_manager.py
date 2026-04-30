@@ -64,7 +64,8 @@ def test_project_create_command_defaults_to_xdg_data_home(
     assert len(project_dirs) == 1
     assert "Project created." in result.output
     assert f"cd {project_dirs[0].resolve()}" in result.output
-    assert "meeting-asr project transcribe ." in result.output
+    assert "meeting-asr project transcribe" in result.output
+    assert "meeting-asr project transcribe ." not in result.output
 
 
 def test_project_create_output_quotes_copyable_cd_command(tmp_path: Path) -> None:
@@ -77,7 +78,8 @@ def test_project_create_output_quotes_copyable_cd_command(tmp_path: Path) -> Non
 
     assert result.exit_code == 0
     assert f"cd '{project_dir.resolve()}'" in result.output
-    assert "meeting-asr project status ." in result.output
+    assert "meeting-asr project status" in result.output
+    assert "meeting-asr project status ." not in result.output
 
 
 def test_project_status_command_reads_manifest(tmp_path: Path) -> None:
@@ -89,6 +91,21 @@ def test_project_status_command_reads_manifest(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Title: Demo" in result.output
     assert "Source: source/meeting.mp4" in result.output
+
+
+def test_project_status_defaults_to_current_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project commands should not require '.' inside a project directory."""
+    project_dir = _sample_project(tmp_path)
+    monkeypatch.chdir(project_dir)
+
+    result = runner.invoke(app, ["project", "status"])
+
+    assert result.exit_code == 0
+    assert "Title: Demo" in result.output
+    assert f"Project: {project_dir.resolve()}" in result.output
 
 
 def test_legacy_absolute_source_path_still_resolves(tmp_path: Path) -> None:

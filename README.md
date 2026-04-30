@@ -49,13 +49,14 @@ meeting-asr project run "/path/to/meeting.mp4" \
 ```bash
 meeting-asr project create "/path/to/meeting.mp4" --title "供应商管理AI治理"
 cd "<Project created 输出的路径>"
-meeting-asr project transcribe .
-meeting-asr project speakers inspect .
-meeting-asr project speakers preview .
-meeting-asr project speakers apply . --map 0=欧丁 --map 1=敬悦
+meeting-asr project transcribe
+meeting-asr project speakers inspect
+meeting-asr project speakers preview
+meeting-asr project speakers apply --map 0=欧丁 --map 1=敬悦
 ```
 
 `project create` 会复制源视频到 `source/`，后续命令只需要项目目录，不需要再次传视频路径。
+在项目目录内执行时，项目路径参数默认是当前目录；在其他目录执行时仍可显式传项目路径。
 
 ## 输出结构
 

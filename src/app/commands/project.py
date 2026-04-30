@@ -58,7 +58,7 @@ def create(
 
 @app.command("prepare")
 def prepare(
-    project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=False, dir_okay=True),
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     audio_format: str = typer.Option("flac", "--audio-format"),
 ) -> None:
     """Extract project audio without starting cloud transcription."""
@@ -69,7 +69,7 @@ def prepare(
 
 @app.command("transcribe")
 def transcribe(
-    project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=False, dir_okay=True),
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     speaker_count: Optional[int] = typer.Option(None, "--speaker-count", min=1),
     language: Optional[str] = typer.Option("zh,en", "--language"),
     model: str = typer.Option("fun-asr", "--model"),
@@ -150,7 +150,9 @@ def run(
 
 
 @app.command("status")
-def status(project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=False, dir_okay=True)) -> None:
+def status(
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+) -> None:
     """Print a project status summary."""
     manifest = run_with_cli_errors(lambda: load_manifest(project_dir))
     paths = project_paths(project_dir)
@@ -167,7 +169,9 @@ def status(project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=
 
 
 @app.command("git-init")
-def git_init(project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=False, dir_okay=True)) -> None:
+def git_init(
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+) -> None:
     """Initialize optional Git tracking for human-edited project files."""
     gitignore_path = run_with_cli_errors(lambda: init_project_git(project_dir))
     typer.echo(f"Git initialized: {project_dir.expanduser().resolve()}")
@@ -176,7 +180,7 @@ def git_init(project_dir: Path = typer.Argument(..., metavar="PROJECT", file_oka
 
 @speakers_app.command("inspect")
 def speakers_inspect(
-    project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=False, dir_okay=True),
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     sample_count: int = typer.Option(5, "--sample-count", min=1, max=20),
 ) -> None:
     """Print per-speaker samples for a project."""
@@ -193,7 +197,7 @@ def speakers_inspect(
 
 @speakers_app.command("preview")
 def speakers_preview(
-    project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=False, dir_okay=True),
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     speaker_id: Optional[int] = typer.Option(None, "--speaker-id"),
     padding_seconds: int = typer.Option(8, "--padding-seconds", min=0),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -219,7 +223,7 @@ def speakers_preview(
 
 @speakers_app.command("apply")
 def speakers_apply(
-    project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=False, dir_okay=True),
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     mappings: list[str] = typer.Option([], "--map"),
 ) -> None:
     """Apply speaker_id=name mappings to a project."""
@@ -236,7 +240,7 @@ def speakers_apply(
 
 @speakers_app.command("compare-srt")
 def speakers_compare_srt(
-    project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=False, dir_okay=True),
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     dingtalk_srt: Path = typer.Option(..., "--dingtalk-srt", exists=True, file_okay=True, dir_okay=False),
     output: Optional[Path] = typer.Option(None, "--output"),
 ) -> None:
@@ -289,8 +293,8 @@ def _echo_transcribe_summary(project_dir: Path, task_id: str, speaker_count: int
     typer.echo("")
     typer.echo("Next steps:")
     typer.echo(f"  cd {_shell_quote_path(project_dir)}")
-    typer.echo("  meeting-asr project speakers inspect .")
-    typer.echo("  meeting-asr project speakers preview .")
+    typer.echo("  meeting-asr project speakers inspect")
+    typer.echo("  meeting-asr project speakers preview")
 
 
 def _echo_project_created(project_dir: Path, manifest) -> None:
@@ -305,8 +309,8 @@ def _echo_project_created(project_dir: Path, manifest) -> None:
     typer.echo("")
     typer.echo("Next steps:")
     typer.echo(f"  cd {_shell_quote_path(resolved_dir)}")
-    typer.echo("  meeting-asr project transcribe .")
-    typer.echo("  meeting-asr project status .")
+    typer.echo("  meeting-asr project transcribe")
+    typer.echo("  meeting-asr project status")
 
 
 def _shell_quote_path(path: Path) -> str:

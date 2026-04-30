@@ -29,8 +29,8 @@ meeting-asr project create "/path/to/meeting.mp4" \
 
 ```bash
 cd "/path/to/project"
-meeting-asr project transcribe .
-meeting-asr project status .
+meeting-asr project transcribe
+meeting-asr project status
 ```
 
 默认项目目录遵循 XDG：`~/.local/share/meeting-asr/projects`。
@@ -40,13 +40,13 @@ meeting-asr project status .
 如果 OSS 已配置，默认使用 private OSS signed URL：
 
 ```bash
-meeting-asr project transcribe .
+meeting-asr project transcribe
 ```
 
 如果你已经有公网可访问音频 URL：
 
 ```bash
-meeting-asr project transcribe . \
+meeting-asr project transcribe \
   --file-url "https://example.com/audio.flac" \
   --oss-upload false
 ```
@@ -54,15 +54,15 @@ meeting-asr project transcribe . \
 ## 4. 人工确认 speaker
 
 ```bash
-meeting-asr project speakers inspect .
-meeting-asr project speakers preview .
-meeting-asr project speakers preview . --speaker-id 3
+meeting-asr project speakers inspect
+meeting-asr project speakers preview
+meeting-asr project speakers preview --speaker-id 3
 ```
 
 确认后写入映射：
 
 ```bash
-meeting-asr project speakers apply . \
+meeting-asr project speakers apply \
   --map 0=欧丁 \
   --map 1=敬悦 \
   --map 2=敬悦 \
