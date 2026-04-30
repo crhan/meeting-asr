@@ -439,6 +439,7 @@ def _prompt_speaker_name(
         name = typer.prompt(prompt, default=default_name).strip()
         if name != MORE_SAMPLES_COMMAND:
             return name or default_name
+        _remember_prompt_history(MORE_SAMPLES_COMMAND)
         offset = _show_more_speaker_samples(speaker_label, segments, offset, sample_count)
 
 
@@ -468,6 +469,28 @@ def _show_more_speaker_samples(
     typer.echo(f"More samples for {speaker_label}:")
     typer.echo(_render_speaker_samples(samples))
     return offset + len(samples)
+
+
+def _remember_prompt_history(value: str) -> None:
+    """
+    Add a command to interactive input history when readline is available.
+
+    Args:
+        value: Prompt input value to remember.
+    """
+    if not value:
+        return
+    try:
+        import readline
+    except ImportError:
+        return
+    try:
+        length = readline.get_current_history_length()
+        if length > 0 and readline.get_history_item(length) == value:
+            return
+        readline.add_history(value)
+    except (AttributeError, OSError):
+        return
 
 
 def _speaker_segments_by_id(result: TranscriptResult) -> dict[int, list[SentenceSegment]]:

@@ -171,10 +171,15 @@ def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     assert f"open {transcript_path.resolve()}" in result.output
 
 
-def test_project_speakers_apply_can_show_more_samples(tmp_path: Path) -> None:
+def test_project_speakers_apply_can_show_more_samples(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Speaker apply should let users ask for more evidence before naming."""
     project_dir = _sample_project(tmp_path)
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    remembered: list[str] = []
+    monkeypatch.setattr("app.commands.project._remember_prompt_history", remembered.append)
 
     result = runner.invoke(
         app,
@@ -186,6 +191,7 @@ def test_project_speakers_apply_can_show_more_samples(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "More samples for Speaker A" in result.output
     assert "再补一句。" in result.output
+    assert remembered == ["/more"]
     assert mapping == {"0": "欧丁", "1": "敬悦"}
 
 
