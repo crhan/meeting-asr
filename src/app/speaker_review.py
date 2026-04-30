@@ -12,7 +12,13 @@ from app.speaker_labeling import SpeakerSummary, load_transcript_result
 from app.utils import format_ms_timestamp
 
 
-def build_preview_command(*, video: Path, subtitle: Path, start_seconds: float) -> list[str]:
+def build_preview_command(
+    *,
+    video: Path,
+    subtitle: Path,
+    start_seconds: float,
+    duration_seconds: float | None = None,
+) -> list[str]:
     """
     Build a player command that can show external subtitles.
 
@@ -20,49 +26,163 @@ def build_preview_command(*, video: Path, subtitle: Path, start_seconds: float) 
         video: Source video.
         subtitle: Subtitle path.
         start_seconds: Playback start offset.
+        duration_seconds: Optional playback duration limit.
 
     Returns:
         Command argv.
     """
     video_path = _existing_path(video, "Video")
     subtitle_path = _existing_path(subtitle, "Subtitle")
-    mpv = shutil.which("mpv")
-    if mpv:
-        return [
-            mpv,
-            "--resume-playback=no",
-            f"--sub-file={subtitle_path}",
-            "--sid=1",
-            f"--start={start_seconds:.3f}",
-            str(video_path),
-        ]
+    if mpv := shutil.which("mpv"):
+        return _mpv_preview_command(mpv, video_path, subtitle_path, start_seconds, duration_seconds)
     iina_cli = _find_iina_cli()
     if iina_cli:
-        _stage_iina_subtitle(video_path, subtitle_path)
-        return [
-            iina_cli,
-            "--no-stdin",
-            str(video_path),
-            "--",
+        return _iina_preview_command(iina_cli, video_path, subtitle_path, start_seconds, duration_seconds)
+    if _ffplay_supports_subtitles_filter():
+        return _ffplay_preview_command(video_path, subtitle_path, start_seconds, duration_seconds)
+    raise RuntimeError("No supported subtitle preview player found. Install mpv, IINA, or ffplay.")
+
+
+def _mpv_preview_command(
+    mpv: str,
+    video: Path,
+    subtitle: Path,
+    start_seconds: float,
+    duration_seconds: float | None,
+) -> list[str]:
+    """
+    Build an mpv subtitle preview command.
+
+    Args:
+        mpv: mpv executable path.
+        video: Resolved video path.
+        subtitle: Resolved subtitle path.
+        start_seconds: Playback start offset.
+        duration_seconds: Optional playback duration limit.
+
+    Returns:
+        Command argv.
+    """
+    command = [mpv, "--resume-playback=no", f"--sub-file={subtitle}", "--sid=1", f"--start={start_seconds:.3f}"]
+    if duration_seconds is not None:
+        command.append(f"--length={duration_seconds:.3f}")
+    command.append(str(video))
+    return command
+
+
+def _iina_preview_command(
+    iina_cli: str,
+    video: Path,
+    subtitle: Path,
+    start_seconds: float,
+    duration_seconds: float | None,
+) -> list[str]:
+    """
+    Build an IINA subtitle preview command.
+
+    Args:
+        iina_cli: IINA command line launcher.
+        video: Resolved video path.
+        subtitle: Resolved subtitle path.
+        start_seconds: Playback start offset.
+        duration_seconds: Optional playback duration limit.
+
+    Returns:
+        Command argv.
+    """
+    _stage_iina_subtitle(video, subtitle)
+    raw_options = ["--resume-playback=no", "--sub-auto=fuzzy", "--sid=1", f"--start={start_seconds:.3f}"]
+    if duration_seconds is not None:
+        raw_options.append(f"--length={duration_seconds:.3f}")
+    return [iina_cli, "--no-stdin", str(video), "--", *raw_options]
+
+
+def _ffplay_preview_command(
+    video: Path,
+    subtitle: Path,
+    start_seconds: float,
+    duration_seconds: float | None,
+) -> list[str]:
+    """
+    Build an ffplay subtitle preview command.
+
+    Args:
+        video: Resolved video path.
+        subtitle: Resolved subtitle path.
+        start_seconds: Playback start offset.
+        duration_seconds: Optional playback duration limit.
+
+    Returns:
+        Command argv.
+    """
+    subtitle_filter = f"subtitles=filename='{_escape_subtitle_path_for_ffmpeg(subtitle)}'"
+    command = [
+        "ffplay",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostats",
+        "-autoexit",
+        "-window_title",
+        "Meeting-ASR Speaker Review",
+        "-ss",
+        f"{start_seconds:.3f}",
+    ]
+    if duration_seconds is not None:
+        command.extend(["-t", f"{duration_seconds:.3f}"])
+    command.extend(["-i", str(video), "-vf", subtitle_filter])
+    return command
+
+
+def build_audio_preview_command(
+    *,
+    media: Path,
+    start_seconds: float,
+    duration_seconds: float | None = None,
+) -> list[str]:
+    """
+    Build an audio-only player command for local speaker review.
+
+    Args:
+        media: Source media file.
+        start_seconds: Playback start offset.
+        duration_seconds: Optional playback duration limit.
+
+    Returns:
+        Command argv.
+    """
+    media_path = _existing_path(media, "Media")
+    mpv = shutil.which("mpv")
+    if mpv:
+        command = [
+            mpv,
+            "--really-quiet",
             "--resume-playback=no",
-            "--sub-auto=fuzzy",
-            "--sid=1",
+            "--vid=no",
+            "--force-window=no",
             f"--start={start_seconds:.3f}",
         ]
-    if _ffplay_supports_subtitles_filter():
-        subtitle_filter = f"subtitles=filename='{_escape_subtitle_path_for_ffmpeg(subtitle_path)}'"
-        return [
+        if duration_seconds is not None:
+            command.append(f"--length={duration_seconds:.3f}")
+        command.append(str(media_path))
+        return command
+    if shutil.which("ffplay"):
+        command = [
             "ffplay",
-            "-window_title",
-            "Meeting-ASR Speaker Review",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostats",
+            "-nodisp",
+            "-autoexit",
             "-ss",
             f"{start_seconds:.3f}",
-            "-i",
-            str(video_path),
-            "-vf",
-            subtitle_filter,
         ]
-    raise RuntimeError("No supported subtitle preview player found. Install mpv, IINA, or ffplay.")
+        if duration_seconds is not None:
+            command.extend(["-t", f"{duration_seconds:.3f}"])
+        command.extend(["-i", str(media_path)])
+        return command
+    raise RuntimeError("No supported audio preview player found. Install mpv or ffplay.")
 
 
 def preview_start_seconds(sentences_json: Path, speaker_id: int | None, padding_seconds: int) -> float:

@@ -42,9 +42,24 @@ def test_transcript_list_shows_available_artifacts(tmp_path: Path) -> None:
     result = runner.invoke(app, ["project", "transcript", "list", str(project_dir)])
 
     assert result.exit_code == 0
-    assert "named:" in result.output
-    assert "raw_result.json" in result.output
-    assert "sentences.json" in result.output
+    assert "Artifacts: 6/6 available" in result.output
+    assert "named" in result.output
+    assert "exports/transcript_named.txt" in result.output
+    assert "asr/raw_result.json" in result.output
+    assert "asr/sentences.json" in result.output
+
+
+def test_transcript_list_shows_missing_artifacts(tmp_path: Path) -> None:
+    """List mode should show expected locations for absent artifacts."""
+    project_dir = _sample_project(tmp_path)
+
+    result = runner.invoke(app, ["project", "transcript", "list", str(project_dir)])
+
+    assert result.exit_code == 0
+    assert "Artifacts: 0/6 available" in result.output
+    assert "missing" in result.output
+    assert "expected: exports/transcript.txt" in result.output
+    assert "exports/subtitle_named.srt or exports/subtitle.srt" in result.output
 
 
 def test_transcript_show_can_select_plain_output(tmp_path: Path) -> None:

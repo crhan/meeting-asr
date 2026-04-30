@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 import subprocess
 
+from rich import box
+from rich.console import Console
+from rich.table import Table
 import typer
 
 from app.cli_errors import run_with_cli_errors
@@ -26,19 +30,23 @@ class TranscriptKind(str, Enum):
     sentences = "sentences"
 
 
+@dataclass(frozen=True, slots=True)
+class TranscriptArtifactRow:
+    """One transcript artifact row for list output."""
+
+    kind: TranscriptKind
+    path: Path | None
+    candidates: list[Path]
+
+
 @app.command("list")
 def list_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
 ) -> None:
     """List transcript artifacts for a project."""
     paths = project_paths(project_dir)
-    typer.echo(f"Project: {paths.root}")
-    for kind in TranscriptKind:
-        if kind == TranscriptKind.auto:
-            continue
-        path = _resolve_transcript_path(paths.root, kind, required=False)
-        status = str(path) if path else "-"
-        typer.echo(f"{kind.value}: {status}")
+    rows = _transcript_artifact_rows(paths.root)
+    _echo_transcript_artifact_rows(paths.root, rows)
 
 
 @app.command("path")
@@ -86,9 +94,8 @@ def _resolve_transcript_path(project_dir: Path, kind: TranscriptKind, *, require
     """
     paths = project_paths(project_dir)
     candidates = _transcript_candidates(paths.root, kind)
-    for path in candidates:
-        if path.exists():
-            return path
+    if path := _first_existing_path(candidates):
+        return path
     if not required:
         return None
     expected = ", ".join(str(path) for path in candidates)
@@ -124,3 +131,127 @@ def _transcript_candidates(project_dir: Path, kind: TranscriptKind) -> list[Path
     if kind == TranscriptKind.raw:
         return [paths.asr_dir / "raw_result.json"]
     return [paths.asr_dir / "sentences.json"]
+
+
+def _transcript_artifact_rows(project_dir: Path) -> list[TranscriptArtifactRow]:
+    """
+    Build transcript artifact rows in display order.
+
+    Args:
+        project_dir: Project root.
+
+    Returns:
+        Artifact rows with resolved availability.
+    """
+    rows = []
+    for kind in TranscriptKind:
+        if kind == TranscriptKind.auto:
+            continue
+        candidates = _transcript_candidates(project_dir, kind)
+        rows.append(
+            TranscriptArtifactRow(
+                kind=kind,
+                path=_first_existing_path(candidates),
+                candidates=candidates,
+            )
+        )
+    return rows
+
+
+def _first_existing_path(candidates: list[Path]) -> Path | None:
+    """
+    Return the first existing candidate path.
+
+    Args:
+        candidates: Candidate paths in preference order.
+
+    Returns:
+        First existing path, or ``None`` when all candidates are absent.
+    """
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def _echo_transcript_artifact_rows(project_dir: Path, rows: list[TranscriptArtifactRow]) -> None:
+    """
+    Print transcript artifacts as a compact summary table.
+
+    Args:
+        project_dir: Project root.
+        rows: Artifact rows to display.
+    """
+    available_count = sum(row.path is not None for row in rows)
+    typer.echo(f"Project: {project_dir}")
+    typer.echo(f"Artifacts: {available_count}/{len(rows)} available")
+    _transcript_table_console().print(_transcript_artifact_table(project_dir, rows))
+
+
+def _transcript_artifact_table(project_dir: Path, rows: list[TranscriptArtifactRow]) -> Table:
+    """
+    Build the transcript artifact table.
+
+    Args:
+        project_dir: Project root.
+        rows: Artifact rows to display.
+
+    Returns:
+        Rich table ready to print.
+    """
+    table = Table(box=box.ASCII, show_edge=False, pad_edge=False)
+    table.add_column("Kind", no_wrap=True)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Location")
+    for row in rows:
+        table.add_row(row.kind.value, _artifact_status(row), _artifact_location(project_dir, row))
+    return table
+
+
+def _artifact_status(row: TranscriptArtifactRow) -> str:
+    """Return a short artifact availability label."""
+    return "available" if row.path else "missing"
+
+
+def _artifact_location(project_dir: Path, row: TranscriptArtifactRow) -> str:
+    """
+    Return the display location for one artifact row.
+
+    Args:
+        project_dir: Project root.
+        row: Artifact row.
+
+    Returns:
+        Existing path or expected candidates, relative to the project where possible.
+    """
+    if row.path:
+        return _relative_display_path(project_dir, row.path)
+    expected = " or ".join(_relative_display_path(project_dir, path) for path in row.candidates)
+    return f"expected: {expected}"
+
+
+def _relative_display_path(project_dir: Path, path: Path) -> str:
+    """
+    Format a path relative to the project root when possible.
+
+    Args:
+        project_dir: Project root.
+        path: Path to display.
+
+    Returns:
+        Project-relative path, falling back to the absolute path.
+    """
+    try:
+        return str(path.relative_to(project_dir))
+    except ValueError:
+        return str(path)
+
+
+def _transcript_table_console() -> Console:
+    """
+    Build the stdout console used for transcript tables.
+
+    Returns:
+        Rich console instance.
+    """
+    return Console(highlight=False, color_system=None, width=120)

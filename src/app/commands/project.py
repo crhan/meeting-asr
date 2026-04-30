@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
+import select
 import shlex
+import signal
 import subprocess
+import sys
+import termios
+import tty
+import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +29,7 @@ from app.completion_helpers import (
     complete_voiceprint_provider,
 )
 from app.config import get_default_projects_dir
+from app.ffmpeg_utils import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
 from app.project_manager import (
     ProjectListItem,
@@ -40,7 +49,12 @@ from app.project_manager import (
 )
 from app.speaker_labeling import build_speaker_summaries, load_transcript_result
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
-from app.speaker_review import build_preview_command, preview_start_seconds, render_speaker_summary
+from app.speaker_review import (
+    build_audio_preview_command,
+    build_preview_command,
+    preview_start_seconds,
+    render_speaker_summary,
+)
 from app.srt_compare import build_report, parse_srt
 from app.utils import configure_logging, format_ms_timestamp, safe_write_text
 
@@ -50,6 +64,30 @@ app.add_typer(speakers_app, name="speakers", help="Review and name project speak
 app.add_typer(transcript_commands.app, name="transcript", help="View project transcript artifacts.")
 
 MORE_SAMPLES_COMMAND = "/more"
+AUDIO_PREVIEW_COMMAND = "/audio"
+SPEAKER_APPLY_COMMANDS = (MORE_SAMPLES_COMMAND, AUDIO_PREVIEW_COMMAND)
+SPEAKER_APPLY_PREVIEW_LEAD_SECONDS = 1.0
+SPEAKER_APPLY_PREVIEW_TAIL_SECONDS = 1.0
+SPEAKER_APPLY_PREVIEW_MIN_SECONDS = 4.0
+SPEAKER_APPLY_PREVIEW_MAX_SECONDS = 18.0
+SPEAKER_APPLY_PREVIEW_GAP_SECONDS = 0.25
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerApplyPreviewContext:
+    """Inputs needed to play speaker previews during interactive apply."""
+
+    project_root: Path
+    video: Path
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerApplyPreviewTarget:
+    """Selected speaker sample for finite playback."""
+
+    segment: SentenceSegment
+    start_seconds: float
+    duration_seconds: float
 
 
 @app.command("create")
@@ -275,7 +313,7 @@ def speakers_inspect(
         typer.echo("No detected speakers found in the transcript.")
         raise typer.Exit(code=1)
     speaker_mapping = run_with_cli_errors(lambda: _load_existing_speaker_mapping(project_dir))
-    speaker_matches = run_with_cli_errors(lambda: _load_speaker_match_summaries(project_dir))
+    speaker_matches = run_with_cli_errors(lambda: _load_speaker_match_summaries(project_dir, speaker_mapping))
     for index, summary in enumerate(summaries):
         if index:
             typer.echo("")
@@ -555,11 +593,13 @@ def _prompt_speaker_mappings(project_dir: Path, result: TranscriptResult, *, sam
     if not summaries:
         typer.echo("No detected speakers found in the transcript.")
         raise typer.Exit(code=1)
-    typer.echo("Enter a name for each speaker. Type /more to show more samples.")
+    typer.echo("Enter a name for each speaker.")
+    typer.echo("Commands: /more shows more samples, /audio plays the visible samples.")
     typer.echo("Press Enter to keep the default label.")
     existing = _load_existing_speaker_mapping(project_dir)
     matched = _load_speaker_match_defaults(project_dir)
     segments = _speaker_segments_by_id(result)
+    preview_context = _speaker_apply_preview_context(project_dir)
     resolved: dict[int, str] = {}
     for index, summary in enumerate(summaries):
         if index:
@@ -570,8 +610,10 @@ def _prompt_speaker_mappings(project_dir: Path, result: TranscriptResult, *, sam
             speaker_label=summary.anonymous_label,
             default_name=default_name,
             segments=segments.get(summary.speaker_id, []),
+            visible_segments=list(summary.sample_segments),
             next_offset=sample_count,
             sample_count=sample_count,
+            preview_context=preview_context,
         )
     return resolved
 
@@ -581,8 +623,10 @@ def _prompt_speaker_name(
     speaker_label: str,
     default_name: str,
     segments: list[SentenceSegment],
+    visible_segments: list[SentenceSegment],
     next_offset: int,
     sample_count: int,
+    preview_context: SpeakerApplyPreviewContext,
 ) -> str:
     """
     Prompt for one speaker name, allowing more samples on demand.
@@ -591,20 +635,374 @@ def _prompt_speaker_name(
         speaker_label: Anonymous speaker label.
         default_name: Existing or anonymous default name.
         segments: All transcript segments for this speaker.
+        visible_segments: Speaker segments currently visible in the terminal.
         next_offset: First segment offset not yet displayed.
         sample_count: Number of samples per extra batch.
+        preview_context: Media inputs for slash-command previews.
 
     Returns:
         Confirmed speaker name.
     """
     offset = next_offset
+    preview_segments = visible_segments or segments[:sample_count]
     while True:
-        prompt = f"Name for {speaker_label} ({MORE_SAMPLES_COMMAND} for more samples)"
+        prompt = f"Name for {speaker_label} (/more /audio)"
         name = typer.prompt(prompt, default=default_name).strip()
-        if name != MORE_SAMPLES_COMMAND:
+        command = _speaker_apply_command(name)
+        if command is None:
             return name or default_name
-        _remember_prompt_history(MORE_SAMPLES_COMMAND)
-        offset = _show_more_speaker_samples(speaker_label, segments, offset, sample_count)
+        _remember_prompt_history(command)
+        if command == AUDIO_PREVIEW_COMMAND:
+            _play_speaker_apply_preview(
+                preview_context=preview_context,
+                speaker_label=speaker_label,
+                segments=preview_segments,
+            )
+            continue
+        offset, samples = _show_more_speaker_samples(speaker_label, segments, offset, sample_count)
+        if samples:
+            preview_segments = samples
+
+
+def _speaker_apply_preview_context(project_dir: Path) -> SpeakerApplyPreviewContext:
+    """
+    Build preview inputs for interactive speaker apply commands.
+
+    Args:
+        project_dir: Project root.
+
+    Returns:
+        Preview context with resolved media and subtitle paths.
+    """
+    paths = project_paths(project_dir)
+    manifest = load_manifest(paths.root)
+    return SpeakerApplyPreviewContext(
+        project_root=paths.root,
+        video=resolve_project_source_path(paths.root, manifest),
+    )
+
+
+def _speaker_apply_command(value: str) -> str | None:
+    """
+    Parse a speaker apply slash command.
+
+    Args:
+        value: Raw prompt input.
+
+    Returns:
+        Normalized command, or ``None`` when the input is a speaker name.
+    """
+    command = value.strip().lower()
+    return command if command in SPEAKER_APPLY_COMMANDS else None
+
+
+def _play_speaker_apply_preview(
+    *,
+    preview_context: SpeakerApplyPreviewContext,
+    speaker_label: str,
+    segments: list[SentenceSegment],
+) -> None:
+    """
+    Play the current speaker from the currently visible samples.
+
+    Args:
+        preview_context: Media inputs for playback.
+        speaker_label: Anonymous speaker label.
+        segments: Currently visible speaker segments.
+    """
+    try:
+        _echo_preview_segments(speaker_label, segments)
+        clip_path = _build_speaker_apply_audio_preview_clip(
+            preview_context=preview_context,
+            speaker_label=speaker_label,
+            segments=segments,
+        )
+        command = build_audio_preview_command(media=clip_path, start_seconds=0.0)
+        typer.echo(f"Starting audio preview for {speaker_label} with {len(segments)} displayed sample(s).")
+        typer.echo("Controls: Space/P pauses, Q/Esc stops early, Ctrl-C also stops.")
+        _run_speaker_apply_preview_command(command)
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Preview failed for {speaker_label}: {exc}", err=True)
+
+
+def _run_speaker_apply_preview_command(command: list[str]) -> None:
+    """
+    Run a preview player while handling controls in this CLI process.
+
+    Args:
+        command: Player command argv.
+    """
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL)
+    stopped = False
+    paused = False
+    old_terminal_settings = None
+    try:
+        if not sys.stdin.isatty():
+            returncode = process.wait()
+        else:
+            old_terminal_settings = termios.tcgetattr(sys.stdin.fileno())
+            tty.setcbreak(sys.stdin.fileno())
+            while process.poll() is None:
+                key = _read_preview_control_key()
+                if key in {"q", "Q", "\x1b"}:
+                    stopped = True
+                    _terminate_preview_process(process, paused=paused)
+                    break
+                if key in {" ", "p", "P"}:
+                    paused = _toggle_preview_pause(process, paused)
+            returncode = process.wait()
+    except KeyboardInterrupt:
+        stopped = True
+        _terminate_preview_process(process, paused=paused)
+        returncode = process.wait()
+    finally:
+        if old_terminal_settings is not None:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_terminal_settings)
+    if stopped:
+        typer.echo("Preview stopped.")
+        return
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, command)
+
+
+def _read_preview_control_key() -> str | None:
+    """
+    Read one preview control key without blocking playback.
+
+    Returns:
+        Pressed key, or ``None`` when no key is available.
+    """
+    ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+    if not ready:
+        return None
+    return sys.stdin.read(1)
+
+
+def _toggle_preview_pause(process: subprocess.Popen, paused: bool) -> bool:
+    """
+    Pause or resume the preview process.
+
+    Args:
+        process: Running preview process.
+        paused: Current pause state.
+
+    Returns:
+        Updated pause state.
+    """
+    if paused:
+        os.kill(process.pid, signal.SIGCONT)
+        typer.echo("Preview resumed.")
+        return False
+    os.kill(process.pid, signal.SIGSTOP)
+    typer.echo("Preview paused. Press Space/P to resume, Q/Esc to stop.")
+    return True
+
+
+def _terminate_preview_process(process: subprocess.Popen, *, paused: bool) -> None:
+    """
+    Terminate a preview process.
+
+    Args:
+        process: Running preview process.
+        paused: Whether the process is currently stopped.
+    """
+    if process.poll() is not None:
+        return
+    if paused:
+        os.kill(process.pid, signal.SIGCONT)
+    process.terminate()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
+def _echo_preview_segments(speaker_label: str, segments: list[SentenceSegment]) -> None:
+    """
+    Print the visible sample batch that will be played.
+
+    Args:
+        speaker_label: Anonymous speaker label.
+        segments: Currently visible speaker segments.
+    """
+    if len(segments) == 1:
+        typer.echo(f"Preview sample for {speaker_label}: {_render_preview_target_sample(segments[0])}")
+        return
+    typer.echo(f"Preview samples for {speaker_label}:")
+    for segment in segments:
+        typer.echo(f"  - {_render_preview_target_sample(segment)}")
+
+
+def _build_speaker_apply_audio_preview_clip(
+    *,
+    preview_context: SpeakerApplyPreviewContext,
+    speaker_label: str,
+    segments: list[SentenceSegment],
+) -> Path:
+    """
+    Build one temporary WAV containing the visible sample batch.
+
+    Args:
+        preview_context: Media inputs for playback.
+        speaker_label: Anonymous speaker label.
+        segments: Currently visible speaker segments.
+
+    Returns:
+        Temporary WAV path.
+    """
+    if not segments:
+        raise RuntimeError("No transcript samples found for this speaker.")
+    clip_dir = _speaker_apply_preview_clip_dir(preview_context.project_root, speaker_label)
+    clip_dir.mkdir(parents=True, exist_ok=True)
+    clip_paths = []
+    for index, segment in enumerate(segments, start=1):
+        target = _speaker_apply_preview_target([segment])
+        clip_path = clip_dir / f"clip_{index:03d}.wav"
+        extract_audio_clip(
+            preview_context.video,
+            clip_path,
+            start_seconds=target.start_seconds,
+            duration_seconds=target.duration_seconds,
+        )
+        clip_paths.append(clip_path)
+    output_path = clip_dir / "preview.wav"
+    _concatenate_wav_clips(clip_paths, output_path)
+    return output_path
+
+
+def _speaker_apply_preview_clip_dir(project_root: Path, speaker_label: str) -> Path:
+    """
+    Return the temporary clip directory for one speaker prompt.
+
+    Args:
+        project_root: Project root.
+        speaker_label: Anonymous speaker label.
+
+    Returns:
+        Temporary clip directory.
+    """
+    safe_label = "".join(char if char.isalnum() else "_" for char in speaker_label).strip("_") or "speaker"
+    return project_root / "tmp" / "speaker_apply_preview" / safe_label
+
+
+def _concatenate_wav_clips(clip_paths: list[Path], output_path: Path) -> Path:
+    """
+    Concatenate WAV clips with a small silent gap.
+
+    Args:
+        clip_paths: WAV clips in playback order.
+        output_path: Combined WAV output path.
+
+    Returns:
+        Combined WAV path.
+    """
+    if not clip_paths:
+        raise RuntimeError("No audio preview clips were generated.")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    expected_format: tuple[int, int, int, str, str] | None = None
+    with wave.open(str(output_path), "wb") as writer:
+        for index, clip_path in enumerate(clip_paths):
+            with wave.open(str(clip_path), "rb") as reader:
+                params = reader.getparams()
+                current_format = (
+                    params.nchannels,
+                    params.sampwidth,
+                    params.framerate,
+                    params.comptype,
+                    params.compname,
+                )
+                if expected_format is None:
+                    writer.setparams(params)
+                    expected_format = current_format
+                elif current_format != expected_format:
+                    raise RuntimeError(f"Audio preview clip format mismatch: {clip_path}")
+                writer.writeframes(reader.readframes(reader.getnframes()))
+                if index + 1 < len(clip_paths):
+                    _write_wav_silence(writer, params)
+    return output_path
+
+
+def _write_wav_silence(
+    writer: wave.Wave_write,
+    params,
+    seconds: float = SPEAKER_APPLY_PREVIEW_GAP_SECONDS,
+) -> None:
+    """
+    Append silence to a WAV writer.
+
+    Args:
+        writer: Open WAV writer.
+        params: WAV params from the current clip.
+        seconds: Silence duration.
+    """
+    frame_count = int(round(params.framerate * seconds))
+    writer.writeframes(b"\x00" * frame_count * params.nchannels * params.sampwidth)
+
+
+def _speaker_apply_preview_target(segments: list[SentenceSegment]) -> SpeakerApplyPreviewTarget:
+    """
+    Select a finite preview target for the current speaker.
+
+    Args:
+        segments: Ordered speaker segments.
+
+    Returns:
+        Playback target with a bounded duration.
+    """
+    if not segments:
+        raise RuntimeError("No transcript samples found for this speaker.")
+    segment = _speaker_apply_preview_segment(segments)
+    start_seconds = max(0.0, segment.begin_time_ms / 1000.0 - SPEAKER_APPLY_PREVIEW_LEAD_SECONDS)
+    end_seconds = segment.end_time_ms / 1000.0 + SPEAKER_APPLY_PREVIEW_TAIL_SECONDS
+    duration_seconds = min(
+        SPEAKER_APPLY_PREVIEW_MAX_SECONDS,
+        max(SPEAKER_APPLY_PREVIEW_MIN_SECONDS, end_seconds - start_seconds),
+    )
+    return SpeakerApplyPreviewTarget(segment, start_seconds, duration_seconds)
+
+
+def _speaker_apply_preview_segment(segments: list[SentenceSegment]) -> SentenceSegment:
+    """
+    Pick the most useful sample segment for speaker preview.
+
+    Args:
+        segments: Ordered speaker segments.
+
+    Returns:
+        Longest segment, preferring richer text and earlier timeline position on ties.
+    """
+    return max(
+        segments,
+        key=lambda segment: (_segment_duration_ms(segment), len(segment.text.strip()), -segment.begin_time_ms),
+    )
+
+
+def _segment_duration_ms(segment: SentenceSegment) -> int:
+    """
+    Return a non-negative segment duration.
+
+    Args:
+        segment: Transcript segment.
+
+    Returns:
+        Duration in milliseconds.
+    """
+    return max(0, segment.end_time_ms - segment.begin_time_ms)
+
+
+def _render_preview_target_sample(segment: SentenceSegment) -> str:
+    """
+    Render the selected preview segment for terminal confirmation.
+
+    Args:
+        segment: Selected transcript segment.
+
+    Returns:
+        Compact timestamped transcript text.
+    """
+    start = format_ms_timestamp(segment.begin_time_ms)
+    end = format_ms_timestamp(segment.end_time_ms)
+    return f"[{start} - {end}] {_trim_prompt_sample(segment.text, limit=120)}"
 
 
 def _show_more_speaker_samples(
@@ -612,7 +1010,7 @@ def _show_more_speaker_samples(
     segments: list[SentenceSegment],
     offset: int,
     sample_count: int,
-) -> int:
+) -> tuple[int, list[SentenceSegment]]:
     """
     Print the next batch of samples for a speaker.
 
@@ -623,16 +1021,16 @@ def _show_more_speaker_samples(
         sample_count: Maximum samples to show.
 
     Returns:
-        Updated sample offset.
+        Updated sample offset and newly displayed samples.
     """
     samples = segments[offset : offset + sample_count]
     if not samples:
         typer.echo(f"No more samples for {speaker_label}.")
-        return offset
+        return offset, []
     typer.echo("")
     typer.echo(f"More samples for {speaker_label}:")
     typer.echo(_render_speaker_samples(samples))
-    return offset + len(samples)
+    return offset + len(samples), samples
 
 
 def _remember_prompt_history(value: str) -> None:
@@ -750,12 +1148,13 @@ def _load_speaker_match_defaults(project_dir: Path) -> dict[int, str]:
     }
 
 
-def _load_speaker_match_summaries(project_dir: Path) -> dict[int, str]:
+def _load_speaker_match_summaries(project_dir: Path, speaker_mapping: dict[int, str]) -> dict[int, str]:
     """
     Load speaker match results for inspect output.
 
     Args:
         project_dir: Project root.
+        speaker_mapping: Existing confirmed speaker mapping.
 
     Returns:
         Speaker id to display-safe match summary.
@@ -765,19 +1164,22 @@ def _load_speaker_match_summaries(project_dir: Path) -> dict[int, str]:
         return {}
     payload = json.loads(match_path.read_text(encoding="utf-8"))
     matches = payload.get("matches", [])
-    return {
-        int(item["speaker_id"]): _speaker_match_summary(item)
-        for item in matches
-        if isinstance(item, dict) and "speaker_id" in item
-    }
+    summaries: dict[int, str] = {}
+    for item in matches:
+        if not isinstance(item, dict) or "speaker_id" not in item:
+            continue
+        speaker_id = int(item["speaker_id"])
+        summaries[speaker_id] = _speaker_match_summary(item, mapped_name=speaker_mapping.get(speaker_id))
+    return summaries
 
 
-def _speaker_match_summary(item: dict[str, object]) -> str:
+def _speaker_match_summary(item: dict[str, object], *, mapped_name: str | None = None) -> str:
     """
     Format one voiceprint match row for humans.
 
     Args:
         item: Raw match JSON item.
+        mapped_name: Existing confirmed speaker name.
 
     Returns:
         Short match summary.
@@ -785,9 +1187,31 @@ def _speaker_match_summary(item: dict[str, object]) -> str:
     name = str(item.get("name") or "unknown")
     status = "accepted" if item.get("accepted") else "review"
     score = _safe_float(item.get("score"))
+    suffix = " CONFLICT" if _speaker_match_conflicts(item, name, mapped_name) else ""
     if score is None:
-        return f"{name} {status}"
-    return f"{name} score={score:.3f} {status}"
+        return f"{name} {status}{suffix}"
+    return f"{name} score={score:.3f} {status}{suffix}"
+
+
+def _speaker_match_conflicts(item: dict[str, object], match_name: str, mapped_name: str | None) -> bool:
+    """
+    Return whether a voiceprint match conflicts with a confirmed mapping.
+
+    Args:
+        item: Raw match JSON item.
+        match_name: Display name from the match row.
+        mapped_name: Existing confirmed speaker name.
+
+    Returns:
+        ``True`` when both sides name different real speakers.
+    """
+    if not mapped_name or match_name == "unknown":
+        return False
+    if not item.get("accepted"):
+        return False
+    if mapped_name == str(item.get("label") or ""):
+        return False
+    return mapped_name != match_name
 
 
 def _safe_float(value: object) -> float | None:

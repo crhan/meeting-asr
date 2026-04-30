@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import wave
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,8 @@ import typer
 from typer.testing import CliRunner
 
 from app.cli import app
+from app.commands import project as project_commands
+from app.models import SentenceSegment
 from app.project_manager import (
     _parse_project_oss_upload,
     apply_project_speakers,
@@ -286,6 +289,40 @@ def test_project_speakers_inspect_shows_voiceprint_matches(tmp_path: Path) -> No
     assert "Voiceprint match: 敬悦 score=0.775 accepted" in result.output
 
 
+def test_project_speakers_inspect_marks_voiceprint_conflicts(tmp_path: Path) -> None:
+    """Speaker inspect should flag conflicts between manual names and accepted matches."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    apply_project_speakers(project_dir, {1: "敬悦"})
+    (project_dir / "speakers" / "speaker_matches.json").write_text(
+        json.dumps(
+            {
+                "provider": "local-speechbrain",
+                "model": "speechbrain-spkrec-ecapa-voxceleb",
+                "threshold": 0.75,
+                "matches": [
+                    {
+                        "speaker_id": 1,
+                        "label": "Speaker B",
+                        "name": "墨泪",
+                        "score": 0.80123,
+                        "accepted": True,
+                        "sample_count": 23,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"])
+
+    assert result.exit_code == 0
+    assert "Name: 敬悦" in result.output
+    assert "Voiceprint match: 墨泪 score=0.801 accepted CONFLICT" in result.output
+
+
 def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     """Speaker apply should support the human review flow."""
     project_dir = _sample_project(tmp_path)
@@ -331,6 +368,147 @@ def test_project_speakers_apply_can_show_more_samples(
     assert "再补一句。" in result.output
     assert remembered == ["/more"]
     assert mapping == {"0": "欧丁", "1": "敬悦"}
+
+
+def test_project_speakers_apply_can_preview_audio(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Speaker apply should let users play the current speaker before naming."""
+    project_dir = _sample_project(tmp_path)
+    sentences_path = project_dir / "asr" / "sentences.json"
+    _write_sample_sentences(sentences_path)
+    payload = json.loads(sentences_path.read_text(encoding="utf-8"))
+    payload["sentences"].append(
+        {
+            "begin_time_ms": 10_000,
+            "end_time_ms": 18_000,
+            "text": "这是一段更适合试听的句子。",
+            "speaker_id": 0,
+            "sentence_id": 4,
+        }
+    )
+    sentences_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    played: list[list[str]] = []
+    remembered: list[str] = []
+    captured: dict[str, Path | float] = {}
+    audio_segments: list[str] = []
+    audio_clip = project_dir / "tmp" / "speaker_apply_preview" / "Speaker_A" / "preview.wav"
+
+    def fake_build_audio_preview_command(
+        *,
+        media: Path,
+        start_seconds: float,
+        duration_seconds: float | None = None,
+    ) -> list[str]:
+        captured["audio"] = media
+        captured["audio_start"] = start_seconds
+        captured["audio_duration"] = duration_seconds or 0.0
+        return ["audio-player"]
+
+    def fake_build_audio_preview_clip(
+        *,
+        preview_context,
+        speaker_label: str,
+        segments,
+    ) -> Path:
+        assert preview_context.project_root == project_dir.resolve()
+        assert speaker_label == "Speaker A"
+        audio_segments.extend(segment.text for segment in segments)
+        return audio_clip
+
+    def fake_run_preview_command(command: list[str]) -> None:
+        played.append(command)
+
+    monkeypatch.setattr("app.commands.project.build_audio_preview_command", fake_build_audio_preview_command)
+    monkeypatch.setattr("app.commands.project._build_speaker_apply_audio_preview_clip", fake_build_audio_preview_clip)
+    monkeypatch.setattr("app.commands.project._run_speaker_apply_preview_command", fake_run_preview_command)
+    monkeypatch.setattr("app.commands.project._remember_prompt_history", remembered.append)
+
+    result = runner.invoke(
+        app,
+        ["project", "speakers", "apply", str(project_dir), "--sample-count", "1"],
+        input="/more\n/audio\n欧丁\n敬悦\n",
+    )
+
+    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert played == [["audio-player"]]
+    assert remembered == ["/more", "/audio"]
+    assert captured["audio"] == audio_clip
+    assert captured["audio_start"] == 0.0
+    assert captured["audio_duration"] == 0.0
+    assert audio_segments == ["再补一句。"]
+    assert "Preview sample for Speaker A: [00:00:01.900 - 00:00:02.500] 再补一句。" in result.output
+    assert "Starting audio preview for Speaker A with 1 displayed sample(s)." in result.output
+    assert "Controls: Space/P pauses, Q/Esc stops early, Ctrl-C also stops." in result.output
+    assert "/video" not in result.output
+    assert mapping == {"0": "欧丁", "1": "敬悦"}
+
+
+def test_speaker_apply_audio_preview_clip_uses_visible_segments(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Audio preview clips should be built from the visible sample batch only."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"video")
+    context = project_commands.SpeakerApplyPreviewContext(
+        project_root=tmp_path,
+        video=source,
+    )
+    segments = [
+        SentenceSegment(1000, 1600, "第一段。", 0, 1),
+        SentenceSegment(5000, 9000, "第二段。", 0, 2),
+    ]
+    calls: list[tuple[Path, float, float]] = []
+
+    def fake_extract_audio_clip(
+        input_path: Path,
+        output_path: Path,
+        *,
+        start_seconds: float,
+        duration_seconds: float,
+    ) -> Path:
+        assert input_path == source
+        calls.append((output_path, start_seconds, duration_seconds))
+        _write_test_wav(output_path)
+        return output_path
+
+    monkeypatch.setattr(project_commands, "extract_audio_clip", fake_extract_audio_clip)
+
+    output = project_commands._build_speaker_apply_audio_preview_clip(
+        preview_context=context,
+        speaker_label="Speaker A",
+        segments=segments,
+    )
+
+    assert output == tmp_path / "tmp" / "speaker_apply_preview" / "Speaker_A" / "preview.wav"
+    assert [(start, duration) for _, start, duration in calls] == [(0.0, 4.0), (4.0, 6.0)]
+    assert [path.name for path, _, _ in calls] == ["clip_001.wav", "clip_002.wav"]
+    with wave.open(str(output), "rb") as reader:
+        assert reader.getnframes() > 2 * 160
+
+
+def test_speaker_apply_preview_runner_stops_on_q(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Preview controls should terminate the player from the CLI process."""
+    process = _FakePreviewProcess()
+    stdin = _FakePreviewStdin("q")
+
+    monkeypatch.setattr(project_commands.sys, "stdin", stdin)
+    monkeypatch.setattr(project_commands.subprocess, "Popen", lambda command, stdin=None: process)
+    monkeypatch.setattr(project_commands.termios, "tcgetattr", lambda fd: ["old"])
+    monkeypatch.setattr(project_commands.termios, "tcsetattr", lambda fd, when, settings: None)
+    monkeypatch.setattr(project_commands.tty, "setcbreak", lambda fd: None)
+    monkeypatch.setattr(project_commands.select, "select", lambda read, write, error, timeout: (read, [], []))
+
+    project_commands._run_speaker_apply_preview_command(["player"])
+
+    assert process.terminated is True
+    assert "Preview stopped." in capsys.readouterr().out
 
 
 def test_project_speakers_preview_prefers_named_subtitle(
@@ -400,3 +578,57 @@ def _write_sample_sentences(path: Path) -> None:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _write_test_wav(path: Path) -> None:
+    """Write a tiny mono 16kHz WAV fixture."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(16_000)
+        writer.writeframes(b"\x00\x00" * 160)
+
+
+class _FakePreviewStdin:
+    """Tiny TTY-like stdin for preview control tests."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def isatty(self) -> bool:
+        return True
+
+    def fileno(self) -> int:
+        return 0
+
+    def read(self, size: int) -> str:
+        value = self.text[:size]
+        self.text = self.text[size:]
+        return value
+
+
+class _FakePreviewProcess:
+    """Tiny process-like object for preview control tests."""
+
+    pid = 12345
+
+    def __init__(self) -> None:
+        self.terminated = False
+        self.killed = False
+
+    def poll(self) -> int | None:
+        if self.terminated:
+            return -15
+        if self.killed:
+            return -9
+        return None
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.poll() or 0

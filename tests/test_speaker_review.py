@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from app import speaker_review
-from app.speaker_review import build_preview_command
+from app.speaker_review import build_audio_preview_command, build_preview_command
 
 
 def test_iina_preview_uses_raw_mpv_options_after_video(
@@ -54,6 +54,57 @@ def test_mpv_preview_disables_resume_and_selects_subtitle(
     assert "--resume-playback=no" in command
     assert f"--sub-file={subtitle.resolve()}" in command
     assert "--sid=1" in command
+
+
+def test_mpv_audio_preview_disables_video(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Audio preview should use the source media without opening video."""
+    media = tmp_path / "meeting.mp4"
+    media.write_bytes(b"video")
+    monkeypatch.setattr(speaker_review.shutil, "which", lambda name: "/usr/local/bin/mpv" if name == "mpv" else None)
+
+    command = build_audio_preview_command(media=media, start_seconds=9.8765, duration_seconds=4.321)
+
+    assert command == [
+        "/usr/local/bin/mpv",
+        "--really-quiet",
+        "--resume-playback=no",
+        "--vid=no",
+        "--force-window=no",
+        "--start=9.877",
+        "--length=4.321",
+        str(media.resolve()),
+    ]
+
+
+def test_ffplay_audio_preview_is_quiet_and_limited(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """ffplay fallback should avoid banner/stats output and stop after the clip."""
+    media = tmp_path / "meeting.mp4"
+    media.write_bytes(b"video")
+    monkeypatch.setattr(speaker_review.shutil, "which", lambda name: "ffplay" if name == "ffplay" else None)
+
+    command = build_audio_preview_command(media=media, start_seconds=10.0, duration_seconds=5.0)
+
+    assert command == [
+        "ffplay",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostats",
+        "-nodisp",
+        "-autoexit",
+        "-ss",
+        "10.000",
+        "-t",
+        "5.000",
+        "-i",
+        str(media.resolve()),
+    ]
 
 
 def test_preview_rejects_missing_subtitle(tmp_path: Path) -> None:
