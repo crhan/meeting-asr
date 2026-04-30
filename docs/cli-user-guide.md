@@ -90,6 +90,16 @@ meeting-asr project speakers apply
 
 ## 6. 最终文件
 
+直接查看结果：
+
+```bash
+meeting-asr transcript list
+meeting-asr transcript show
+meeting-asr transcript show --kind plain
+meeting-asr transcript path --kind srt
+meeting-asr transcript open --kind named
+```
+
 - `exports/transcript.txt`：纯文本
 - `exports/transcript_speakers.txt`：匿名 speaker 文本
 - `exports/transcript_named.txt`：人名版文本

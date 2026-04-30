@@ -56,10 +56,20 @@ meeting-asr project transcribe
 meeting-asr project speakers inspect
 meeting-asr project speakers preview
 meeting-asr project speakers apply
+meeting-asr transcript show
 ```
 
 `project create` 会复制源视频到 `source/`，后续命令只需要项目目录，不需要再次传视频路径。
 在项目目录内执行时，项目路径参数默认是当前目录；在其他目录执行时仍可显式传项目路径。
+
+转写结果可以用独立 CLI 查看：
+
+```bash
+meeting-asr transcript list
+meeting-asr transcript show
+meeting-asr transcript path --kind srt
+meeting-asr transcript open --kind named
+```
 
 ## 输出结构
 
