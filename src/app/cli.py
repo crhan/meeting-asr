@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 from typer.completion import completion_init
 
-from app.commands import audio, completion, config, doctor, oss, project, voiceprint
+from app.commands import completion, config, doctor, oss, project, voiceprint
 
 completion_init()
 
@@ -20,7 +20,6 @@ app.command("doctor")(doctor.command)
 app.add_typer(config.app, name="config", help="Manage global XDG configuration.")
 app.add_typer(project.app, name="project", help="Manage project-based transcription workflows.")
 app.add_typer(voiceprint.app, name="voiceprint", help="Manage the cross-project voiceprint registry.")
-app.add_typer(audio.app, name="audio", help="Prepare local audio for ASR.")
 app.add_typer(oss.app, name="oss", help="Upload, sign, and configure OSS objects.")
 app.add_typer(completion.app, name="completion", help="Generate or install shell completion scripts.")
 
