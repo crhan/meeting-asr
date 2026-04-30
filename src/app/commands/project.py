@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shlex
 import subprocess
 from pathlib import Path
@@ -12,6 +13,7 @@ import typer
 from app.cli_errors import run_with_cli_errors
 from app.completion_helpers import complete_audio_format, complete_model, complete_oss_upload_mode
 from app.config import get_default_projects_dir
+from app.models import TranscriptResult
 from app.project_manager import (
     ProjectTranscribeOptions,
     apply_project_speakers,
@@ -225,12 +227,19 @@ def speakers_preview(
 @speakers_app.command("apply")
 def speakers_apply(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    mappings: list[str] = typer.Option([], "--map"),
+    mappings: list[str] = typer.Option([], "--map", help="Non-interactive speaker_id=name mapping."),
+    sample_count: int = typer.Option(3, "--sample-count", min=1, max=20, help="Samples shown per speaker."),
 ) -> None:
-    """Apply speaker_id=name mappings to a project."""
+    """Interactively apply speaker names to a project."""
     sentences_path = project_paths(project_dir).asr_dir / "sentences.json"
     result = run_with_cli_errors(lambda: load_transcript_result(sentences_path))
-    resolved = parse_mapping_items(mappings, set(result.detected_speakers))
+    resolved = _resolve_speaker_mappings(
+        project_dir=project_dir,
+        mappings=mappings,
+        sample_count=sample_count,
+        known_speakers=set(result.detected_speakers),
+        result=result,
+    )
     mapping_path, transcript_path, srt_path = run_with_cli_errors(
         lambda: apply_project_speakers(project_dir, resolved)
     )
@@ -333,3 +342,75 @@ def _preferred_project_srt(paths) -> Path:
     if named_srt.exists():
         return named_srt
     return paths.exports_dir / "subtitle.srt"
+
+
+def _resolve_speaker_mappings(
+    *,
+    project_dir: Path,
+    mappings: list[str],
+    sample_count: int,
+    known_speakers: set[int],
+    result: TranscriptResult,
+) -> dict[int, str]:
+    """
+    Resolve speaker mappings from CLI flags or prompts.
+
+    Args:
+        project_dir: Project root.
+        mappings: Explicit ``--map`` values.
+        sample_count: Number of samples to show per speaker.
+        known_speakers: Speaker ids present in the transcript.
+        result: Loaded transcript result.
+
+    Returns:
+        User-provided speaker mapping.
+    """
+    if mappings:
+        return parse_mapping_items(mappings, known_speakers)
+    return _prompt_speaker_mappings(project_dir, result, sample_count=sample_count)
+
+
+def _prompt_speaker_mappings(project_dir: Path, result: TranscriptResult, *, sample_count: int) -> dict[int, str]:
+    """
+    Prompt for speaker names with transcript samples.
+
+    Args:
+        project_dir: Project root.
+        result: Loaded transcript result.
+        sample_count: Number of samples per speaker.
+
+    Returns:
+        Speaker mapping entered by the user.
+    """
+    summaries = build_speaker_summaries(result, sample_count=sample_count)
+    if not summaries:
+        typer.echo("No detected speakers found in the transcript.")
+        raise typer.Exit(code=1)
+    typer.echo("Enter a name for each speaker. Press Enter to keep the default label.")
+    existing = _load_existing_speaker_mapping(project_dir)
+    resolved: dict[int, str] = {}
+    for index, summary in enumerate(summaries):
+        if index:
+            typer.echo("")
+        typer.echo(render_speaker_summary(summary))
+        default_name = existing.get(summary.speaker_id, summary.anonymous_label)
+        name = typer.prompt(f"Name for {summary.anonymous_label}", default=default_name).strip()
+        resolved[summary.speaker_id] = name or default_name
+    return resolved
+
+
+def _load_existing_speaker_mapping(project_dir: Path) -> dict[int, str]:
+    """
+    Load an existing speaker map as prompt defaults.
+
+    Args:
+        project_dir: Project root.
+
+    Returns:
+        Existing speaker mapping, or an empty mapping.
+    """
+    map_path = project_paths(project_dir).speakers_dir / "speaker_map.json"
+    if not map_path.exists():
+        return {}
+    payload = json.loads(map_path.read_text(encoding="utf-8"))
+    return {int(key): str(value) for key, value in payload.items()}

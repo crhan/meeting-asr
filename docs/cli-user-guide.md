@@ -80,12 +80,11 @@ meeting-asr project speakers preview --speaker-id 3
 确认后写入映射：
 
 ```bash
-meeting-asr project speakers apply \
-  --map 0=欧丁 \
-  --map 1=敬悦 \
-  --map 2=敬悦 \
-  --map 3=墨泪
+meeting-asr project speakers apply
 ```
+
+`apply` 默认交互式逐个 speaker 提示输入人名，并展示该 speaker 的样例文本。
+如果要脚本化执行，仍可使用 `--map 0=欧丁 --map 1=敬悦`。
 
 ## 6. 最终文件
 
