@@ -1186,11 +1186,40 @@ def _speaker_match_summary(item: dict[str, object], *, mapped_name: str | None =
     """
     name = str(item.get("name") or "unknown")
     status = "accepted" if item.get("accepted") else "review"
+    accepted = bool(item.get("accepted"))
     score = _safe_float(item.get("score"))
-    suffix = " CONFLICT" if _speaker_match_conflicts(item, name, mapped_name) else ""
+    conflict = _speaker_match_conflicts(item, name, mapped_name)
+    suffix = " CONFLICT" if conflict else ""
     if score is None:
-        return f"{name} {status}{suffix}"
-    return f"{name} score={score:.3f} {status}{suffix}"
+        return _style_speaker_match_summary(
+            f"{name} {status}{suffix}",
+            accepted=accepted,
+            conflict=conflict,
+        )
+    return _style_speaker_match_summary(
+        f"{name} score={score:.3f} {status}{suffix}",
+        accepted=accepted,
+        conflict=conflict,
+    )
+
+
+def _style_speaker_match_summary(text: str, *, accepted: bool, conflict: bool) -> str:
+    """
+    Color a voiceprint match summary by review state.
+
+    Args:
+        text: Plain match summary.
+        accepted: Whether the match passed the configured threshold.
+        conflict: Whether the match conflicts with a manual name.
+
+    Returns:
+        Styled terminal text.
+    """
+    if conflict:
+        return typer.style(text, fg=typer.colors.RED, bold=True)
+    if accepted:
+        return typer.style(text, fg=typer.colors.GREEN)
+    return typer.style(text, fg=typer.colors.YELLOW)
 
 
 def _speaker_match_conflicts(item: dict[str, object], match_name: str, mapped_name: str | None) -> bool:

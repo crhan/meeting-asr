@@ -323,6 +323,22 @@ def test_project_speakers_inspect_marks_voiceprint_conflicts(tmp_path: Path) -> 
     assert "Voiceprint match: 墨泪 score=0.801 accepted CONFLICT" in result.output
 
 
+def test_speaker_match_summary_colors_review_states() -> None:
+    """Voiceprint match summaries should use color to separate review states."""
+    accepted = project_commands._speaker_match_summary({"name": "敬悦", "score": 0.775052, "accepted": True})
+    review = project_commands._speaker_match_summary({"name": "unknown", "accepted": False})
+    conflict = project_commands._speaker_match_summary(
+        {"label": "Speaker B", "name": "墨泪", "score": 0.80123, "accepted": True},
+        mapped_name="敬悦",
+    )
+
+    assert "\x1b[32m" in accepted
+    assert "\x1b[33m" in review
+    assert "\x1b[31m" in conflict
+    assert "\x1b[1m" in conflict
+    assert "CONFLICT" in conflict
+
+
 def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     """Speaker apply should support the human review flow."""
     project_dir = _sample_project(tmp_path)

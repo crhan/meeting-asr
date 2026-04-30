@@ -226,7 +226,7 @@ def render_speaker_summary(
         "  Samples:",
     ]
     if mapped_name:
-        lines.insert(1, f"  Name: {mapped_name}")
+        lines.insert(1, _confirmed_name_line(mapped_name))
     if match_summary:
         insert_index = 2 if mapped_name else 1
         lines.insert(insert_index, f"  Voiceprint match: {match_summary}")
@@ -235,6 +235,19 @@ def render_speaker_summary(
         end = format_ms_timestamp(segment.end_time_ms)
         lines.append(f"    - [{start} - {end}] {_preview_text(segment.text)}")
     return "\n".join(lines)
+
+
+def _confirmed_name_line(mapped_name: str) -> str:
+    """
+    Format a manually confirmed speaker name for terminal output.
+
+    Args:
+        mapped_name: Human-confirmed speaker name.
+
+    Returns:
+        Styled terminal text.
+    """
+    return typer.style(f"  Name: {mapped_name}", fg=typer.colors.GREEN, bold=True)
 
 
 def _find_first_segment_time_ms(sentences_json: Path, speaker_id: int) -> int:
