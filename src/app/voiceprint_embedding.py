@@ -152,7 +152,8 @@ def _embed_audio_with_local_speechbrain(path: Path) -> list[float]:
         Embedding vector.
     """
     classifier = _load_speechbrain_classifier()
-    embedding = classifier.encode_file(str(path))
+    signal = classifier.load_audio(str(path))
+    embedding = classifier.encode_batch(signal)
     return _flatten_embedding(embedding)
 
 
