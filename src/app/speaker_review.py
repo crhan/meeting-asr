@@ -24,25 +24,33 @@ def build_preview_command(*, video: Path, subtitle: Path, start_seconds: float) 
     Returns:
         Command argv.
     """
+    video_path = _existing_path(video, "Video")
+    subtitle_path = _existing_path(subtitle, "Subtitle")
     mpv = shutil.which("mpv")
     if mpv:
         return [
             mpv,
-            f"--sub-file={subtitle.resolve()}",
+            "--resume-playback=no",
+            f"--sub-file={subtitle_path}",
+            "--sid=1",
             f"--start={start_seconds:.3f}",
-            str(video.resolve()),
+            str(video_path),
         ]
     iina_cli = _find_iina_cli()
     if iina_cli:
+        _stage_iina_subtitle(video_path, subtitle_path)
         return [
             iina_cli,
             "--no-stdin",
-            f"--mpv-sub-file={subtitle.resolve()}",
-            f"--mpv-start={start_seconds:.3f}",
-            str(video.resolve()),
+            str(video_path),
+            "--",
+            "--resume-playback=no",
+            "--sub-auto=fuzzy",
+            "--sid=1",
+            f"--start={start_seconds:.3f}",
         ]
     if _ffplay_supports_subtitles_filter():
-        subtitle_filter = f"subtitles=filename='{_escape_subtitle_path_for_ffmpeg(subtitle.resolve())}'"
+        subtitle_filter = f"subtitles=filename='{_escape_subtitle_path_for_ffmpeg(subtitle_path)}'"
         return [
             "ffplay",
             "-window_title",
@@ -50,7 +58,7 @@ def build_preview_command(*, video: Path, subtitle: Path, start_seconds: float) 
             "-ss",
             f"{start_seconds:.3f}",
             "-i",
-            str(video.resolve()),
+            str(video_path),
             "-vf",
             subtitle_filter,
         ]
@@ -114,6 +122,42 @@ def _find_iina_cli() -> str | None:
         return cli
     app_cli = Path("/Applications/IINA.app/Contents/MacOS/iina-cli")
     return str(app_cli) if app_cli.exists() else None
+
+
+def _existing_path(path: Path, label: str) -> Path:
+    """
+    Resolve a required preview input.
+
+    Args:
+        path: Input path.
+        label: Human-readable input label.
+
+    Returns:
+        Resolved path.
+    """
+    resolved = path.expanduser().resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"{label} file does not exist: {resolved}")
+    return resolved
+
+
+def _stage_iina_subtitle(video: Path, subtitle: Path) -> Path:
+    """
+    Copy subtitles next to the video so IINA's mpv core auto-loads them.
+
+    Args:
+        video: Source video path.
+        subtitle: Generated subtitle path.
+
+    Returns:
+        Sidecar subtitle path.
+    """
+    sidecar = video.with_suffix(".srt")
+    if sidecar == subtitle:
+        return sidecar
+    if not sidecar.exists() or sidecar.read_bytes() != subtitle.read_bytes():
+        shutil.copyfile(subtitle, sidecar)
+    return sidecar
 
 
 def _ffplay_supports_subtitles_filter() -> bool:
