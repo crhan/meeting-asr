@@ -13,7 +13,7 @@ import typer
 from app.cli_errors import run_with_cli_errors
 from app.completion_helpers import complete_audio_format, complete_model, complete_oss_upload_mode
 from app.config import get_default_projects_dir
-from app.models import TranscriptResult
+from app.models import SentenceSegment, TranscriptResult
 from app.project_manager import (
     ProjectTranscribeOptions,
     apply_project_speakers,
@@ -29,11 +29,13 @@ from app.project_manager import (
 from app.speaker_labeling import build_speaker_summaries, load_transcript_result
 from app.speaker_review import build_preview_command, preview_start_seconds, render_speaker_summary
 from app.srt_compare import build_report, parse_srt
-from app.utils import configure_logging, safe_write_text
+from app.utils import configure_logging, format_ms_timestamp, safe_write_text
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
 speakers_app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
 app.add_typer(speakers_app, name="speakers", help="Review and name project speakers.")
+
+MORE_SAMPLES_COMMAND = "/more"
 
 
 @app.command("create")
@@ -386,17 +388,136 @@ def _prompt_speaker_mappings(project_dir: Path, result: TranscriptResult, *, sam
     if not summaries:
         typer.echo("No detected speakers found in the transcript.")
         raise typer.Exit(code=1)
-    typer.echo("Enter a name for each speaker. Press Enter to keep the default label.")
+    typer.echo("Enter a name for each speaker. Type /more to show more samples.")
+    typer.echo("Press Enter to keep the default label.")
     existing = _load_existing_speaker_mapping(project_dir)
+    segments = _speaker_segments_by_id(result)
     resolved: dict[int, str] = {}
     for index, summary in enumerate(summaries):
         if index:
             typer.echo("")
         typer.echo(render_speaker_summary(summary))
         default_name = existing.get(summary.speaker_id, summary.anonymous_label)
-        name = typer.prompt(f"Name for {summary.anonymous_label}", default=default_name).strip()
-        resolved[summary.speaker_id] = name or default_name
+        resolved[summary.speaker_id] = _prompt_speaker_name(
+            speaker_label=summary.anonymous_label,
+            default_name=default_name,
+            segments=segments.get(summary.speaker_id, []),
+            next_offset=sample_count,
+            sample_count=sample_count,
+        )
     return resolved
+
+
+def _prompt_speaker_name(
+    *,
+    speaker_label: str,
+    default_name: str,
+    segments: list[SentenceSegment],
+    next_offset: int,
+    sample_count: int,
+) -> str:
+    """
+    Prompt for one speaker name, allowing more samples on demand.
+
+    Args:
+        speaker_label: Anonymous speaker label.
+        default_name: Existing or anonymous default name.
+        segments: All transcript segments for this speaker.
+        next_offset: First segment offset not yet displayed.
+        sample_count: Number of samples per extra batch.
+
+    Returns:
+        Confirmed speaker name.
+    """
+    offset = next_offset
+    while True:
+        prompt = f"Name for {speaker_label} ({MORE_SAMPLES_COMMAND} for more samples)"
+        name = typer.prompt(prompt, default=default_name).strip()
+        if name != MORE_SAMPLES_COMMAND:
+            return name or default_name
+        offset = _show_more_speaker_samples(speaker_label, segments, offset, sample_count)
+
+
+def _show_more_speaker_samples(
+    speaker_label: str,
+    segments: list[SentenceSegment],
+    offset: int,
+    sample_count: int,
+) -> int:
+    """
+    Print the next batch of samples for a speaker.
+
+    Args:
+        speaker_label: Anonymous speaker label.
+        segments: All transcript segments for this speaker.
+        offset: Current sample offset.
+        sample_count: Maximum samples to show.
+
+    Returns:
+        Updated sample offset.
+    """
+    samples = segments[offset : offset + sample_count]
+    if not samples:
+        typer.echo(f"No more samples for {speaker_label}.")
+        return offset
+    typer.echo("")
+    typer.echo(f"More samples for {speaker_label}:")
+    typer.echo(_render_speaker_samples(samples))
+    return offset + len(samples)
+
+
+def _speaker_segments_by_id(result: TranscriptResult) -> dict[int, list[SentenceSegment]]:
+    """
+    Group non-empty transcript segments by speaker id.
+
+    Args:
+        result: Loaded transcript result.
+
+    Returns:
+        Speaker id to ordered transcript segments.
+    """
+    grouped: dict[int, list[SentenceSegment]] = {}
+    for segment in result.sentences:
+        if segment.speaker_id is None or not segment.text.strip():
+            continue
+        grouped.setdefault(segment.speaker_id, []).append(segment)
+    return grouped
+
+
+def _render_speaker_samples(samples: list[SentenceSegment]) -> str:
+    """
+    Render sample transcript segments.
+
+    Args:
+        samples: Transcript segments to render.
+
+    Returns:
+        Terminal text.
+    """
+    lines = []
+    for segment in samples:
+        start = format_ms_timestamp(segment.begin_time_ms)
+        end = format_ms_timestamp(segment.end_time_ms)
+        text = _trim_prompt_sample(segment.text)
+        lines.append(f"  - [{start} - {end}] {text}")
+    return "\n".join(lines)
+
+
+def _trim_prompt_sample(text: str, *, limit: int = 90) -> str:
+    """
+    Trim a sample line for prompt display.
+
+    Args:
+        text: Segment text.
+        limit: Maximum output length.
+
+    Returns:
+        Single-line preview text.
+    """
+    preview = text.strip().replace("\n", " ")
+    if len(preview) <= limit:
+        return preview
+    return preview[: limit - 3] + "..."
 
 
 def _load_existing_speaker_mapping(project_dir: Path) -> dict[int, str]:

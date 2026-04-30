@@ -84,6 +84,7 @@ meeting-asr project speakers apply
 ```
 
 `apply` 默认交互式逐个 speaker 提示输入人名，并展示该 speaker 的样例文本。
+如果样例还不足以确认，在姓名提示处输入 `/more` 会继续输出更多样例。
 如果要脚本化执行，仍可使用 `--map 0=欧丁 --map 1=敬悦`。
 
 ## 6. 最终文件

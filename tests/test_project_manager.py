@@ -169,6 +169,24 @@ def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
 
 
+def test_project_speakers_apply_can_show_more_samples(tmp_path: Path) -> None:
+    """Speaker apply should let users ask for more evidence before naming."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+
+    result = runner.invoke(
+        app,
+        ["project", "speakers", "apply", str(project_dir), "--sample-count", "1"],
+        input="/more\n欧丁\n敬悦\n",
+    )
+
+    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert "More samples for Speaker A" in result.output
+    assert "再补一句。" in result.output
+    assert mapping == {"0": "欧丁", "1": "敬悦"}
+
+
 def test_project_git_init_writes_safe_ignore_file(tmp_path: Path) -> None:
     """Optional Git tracking should ignore heavy generated artifacts."""
     if shutil.which("git") is None:
@@ -206,6 +224,7 @@ def _write_sample_sentences(path: Path) -> None:
         "sentences": [
             {"begin_time_ms": 0, "end_time_ms": 1000, "text": "大家好。", "speaker_id": 0, "sentence_id": 1},
             {"begin_time_ms": 1200, "end_time_ms": 1800, "text": "收到。", "speaker_id": 1, "sentence_id": 2},
+            {"begin_time_ms": 1900, "end_time_ms": 2500, "text": "再补一句。", "speaker_id": 0, "sentence_id": 3},
         ],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
