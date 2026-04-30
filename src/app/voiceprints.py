@@ -7,6 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.cli_ui import CliProgressReporter, emit_progress
 from app.ffmpeg_utils import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
@@ -71,6 +72,7 @@ def capture_voiceprints(
     padding_seconds: float,
     store_dir: Path | None = None,
     dry_run: bool = False,
+    progress: CliProgressReporter | None = None,
 ) -> VoiceprintCaptureSummary:
     """
     Capture speaker reference clips into the global voiceprint store.
@@ -82,6 +84,7 @@ def capture_voiceprints(
         padding_seconds: Extra context around each sentence.
         store_dir: Optional XDG-style voiceprint store directory.
         dry_run: Only plan clips when true.
+        progress: Optional progress reporter.
 
     Returns:
         Capture summary.
@@ -109,8 +112,10 @@ def capture_voiceprints(
             "No named speaker segments are available for voiceprint capture. "
             "Run meeting-asr project speakers apply and enter real names."
         )
+    if dry_run:
+        emit_progress(progress, "Voiceprint clips planned", total=_clip_count(speakers), completed=_clip_count(speakers))
     if not dry_run:
-        _persist_voiceprint_capture(paths.root, manifest, source, speakers, resolved_store_dir, db_path)
+        _persist_voiceprint_capture(paths.root, manifest, source, speakers, resolved_store_dir, db_path, progress)
     return VoiceprintCaptureSummary(resolved_store_dir, db_path, clip_dir, speakers, dry_run)
 
 
@@ -121,6 +126,7 @@ def _persist_voiceprint_capture(
     speakers: list[VoiceprintSpeaker],
     store_dir: Path,
     db_path: Path,
+    progress: CliProgressReporter | None,
 ) -> None:
     """
     Write clips, store SQLite rows, and update the project manifest pointer.
@@ -132,13 +138,16 @@ def _persist_voiceprint_capture(
         speakers: Selected voiceprint speakers.
         store_dir: Global voiceprint store directory.
         db_path: SQLite database path.
+        progress: Optional progress reporter.
     """
-    _write_voiceprint_clips(source, speakers)
+    _write_voiceprint_clips(source, speakers, progress)
+    emit_progress(progress, "Indexing voiceprint samples")
     samples = _stored_samples(project_root, manifest.project_id, source, speakers)
     store_voiceprint_samples(samples, db_path)
     manifest.speakers["voiceprints"] = {"store_dir": str(store_dir), "db_path": str(db_path), "sample_count": len(samples)}
     manifest.status = "voiceprinted"
     save_manifest(project_root, manifest)
+    emit_progress(progress, "Voiceprint capture complete")
 
 
 def _validate_capture_options(sample_count: int, max_seconds: float, padding_seconds: float) -> None:
@@ -362,14 +371,20 @@ def _build_clip(
     )
 
 
-def _write_voiceprint_clips(source: Path, speakers: list[VoiceprintSpeaker]) -> None:
+def _write_voiceprint_clips(
+    source: Path,
+    speakers: list[VoiceprintSpeaker],
+    progress: CliProgressReporter | None,
+) -> None:
     """
     Write all planned voiceprint clips.
 
     Args:
         source: Source media path.
         speakers: Planned voiceprint speakers.
+        progress: Optional progress reporter.
     """
+    emit_progress(progress, "Writing voiceprint clips", total=_clip_count(speakers), completed=0)
     for speaker in speakers:
         for clip in speaker.clips:
             extract_audio_clip(
@@ -378,6 +393,20 @@ def _write_voiceprint_clips(source: Path, speakers: list[VoiceprintSpeaker]) -> 
                 start_seconds=clip.clip_begin_time_ms / 1000,
                 duration_seconds=clip.duration_seconds,
             )
+            emit_progress(progress, f"Captured {speaker.name} voiceprint clip", advance=1)
+
+
+def _clip_count(speakers: list[VoiceprintSpeaker]) -> int:
+    """
+    Count clips across selected speakers.
+
+    Args:
+        speakers: Selected voiceprint speakers.
+
+    Returns:
+        Total clip count.
+    """
+    return sum(len(speaker.clips) for speaker in speakers)
 
 
 def _stored_samples(

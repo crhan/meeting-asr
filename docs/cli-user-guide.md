@@ -72,6 +72,9 @@ meeting-asr project list --projects-dir "/path/to/projects"
 meeting-asr project transcribe
 ```
 
+交互式终端默认显示进度 UI；输出重定向或非 TTY 环境不会污染 stdout。所有耗时命令都可用
+`--no-progress` 关闭。
+
 如果你已经有公网可访问音频 URL：
 
 ```bash

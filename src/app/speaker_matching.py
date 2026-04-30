@@ -7,6 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.cli_ui import CliProgressReporter, emit_progress
 from app.ffmpeg_utils import extract_audio_clip
 from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
@@ -75,6 +76,7 @@ def match_project_speakers(
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
+    progress: CliProgressReporter | None = None,
 ) -> SpeakerMatchSummary:
     """
     Match project speakers against stored voiceprint embeddings.
@@ -89,6 +91,7 @@ def match_project_speakers(
         sample_count: Maximum probe clips per speaker.
         max_seconds: Maximum seconds per probe clip.
         padding_seconds: Context padding around each segment.
+        progress: Optional progress reporter.
 
     Returns:
         Match summary.
@@ -105,11 +108,14 @@ def match_project_speakers(
         sample_count,
         max_seconds,
         padding_seconds,
+        progress,
     )
+    emit_progress(progress, "Writing speaker match suggestions")
     match_path = context.project_root / "speakers" / "speaker_matches.json"
     safe_write_json(match_path, _matches_payload(context.provider, context.model, threshold, matches))
     context.manifest.speakers["matches"] = "speakers/speaker_matches.json"
     save_manifest(context.project_root, context.manifest)
+    emit_progress(progress, "Speaker matching complete")
     return SpeakerMatchSummary(match_path, context.provider, context.model, threshold, matches)
 
 
@@ -168,10 +174,14 @@ def _match_speaker_groups(
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
+    progress: CliProgressReporter | None,
 ) -> list[SpeakerMatch]:
     """Match all speakers in a project transcript."""
     matches: list[SpeakerMatch] = []
-    for speaker_id, speaker_segments in sorted(_segments_by_speaker(segments).items()):
+    speaker_groups = sorted(_segments_by_speaker(segments).items())
+    emit_progress(progress, "Matching project speakers", total=len(speaker_groups), completed=0)
+    for speaker_id, speaker_segments in speaker_groups:
+        emit_progress(progress, f"Matching {speaker_id_to_label(speaker_id)}")
         vector = _probe_speaker_vector(
             project_root,
             source,
@@ -195,6 +205,7 @@ def _match_speaker_groups(
                 len(speaker_segments),
             )
         )
+        emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)}", advance=1)
     return matches
 
 

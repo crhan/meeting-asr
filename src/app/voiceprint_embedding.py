@@ -9,6 +9,7 @@ from typing import Any
 
 import requests
 
+from app.cli_ui import CliProgressReporter, emit_progress
 from app.config import get_cache_dir, load_settings
 from app.uploader import upload_file_to_oss
 from app.voiceprint_store import (
@@ -58,6 +59,7 @@ def embed_voiceprint_samples(
     endpoint: str | None,
     model: str | None,
     rebuild: bool,
+    progress: CliProgressReporter | None = None,
 ) -> VoiceprintEmbedSummary:
     """
     Generate embeddings for stored voiceprint samples.
@@ -68,6 +70,7 @@ def embed_voiceprint_samples(
         endpoint: Optional provider endpoint.
         model: Embedding model key for SQLite.
         rebuild: Rebuild existing embeddings when true.
+        progress: Optional progress reporter.
 
     Returns:
         Embedding summary.
@@ -78,13 +81,17 @@ def embed_voiceprint_samples(
     embedded_ids = set() if rebuild else list_embedded_sample_ids(resolved_model, db_path)
     embedded_count = 0
     skipped_count = 0
+    emit_progress(progress, "Embedding voiceprint samples", total=len(samples), completed=0)
     for sample in samples:
         if sample.sample_id in embedded_ids:
             skipped_count += 1
+            emit_progress(progress, "Skipping existing voiceprint embedding", advance=1)
             continue
         vector = embed_audio_file(sample.clip_path, provider=resolved_provider, endpoint=endpoint)
         upsert_voiceprint_embedding(sample.sample_id, resolved_model, vector, db_path)
         embedded_count += 1
+        emit_progress(progress, "Embedded voiceprint sample", advance=1)
+    emit_progress(progress, "Voiceprint embeddings ready")
     return VoiceprintEmbedSummary(db_path, resolved_provider, resolved_model, embedded_count, skipped_count)
 
 

@@ -15,6 +15,7 @@ from typing import Any
 import typer
 
 from app.asr_client import download_transcription_json, submit_transcription, wait_transcription
+from app.cli_ui import CliProgressReporter, emit_progress
 from app.config import get_default_projects_dir, load_settings
 from app.ffmpeg_utils import SUPPORTED_AUDIO_FORMATS, extract_audio_for_asr
 from app.models import TranscriptResult
@@ -186,6 +187,7 @@ def create_project(
     project_dir: Path | None,
     meeting_time: str | None,
     hash_source: bool,
+    progress: CliProgressReporter | None = None,
 ) -> ProjectManifest:
     """
     Create a project directory and copy the source media into it.
@@ -197,6 +199,7 @@ def create_project(
         project_dir: Explicit project directory.
         meeting_time: Optional meeting start time string.
         hash_source: Whether to compute SHA-256.
+        progress: Optional progress reporter.
 
     Returns:
         Created manifest.
@@ -210,8 +213,17 @@ def create_project(
     if (root / "project.json").exists():
         raise FileExistsError(f"Project already exists: {root}")
     _create_project_dirs(root)
-    project_source = _copy_source_into_project(source, root)
-    manifest = _initial_manifest(project_source, source, root, resolved_title, created_at, meeting_time, hash_source)
+    project_source = _copy_source_into_project(source, root, progress)
+    manifest = _initial_manifest(
+        project_source,
+        source,
+        root,
+        resolved_title,
+        created_at,
+        meeting_time,
+        hash_source,
+        progress,
+    )
     safe_write_text(root / "source" / "original.path", str(source) + "\n")
     safe_write_text(root / "notes.md", f"# {resolved_title}\n")
     save_manifest(root, manifest)
@@ -310,13 +322,19 @@ def ensure_project_dirs(project_dir: Path) -> ProjectPaths:
     return paths
 
 
-def prepare_project_audio(project_dir: Path, *, audio_format: str) -> Path:
+def prepare_project_audio(
+    project_dir: Path,
+    *,
+    audio_format: str,
+    progress: CliProgressReporter | None = None,
+) -> Path:
     """
     Extract mono 16kHz audio into the project audio directory.
 
     Args:
         project_dir: Project root.
         audio_format: wav or flac.
+        progress: Optional progress reporter.
 
     Returns:
         Generated audio path.
@@ -325,35 +343,59 @@ def prepare_project_audio(project_dir: Path, *, audio_format: str) -> Path:
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
     audio_path = paths.audio_dir / f"audio.{normalized_format}"
+    emit_progress(progress, "Extracting 16 kHz mono audio")
     extract_audio_for_asr(resolve_project_source_path(paths.root, manifest), audio_path, audio_format=normalized_format)
+    emit_progress(progress, "Audio ready", advance=1)
     manifest.audio = _audio_metadata(audio_path, normalized_format)
     manifest.status = "prepared"
     save_manifest(paths.root, manifest)
     return audio_path
 
 
-def transcribe_project(project_dir: Path, options: ProjectTranscribeOptions) -> ProjectTranscribeSummary:
+def transcribe_project(
+    project_dir: Path,
+    options: ProjectTranscribeOptions,
+    progress: CliProgressReporter | None = None,
+) -> ProjectTranscribeSummary:
     """
     Run DashScope transcription for a project.
 
     Args:
         project_dir: Project root.
         options: Transcription options.
+        progress: Optional progress reporter.
 
     Returns:
         Transcription summary.
     """
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
-    audio_path = _ensure_project_audio(paths, manifest, options.audio_format)
+    emit_progress(progress, "Preparing audio", total=7, completed=0)
+    audio_path = _ensure_project_audio(paths, manifest, options.audio_format, progress)
     should_upload = _parse_project_oss_upload(options.oss_upload, options.file_url)
     settings = load_settings(require_oss=should_upload)
-    file_url, file_url_source = _resolve_project_file_url(paths, manifest, audio_path, options, should_upload, settings)
+    file_url, file_url_source = _resolve_project_file_url(
+        paths,
+        manifest,
+        audio_path,
+        options,
+        should_upload,
+        settings,
+        progress,
+    )
+    emit_progress(progress, "Submitting DashScope task")
     task_response = _submit_project_task(settings, file_url, options)
     task_id = _extract_task_id(task_response)
-    raw_result = download_transcription_json(wait_transcription(settings=settings, task=task_response))
+    emit_progress(progress, f"DashScope task submitted: {task_id}", advance=1)
+    emit_progress(progress, "Waiting for DashScope transcription")
+    wait_response = wait_transcription(settings=settings, task=task_response)
+    emit_progress(progress, "Downloading transcription result", advance=1)
+    raw_result = download_transcription_json(wait_response)
+    emit_progress(progress, "Normalizing transcript", advance=1)
     parsed_result = parse_transcription_result(raw_result)
+    emit_progress(progress, "Writing transcript artifacts", advance=1)
     _write_project_asr_outputs(paths, raw_result, parsed_result, options.generate_srt)
+    emit_progress(progress, "Transcription complete", advance=1)
     _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result)
     manifest.status = "transcribed"
     save_manifest(paths.root, manifest)
@@ -456,6 +498,7 @@ def _initial_manifest(
     created_at: str,
     meeting_time: str | None,
     hash_source: bool,
+    progress: CliProgressReporter | None,
 ) -> ProjectManifest:
     """Build the initial project manifest."""
     stat = source.stat()
@@ -471,7 +514,7 @@ def _initial_manifest(
             filename=source.name,
             size_bytes=stat.st_size,
             mtime=datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds"),
-            sha256=_sha256_file(source) if hash_source else None,
+            sha256=_sha256_file(source, progress) if hash_source else None,
             meeting_time=meeting_time,
             original_path=str(original_source),
         ),
@@ -479,15 +522,41 @@ def _initial_manifest(
     )
 
 
-def _copy_source_into_project(source: Path, root: Path) -> Path:
+def _copy_source_into_project(source: Path, root: Path, progress: CliProgressReporter | None) -> Path:
     """Copy source media into the project directory."""
     target = root / "source" / source.name
     if source.resolve() == target.resolve():
+        emit_progress(progress, "Source media already staged", total=1, completed=1)
         return target
     if target.exists():
         raise FileExistsError(f"Project source file already exists: {target}")
-    shutil.copy2(source, target)
+    _copy_file_with_progress(source, target, progress)
     return target
+
+
+def _copy_file_with_progress(source: Path, target: Path, progress: CliProgressReporter | None) -> None:
+    """
+    Copy a file in chunks while reporting byte progress.
+
+    Args:
+        source: Existing source file.
+        target: Destination path.
+        progress: Optional progress reporter.
+
+    Returns:
+        None.
+    """
+    total_bytes = source.stat().st_size
+    emit_progress(progress, "Copying source media", total=total_bytes, completed=0)
+    try:
+        with source.open("rb") as source_file, target.open("wb") as target_file:
+            for chunk in iter(lambda: source_file.read(1024 * 1024), b""):
+                target_file.write(chunk)
+                emit_progress(progress, advance=len(chunk))
+        shutil.copystat(source, target)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
 
 
 def _resolve_project_root(
@@ -542,12 +611,14 @@ def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def _sha256_file(path: Path) -> str:
+def _sha256_file(path: Path, progress: CliProgressReporter | None = None) -> str:
     """Compute SHA-256 without loading the whole file into memory."""
     digest = hashlib.sha256()
+    emit_progress(progress, "Hashing source media", total=path.stat().st_size, completed=0)
     with path.open("rb") as source_file:
         for chunk in iter(lambda: source_file.read(1024 * 1024), b""):
             digest.update(chunk)
+            emit_progress(progress, advance=len(chunk))
     return digest.hexdigest()
 
 
@@ -571,13 +642,19 @@ def _audio_metadata(audio_path: Path, audio_format: str) -> dict[str, Any]:
     }
 
 
-def _ensure_project_audio(paths: ProjectPaths, manifest: ProjectManifest, audio_format: str) -> Path:
+def _ensure_project_audio(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    audio_format: str,
+    progress: CliProgressReporter | None,
+) -> Path:
     """Return existing project audio or generate it."""
     normalized_format = _normalize_audio_format(audio_format)
     existing_path = _manifest_audio_path(paths.root, manifest, normalized_format)
     if existing_path and existing_path.exists():
+        emit_progress(progress, "Using existing project audio", advance=1)
         return existing_path
-    return prepare_project_audio(paths.root, audio_format=normalized_format)
+    return prepare_project_audio(paths.root, audio_format=normalized_format, progress=progress)
 
 
 def _manifest_audio_path(root: Path, manifest: ProjectManifest, audio_format: str) -> Path | None:
@@ -602,18 +679,29 @@ def _parse_project_oss_upload(value: str | bool, file_url: str | None) -> bool:
     raise typer.BadParameter("--oss-upload must be auto, true, or false.")
 
 
-def _resolve_project_file_url(paths, manifest, audio_path, options, should_upload, settings) -> tuple[str, str]:
+def _resolve_project_file_url(
+    paths,
+    manifest,
+    audio_path,
+    options,
+    should_upload,
+    settings,
+    progress: CliProgressReporter | None,
+) -> tuple[str, str]:
     """Resolve the HTTP URL submitted to DashScope without storing signed URLs."""
     if not should_upload:
         if not options.file_url:
             raise typer.BadParameter("--file-url is required when --oss-upload is false.")
         manifest.oss = {"mode": "provided_url"}
+        emit_progress(progress, "Using provided file URL", advance=1)
         return options.file_url, "provided_url"
+    emit_progress(progress, "Uploading audio to OSS")
     object_key = f"meeting-asr/projects/{manifest.project_id}/{audio_path.name}"
     file_url = upload_file_to_oss(audio_path, object_name=object_key, settings=settings)
     expires_at = datetime.now(UTC) + timedelta(seconds=SIGNED_URL_EXPIRES_SECONDS)
     manifest.oss = _oss_metadata(settings.oss_bucket_name, object_key, expires_at)
     save_manifest(paths.root, manifest)
+    emit_progress(progress, "Audio uploaded to OSS", advance=1)
     return file_url, "oss_signed_url"
 
 

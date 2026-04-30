@@ -10,6 +10,7 @@ from typing import Optional
 import typer
 
 from app.cli_errors import run_with_cli_errors
+from app.cli_ui import run_with_progress
 from app.completion_helpers import complete_voiceprint_model, complete_voiceprint_provider
 from app.utils import format_ms_timestamp
 from app.voiceprint_store import (
@@ -35,17 +36,21 @@ def capture_command(
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Capture this project's named speakers into the global voiceprint store."""
-    summary = run_with_cli_errors(
-        lambda: capture_voiceprints(
+    summary = run_with_progress(
+        lambda reporter: capture_voiceprints(
             project_dir,
             sample_count=sample_count,
             max_seconds=max_seconds,
             padding_seconds=padding_seconds,
             store_dir=store_dir,
             dry_run=dry_run,
-        )
+            progress=reporter,
+        ),
+        description="Capturing voiceprints",
+        enabled=progress,
     )
     _echo_capture_summary(summary)
 
@@ -72,16 +77,20 @@ def embed_command(
     endpoint: Optional[str] = typer.Option(None, "--endpoint"),
     model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
     rebuild: bool = typer.Option(False, "--rebuild"),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Generate embeddings for stored voiceprint samples."""
-    summary = run_with_cli_errors(
-        lambda: embed_voiceprint_samples(
+    summary = run_with_progress(
+        lambda reporter: embed_voiceprint_samples(
             store_dir=store_dir,
             provider=provider,
             endpoint=endpoint,
             model=model,
             rebuild=rebuild,
-        )
+            progress=reporter,
+        ),
+        description="Embedding voiceprints",
+        enabled=progress,
     )
     typer.echo(f"Database: {summary.db_path}")
     typer.echo(f"Provider: {summary.provider}")

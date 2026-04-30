@@ -47,6 +47,29 @@ def test_create_project_writes_manifest_and_copies_source(tmp_path: Path) -> Non
     assert loaded.source.sha256 is not None
 
 
+def test_create_project_reports_copy_progress(tmp_path: Path) -> None:
+    """Project creation should expose copy progress without printing from the core."""
+    source = tmp_path / "meeting.mp4"
+    payload = b"fake video"
+    source.write_bytes(payload)
+    project_dir = tmp_path / "projects" / "supplier-ai"
+    events = []
+
+    create_project(
+        source,
+        title="Demo",
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+        progress=events.append,
+    )
+
+    assert events[0].description == "Copying source media"
+    assert events[0].total == len(payload)
+    assert sum(event.advance for event in events) == len(payload)
+
+
 def test_project_create_command_defaults_to_xdg_data_home(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

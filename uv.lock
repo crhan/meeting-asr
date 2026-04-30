@@ -630,6 +630,7 @@ dependencies = [
     { name = "oss2" },
     { name = "python-dotenv" },
     { name = "requests" },
+    { name = "rich" },
     { name = "typer" },
 ]
 
@@ -651,6 +652,7 @@ requires-dist = [
     { name = "oss2", specifier = ">=2.19.1" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "requests", specifier = ">=2.32.3" },
+    { name = "rich", specifier = ">=15.0.0" },
     { name = "speechbrain", marker = "extra == 'local-voiceprint'", specifier = ">=1.0.3" },
     { name = "torch", marker = "extra == 'local-voiceprint'", specifier = ">=2.9.0" },
     { name = "torchaudio", marker = "extra == 'local-voiceprint'", specifier = ">=2.9.0" },

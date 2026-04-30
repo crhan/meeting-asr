@@ -12,6 +12,7 @@ import typer
 
 from app.commands import transcript as transcript_commands
 from app.cli_errors import run_with_cli_errors
+from app.cli_ui import CliProgressReporter, run_with_progress
 from app.completion_helpers import (
     complete_audio_format,
     complete_model,
@@ -23,7 +24,9 @@ from app.config import get_default_projects_dir
 from app.models import SentenceSegment, TranscriptResult
 from app.project_manager import (
     ProjectListItem,
+    ProjectManifest,
     ProjectTranscribeOptions,
+    ProjectTranscribeSummary,
     apply_project_speakers,
     create_project,
     init_project_git,
@@ -57,17 +60,21 @@ def create(
     project_dir: Optional[Path] = typer.Option(None, "--project-dir", file_okay=False, dir_okay=True),
     meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
     hash_source: bool = typer.Option(False, "--hash-source/--no-hash-source"),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Create a project directory with project.json metadata."""
-    manifest = run_with_cli_errors(
-        lambda: create_project(
+    manifest = run_with_progress(
+        lambda reporter: create_project(
             input,
             title=title,
             projects_dir=projects_dir,
             project_dir=project_dir,
             meeting_time=meeting_time,
             hash_source=hash_source,
-        )
+            progress=reporter,
+        ),
+        description="Creating project",
+        enabled=progress,
     )
     _echo_project_created(_created_project_root(project_dir, projects_dir, manifest), manifest)
 
@@ -76,10 +83,16 @@ def create(
 def prepare(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Extract project audio without starting cloud transcription."""
     configure_logging()
-    audio_path = run_with_cli_errors(lambda: prepare_project_audio(project_dir, audio_format=audio_format))
+    audio_path = run_with_progress(
+        lambda reporter: prepare_project_audio(project_dir, audio_format=audio_format, progress=reporter),
+        description="Preparing project audio",
+        total=1,
+        enabled=progress,
+    )
     typer.echo(f"Audio written to: {audio_path}")
 
 
@@ -95,6 +108,7 @@ def transcribe(
     timestamp_alignment: bool = typer.Option(True, "--timestamp-alignment/--no-timestamp-alignment"),
     disfluency_removal: bool = typer.Option(False, "--disfluency-removal/--no-disfluency-removal"),
     audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Transcribe a project and write structured artifacts."""
     configure_logging()
@@ -109,7 +123,12 @@ def transcribe(
         disfluency_removal=disfluency_removal,
         audio_format=audio_format,
     )
-    summary = run_with_cli_errors(lambda: transcribe_project(project_dir, options))
+    summary = run_with_progress(
+        lambda reporter: transcribe_project(project_dir, options, progress=reporter),
+        description="Transcribing project",
+        total=7,
+        enabled=progress,
+    )
     _echo_transcribe_summary(
         summary.project_dir,
         summary.task_id,
@@ -131,20 +150,10 @@ def run(
     oss_upload: str = typer.Option("auto", "--oss-upload", autocompletion=complete_oss_upload_mode),
     file_url: Optional[str] = typer.Option(None, "--file-url"),
     audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Create a project and run the default transcription workflow."""
     configure_logging()
-    manifest = run_with_cli_errors(
-        lambda: create_project(
-            input,
-            title=title,
-            projects_dir=projects_dir,
-            project_dir=project_dir,
-            meeting_time=meeting_time,
-            hash_source=False,
-        )
-    )
-    root = _created_project_root(project_dir, projects_dir, manifest)
     options = _project_transcribe_options(
         speaker_count=speaker_count,
         language=language,
@@ -156,7 +165,19 @@ def run(
         disfluency_removal=False,
         audio_format=audio_format,
     )
-    summary = run_with_cli_errors(lambda: transcribe_project(root, options))
+    _, summary = run_with_progress(
+        lambda reporter: _create_and_transcribe_project(
+            input,
+            title=title,
+            projects_dir=projects_dir,
+            project_dir=project_dir,
+            meeting_time=meeting_time,
+            options=options,
+            progress=reporter,
+        ),
+        description="Running project workflow",
+        enabled=progress,
+    )
     _echo_transcribe_summary(
         summary.project_dir,
         summary.task_id,
@@ -172,6 +193,45 @@ def list_command(
     """List projects under the default or specified projects directory."""
     result = run_with_cli_errors(lambda: list_projects(projects_dir))
     _echo_project_list(result.projects_dir, result.projects)
+
+
+def _create_and_transcribe_project(
+    input_path: Path,
+    *,
+    title: str | None,
+    projects_dir: Path | None,
+    project_dir: Path | None,
+    meeting_time: str | None,
+    options: ProjectTranscribeOptions,
+    progress: CliProgressReporter | None,
+) -> tuple[ProjectManifest, ProjectTranscribeSummary]:
+    """
+    Create a project and immediately transcribe it.
+
+    Args:
+        input_path: Local source media file.
+        title: Optional human title.
+        projects_dir: Optional parent directory.
+        project_dir: Optional explicit project directory.
+        meeting_time: Optional meeting start time string.
+        options: Project transcription options.
+        progress: Optional progress reporter.
+
+    Returns:
+        Created manifest and transcription summary.
+    """
+    manifest = create_project(
+        input_path,
+        title=title,
+        projects_dir=projects_dir,
+        project_dir=project_dir,
+        meeting_time=meeting_time,
+        hash_source=False,
+        progress=progress,
+    )
+    root = _created_project_root(project_dir, projects_dir, manifest)
+    summary = transcribe_project(root, options, progress=progress)
+    return manifest, summary
 
 
 @app.command("status")
@@ -289,10 +349,11 @@ def speakers_match(
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
     apply_matches: bool = typer.Option(False, "--apply"),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Match project speakers against the cross-project voiceprint library."""
-    summary = run_with_cli_errors(
-        lambda: match_project_speakers(
+    summary = run_with_progress(
+        lambda reporter: match_project_speakers(
             project_dir,
             store_dir=store_dir,
             provider=provider,
@@ -302,7 +363,10 @@ def speakers_match(
             sample_count=sample_count,
             max_seconds=max_seconds,
             padding_seconds=padding_seconds,
-        )
+            progress=reporter,
+        ),
+        description="Matching project speakers",
+        enabled=progress,
     )
     _echo_match_summary(summary)
     if apply_matches and summary.accepted_mapping:
