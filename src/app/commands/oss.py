@@ -6,7 +6,7 @@ from pathlib import Path
 
 import typer
 
-from app.cli_errors import run_with_cli_errors
+from app.presentation.cli.errors import run_with_cli_errors
 from app.config import load_settings
 from app.oss_lifecycle import set_lifecycle_rule
 from app.uploader import (

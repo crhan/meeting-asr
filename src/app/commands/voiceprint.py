@@ -13,8 +13,8 @@ from rich.console import Console
 from rich.table import Table
 import typer
 
-from app.cli_errors import run_with_cli_errors
-from app.cli_ui import run_with_progress
+from app.presentation.cli.errors import run_with_cli_errors
+from app.presentation.cli.progress import run_with_progress
 from app.completion_helpers import complete_voiceprint_model, complete_voiceprint_provider
 from app.utils import format_ms_timestamp
 from app.voiceprint_playback import build_voiceprint_play_command
@@ -28,7 +28,7 @@ from app.voiceprint_store import (
     VoiceprintSampleRow,
     VoiceprintSpeakerRow,
 )
-from app.voiceprint_tui import (
+from app.presentation.tui.voiceprint import (
     load_voiceprint_library_session,
     render_voiceprint_library_summary,
     run_voiceprint_library_tui,

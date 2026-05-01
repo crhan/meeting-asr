@@ -7,8 +7,8 @@ import io
 from rich.console import Console
 from rich.progress import Progress
 
-from app import cli_ui
-from app.cli_ui import CliProgressEvent
+from app.presentation.cli import progress as cli_ui
+from app.core.progress import CliProgressEvent
 
 
 def test_reset_progress_event_clears_finished_unknown_total() -> None:

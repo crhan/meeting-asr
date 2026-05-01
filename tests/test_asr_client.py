@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from app import asr_client
-from app.asr_client import wait_transcription
+from app.infra import dashscope_asr as asr_client
+from app.infra.dashscope_asr import wait_transcription
 from app.config import Settings
 
 

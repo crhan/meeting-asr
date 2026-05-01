@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.table import Table
 import typer
 
-from app.cli_errors import run_with_cli_errors
+from app.presentation.cli.errors import run_with_cli_errors
 from app.project_manager import project_paths, resolve_project_ref
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)

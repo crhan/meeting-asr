@@ -6,7 +6,7 @@ import pytest
 import requests
 import typer
 
-from app.cli_errors import build_cli_error_advice, run_with_cli_errors
+from app.presentation.cli.errors import build_cli_error_advice, run_with_cli_errors
 
 
 def test_missing_dashscope_config_suggests_doctor(capsys: pytest.CaptureFixture[str]) -> None:

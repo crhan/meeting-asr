@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.config import CONFIG_KEYS
-from app.ffmpeg_utils import SUPPORTED_AUDIO_FORMATS
+from app.infra.ffmpeg import SUPPORTED_AUDIO_FORMATS
 from app.voiceprint_embedding import (
     BAILIAN_VOICEPRINT_MODEL,
     LOCAL_SPEECHBRAIN_MODEL,

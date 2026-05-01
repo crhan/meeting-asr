@@ -22,8 +22,8 @@ from rich.table import Table
 import typer
 
 from app.commands import transcript as transcript_commands
-from app.cli_errors import run_with_cli_errors
-from app.cli_ui import CliProgressReporter, emit_progress, run_with_progress
+from app.presentation.cli.errors import run_with_cli_errors
+from app.presentation.cli.progress import CliProgressReporter, emit_progress, run_with_progress
 from app.completion_helpers import (
     complete_audio_format,
     complete_model,
@@ -32,7 +32,7 @@ from app.completion_helpers import (
     complete_voiceprint_provider,
 )
 from app.config import get_default_projects_dir
-from app.ffmpeg_utils import extract_audio_clip
+from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
 from app.project_manager import (
     ProjectListItem,
@@ -58,7 +58,7 @@ from app.project_manager import (
     transcribe_project,
     update_project_metadata,
 )
-from app.project_tui import (
+from app.presentation.tui.project import (
     load_project_picker_session,
     render_project_picker_summary,
     run_project_picker_tui,
@@ -71,7 +71,7 @@ from app.speaker_review import (
     preview_start_seconds,
     render_speaker_summary,
 )
-from app.speaker_tui import (
+from app.presentation.tui.speaker import (
     load_speaker_review_session,
     render_speaker_review_summary,
     run_speaker_review_tui,

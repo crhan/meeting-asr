@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app.asr_metrics import (
+from app.core.asr_metrics import (
     ASR_SERVICE,
     AsrWaitObservation,
     estimate_asr_wait_seconds,

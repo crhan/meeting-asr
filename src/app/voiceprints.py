@@ -7,8 +7,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.cli_ui import CliProgressReporter, emit_progress
-from app.ffmpeg_utils import extract_audio_clip
+from app.core.progress import CliProgressReporter, emit_progress
+from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
 from app.project_manager import ensure_project_dirs, load_manifest, resolve_project_source_path, save_manifest

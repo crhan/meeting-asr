@@ -6,7 +6,7 @@ from pathlib import Path
 
 import typer
 
-from app.cli_errors import run_with_cli_errors
+from app.presentation.cli.errors import run_with_cli_errors
 from app.completion_helpers import complete_config_key
 from app.config import (
     CONFIG_KEYS,

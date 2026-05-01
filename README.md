@@ -2,6 +2,10 @@
 
 `meeting-asr` 是一个项目化 CLI：从本地 MP4/MOV/MKV 创建项目，抽取 mono 16kHz 音频，上传 private OSS 并签出 URL，调用阿里云 DashScope / 百炼 Fun-ASR 异步转写，最后生成文本、字幕和 speaker 人工标注结果。
 
+## 架构说明
+
+代码分层见 `docs/architecture.md`。新代码优先放入 `core/`、`infra/`、`presentation/cli` 或 `presentation/tui`，旧的顶层 import wrapper 只用于兼容。
+
 ## 快速开始
 
 如果只想知道怎么跑会议转写，先看 [快速开始：两条路径](docs/quick-start.md)。

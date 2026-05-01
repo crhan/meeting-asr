@@ -9,7 +9,7 @@ from typing import Any
 
 import requests
 
-from app.cli_ui import CliProgressReporter, emit_progress
+from app.core.progress import CliProgressReporter, emit_progress
 from app.config import get_cache_dir, load_settings
 from app.uploader import upload_file_to_oss
 from app.utils import retry
