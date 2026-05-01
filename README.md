@@ -60,6 +60,7 @@ scripts/install-tool.sh
 ```bash
 meeting-asr config set dashscope.api_key "<your-dashscope-api-key>"
 meeting-asr config set dashscope.base_url "https://dashscope.aliyuncs.com/api/v1"
+meeting-asr config set dashscope.summary_model "qwen-plus"
 meeting-asr config set oss.access_key_id "<your-oss-access-key-id>"
 meeting-asr config set oss.access_key_secret "<your-oss-access-key-secret>"
 meeting-asr config set oss.bucket_name "<your-bucket>"
@@ -101,11 +102,10 @@ meeting-asr doctor --require-oss --require-voiceprint-embedding
 
 ## 主流程
 
-一条命令创建或复用项目、转写、声纹匹配，并自动应用 accepted 的 speaker 匹配：
+一条命令创建或复用项目、转写、生成会议标题/摘要、声纹匹配，并自动应用 accepted 的 speaker 匹配：
 
 ```bash
 meeting-asr project run "/path/to/meeting.mp4" \
-  --title "供应商管理AI治理" \
   --meeting-time "2026-04-29T15:07:42+08:00"
 ```
 
@@ -125,6 +125,9 @@ meeting-asr voiceprint browse
 ```
 
 `project create` 会复制源视频到 `source/`，后续命令只需要项目目录，不需要再次传视频路径。
+`project run` 不需要手工输入会议标题；转写完成后会调用 DashScope 文本模型生成标题和摘要，
+写入 `exports/meeting_summary.md` 和 `exports/meeting_summary.json`。如果显式传了
+`--title`，模型仍会生成摘要，但不会覆盖手工标题。
 同一个源视频再次创建或 run 会复用已有项目；新项目 ID 基于源文件内容 hash，形如 `p-...`，
 不依赖创建日期。
 AutoRun、create 和 `project list` 会打印短数字 `Project No.`，后续命令优先传这个数字；

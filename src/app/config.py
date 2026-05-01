@@ -11,6 +11,7 @@ from typing import Any
 APP_CONFIG_DIR = "meeting-asr"
 CONFIG_FILENAME = "config.json"
 DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
+DEFAULT_DASHSCOPE_SUMMARY_MODEL = "qwen-plus"
 DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER = "local-speechbrain"
 
 
@@ -31,6 +32,7 @@ class Settings:
 
     dashscope_api_key: str
     dashscope_base_url: str
+    dashscope_summary_model: str = DEFAULT_DASHSCOPE_SUMMARY_MODEL
     oss_access_key_id: str | None = None
     oss_access_key_secret: str | None = None
     oss_bucket_name: str | None = None
@@ -44,6 +46,12 @@ class Settings:
 CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ConfigKey("dashscope.api_key", "dashscope_api_key", "DASHSCOPE_API_KEY", secret=True),
     ConfigKey("dashscope.base_url", "dashscope_base_url", "DASHSCOPE_BASE_URL", default=DEFAULT_DASHSCOPE_BASE_URL),
+    ConfigKey(
+        "dashscope.summary_model",
+        "dashscope_summary_model",
+        "DASHSCOPE_SUMMARY_MODEL",
+        default=DEFAULT_DASHSCOPE_SUMMARY_MODEL,
+    ),
     ConfigKey("oss.access_key_id", "oss_access_key_id", "OSS_ACCESS_KEY_ID", secret=True),
     ConfigKey("oss.access_key_secret", "oss_access_key_secret", "OSS_ACCESS_KEY_SECRET", secret=True),
     ConfigKey("oss.bucket_name", "oss_bucket_name", "OSS_BUCKET_NAME"),
@@ -214,6 +222,9 @@ def load_settings(*, require_oss: bool = False, require_dashscope: bool = True) 
     return Settings(
         dashscope_api_key=_read_value(values, "dashscope.api_key", required=require_dashscope) or "",
         dashscope_base_url=_read_value(values, "dashscope.base_url", required=False) or DEFAULT_DASHSCOPE_BASE_URL,
+        dashscope_summary_model=(
+            _read_value(values, "dashscope.summary_model", required=False) or DEFAULT_DASHSCOPE_SUMMARY_MODEL
+        ),
         oss_access_key_id=_read_value(values, "oss.access_key_id", required=require_oss),
         oss_access_key_secret=_read_value(values, "oss.access_key_secret", required=require_oss),
         oss_bucket_name=_read_value(values, "oss.bucket_name", required=require_oss),

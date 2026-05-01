@@ -80,7 +80,16 @@ meeting-asr project run "/path/to/meeting.mp4"
 ```
 
 它会创建或复用项目、转写、声纹匹配，并自动应用 accepted 的 speaker 匹配。
+转写完成后还会调用 DashScope 文本模型生成会议标题和摘要。默认模型来自
+`dashscope.summary_model`，可用 `--summary-model` 临时覆盖；如果不想生成摘要，用
+`--no-summarize`。
 如果还有未确认 speaker，输出会给出 `meeting-asr project review PROJECT_NO`。
+
+如果只想给已经转写完成的 project 补摘要：
+
+```bash
+meeting-asr project summarize PROJECT_NO
+```
 
 如果 OSS 已配置，默认使用 private OSS signed URL：
 
@@ -356,5 +365,7 @@ meeting-asr project transcript open --kind named
 - `exports/transcript_named.txt`：人名版文本
 - `exports/subtitle.srt`：匿名字幕
 - `exports/subtitle_named.srt`：人名版字幕
+- `exports/meeting_summary.md`：会议标题和摘要
+- `exports/meeting_summary.json`：结构化会议摘要
 - `asr/raw_result.json`：DashScope 原始结果
 - `asr/sentences.json`：标准化逐句结果

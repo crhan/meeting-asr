@@ -92,6 +92,7 @@ def test_bash_completion_runtime_includes_value_completions() -> None:
     assert voiceprint_providers == ["local-speechbrain", "bailian"]
     assert "dashscope.api_key" in config_keys
     assert "dashscope.base_url" in config_keys
+    assert "dashscope.summary_model" in config_keys
     assert "zsh" in install_shells
     assert "csh" not in install_shells
 

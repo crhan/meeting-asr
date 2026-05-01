@@ -18,6 +18,7 @@ from app.asr_client import download_transcription_json, submit_transcription, wa
 from app.cli_ui import CliProgressReporter, emit_progress
 from app.config import get_default_projects_dir, load_settings
 from app.ffmpeg_utils import SUPPORTED_AUDIO_FORMATS, extract_audio_for_asr
+from app.meeting_summary import MeetingSummary, generate_meeting_summary, render_meeting_summary_markdown
 from app.models import TranscriptResult
 from app.postprocess import (
     merge_adjacent_sentences,
@@ -187,6 +188,18 @@ class ProjectTranscribeSummary:
     file_url_source: str
     detected_speaker_count: int
     sentence_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectMeetingSummary:
+    """Terminal summary for generated meeting summary artifacts."""
+
+    project_dir: Path
+    title: str
+    summary_path: Path
+    json_path: Path
+    model: str
+    title_updated: bool
 
 
 def create_project(
@@ -625,6 +638,42 @@ def apply_project_speakers(project_dir: Path, mappings: dict[int, str]) -> tuple
     return mapping_path, transcript_path, srt_path
 
 
+def summarize_project(
+    project_dir: Path,
+    *,
+    model: str | None,
+    update_title: bool,
+    progress: CliProgressReporter | None = None,
+) -> ProjectMeetingSummary:
+    """
+    Generate meeting summary artifacts from the project transcript.
+
+    Args:
+        project_dir: Project root.
+        model: Optional DashScope text model override.
+        update_title: Whether to replace the manifest title.
+        progress: Optional progress reporter.
+
+    Returns:
+        Summary artifact paths.
+    """
+    paths = ensure_project_dirs(project_dir)
+    manifest = load_manifest(project_dir)
+    result = load_transcript_result(paths.asr_dir / "sentences.json")
+    settings = load_settings(require_oss=False)
+    emit_progress(progress, "Generating meeting summary")
+    summary = generate_meeting_summary(result, settings=settings, model=model)
+    json_path = safe_write_json(paths.exports_dir / "meeting_summary.json", summary.to_dict())
+    summary_path = safe_write_text(paths.exports_dir / "meeting_summary.md", render_meeting_summary_markdown(summary))
+    title_updated = bool(update_title and _can_replace_title(manifest, summary))
+    if title_updated:
+        manifest.title = summary.title
+    _record_meeting_summary(manifest, paths, summary, summary_path, json_path)
+    save_manifest(paths.root, manifest)
+    emit_progress(progress, "Meeting summary ready", completed=1, total=1)
+    return ProjectMeetingSummary(paths.root, summary.title, summary_path, json_path, summary.model, title_updated)
+
+
 def init_project_git(project_dir: Path) -> Path:
     """
     Initialize optional Git tracking for edited project outputs.
@@ -955,6 +1004,47 @@ def _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_res
     }
     manifest.outputs.update(_default_output_paths())
     manifest.speakers["detected_ids"] = parsed_result.detected_speakers
+
+
+def _record_meeting_summary(
+    manifest: ProjectManifest,
+    paths: ProjectPaths,
+    summary: MeetingSummary,
+    summary_path: Path,
+    json_path: Path,
+) -> None:
+    """
+    Record meeting summary metadata in the manifest.
+
+    Args:
+        manifest: Project manifest.
+        paths: Project paths.
+        summary: Generated summary.
+        summary_path: Markdown summary path.
+        json_path: JSON summary path.
+
+    Returns:
+        None.
+    """
+    manifest.asr["summary_model"] = summary.model
+    manifest.outputs["meeting_summary"] = _relative_path(paths.root, summary_path)
+    manifest.outputs["meeting_summary_json"] = _relative_path(paths.root, json_path)
+
+
+def _can_replace_title(manifest: ProjectManifest, summary: MeetingSummary) -> bool:
+    """
+    Return whether an auto-generated summary title should replace the manifest title.
+
+    Args:
+        manifest: Project manifest.
+        summary: Generated summary.
+
+    Returns:
+        True when the current title is still the source filename stem.
+    """
+    current_title = manifest.title.strip()
+    source_stem = Path(manifest.source.filename).stem.strip()
+    return bool(summary.title.strip()) and current_title == source_stem
 
 
 def _default_output_paths() -> dict[str, str]:

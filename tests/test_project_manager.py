@@ -21,11 +21,14 @@ from app.project_manager import (
     find_project_by_source,
     init_project_git,
     load_manifest,
+    ProjectMeetingSummary,
     ProjectTranscribeSummary,
     resolve_project_ref,
     resolve_project_source_path,
     save_manifest,
+    summarize_project,
 )
+from app.meeting_summary import MeetingSummary
 from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
 
 runner = CliRunner()
@@ -175,7 +178,19 @@ def test_project_run_applies_accepted_voiceprint_matches(
             ],
         )
 
+    def fake_summarize_project(project_dir, model=None, update_title=True, progress=None):
+        manifest = load_manifest(project_dir)
+        manifest.title = "自动会议标题"
+        save_manifest(project_dir, manifest)
+        summary_path = project_dir / "exports" / "meeting_summary.md"
+        json_path = project_dir / "exports" / "meeting_summary.json"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text("# 自动会议标题\n", encoding="utf-8")
+        json_path.write_text("{}\n", encoding="utf-8")
+        return ProjectMeetingSummary(project_dir, "自动会议标题", summary_path, json_path, "qwen-test", True)
+
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+    monkeypatch.setattr(project_commands, "summarize_project", fake_summarize_project)
     monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
 
     result = runner.invoke(app, ["project", "run", str(source), "--projects-dir", str(projects_dir)])
@@ -184,6 +199,8 @@ def test_project_run_applies_accepted_voiceprint_matches(
     transcript = project_dir / "exports" / "transcript_named.txt"
     assert result.exit_code == 0
     assert "Project automation completed." in result.output
+    assert "Title: 自动会议标题" in result.output
+    assert "exports/meeting_summary.md" in result.output
     assert "Voiceprint matches: 2/2 accepted" in result.output
     assert "meeting-asr project review" not in result.output
     assert "欧丁" in transcript.read_text(encoding="utf-8")
@@ -215,7 +232,16 @@ def test_project_run_reports_review_when_matches_are_incomplete(
             ],
         )
 
+    def fake_summarize_project(project_dir, model=None, update_title=True, progress=None):
+        summary_path = project_dir / "exports" / "meeting_summary.md"
+        json_path = project_dir / "exports" / "meeting_summary.json"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text("# 自动会议标题\n", encoding="utf-8")
+        json_path.write_text("{}\n", encoding="utf-8")
+        return ProjectMeetingSummary(project_dir, "自动会议标题", summary_path, json_path, "qwen-test", False)
+
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+    monkeypatch.setattr(project_commands, "summarize_project", fake_summarize_project)
     monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
 
     result = runner.invoke(app, ["project", "run", str(source), "--projects-dir", str(projects_dir)])
@@ -225,6 +251,81 @@ def test_project_run_reports_review_when_matches_are_incomplete(
     assert "Voiceprint matches: 1/2 accepted" in result.output
     assert "meeting-asr project review 1" in result.output
     assert "Agent prompt:" in result.output
+
+
+def test_summarize_project_writes_summary_and_updates_auto_title(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project summary should write artifacts and replace a filename-derived title."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "project"
+    create_project(
+        source,
+        title=None,
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    monkeypatch.setattr(
+        "app.project_manager.generate_meeting_summary",
+        lambda result, settings, model: MeetingSummary(
+            "AI 转型研讨",
+            "讨论 AI 转型目标和落地路径。",
+            ["目标", "路径"],
+            ["补充方案"],
+            "qwen-test",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.project_manager.load_settings",
+        lambda require_oss=False: object(),
+    )
+
+    summary = summarize_project(project_dir, model=None, update_title=True)
+    manifest = load_manifest(project_dir)
+
+    assert summary.title_updated is True
+    assert manifest.title == "AI 转型研讨"
+    assert manifest.outputs["meeting_summary"] == "exports/meeting_summary.md"
+    assert manifest.outputs["meeting_summary_json"] == "exports/meeting_summary.json"
+    assert manifest.asr["summary_model"] == "qwen-test"
+    assert "讨论 AI 转型目标" in summary.summary_path.read_text(encoding="utf-8")
+
+
+def test_summarize_project_preserves_manual_title(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A manually supplied title should not be overwritten by summarization."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "project"
+    create_project(
+        source,
+        title="手工标题",
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    monkeypatch.setattr(
+        "app.project_manager.generate_meeting_summary",
+        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], [], "qwen-test"),
+    )
+    monkeypatch.setattr(
+        "app.project_manager.load_settings",
+        lambda require_oss=False: object(),
+    )
+
+    summary = summarize_project(project_dir, model=None, update_title=True)
+
+    assert summary.title_updated is False
+    assert load_manifest(project_dir).title == "手工标题"
 
 
 def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(tmp_path: Path) -> None:

@@ -8,7 +8,7 @@
 适合已经积累了声纹库，并且希望让命令自己跑到可用结果。
 
 ```bash
-meeting-asr project run "/path/to/meeting.mp4" --title "会议标题"
+meeting-asr project run "/path/to/meeting.mp4"
 ```
 
 `project run` 会自动执行：
@@ -16,8 +16,9 @@ meeting-asr project run "/path/to/meeting.mp4" --title "会议标题"
 1. 创建或复用项目。同一个源视频不会重复创建新项目。
 2. 抽取音频并提交 DashScope 转写。
 3. 下载并写出匿名转写结果。
-4. 用声纹库匹配 speaker。
-5. 自动应用 accepted 的 speaker 匹配。
+4. 用 DashScope 文本模型生成会议标题和摘要。
+5. 用声纹库匹配 speaker。
+6. 自动应用 accepted 的 speaker 匹配。
 
 看项目编号：
 
@@ -38,6 +39,7 @@ meeting-asr project speakers preview PROJECT_NO
 
 - `exports/transcript_named.txt`
 - `exports/subtitle_named.srt`
+- `exports/meeting_summary.md`
 
 如果输出是 `Project automation needs review.`，说明至少有一个 speaker 没有自动确认，
 进入 TUI 路径。

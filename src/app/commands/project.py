@@ -40,6 +40,7 @@ from app.project_manager import (
     ProjectCreateSummary,
     ProjectTranscribeOptions,
     ProjectTranscribeSummary,
+    ProjectMeetingSummary,
     apply_project_speakers,
     create_or_reuse_project,
     init_project_git,
@@ -50,6 +51,7 @@ from app.project_manager import (
     project_paths,
     resolve_project_ref,
     resolve_project_source_path,
+    summarize_project,
     transcribe_project,
 )
 from app.project_tui import (
@@ -111,6 +113,7 @@ class ProjectRunSummary:
 
     project: ProjectCreateSummary
     transcription: ProjectTranscribeSummary
+    meeting_summary: ProjectMeetingSummary | None
     matches: SpeakerMatchSummary
     applied_mapping: dict[int, str]
 
@@ -209,6 +212,39 @@ def transcribe(
     )
 
 
+@app.command("summarize")
+def summarize(
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    model: Optional[str] = typer.Option(None, "--model", help="DashScope text model for meeting summary."),
+    update_title: bool = typer.Option(True, "--update-title/--no-update-title"),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+) -> None:
+    """Generate a meeting title and summary from a transcribed project."""
+    configure_logging()
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    summary = run_with_progress(
+        lambda reporter: summarize_project(
+            resolved_project_dir,
+            model=model,
+            update_title=update_title,
+            progress=reporter,
+        ),
+        description="Summarizing project",
+        total=1,
+        enabled=progress,
+    )
+    manifest = load_manifest(resolved_project_dir)
+    project_ref = _project_cli_ref(resolved_project_dir, manifest, projects_dir)
+    typer.echo("Project summary completed.")
+    typer.echo(f"Project ID: {manifest.project_id}")
+    if project_ref != manifest.project_id:
+        typer.echo(f"Project No.: {project_ref}")
+    typer.echo(f"Title: {manifest.title}")
+    typer.echo(f"Summary: {_relative_project_output(resolved_project_dir, summary.summary_path)}")
+    typer.echo(f"Summary JSON: {_relative_project_output(resolved_project_dir, summary.json_path)}")
+
+
 @app.command("run")
 def run(
     input: Path = typer.Argument(..., metavar="INPUT", exists=True, file_okay=True, dir_okay=False),
@@ -235,9 +271,11 @@ def run(
         autocompletion=complete_voiceprint_model,
     ),
     match_threshold: float = typer.Option(0.75, "--match-threshold", min=0.0, max=1.0),
+    summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Generate title and summary after ASR."),
+    summary_model: Optional[str] = typer.Option(None, "--summary-model", help="DashScope model for meeting summary."),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
-    """Create a project and run the automatic transcription and speaker matching workflow."""
+    """Create a project, transcribe, summarize, and match speakers automatically."""
     configure_logging()
     options = _project_transcribe_options(
         speaker_count=speaker_count,
@@ -263,6 +301,8 @@ def run(
             voiceprint_endpoint=voiceprint_endpoint,
             voiceprint_model=voiceprint_model,
             match_threshold=match_threshold,
+            summarize=summarize,
+            summary_model=summary_model,
             progress=reporter,
         ),
         description="Running project workflow",
@@ -314,6 +354,8 @@ def _run_project_workflow(
     voiceprint_endpoint: str | None,
     voiceprint_model: str | None,
     match_threshold: float,
+    summarize: bool,
+    summary_model: str | None,
     progress: CliProgressReporter | None,
 ) -> ProjectRunSummary:
     """
@@ -331,12 +373,15 @@ def _run_project_workflow(
         voiceprint_endpoint: Optional voiceprint endpoint override.
         voiceprint_model: Optional voiceprint model override.
         match_threshold: Voiceprint match acceptance threshold.
+        summarize: Generate meeting summary when true.
+        summary_model: Optional DashScope text model override.
         progress: Optional progress reporter.
 
     Returns:
         Project run summary.
     """
-    emit_progress(progress, "Creating or reusing project", step_index=1, step_total=9, reset_total=True)
+    step_total = 10 if summarize else 9
+    emit_progress(progress, "Creating or reusing project", step_index=1, step_total=step_total, reset_total=True)
     project = create_or_reuse_project(
         input_path,
         title=title,
@@ -346,8 +391,25 @@ def _run_project_workflow(
         hash_source=False,
         progress=progress,
     )
-    transcription = transcribe_project(project.project_dir, options, progress=progress, step_offset=1, step_total=9)
-    emit_progress(progress, "Matching speakers with voiceprints", step_index=8, step_total=9, reset_total=True)
+    transcription = transcribe_project(project.project_dir, options, progress=progress, step_offset=1, step_total=step_total)
+    meeting_summary = None
+    if summarize:
+        emit_progress(progress, "Summarizing meeting", step_index=8, step_total=step_total, reset_total=True)
+        meeting_summary = summarize_project(
+            project.project_dir,
+            model=summary_model,
+            update_title=title is None,
+            progress=progress,
+        )
+    match_step = 9 if summarize else 8
+    apply_step = 10 if summarize else 9
+    emit_progress(
+        progress,
+        "Matching speakers with voiceprints",
+        step_index=match_step,
+        step_total=step_total,
+        reset_total=True,
+    )
     matches = match_project_speakers(
         project.project_dir,
         store_dir=store_dir,
@@ -360,12 +422,18 @@ def _run_project_workflow(
         padding_seconds=0.5,
         progress=progress,
     )
-    emit_progress(progress, "Applying accepted speaker matches", step_index=9, step_total=9, reset_total=True)
+    emit_progress(
+        progress,
+        "Applying accepted speaker matches",
+        step_index=apply_step,
+        step_total=step_total,
+        reset_total=True,
+    )
     applied_mapping = matches.accepted_mapping
     if applied_mapping:
         apply_project_speakers(project.project_dir, applied_mapping)
     emit_progress(progress, "Project run complete", completed=1, total=1)
-    return ProjectRunSummary(project, transcription, matches, applied_mapping)
+    return ProjectRunSummary(project, transcription, meeting_summary, matches, applied_mapping)
 
 
 @app.command("status")
@@ -711,6 +779,10 @@ def _echo_run_summary(summary: ProjectRunSummary, projects_dir: Path | None) -> 
         typer.echo(f"Project No.: {project_ref}")
     typer.echo(f"Project ID: {manifest.project_id}")
     typer.echo(f"Title: {manifest.title}")
+    if summary.meeting_summary is not None:
+        typer.echo(f"Meeting summary: {_relative_project_output(project_dir, summary.meeting_summary.summary_path)}")
+        if summary.meeting_summary.title_updated:
+            typer.echo(f"Auto title: {summary.meeting_summary.title}")
     typer.echo(f"Task ID: {summary.transcription.task_id}")
     typer.echo(f"Detected speakers: {summary.transcription.detected_speaker_count}")
     typer.echo(f"Sentence count: {summary.transcription.sentence_count}")
@@ -723,6 +795,9 @@ def _echo_run_summary(summary: ProjectRunSummary, projects_dir: Path | None) -> 
     typer.echo("Outputs:")
     typer.echo("  exports/transcript.txt")
     typer.echo("  exports/transcript_speakers.txt")
+    if summary.meeting_summary is not None:
+        typer.echo("  exports/meeting_summary.md")
+        typer.echo("  exports/meeting_summary.json")
     if accepted:
         typer.echo("  exports/transcript_named.txt")
         typer.echo("  exports/subtitle_named.srt")
@@ -863,6 +938,23 @@ def _project_cli_ref(project_dir: Path, manifest: ProjectManifest, projects_dir:
     """
     number = _project_number_for_dir(project_dir, projects_dir)
     return str(number) if number is not None else manifest.project_id
+
+
+def _relative_project_output(project_dir: Path, output_path: Path) -> str:
+    """
+    Return a project-relative output path for display.
+
+    Args:
+        project_dir: Project root.
+        output_path: Output path.
+
+    Returns:
+        Project-relative path when possible.
+    """
+    try:
+        return output_path.resolve().relative_to(project_dir.resolve()).as_posix()
+    except ValueError:
+        return str(output_path.resolve())
 
 
 def _project_number_for_dir(project_dir: Path, projects_dir: Path | None) -> int | None:
