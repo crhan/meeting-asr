@@ -22,9 +22,11 @@ from app.speaker_review import build_audio_preview_command
 from app.utils import format_ms_timestamp
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_speakers
 
+DEFAULT_SAMPLE_PAGE_SIZE = 6
+SAMPLE_PANE_RESERVED_ROWS = 4
 BROWSE_STATUS = (
-    "Browse mode: move first, listen with Space, then press / only when you "
-    "want to name this speaker."
+    "Browse mode: move speakers/samples first, flip pages when needed, "
+    "then press / only when you want to name this speaker."
 )
 EDIT_STATUS = (
     "Edit mode: type a name or search people. Tab chooses first suggestion, "
@@ -50,7 +52,6 @@ class ReviewSpeaker:
     segments: list[SentenceSegment]
     current_name: str
     match: SpeakerMatchCandidate | None
-    visible_count: int
     selected_sample_index: int = 0
 
     @property
@@ -67,6 +68,7 @@ class SpeakerReviewSession:
     source_media: Path
     speakers: list[ReviewSpeaker]
     people_names: list[str]
+    page_size: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,7 +118,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("k", "previous_speaker", "Previous speaker"),
         Binding("down", "next_sample", "Next sample", show=False),
         Binding("up", "previous_sample", "Previous sample", show=False),
-        Binding("m", "more_samples", "More samples"),
+        Binding("pagedown", "next_sample_page", "Next page"),
+        Binding("pageup", "previous_sample_page", "Previous page"),
+        Binding("]", "next_sample_page", "Next page", show=False),
+        Binding("[", "previous_sample_page", "Previous page", show=False),
         Binding("space", "play_sample", "Play sample"),
         Binding("/", "edit_name", "Edit name"),
         Binding("tab", "accept_suggestion", "Accept suggestion", show=False),
@@ -180,11 +185,13 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Select the previous visible sample."""
         self._move_sample(-1)
 
-    def action_more_samples(self) -> None:
-        """Reveal another batch of samples for the selected speaker."""
-        speaker = self._speaker()
-        speaker.visible_count = min(speaker.visible_count + 3, speaker.segment_count)
-        self._refresh()
+    def action_next_sample_page(self) -> None:
+        """Select the first sample on the next page."""
+        self._move_sample_page(1)
+
+    def action_previous_sample_page(self) -> None:
+        """Select the first sample on the previous page."""
+        self._move_sample_page(-1)
 
     def action_play_sample(self) -> None:
         """Play the selected sample as audio."""
@@ -267,8 +274,18 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _move_sample(self, delta: int) -> None:
         """Move the selected sample index."""
         speaker = self._speaker()
-        count = len(self._visible_segments(speaker))
-        speaker.selected_sample_index = (speaker.selected_sample_index + delta) % count
+        target = speaker.selected_sample_index + delta
+        speaker.selected_sample_index = _clamp(target, 0, speaker.segment_count - 1)
+        self._refresh()
+
+    def _move_sample_page(self, delta: int) -> None:
+        """Move the selected sample page."""
+        speaker = self._speaker()
+        page_size = self._sample_page_size()
+        current_start = _sample_page_start(speaker.selected_sample_index, page_size)
+        last_start = _last_sample_page_start(speaker.segment_count, page_size)
+        target_start = _clamp(current_start + delta * page_size, 0, last_start)
+        speaker.selected_sample_index = target_start
         self._refresh()
 
     def _refresh(self) -> None:
@@ -291,7 +308,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Render the selected speaker samples."""
         speaker = self._speaker()
         lines = [f"[b]{escape(speaker.label)} samples[/b]"]
-        for index, segment in enumerate(self._visible_segments(speaker)):
+        page_start, segments = self._visible_segments(speaker)
+        for offset, segment in enumerate(segments):
+            index = page_start + offset
             prefix = ">" if index == speaker.selected_sample_index else " "
             time_range = _segment_time_range(segment)
             text = _trim_sample_text(segment.text)
@@ -299,10 +318,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             if index == speaker.selected_sample_index:
                 sample_line = f"[reverse]{sample_line}[/]"
             lines.append(sample_line)
-        lines.append(
-            f"\nShowing {speaker.visible_count}/{speaker.segment_count}. "
-            "Press m for more."
-        )
+        lines.append("")
+        lines.append(self._sample_page_footer(speaker, page_start))
         return "\n".join(lines)
 
     def _identity_pane(self) -> str:
@@ -371,11 +388,34 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _selected_sample(self) -> SentenceSegment:
         """Return the selected sample segment."""
         speaker = self._speaker()
-        return self._visible_segments(speaker)[speaker.selected_sample_index]
+        return speaker.segments[speaker.selected_sample_index]
 
-    def _visible_segments(self, speaker: ReviewSpeaker) -> list[SentenceSegment]:
-        """Return currently visible samples for one speaker."""
-        return speaker.segments[: max(1, speaker.visible_count)]
+    def _visible_segments(self, speaker: ReviewSpeaker) -> tuple[int, list[SentenceSegment]]:
+        """Return the current sample page start and segments."""
+        page_size = self._sample_page_size()
+        page_start = _sample_page_start(speaker.selected_sample_index, page_size)
+        return page_start, speaker.segments[page_start : page_start + page_size]
+
+    def _sample_page_size(self) -> int:
+        """Return the number of sample rows that fit in the pane."""
+        if self.session.page_size is not None:
+            return max(1, self.session.page_size)
+        pane_height = self.query_one("#samples", Static).size.height
+        if pane_height <= SAMPLE_PANE_RESERVED_ROWS:
+            return DEFAULT_SAMPLE_PAGE_SIZE
+        return max(1, pane_height - SAMPLE_PANE_RESERVED_ROWS)
+
+    def _sample_page_footer(self, speaker: ReviewSpeaker, page_start: int) -> str:
+        """Render pagination status for the sample pane."""
+        page_size = self._sample_page_size()
+        page_count = _sample_page_count(speaker.segment_count, page_size)
+        page_number = page_start // page_size + 1
+        start = page_start + 1
+        end = min(page_start + page_size, speaker.segment_count)
+        return (
+            f"Page {page_number}/{page_count}  Samples {start}-{end}/"
+            f"{speaker.segment_count}  PageUp/PageDown or bracket keys"
+        )
 
     def _enter_browse_mode(self, status: str) -> None:
         """Disable name input and return keyboard handling to browse mode."""
@@ -396,7 +436,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 def load_speaker_review_session(
     project_dir: Path,
     *,
-    sample_count: int,
+    page_size: int | None = None,
     store_dir: Path | None = None,
 ) -> SpeakerReviewSession:
     """
@@ -404,7 +444,7 @@ def load_speaker_review_session(
 
     Args:
         project_dir: Project root.
-        sample_count: Initial sample count per speaker.
+        page_size: Optional samples-per-page override.
         store_dir: Optional voiceprint store directory.
 
     Returns:
@@ -421,8 +461,9 @@ def load_speaker_review_session(
     return SpeakerReviewSession(
         project_dir=paths.root,
         source_media=resolve_project_source_path(paths.root, manifest),
-        speakers=_build_review_speakers(segments_by_speaker, mapping, matches, sample_count),
+        speakers=_build_review_speakers(segments_by_speaker, mapping, matches),
         people_names=_load_people_names(store_dir),
+        page_size=page_size,
     )
 
 
@@ -508,11 +549,10 @@ def _build_review_speakers(
     segments_by_speaker: dict[int, list[SentenceSegment]],
     mapping: dict[int, str],
     matches: dict[int, SpeakerMatchCandidate],
-    sample_count: int,
 ) -> list[ReviewSpeaker]:
     """Build mutable speaker review rows."""
     return [
-        _review_speaker(speaker_id, segments, mapping, matches, sample_count)
+        _review_speaker(speaker_id, segments, mapping, matches)
         for speaker_id, segments in sorted(segments_by_speaker.items())
     ]
 
@@ -522,14 +562,12 @@ def _review_speaker(
     segments: list[SentenceSegment],
     mapping: dict[int, str],
     matches: dict[int, SpeakerMatchCandidate],
-    sample_count: int,
 ) -> ReviewSpeaker:
     """Build one speaker review row."""
     label = speaker_id_to_label(speaker_id)
     match = matches.get(speaker_id)
     current_name = mapping.get(speaker_id) or _accepted_match_name(match) or label
-    visible_count = min(sample_count, len(segments))
-    return ReviewSpeaker(speaker_id, label, segments, current_name, match, visible_count)
+    return ReviewSpeaker(speaker_id, label, segments, current_name, match)
 
 
 def _accepted_match_name(match: SpeakerMatchCandidate | None) -> str | None:
@@ -587,8 +625,9 @@ def _help_lines() -> list[str]:
         "[b]Keys[/b]",
         "j/k: previous/next speaker",
         "up/down: choose sample",
+        "PageUp/PageDown: sample page",
+        "bracket keys: sample page",
         "space: play selected sample",
-        "m: show more samples",
         "a: accept voiceprint match",
         "/: edit or search name",
         "Tab: choose first suggestion",
@@ -616,6 +655,26 @@ def _dedupe_names(names: list[str]) -> list[str]:
             seen.add(normalized)
             deduped.append(normalized)
     return deduped
+
+
+def _sample_page_start(selected_index: int, page_size: int) -> int:
+    """Return the first sample index for the selected sample's page."""
+    return selected_index // page_size * page_size
+
+
+def _last_sample_page_start(segment_count: int, page_size: int) -> int:
+    """Return the first sample index of the last page."""
+    return max(0, (segment_count - 1) // page_size * page_size)
+
+
+def _sample_page_count(segment_count: int, page_size: int) -> int:
+    """Return the number of sample pages."""
+    return max(1, (segment_count + page_size - 1) // page_size)
+
+
+def _clamp(value: int, minimum: int, maximum: int) -> int:
+    """Clamp an integer into an inclusive range."""
+    return min(max(value, minimum), maximum)
 
 
 def _summary_line(speaker: ReviewSpeaker) -> str:

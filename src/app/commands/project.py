@@ -395,12 +395,12 @@ def speakers_review(
         file_okay=False,
         dir_okay=True,
     ),
-    sample_count: int = typer.Option(
-        3,
-        "--sample-count",
+    page_size: Optional[int] = typer.Option(
+        None,
+        "--page-size",
         min=1,
-        max=20,
-        help="Initial samples per speaker.",
+        max=50,
+        help="Override samples per page. By default the TUI uses the pane height.",
     ),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     summary: bool = typer.Option(
@@ -413,7 +413,7 @@ def speakers_review(
     session = run_with_cli_errors(
         lambda: load_speaker_review_session(
             project_dir,
-            sample_count=sample_count,
+            page_size=page_size,
             store_dir=store_dir,
         )
     )

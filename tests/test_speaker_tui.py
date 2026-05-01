@@ -46,7 +46,11 @@ def test_speaker_review_tui_plays_selected_sample(monkeypatch) -> None:
         return ["fake-player"]
 
     monkeypatch.setattr(speaker_tui, "build_audio_preview_command", fake_command)
-    monkeypatch.setattr(speaker_tui.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(
+        speaker_tui.subprocess,
+        "Popen",
+        lambda *args, **kwargs: _FakeProcess(),
+    )
 
     async def scenario() -> None:
         async with SpeakerReviewApp(_session()).run_test() as pilot:
@@ -57,6 +61,24 @@ def test_speaker_review_tui_plays_selected_sample(monkeypatch) -> None:
 
     assert captured["start_seconds"] == 1.5
     assert captured["duration_seconds"] == 2.0
+
+
+def test_speaker_review_tui_pages_samples() -> None:
+    """Sample pagination should replace the old growing more-samples list."""
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session(page_size=1)).run_test() as pilot:
+            app = pilot.app
+            speaker = app._speaker()
+
+            assert [segment.text for segment in app._visible_segments(speaker)[1]] == ["第一句"]
+
+            await pilot.press("]")
+
+            assert speaker.selected_sample_index == 1
+            assert [segment.text for segment in app._visible_segments(speaker)[1]] == ["第二句"]
+
+    asyncio.run(scenario())
 
 
 class _FakeProcess:
@@ -77,10 +99,16 @@ class _FakeProcess:
         """Pretend to kill playback."""
 
 
-def _session() -> SpeakerReviewSession:
+def _session(*, page_size: int | None = None) -> SpeakerReviewSession:
     """Build a minimal review session."""
     segments = [
-        SentenceSegment(begin_time_ms=0, end_time_ms=1000, text="第一句", speaker_id=0, sentence_id=1),
+        SentenceSegment(
+            begin_time_ms=0,
+            end_time_ms=1000,
+            text="第一句",
+            speaker_id=0,
+            sentence_id=1,
+        ),
         SentenceSegment(
             begin_time_ms=2000,
             end_time_ms=2500,
@@ -92,6 +120,7 @@ def _session() -> SpeakerReviewSession:
     return SpeakerReviewSession(
         project_dir=Path("."),
         source_media=Path("source.mp4"),
-        speakers=[ReviewSpeaker(0, "Speaker A", segments, "Speaker A", None, 2)],
+        speakers=[ReviewSpeaker(0, "Speaker A", segments, "Speaker A", None)],
         people_names=["欧丁"],
+        page_size=page_size,
     )
