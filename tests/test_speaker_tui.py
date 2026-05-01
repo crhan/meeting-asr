@@ -66,6 +66,7 @@ def test_speaker_review_tui_plays_selected_sample(monkeypatch) -> None:
 
     async def scenario() -> None:
         async with SpeakerReviewApp(_session()).run_test() as pilot:
+            await pilot.press("right")
             await pilot.press("down")
             await pilot.press("space")
 
@@ -73,6 +74,32 @@ def test_speaker_review_tui_plays_selected_sample(monkeypatch) -> None:
 
     assert captured["start_seconds"] == 1.5
     assert captured["duration_seconds"] == 2.0
+
+
+def test_speaker_review_tui_uses_focused_columns_for_movement() -> None:
+    """Arrow keys and HJKL should act on the currently focused column."""
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session(two_speakers=True)).run_test() as pilot:
+            app = pilot.app
+
+            await pilot.press("down")
+
+            assert app.selected_speaker_index == 1
+            assert app._speaker().selected_sample_index == 0
+
+            await pilot.press("right")
+            await pilot.press("down")
+
+            assert app.selected_speaker_index == 1
+            assert app._speaker().selected_sample_index == 1
+
+            await pilot.press("h")
+            await pilot.press("k")
+
+            assert app.selected_speaker_index == 0
+
+    asyncio.run(scenario())
 
 
 def test_speaker_review_tui_pages_samples() -> None:
@@ -111,7 +138,11 @@ class _FakeProcess:
         """Pretend to kill playback."""
 
 
-def _session(*, page_size: int | None = None) -> SpeakerReviewSession:
+def _session(
+    *,
+    page_size: int | None = None,
+    two_speakers: bool = False,
+) -> SpeakerReviewSession:
     """Build a minimal review session."""
     segments = [
         SentenceSegment(
@@ -129,10 +160,13 @@ def _session(*, page_size: int | None = None) -> SpeakerReviewSession:
             sentence_id=2,
         ),
     ]
+    speakers = [ReviewSpeaker(0, "Speaker A", segments, "Speaker A", None)]
+    if two_speakers:
+        speakers.append(ReviewSpeaker(1, "Speaker B", segments, "Speaker B", None))
     return SpeakerReviewSession(
         project_dir=Path("."),
         source_media=Path("source.mp4"),
-        speakers=[ReviewSpeaker(0, "Speaker A", segments, "Speaker A", None)],
+        speakers=speakers,
         people_names=["欧丁"],
         page_size=page_size,
     )

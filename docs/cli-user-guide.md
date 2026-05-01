@@ -123,8 +123,10 @@ meeting-asr project speakers review
 
 - 初始进入是浏览模式，不会要求输入人名；先看 speaker 和样例。
 - 默认只有两栏：左边 speaker，右边样例；姓名候选不会常驻占用空间。
-- `j/k` 切 speaker。
-- `up/down` 切样例；高亮的样例就是当前选中的样例。
+- `h/l` 和 `left/right` 切换当前关注列。
+- `j/k` 和 `up/down` 在当前关注列内上下移动。
+- 关注左列时上下切 speaker；关注右列时上下切样例。
+- 高亮列表示当前关注列，高亮行表示当前选中项。
 - `PageUp/PageDown` 翻样例页；`[` 和 `]` 也可以翻页。
 - `space` 只播放当前选中的单条样例。
 - `a` 接受当前声纹 match。

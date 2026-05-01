@@ -25,13 +25,14 @@ from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_speaker
 DEFAULT_SAMPLE_PAGE_SIZE = 6
 SAMPLE_PANE_RESERVED_ROWS = 4
 BROWSE_STATUS = (
-    "Browse: j/k speaker | up/down sample | PgUp/PgDn or [/] page | "
-    "Space play | a match | / edit | s save | q quit"
+    "Browse: h/l or left/right choose column | j/k or up/down move | "
+    "PgUp/PgDn page samples | Space play | / edit | s save"
 )
 EDIT_STATUS = (
     "Edit: type a name or search people | Tab first suggestion | "
     "Enter apply | Esc cancel"
 )
+COLUMNS = ("speakers", "samples")
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,10 +126,14 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     """
 
     BINDINGS = [
-        Binding("j", "next_speaker", "Next speaker"),
-        Binding("k", "previous_speaker", "Previous speaker"),
-        Binding("down", "next_sample", "Next sample", show=False),
-        Binding("up", "previous_sample", "Previous sample", show=False),
+        Binding("j", "down", "Down"),
+        Binding("k", "up", "Up"),
+        Binding("down", "down", "Down", show=False),
+        Binding("up", "up", "Up", show=False),
+        Binding("h", "left", "Left"),
+        Binding("l", "right", "Right"),
+        Binding("left", "left", "Left", show=False),
+        Binding("right", "right", "Right", show=False),
         Binding("pagedown", "next_sample_page", "Next page"),
         Binding("pageup", "previous_sample_page", "Previous page"),
         Binding("]", "next_sample_page", "Next page", show=False),
@@ -153,6 +158,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         super().__init__()
         self.session = session
         self.selected_speaker_index = 0
+        self.focused_column = "speakers"
         self.playback_process: subprocess.Popen | None = None
         self.search_query = ""
 
@@ -180,21 +186,21 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Stop any child player when the TUI closes."""
         self._stop_playback()
 
-    def action_next_speaker(self) -> None:
-        """Select the next speaker."""
-        self._move_speaker(1)
+    def action_down(self) -> None:
+        """Move down in the focused column."""
+        self._move_focused_row(1)
 
-    def action_previous_speaker(self) -> None:
-        """Select the previous speaker."""
-        self._move_speaker(-1)
+    def action_up(self) -> None:
+        """Move up in the focused column."""
+        self._move_focused_row(-1)
 
-    def action_next_sample(self) -> None:
-        """Select the next visible sample."""
-        self._move_sample(1)
+    def action_left(self) -> None:
+        """Focus the previous column."""
+        self._move_column(-1)
 
-    def action_previous_sample(self) -> None:
-        """Select the previous visible sample."""
-        self._move_sample(-1)
+    def action_right(self) -> None:
+        """Focus the next column."""
+        self._move_column(1)
 
     def action_next_sample_page(self) -> None:
         """Select the first sample on the next page."""
@@ -277,11 +283,24 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self._enter_browse_mode(status)
         self._refresh()
 
+    def _move_focused_row(self, delta: int) -> None:
+        """Move selection inside the focused column."""
+        if self.focused_column == "speakers":
+            self._move_speaker(delta)
+            return
+        self._move_sample(delta)
+
+    def _move_column(self, delta: int) -> None:
+        """Move focus between the speaker and sample columns."""
+        index = COLUMNS.index(self.focused_column)
+        self.focused_column = COLUMNS[_clamp(index + delta, 0, len(COLUMNS) - 1)]
+        self._enter_browse_mode(BROWSE_STATUS)
+        self._refresh()
+
     def _move_speaker(self, delta: int) -> None:
         """Move the selected speaker index."""
         total = len(self.session.speakers)
         self.selected_speaker_index = (self.selected_speaker_index + delta) % total
-        self._enter_browse_mode(BROWSE_STATUS)
         self._refresh()
 
     def _move_sample(self, delta: int) -> None:
@@ -309,7 +328,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def _speaker_pane(self) -> str:
         """Render the left speaker list."""
-        lines = ["[b]Speakers[/b]"]
+        lines = [self._pane_title("Speakers", "speakers")]
         for index, speaker in enumerate(self.session.speakers):
             marker = ">" if index == self.selected_speaker_index else " "
             style = _status_style(_speaker_status(speaker))
@@ -320,7 +339,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _sample_pane(self) -> str:
         """Render the selected speaker samples."""
         speaker = self._speaker()
-        lines = [f"[b]{escape(speaker.label)} samples[/b]"]
+        lines = [self._pane_title(f"{speaker.label} samples", "samples")]
         page_start, segments = self._visible_segments(speaker)
         for offset, segment in enumerate(segments):
             index = page_start + offset
@@ -428,6 +447,13 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             f"Page {page_number}/{page_count}  Samples {start}-{end}/"
             f"{speaker.segment_count}  PageUp/PageDown or bracket keys"
         )
+
+    def _pane_title(self, title: str, column: str) -> str:
+        """Render a pane title with focused-column state."""
+        escaped = escape(title)
+        if self.focused_column == column:
+            return f"[reverse][b] {escaped} [/b][/]"
+        return f"[b]{escaped}[/b]"
 
     def _enter_browse_mode(self, status: str) -> None:
         """Disable name input and return keyboard handling to browse mode."""
