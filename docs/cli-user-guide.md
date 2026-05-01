@@ -118,6 +118,12 @@ meeting-asr project transcribe
 交互式终端默认显示进度 UI；输出重定向或非 TTY 环境不会污染 stdout。所有耗时命令都可用
 `--no-progress` 关闭。
 
+DashScope 等待阶段有动态 ETA baseline。每次远程 ASR 等待结束后，CLI 只写入一条耗时样本，
+并刷新对应 provider/service/model/endpoint 的 baseline；下一次开始等待时直接读取 baseline
+并按音频时长估算 ETA。默认数据库：
+`~/.local/share/meeting-asr/metrics/runtime.sqlite`。没有历史样本时会显示
+`baseline: collecting`。
+
 如果你已经有公网可访问音频 URL：
 
 ```bash

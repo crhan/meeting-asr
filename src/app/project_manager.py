@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -15,9 +17,16 @@ from typing import Any
 import typer
 
 from app.asr_client import download_transcription_json, submit_transcription, wait_transcription
+from app.asr_wait import (
+    asr_wait_description,
+    asr_wait_total,
+    emit_dashscope_wait_poll,
+    estimate_dashscope_wait,
+    record_dashscope_wait,
+)
 from app.cli_ui import CliProgressReporter, emit_progress
 from app.config import get_data_dir, get_default_projects_dir, load_settings
-from app.ffmpeg_utils import SUPPORTED_AUDIO_FORMATS, extract_audio_for_asr
+from app.ffmpeg_utils import SUPPORTED_AUDIO_FORMATS, extract_audio_for_asr, probe_media_duration_seconds
 from app.meeting_summary import MeetingSummary, generate_meeting_summary, render_meeting_summary_markdown
 from app.models import TranscriptResult
 from app.postprocess import (
@@ -46,6 +55,8 @@ tmp/
 asr/raw_result.json
 *.signed-url
 """
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -641,14 +652,41 @@ def transcribe_project(
     task_response = _submit_project_task(settings, file_url, options)
     task_id = _extract_task_id(task_response)
     emit_progress(progress, f"DashScope task submitted: {task_id}", completed=1, total=1)
+    audio_duration_seconds = _audio_duration_seconds(paths.root, manifest, audio_path)
+    wait_estimate = estimate_dashscope_wait(settings, model=options.model, audio_duration_seconds=audio_duration_seconds)
     emit_progress(
         progress,
-        f"Waiting for DashScope transcription ({task_id})",
+        asr_wait_description(task_id, wait_estimate, status=None),
         step_index=step_offset + 4,
         step_total=transcribe_steps,
+        total=asr_wait_total(wait_estimate),
         reset_total=True,
     )
-    wait_response = wait_transcription(settings=settings, task=task_response)
+    wait_started_at = time.monotonic()
+    wait_status = "failed"
+    try:
+        wait_response = wait_transcription(
+            settings=settings,
+            task=task_response,
+            poll_callback=lambda event: emit_dashscope_wait_poll(
+                progress,
+                task_id=task_id,
+                estimate=wait_estimate,
+                event=event,
+            ),
+        )
+        wait_status = "succeeded"
+    finally:
+        wait_seconds = time.monotonic() - wait_started_at
+        record_dashscope_wait(
+            settings=settings,
+            project_id=manifest.project_id,
+            model=options.model,
+            task_id=task_id,
+            audio_duration_seconds=audio_duration_seconds,
+            wait_seconds=wait_seconds,
+            status=wait_status,
+        )
     emit_progress(
         progress,
         "Downloading transcription result",
@@ -961,13 +999,57 @@ def _normalize_audio_format(audio_format: str) -> str:
 
 def _audio_metadata(audio_path: Path, audio_format: str) -> dict[str, Any]:
     """Build project audio metadata."""
-    return {
+    metadata: dict[str, Any] = {
         "path": _relative_path(audio_path.parents[1], audio_path),
         "format": audio_format,
         "sample_rate": 16000,
         "channels": 1,
         "size_bytes": audio_path.stat().st_size,
     }
+    duration_seconds = _probe_duration_safely(audio_path)
+    if duration_seconds is not None:
+        metadata["duration_seconds"] = duration_seconds
+    return metadata
+
+
+def _audio_duration_seconds(root: Path, manifest: ProjectManifest, audio_path: Path) -> float | None:
+    """
+    Return the project audio duration and backfill manifest metadata when possible.
+
+    Args:
+        root: Project root.
+        manifest: Project manifest.
+        audio_path: Local ASR audio file.
+
+    Returns:
+        Audio duration in seconds when available.
+    """
+    stored_duration = manifest.audio.get("duration_seconds")
+    if isinstance(stored_duration, int | float) and stored_duration > 0:
+        return float(stored_duration)
+    duration_seconds = _probe_duration_safely(audio_path)
+    if duration_seconds is None:
+        return None
+    manifest.audio["duration_seconds"] = duration_seconds
+    save_manifest(root, manifest)
+    return duration_seconds
+
+
+def _probe_duration_safely(path: Path) -> float | None:
+    """
+    Probe media duration without failing the transcription workflow.
+
+    Args:
+        path: Local media path.
+
+    Returns:
+        Duration in seconds when ffprobe succeeds.
+    """
+    try:
+        return probe_media_duration_seconds(path)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug("Unable to probe media duration for %s: %s", path, exc)
+        return None
 
 
 def _ensure_project_audio(

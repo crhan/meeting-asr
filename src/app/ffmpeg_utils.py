@@ -90,6 +90,46 @@ def extract_audio_clip(
     return output
 
 
+def probe_media_duration_seconds(path: str | Path) -> float:
+    """
+    Probe media duration with ffprobe.
+
+    Args:
+        path: Local media file.
+
+    Returns:
+        Duration in seconds.
+    """
+    media = Path(path).expanduser().resolve()
+    if not media.exists():
+        raise FileNotFoundError(f"Media file does not exist: {media}")
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(media),
+    ]
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffprobe was not found in PATH. Install ffmpeg first.") from exc
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip()
+        raise RuntimeError(f"ffprobe failed with exit code {completed.returncode}: {stderr}")
+    duration_text = completed.stdout.strip()
+    try:
+        duration = float(duration_text)
+    except ValueError as exc:
+        raise RuntimeError(f"ffprobe returned an invalid duration: {duration_text}") from exc
+    if duration <= 0:
+        raise RuntimeError(f"ffprobe returned a non-positive duration: {duration}")
+    return duration
+
+
 def _validate_audio_clip_times(start_seconds: float, duration_seconds: float) -> None:
     """
     Validate clip timing.

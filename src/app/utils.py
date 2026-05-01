@@ -13,6 +13,17 @@ import requests
 
 T = TypeVar("T")
 
+NOISY_LOGGERS = (
+    "dashscope",
+    "httpx",
+    "httpcore",
+    "urllib3",
+    "speechbrain",
+    "speechbrain.utils.fetching",
+    "huggingface_hub",
+    "hyperpyyaml",
+)
+
 
 def configure_logging(verbose: bool = False) -> None:
     """
@@ -23,7 +34,7 @@ def configure_logging(verbose: bool = False) -> None:
     """
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(level=level, format="%(levelname)s %(message)s", force=True)
-    for logger_name in ("dashscope", "httpx", "httpcore", "urllib3"):
+    for logger_name in NOISY_LOGGERS:
         logging.getLogger(logger_name).setLevel(level)
 
 

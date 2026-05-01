@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 import requests
 
-from app.utils import is_retryable_exception, retry
+from app.utils import configure_logging, is_retryable_exception, retry
 
 
 def test_retry_retries_timeout_then_returns_value() -> None:
@@ -77,3 +79,11 @@ def test_is_retryable_exception_rejects_bad_request() -> None:
     response.status_code = 400
 
     assert not is_retryable_exception(requests.HTTPError("Bad request", response=response))
+
+
+def test_configure_logging_suppresses_noisy_dependency_info() -> None:
+    """Default logging should not let dependency INFO messages break progress UI."""
+    configure_logging()
+
+    assert logging.getLogger("speechbrain.utils.fetching").getEffectiveLevel() == logging.WARNING
+    assert logging.getLogger("huggingface_hub").getEffectiveLevel() == logging.WARNING

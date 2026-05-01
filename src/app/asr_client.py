@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import dashscope
@@ -10,6 +13,20 @@ from dashscope.audio.asr import Transcription
 
 from app.config import Settings
 from app.utils import retry
+
+PollCallback = Callable[["TranscriptionPollEvent"], None]
+
+SUCCESS_STATUSES = {"SUCCEEDED", "SUCCESS", "COMPLETED"}
+FAILED_STATUSES = {"FAILED", "FAILURE", "CANCELED", "CANCELLED", "UNKNOWN"}
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptionPollEvent:
+    """One DashScope transcription polling event."""
+
+    status: str | None
+    elapsed_seconds: float
+    wait_seconds: float
 
 
 def submit_transcription(
@@ -57,25 +74,60 @@ def submit_transcription(
     return retry(_submit, attempts=3, delay_seconds=1.0)
 
 
-def wait_transcription(*, settings: Settings, task: Any) -> Any:
+def wait_transcription(
+    *,
+    settings: Settings,
+    task: Any,
+    poll_callback: PollCallback | None = None,
+) -> Any:
     """
     Wait for a DashScope transcription task.
 
     Args:
         settings: Runtime settings.
         task: Submission response.
+        poll_callback: Optional callback invoked after each status fetch.
 
     Returns:
         DashScope wait response.
     """
     _configure_dashscope(settings)
-    def _wait() -> Any:
-        response = Transcription.wait(task=task)
+    wait_seconds = 1.0
+    max_wait_seconds = 5.0
+    increment_steps = 3
+    step = 0
+    started_at = time.monotonic()
+    while True:
+        step += 1
+        if wait_seconds < max_wait_seconds and step % increment_steps == 0:
+            wait_seconds = min(wait_seconds * 2, max_wait_seconds)
+        response = _fetch_transcription_status(task)
         _raise_for_task_error(response, stage="wait")
-        _check_subtasks(response)
+        status = _extract_task_status(response)
+        _raise_for_failed_status(status, response)
+        _emit_poll_event(poll_callback, status, started_at, wait_seconds)
+        if _is_success_status(status) or _response_has_no_output(response):
+            _check_subtasks(response)
+            return response
+        time.sleep(wait_seconds)
+
+
+def _fetch_transcription_status(task: Any) -> Any:
+    """
+    Fetch one DashScope transcription status with transient retry.
+
+    Args:
+        task: Submission response or task id.
+
+    Returns:
+        DashScope status response.
+    """
+    def _fetch() -> Any:
+        response = Transcription.fetch(task=task)
+        _raise_for_task_error(response, stage="wait")
         return response
 
-    return retry(_wait, attempts=3, delay_seconds=2.0)
+    return retry(_fetch, attempts=3, delay_seconds=2.0)
 
 
 def download_transcription_json(wait_response: Any) -> dict:
@@ -129,6 +181,47 @@ def _check_subtasks(response: Any) -> None:
         status = _get_field(subtask, "subtask_status") or _get_field(subtask, "status")
         if status and str(status).upper() not in {"SUCCEEDED", "SUCCESS", "COMPLETED"}:
             raise RuntimeError(f"DashScope subtask {index} failed: {subtask}")
+
+
+def _extract_task_status(response: Any) -> str | None:
+    """Extract a normalized task status from a DashScope response."""
+    output = getattr(response, "output", None)
+    status = _get_field(output, "task_status") or _get_field(output, "status")
+    return str(status).upper() if status else None
+
+
+def _raise_for_failed_status(status: str | None, response: Any) -> None:
+    """Raise when the fetched task status is terminal failure."""
+    if status in FAILED_STATUSES:
+        raise RuntimeError(f"DashScope transcription task failed with status {status}: {response}")
+
+
+def _is_success_status(status: str | None) -> bool:
+    """Return whether a task status means success."""
+    return status in SUCCESS_STATUSES
+
+
+def _response_has_no_output(response: Any) -> bool:
+    """Return whether DashScope returned no output payload."""
+    return getattr(response, "output", None) is None
+
+
+def _emit_poll_event(
+    poll_callback: PollCallback | None,
+    status: str | None,
+    started_at: float,
+    wait_seconds: float,
+) -> None:
+    """Emit one polling event when a callback is available."""
+    if poll_callback is None:
+        return
+    poll_callback(
+        TranscriptionPollEvent(
+            status=status,
+            elapsed_seconds=time.monotonic() - started_at,
+            wait_seconds=wait_seconds,
+        )
+    )
 
 
 def _extract_transcription_url(response: Any) -> str:
