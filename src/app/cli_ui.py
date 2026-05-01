@@ -17,7 +17,6 @@ from rich.progress import (
     Task,
     TaskProgressColumn,
     TextColumn,
-    TimeElapsedColumn,
 )
 from rich.text import Text
 
@@ -125,14 +124,16 @@ def _run_with_rich_progress(
         TextColumn("[dim]step[/]"),
         _StepElapsedColumn(),
         TextColumn("[dim]total[/]"),
-        TimeElapsedColumn(),
+        _TotalElapsedColumn(),
         console=console,
     ) as progress:
+        now = time.monotonic()
         task_id = progress.add_task(
             description,
             total=total,
             step_label="",
-            step_started_at=time.monotonic(),
+            step_started_at=now,
+            workflow_started_at=now,
         )
 
         def report(event: CliProgressEvent) -> None:
@@ -160,8 +161,8 @@ def _apply_progress_event(progress: Progress, task_id, event: CliProgressEvent) 
     if event.description is not None:
         updates["description"] = event.description
     if event.reset_total:
-        updates["total"] = event.total
-        updates["completed"] = 0 if event.completed is None else event.completed
+        _reset_progress_task(progress, task_id, event, updates)
+        return
     elif event.total is not None:
         updates["total"] = event.total
     if event.completed is not None:
@@ -170,6 +171,39 @@ def _apply_progress_event(progress: Progress, task_id, event: CliProgressEvent) 
         progress.update(task_id, **updates)
     if event.advance:
         progress.advance(task_id, event.advance)
+
+
+def _reset_progress_task(progress: Progress, task_id, event: CliProgressEvent, fields: dict[str, object]) -> None:
+    """
+    Reset per-step progress without resetting the workflow clock.
+
+    Args:
+        progress: Rich progress renderer.
+        task_id: Rich task identifier.
+        event: Progress event to apply.
+        fields: Prepared field updates.
+
+    Returns:
+        None.
+    """
+    # Rich has no public API that clears task.total back to None while keeping
+    # the original task clock, so reset the mutable task state directly.
+    with progress._lock:
+        task = progress._tasks[task_id]
+        task._reset()
+        task.total = event.total
+        task.completed = 0 if event.completed is None else event.completed
+        if event.description is not None:
+            task.description = event.description
+        field_updates = dict(fields)
+        field_updates.pop("description", None)
+        task.fields.update(field_updates)
+        if task.total is not None and task.completed >= task.total:
+            task.finished_time = task.elapsed
+    if event.advance:
+        progress.advance(task_id, event.advance)
+    else:
+        progress.refresh()
 
 
 class _StepElapsedColumn(ProgressColumn):
@@ -186,6 +220,25 @@ class _StepElapsedColumn(ProgressColumn):
             Duration text.
         """
         started_at = task.fields.get("step_started_at")
+        if not isinstance(started_at, int | float):
+            started_at = task.start_time or time.monotonic()
+        return Text(_format_elapsed_seconds(time.monotonic() - float(started_at)), style="progress.elapsed")
+
+
+class _TotalElapsedColumn(ProgressColumn):
+    """Render elapsed time for the whole workflow."""
+
+    def render(self, task: Task) -> Text:
+        """
+        Render the total workflow duration.
+
+        Args:
+            task: Rich progress task.
+
+        Returns:
+            Duration text.
+        """
+        started_at = task.fields.get("workflow_started_at")
         if not isinstance(started_at, int | float):
             started_at = task.start_time or time.monotonic()
         return Text(_format_elapsed_seconds(time.monotonic() - float(started_at)), style="progress.elapsed")
