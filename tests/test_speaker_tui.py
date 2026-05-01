@@ -207,6 +207,40 @@ def test_speaker_review_tui_plays_selected_sample(monkeypatch) -> None:
     assert captured["duration_seconds"] == 2.0
 
 
+def test_speaker_review_tui_space_stops_running_sample(monkeypatch) -> None:
+    """Pressing Space while a sample is playing should stop playback."""
+    process = _RunningFakeProcess()
+    starts = 0
+
+    monkeypatch.setattr(
+        speaker_tui,
+        "build_audio_preview_command",
+        lambda **kwargs: ["fake-player"],
+    )
+
+    def fake_popen(*args, **kwargs) -> _RunningFakeProcess:
+        nonlocal starts
+        starts += 1
+        return process
+
+    monkeypatch.setattr(speaker_tui.subprocess, "Popen", fake_popen)
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session()).run_test() as pilot:
+            await pilot.press("space")
+
+            assert starts == 1
+            assert pilot.app.playback_process is process
+
+            await pilot.press("space")
+
+            assert starts == 1
+            assert process.terminated is True
+            assert pilot.app.playback_process is None
+
+    asyncio.run(scenario())
+
+
 def test_speaker_review_tui_uses_focused_columns_for_movement() -> None:
     """Arrow keys and HJKL should act on the currently focused column."""
 
@@ -286,6 +320,31 @@ class _FakeProcess:
 
     def kill(self) -> None:
         """Pretend to kill playback."""
+
+
+class _RunningFakeProcess:
+    """Fake process that remains alive until terminated."""
+
+    def __init__(self) -> None:
+        """Initialize process state."""
+        self.terminated = False
+        self.killed = False
+
+    def poll(self) -> int | None:
+        """Return None while the fake process is running."""
+        return 0 if self.terminated or self.killed else None
+
+    def terminate(self) -> None:
+        """Mark the process as terminated."""
+        self.terminated = True
+
+    def wait(self, timeout: int | None = None) -> int:
+        """Pretend playback exits after termination."""
+        return 0
+
+    def kill(self) -> None:
+        """Mark the process as killed."""
+        self.killed = True
 
 
 def _session(

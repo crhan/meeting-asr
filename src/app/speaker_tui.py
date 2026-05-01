@@ -63,7 +63,7 @@ PageUp/PageDown      Previous/next sample page
 [ / ]                Previous/next sample page
 
 [b]Actions[/b]
-space                Play selected sample
+space                Play or stop selected sample
 a                    Accept current voiceprint match
 i                    Keep anonymous speaker label
 /                    Edit or search speaker name
@@ -226,7 +226,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("pageup", "previous_sample_page", "Previous page"),
         Binding("]", "next_sample_page", "Next page", show=False),
         Binding("[", "previous_sample_page", "Previous page", show=False),
-        Binding("space", "play_sample", "Play sample"),
+        Binding("space", "play_sample", "Play/stop sample"),
         Binding("/", "edit_name", "Edit name"),
         Binding("tab", "accept_suggestion", "Accept suggestion", show=False),
         Binding("escape", "cancel_edit", "Cancel edit", show=False),
@@ -301,7 +301,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self._move_sample_page(-1)
 
     def action_play_sample(self) -> None:
-        """Play the selected sample as audio."""
+        """Play or stop the selected sample as audio."""
+        if self._is_playing():
+            self._stop_playback()
+            self._set_status("Stopped sample playback.")
+            return
         try:
             self._play_sample(self._selected_sample())
         except Exception as exc:  # noqa: BLE001
@@ -513,6 +517,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             process.wait(timeout=2)
         except subprocess.TimeoutExpired:
             process.kill()
+
+    def _is_playing(self) -> bool:
+        """Return whether a playback child process is still running."""
+        process = self.playback_process
+        return process is not None and process.poll() is None
 
     def _mapping(self) -> dict[int, str]:
         """Return the current speaker mapping."""

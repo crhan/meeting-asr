@@ -126,7 +126,7 @@ Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speak
 2. 用 `meeting-asr project speakers inspect` 查看每个 speaker 的样例和声纹建议。
 3. 优先跑 `meeting-asr project speakers review` 进入 TUI。它顶部会显示 project 概况、
    match/manual/capture/embed 进度、match 分数和 conflict/mismatch；下方两栏用于切
-   speaker/sample、样例翻页、播放当前样例、接受 match、输入新名字并保存；按 `?`
+   speaker/sample、样例翻页、播放/停止当前样例、接受 match、输入新名字并保存；按 `?`
    可查看快捷键。
 4. 如果只想用纯终端 prompt，仍可跑 `meeting-asr project speakers apply`。已 accepted 的 match 会作为默认值，直接回车确认；未匹配的人手动输入姓名；不确定就输入 `/more` 继续看样例，或用 `/audio` 播放当前可见样例的短预览。
 5. 用 `meeting-asr project speakers preview` 复核带名字的字幕。
