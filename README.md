@@ -4,6 +4,10 @@
 
 ## 快速开始
 
+如果只想知道怎么跑会议转写，先看 [快速开始：两条路径](docs/quick-start.md)。
+
+下面是开发和安装入口。
+
 ```bash
 uv venv
 uv sync --all-groups
@@ -82,7 +86,7 @@ meeting-asr doctor --require-oss --require-voiceprint-embedding
 
 ## 主流程
 
-一条命令创建项目并转写：
+一条命令创建或复用项目、转写、声纹匹配，并自动应用 accepted 的 speaker 匹配：
 
 ```bash
 meeting-asr project run "/path/to/meeting.mp4" \
@@ -96,6 +100,7 @@ meeting-asr project run "/path/to/meeting.mp4" \
 meeting-asr project create "/path/to/meeting.mp4" --title "供应商管理AI治理"
 meeting-asr project list
 meeting-asr project transcribe PROJECT_NO
+meeting-asr project speakers match PROJECT_NO --apply
 meeting-asr project review PROJECT_NO
 meeting-asr project speakers preview PROJECT_NO
 meeting-asr project transcript show PROJECT_NO
@@ -105,6 +110,8 @@ meeting-asr voiceprint browse
 ```
 
 `project create` 会复制源视频到 `source/`，后续命令只需要项目目录，不需要再次传视频路径。
+同一个源视频再次创建或 run 会复用已有项目；新项目 ID 基于源文件内容 hash，形如 `p-...`，
+不依赖创建日期。
 AutoRun、create 和 `project list` 会打印短数字 `Project No.`，后续命令优先传这个数字；
 也仍然可以传 project path、project id 或 project title，不需要先 `cd`。在项目目录内执行时，
 项目路径参数仍默认是当前目录。不记得 Project No. 时，跑 `meeting-asr project list` 看表格，
@@ -233,5 +240,6 @@ project/
 
 ## 文档
 
+- [快速开始：两条路径](docs/quick-start.md)
 - [CLI 用户手册](docs/cli-user-guide.md)
 - [开发者指南](docs/developer-guide.md)

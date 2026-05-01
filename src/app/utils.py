@@ -19,7 +19,10 @@ def configure_logging(verbose: bool = False) -> None:
     Args:
         verbose: Enable DEBUG logging when true.
     """
-    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, format="%(levelname)s %(message)s")
+    level = logging.DEBUG if verbose else logging.WARNING
+    logging.basicConfig(level=level, format="%(levelname)s %(message)s", force=True)
+    for logger_name in ("dashscope", "httpx", "httpcore", "urllib3"):
+        logging.getLogger(logger_name).setLevel(level)
 
 
 def ensure_directory(path: Path) -> Path:

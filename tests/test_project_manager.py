@@ -18,11 +18,15 @@ from app.project_manager import (
     _parse_project_oss_upload,
     apply_project_speakers,
     create_project,
+    find_project_by_source,
     init_project_git,
     load_manifest,
+    ProjectTranscribeSummary,
     resolve_project_ref,
     resolve_project_source_path,
+    save_manifest,
 )
+from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
 
 runner = CliRunner()
 
@@ -69,9 +73,43 @@ def test_create_project_reports_copy_progress(tmp_path: Path) -> None:
         progress=events.append,
     )
 
-    assert events[0].description == "Copying source media"
+    assert events[0].description == "Hashing source media"
     assert events[0].total == len(payload)
-    assert sum(event.advance for event in events) == len(payload)
+    assert any(event.description == "Copying source media" for event in events)
+    assert sum(event.advance for event in events) == len(payload) * 2
+
+
+def test_project_id_is_stable_for_same_source_content(tmp_path: Path) -> None:
+    """Project id should not depend on creation date or title text."""
+    source_a = tmp_path / "meeting-a.mp4"
+    source_b = tmp_path / "meeting-b.mp4"
+    source_a.write_bytes(b"same video")
+    source_b.write_bytes(b"same video")
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+
+    create_project(
+        source_a,
+        title="First Title",
+        projects_dir=tmp_path / "projects",
+        project_dir=project_a,
+        meeting_time=None,
+        hash_source=False,
+    )
+    create_project(
+        source_b,
+        title="Second Title",
+        projects_dir=tmp_path / "projects",
+        project_dir=project_b,
+        meeting_time=None,
+        hash_source=False,
+    )
+
+    manifest_a = load_manifest(project_a)
+    manifest_b = load_manifest(project_b)
+    assert manifest_a.project_id == manifest_b.project_id
+    assert manifest_a.project_id.startswith("p-")
+    assert manifest_a.source.sha256 == manifest_b.source.sha256
 
 
 def test_project_create_command_defaults_to_xdg_data_home(
@@ -110,6 +148,83 @@ def test_project_create_output_uses_copyable_next_steps(tmp_path: Path) -> None:
     assert "cd " not in result.output
     assert "meeting-asr project status" in result.output
     assert "meeting-asr project status ." not in result.output
+
+
+def test_project_run_applies_accepted_voiceprint_matches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project run should continue through automatic speaker matching."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    projects_dir = tmp_path / "projects"
+
+    def fake_transcribe_project(project_dir, options, progress=None, **kwargs):
+        _write_sample_sentences(project_dir / "asr" / "sentences.json")
+        return ProjectTranscribeSummary(project_dir, "task-1", "test", 2, 3)
+
+    def fake_match_project_speakers(project_dir, **kwargs):
+        return SpeakerMatchSummary(
+            project_dir / "speakers" / "speaker_matches.json",
+            "fake-provider",
+            "fake-model",
+            0.75,
+            [
+                SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2),
+                SpeakerMatch(1, "Speaker B", "敬悦", 0.88, True, 1),
+            ],
+        )
+
+    monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+
+    result = runner.invoke(app, ["project", "run", str(source), "--projects-dir", str(projects_dir)])
+
+    project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
+    transcript = project_dir / "exports" / "transcript_named.txt"
+    assert result.exit_code == 0
+    assert "Project automation completed." in result.output
+    assert "Voiceprint matches: 2/2 accepted" in result.output
+    assert "meeting-asr project review" not in result.output
+    assert "欧丁" in transcript.read_text(encoding="utf-8")
+    assert "敬悦" in transcript.read_text(encoding="utf-8")
+
+
+def test_project_run_reports_review_when_matches_are_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project run should emit a concrete review handoff when automation cannot finish."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    projects_dir = tmp_path / "projects"
+
+    def fake_transcribe_project(project_dir, options, progress=None, **kwargs):
+        _write_sample_sentences(project_dir / "asr" / "sentences.json")
+        return ProjectTranscribeSummary(project_dir, "task-1", "test", 2, 3)
+
+    def fake_match_project_speakers(project_dir, **kwargs):
+        return SpeakerMatchSummary(
+            project_dir / "speakers" / "speaker_matches.json",
+            "fake-provider",
+            "fake-model",
+            0.75,
+            [
+                SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2),
+                SpeakerMatch(1, "Speaker B", None, 0.12, False, 1),
+            ],
+        )
+
+    monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+
+    result = runner.invoke(app, ["project", "run", str(source), "--projects-dir", str(projects_dir)])
+
+    assert result.exit_code == 0
+    assert "Project automation needs review." in result.output
+    assert "Voiceprint matches: 1/2 accepted" in result.output
+    assert "meeting-asr project review 1" in result.output
+    assert "Agent prompt:" in result.output
 
 
 def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(tmp_path: Path) -> None:
@@ -194,6 +309,59 @@ def test_project_list_command_handles_empty_projects_dir(tmp_path: Path) -> None
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
     assert "No projects found." in result.output
+
+
+def test_project_create_command_reuses_existing_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Creating a project from the same source should reuse the existing project."""
+    data_home = tmp_path / "data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"same video")
+
+    first = runner.invoke(app, ["project", "create", str(source), "--title", "Demo"])
+    second = runner.invoke(app, ["project", "create", str(source), "--title", "Demo"])
+
+    projects_dir = data_home / "meeting-asr" / "projects"
+    project_dirs = [path for path in projects_dir.iterdir() if path.is_dir()]
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert len(project_dirs) == 1
+    assert "Project created." in first.output
+    assert "Project already exists; reusing it." in second.output
+    assert "meeting-asr project review 1" in second.output
+
+
+def test_find_project_by_source_prefers_more_complete_duplicate(tmp_path: Path) -> None:
+    """Duplicate source lookup should pick the project with more completed work."""
+    projects_dir = tmp_path / "projects"
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"same video")
+    created_project = projects_dir / "created"
+    named_project = projects_dir / "named"
+    create_project(
+        source,
+        title="Created",
+        projects_dir=projects_dir,
+        project_dir=created_project,
+        meeting_time=None,
+        hash_source=False,
+    )
+    create_project(
+        source,
+        title="Named",
+        projects_dir=projects_dir,
+        project_dir=named_project,
+        meeting_time=None,
+        hash_source=False,
+    )
+    named_manifest = load_manifest(named_project)
+    named_manifest.status = "named"
+    save_manifest(named_project, named_manifest)
+
+    assert find_project_by_source(source, projects_dir) == named_project.resolve()
 
 
 def test_project_status_command_reads_manifest(tmp_path: Path) -> None:

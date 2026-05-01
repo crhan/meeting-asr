@@ -51,10 +51,13 @@ meeting-asr project create "/path/to/meeting.mp4" \
 成功后 CLI 会输出可复制命令：
 
 ```bash
-cd "/path/to/project"
-meeting-asr project transcribe
-meeting-asr project status
+meeting-asr project transcribe PROJECT_NO
+meeting-asr project status PROJECT_NO
+meeting-asr project review PROJECT_NO
 ```
+
+同一个源视频再次创建时，CLI 会复用已有项目，不会因为日期变化生成新项目。
+新项目的 `project_id` 基于源文件内容 hash，形如 `p-...`，不依赖创建时间。
 
 默认项目目录遵循 XDG：`~/.local/share/meeting-asr/projects`。
 列出默认项目目录：
@@ -65,6 +68,15 @@ meeting-asr project list --projects-dir "/path/to/projects"
 ```
 
 ## 4. 转写
+
+全自动入口优先用：
+
+```bash
+meeting-asr project run "/path/to/meeting.mp4"
+```
+
+它会创建或复用项目、转写、声纹匹配，并自动应用 accepted 的 speaker 匹配。
+如果还有未确认 speaker，输出会给出 `meeting-asr project review PROJECT_NO`。
 
 如果 OSS 已配置，默认使用 private OSS signed URL：
 

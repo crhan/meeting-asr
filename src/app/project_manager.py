@@ -154,6 +154,15 @@ class ProjectListResult:
     projects: list[ProjectListItem]
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectCreateSummary:
+    """Result of creating or reusing a project."""
+
+    project_dir: Path
+    manifest: ProjectManifest
+    created: bool
+
+
 @dataclass(slots=True)
 class ProjectTranscribeOptions:
     """Options for transcribing a project."""
@@ -188,6 +197,7 @@ def create_project(
     project_dir: Path | None,
     meeting_time: str | None,
     hash_source: bool,
+    source_sha256: str | None = None,
     progress: CliProgressReporter | None = None,
 ) -> ProjectManifest:
     """
@@ -199,7 +209,8 @@ def create_project(
         projects_dir: Optional parent directory used when project_dir is omitted.
         project_dir: Explicit project directory.
         meeting_time: Optional meeting start time string.
-        hash_source: Whether to compute SHA-256.
+        hash_source: Deprecated compatibility flag. Source identity is always hashed.
+        source_sha256: Optional precomputed source SHA-256.
         progress: Optional progress reporter.
 
     Returns:
@@ -210,7 +221,8 @@ def create_project(
         raise FileNotFoundError(f"Input media file does not exist: {source}")
     resolved_title = title or source.stem
     created_at = _now_iso()
-    root = _resolve_project_root(source, resolved_title, projects_dir, project_dir, created_at)
+    resolved_sha256 = source_sha256 or _sha256_file(source, progress)
+    root = _resolve_project_root(source, projects_dir, project_dir, resolved_sha256)
     if (root / "project.json").exists():
         raise FileExistsError(f"Project already exists: {root}")
     _create_project_dirs(root)
@@ -222,13 +234,64 @@ def create_project(
         resolved_title,
         created_at,
         meeting_time,
-        hash_source,
+        resolved_sha256,
         progress,
     )
     safe_write_text(root / "source" / "original.path", str(source) + "\n")
     safe_write_text(root / "notes.md", f"# {resolved_title}\n")
     save_manifest(root, manifest)
     return manifest
+
+
+def create_or_reuse_project(
+    input_path: Path,
+    *,
+    title: str | None,
+    projects_dir: Path | None,
+    project_dir: Path | None,
+    meeting_time: str | None,
+    hash_source: bool,
+    progress: CliProgressReporter | None = None,
+) -> ProjectCreateSummary:
+    """
+    Return the existing project for a source video, or create a new one.
+
+    Args:
+        input_path: Local source media file.
+        title: Optional human title for new projects.
+        projects_dir: Optional parent directory used when project_dir is omitted.
+        project_dir: Explicit project directory. Explicit paths always create that path.
+        meeting_time: Optional meeting start time string for new projects.
+        hash_source: Deprecated compatibility flag. Source identity is always hashed.
+        progress: Optional progress reporter.
+
+    Returns:
+        Project creation summary.
+    """
+    if project_dir is None:
+        existing = find_project_by_source(input_path, projects_dir)
+        if existing is not None:
+            emit_progress(progress, "Using existing project", total=1, completed=1)
+            return ProjectCreateSummary(existing, load_manifest(existing), False)
+    source = input_path.expanduser().resolve()
+    source_sha256 = _sha256_file(source, progress)
+    if project_dir is None:
+        existing = find_project_by_source(input_path, projects_dir, source_sha256=source_sha256)
+        if existing is not None:
+            emit_progress(progress, "Using existing project", total=1, completed=1)
+            return ProjectCreateSummary(existing, load_manifest(existing), False)
+    manifest = create_project(
+        input_path,
+        title=title,
+        projects_dir=projects_dir,
+        project_dir=project_dir,
+        meeting_time=meeting_time,
+        hash_source=hash_source,
+        source_sha256=source_sha256,
+        progress=progress,
+    )
+    project_root = _resolve_project_root(source, projects_dir, project_dir, source_sha256)
+    return ProjectCreateSummary(project_root, manifest, True)
 
 
 def load_manifest(project_dir: Path) -> ProjectManifest:
@@ -337,6 +400,34 @@ def resolve_project_ref(project_ref: Path | str, projects_dir: Path | None = Non
     raise FileNotFoundError(f"Project not found by path, id, or title: {ref_text}")
 
 
+def find_project_by_source(
+    input_path: Path,
+    projects_dir: Path | None,
+    *,
+    source_sha256: str | None = None,
+) -> Path | None:
+    """
+    Find the best existing project for a source media file.
+
+    Args:
+        input_path: Local source media file.
+        projects_dir: Optional projects parent directory.
+        source_sha256: Optional source SHA-256 for content matching.
+
+    Returns:
+        Existing project directory, or ``None`` when no match exists.
+    """
+    source = input_path.expanduser().resolve()
+    matches: list[ProjectListItem] = []
+    for project in list_projects(projects_dir).projects:
+        manifest = load_manifest(project.project_dir)
+        if _source_manifest_matches(source, source_sha256, manifest):
+            matches.append(project)
+    if not matches:
+        return None
+    return max(matches, key=_project_reuse_rank).project_dir
+
+
 def _number_project_list_items(projects: list[ProjectListItem]) -> list[ProjectListItem]:
     """
     Attach short project numbers to sorted project list rows.
@@ -410,6 +501,9 @@ def transcribe_project(
     project_dir: Path,
     options: ProjectTranscribeOptions,
     progress: CliProgressReporter | None = None,
+    *,
+    step_offset: int = 0,
+    step_total: int | None = None,
 ) -> ProjectTranscribeSummary:
     """
     Run DashScope transcription for a project.
@@ -418,16 +512,32 @@ def transcribe_project(
         project_dir: Project root.
         options: Transcription options.
         progress: Optional progress reporter.
+        step_offset: Number of workflow steps before transcription.
+        step_total: Optional total workflow step count.
 
     Returns:
         Transcription summary.
     """
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
-    emit_progress(progress, "Preparing audio", total=7, completed=0)
+    transcribe_steps = step_total or 6
+    emit_progress(
+        progress,
+        "Preparing audio",
+        step_index=step_offset + 1,
+        step_total=transcribe_steps,
+        reset_total=True,
+    )
     audio_path = _ensure_project_audio(paths, manifest, options.audio_format, progress)
     should_upload = _parse_project_oss_upload(options.oss_upload, options.file_url)
     settings = load_settings(require_oss=should_upload)
+    emit_progress(
+        progress,
+        "Resolving audio URL",
+        step_index=step_offset + 2,
+        step_total=transcribe_steps,
+        reset_total=True,
+    )
     file_url, file_url_source = _resolve_project_file_url(
         paths,
         manifest,
@@ -437,19 +547,43 @@ def transcribe_project(
         settings,
         progress,
     )
-    emit_progress(progress, "Submitting DashScope task")
+    emit_progress(
+        progress,
+        "Submitting DashScope task",
+        step_index=step_offset + 3,
+        step_total=transcribe_steps,
+        reset_total=True,
+    )
     task_response = _submit_project_task(settings, file_url, options)
     task_id = _extract_task_id(task_response)
-    emit_progress(progress, f"DashScope task submitted: {task_id}", advance=1)
-    emit_progress(progress, "Waiting for DashScope transcription")
+    emit_progress(progress, f"DashScope task submitted: {task_id}", completed=1, total=1)
+    emit_progress(
+        progress,
+        f"Waiting for DashScope transcription ({task_id})",
+        step_index=step_offset + 4,
+        step_total=transcribe_steps,
+        reset_total=True,
+    )
     wait_response = wait_transcription(settings=settings, task=task_response)
-    emit_progress(progress, "Downloading transcription result", advance=1)
+    emit_progress(
+        progress,
+        "Downloading transcription result",
+        step_index=step_offset + 5,
+        step_total=transcribe_steps,
+        reset_total=True,
+    )
     raw_result = download_transcription_json(wait_response)
-    emit_progress(progress, "Normalizing transcript", advance=1)
+    emit_progress(progress, "Normalizing transcript")
     parsed_result = parse_transcription_result(raw_result)
-    emit_progress(progress, "Writing transcript artifacts", advance=1)
+    emit_progress(
+        progress,
+        "Writing transcript artifacts",
+        step_index=step_offset + 6,
+        step_total=transcribe_steps,
+        reset_total=True,
+    )
     _write_project_asr_outputs(paths, raw_result, parsed_result, options.generate_srt)
-    emit_progress(progress, "Transcription complete", advance=1)
+    emit_progress(progress, "Transcription complete", completed=1, total=1)
     _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result)
     manifest.status = "transcribed"
     save_manifest(paths.root, manifest)
@@ -551,14 +685,14 @@ def _initial_manifest(
     title: str,
     created_at: str,
     meeting_time: str | None,
-    hash_source: bool,
+    source_sha256: str,
     progress: CliProgressReporter | None,
 ) -> ProjectManifest:
     """Build the initial project manifest."""
     stat = source.stat()
     return ProjectManifest(
         schema_version=SCHEMA_VERSION,
-        project_id=_build_project_id(title, created_at),
+        project_id=_build_project_id(source_sha256),
         title=title,
         created_at=created_at,
         updated_at=created_at,
@@ -568,7 +702,7 @@ def _initial_manifest(
             filename=source.name,
             size_bytes=stat.st_size,
             mtime=datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds"),
-            sha256=_sha256_file(source, progress) if hash_source else None,
+            sha256=source_sha256,
             meeting_time=meeting_time,
             original_path=str(original_source),
         ),
@@ -615,16 +749,15 @@ def _copy_file_with_progress(source: Path, target: Path, progress: CliProgressRe
 
 def _resolve_project_root(
     source: Path,
-    title: str,
     projects_dir: Path | None,
     project_dir: Path | None,
-    created_at: str,
+    source_sha256: str,
 ) -> Path:
     """Resolve the directory for a new project."""
     if project_dir is not None:
         return project_dir.expanduser().resolve()
     base_dir = _projects_parent_dir(projects_dir)
-    return (base_dir / f"{created_at[:10].replace('-', '')}_{_slugify(title or source.stem)}").resolve()
+    return (base_dir / _build_project_id(source_sha256).replace("-", "_", 1)).resolve()
 
 
 def _projects_parent_dir(projects_dir: Path | None) -> Path:
@@ -649,9 +782,9 @@ def _create_project_dirs(root: Path) -> None:
         ensure_directory(root / name)
 
 
-def _build_project_id(title: str, created_at: str) -> str:
-    """Build a stable human-readable project id."""
-    return f"{created_at[:10].replace('-', '')}-{_slugify(title)}"
+def _build_project_id(source_sha256: str) -> str:
+    """Build a stable project id from source content."""
+    return f"p-{source_sha256[:16]}"
 
 
 def _slugify(value: str) -> str:
@@ -886,6 +1019,32 @@ def _resolve_project_path(path: Path) -> Path:
     if manifest.is_file():
         return resolved
     raise FileNotFoundError(f"Project manifest does not exist: {manifest}")
+
+
+def _source_manifest_matches(source: Path, source_sha256: str | None, manifest: ProjectManifest) -> bool:
+    """Return whether a manifest points to the same source media."""
+    if _same_original_source_path(source, manifest.source.original_path):
+        return True
+    return bool(source_sha256 and manifest.source.sha256 and manifest.source.sha256 == source_sha256)
+
+
+def _same_original_source_path(source: Path, original_path: str | None) -> bool:
+    """Return whether an original source path matches the input path."""
+    if not original_path:
+        return False
+    return Path(original_path).expanduser().resolve() == source
+
+
+def _project_reuse_rank(project: ProjectListItem) -> tuple[int, str, str]:
+    """Rank duplicate project candidates by usefulness."""
+    status_rank = {
+        "created": 0,
+        "prepared": 1,
+        "transcribed": 2,
+        "named": 3,
+        "voiceprinted": 4,
+    }
+    return (status_rank.get(project.status, 0), project.updated_at, project.created_at)
 
 
 def _is_project_number_ref(ref_text: str) -> bool:

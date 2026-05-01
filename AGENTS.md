@@ -17,3 +17,9 @@
 
 - `src/app/commands/project.py` is already oversized; do not put Textual UI implementations there.
 - Keep project selection/review UI modules separate, such as `src/app/project_tui.py` and `src/app/speaker_tui.py`, and leave command modules as thin Typer adapters.
+
+## Project Identity Notes
+
+- Do not build new project identity from creation date or title. That created duplicate projects for the same video and made IDs change across runs.
+- New project IDs are content-based (`p-<sha16>`). `project create` / `project run` should reuse an existing project for the same source video when no explicit `--project-dir` is provided.
+- Existing date/title IDs must keep resolving for backward compatibility; do not rewrite old manifests unless a migration command is added.

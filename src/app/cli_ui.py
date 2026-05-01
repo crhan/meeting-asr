@@ -4,10 +4,22 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
+import time
 from typing import TypeVar
 
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    ProgressColumn,
+    SpinnerColumn,
+    Task,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.text import Text
 
 from app.cli_errors import run_with_cli_errors
 
@@ -22,6 +34,9 @@ class CliProgressEvent:
     total: int | None = None
     completed: int | None = None
     advance: int = 0
+    step_index: int | None = None
+    step_total: int | None = None
+    reset_total: bool = False
 
 
 CliProgressReporter = Callable[[CliProgressEvent], None]
@@ -34,6 +49,9 @@ def emit_progress(
     total: int | None = None,
     completed: int | None = None,
     advance: int = 0,
+    step_index: int | None = None,
+    step_total: int | None = None,
+    reset_total: bool = False,
 ) -> None:
     """
     Emit one progress event when a reporter is available.
@@ -44,13 +62,16 @@ def emit_progress(
         total: Optional total work units for the current phase.
         completed: Optional absolute completed work units.
         advance: Optional relative completed work units.
+        step_index: Optional 1-based workflow step number.
+        step_total: Optional total workflow step count.
+        reset_total: Reset the current progress bar before applying this event.
 
     Returns:
         None.
     """
     if reporter is None:
         return
-    reporter(CliProgressEvent(description, total, completed, advance))
+    reporter(CliProgressEvent(description, total, completed, advance, step_index, step_total, reset_total))
 
 
 def run_with_progress(
@@ -98,13 +119,21 @@ def _run_with_rich_progress(
     """
     with Progress(
         SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
+        TextColumn("[bold cyan]{task.fields[step_label]}[/] [progress.description]{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
+        TextColumn("[dim]step[/]"),
+        _StepElapsedColumn(),
+        TextColumn("[dim]total[/]"),
         TimeElapsedColumn(),
         console=console,
     ) as progress:
-        task_id = progress.add_task(description, total=total)
+        task_id = progress.add_task(
+            description,
+            total=total,
+            step_label="",
+            step_started_at=time.monotonic(),
+        )
 
         def report(event: CliProgressEvent) -> None:
             _apply_progress_event(progress, task_id, event)
@@ -125,9 +154,15 @@ def _apply_progress_event(progress: Progress, task_id, event: CliProgressEvent) 
         None.
     """
     updates = {}
+    if event.step_index is not None:
+        updates["step_label"] = _format_step_label(event.step_index, event.step_total)
+        updates["step_started_at"] = time.monotonic()
     if event.description is not None:
         updates["description"] = event.description
-    if event.total is not None:
+    if event.reset_total:
+        updates["total"] = event.total
+        updates["completed"] = 0 if event.completed is None else event.completed
+    elif event.total is not None:
         updates["total"] = event.total
     if event.completed is not None:
         updates["completed"] = event.completed
@@ -135,6 +170,54 @@ def _apply_progress_event(progress: Progress, task_id, event: CliProgressEvent) 
         progress.update(task_id, **updates)
     if event.advance:
         progress.advance(task_id, event.advance)
+
+
+class _StepElapsedColumn(ProgressColumn):
+    """Render elapsed time for the current workflow step."""
+
+    def render(self, task: Task) -> Text:
+        """
+        Render the current step duration.
+
+        Args:
+            task: Rich progress task.
+
+        Returns:
+            Duration text.
+        """
+        started_at = task.fields.get("step_started_at")
+        if not isinstance(started_at, int | float):
+            started_at = task.start_time or time.monotonic()
+        return Text(_format_elapsed_seconds(time.monotonic() - float(started_at)), style="progress.elapsed")
+
+
+def _format_step_label(step_index: int, step_total: int | None) -> str:
+    """
+    Format a workflow step label.
+
+    Args:
+        step_index: 1-based step index.
+        step_total: Optional total step count.
+
+    Returns:
+        Display label such as ``[3/8]``.
+    """
+    if step_total is None:
+        return f"[{step_index}]"
+    return f"[{step_index}/{step_total}]"
+
+
+def _format_elapsed_seconds(seconds: float) -> str:
+    """
+    Format elapsed seconds as ``H:MM:SS``.
+
+    Args:
+        seconds: Elapsed seconds.
+
+    Returns:
+        Human-readable duration.
+    """
+    return str(timedelta(seconds=max(0, int(seconds))))
 
 
 def _console() -> Console:

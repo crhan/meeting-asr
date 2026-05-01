@@ -23,7 +23,7 @@ import typer
 
 from app.commands import transcript as transcript_commands
 from app.cli_errors import run_with_cli_errors
-from app.cli_ui import CliProgressReporter, run_with_progress
+from app.cli_ui import CliProgressReporter, emit_progress, run_with_progress
 from app.completion_helpers import (
     complete_audio_format,
     complete_model,
@@ -37,10 +37,11 @@ from app.models import SentenceSegment, TranscriptResult
 from app.project_manager import (
     ProjectListItem,
     ProjectManifest,
+    ProjectCreateSummary,
     ProjectTranscribeOptions,
     ProjectTranscribeSummary,
     apply_project_speakers,
-    create_project,
+    create_or_reuse_project,
     init_project_git,
     list_projects,
     load_manifest,
@@ -104,6 +105,16 @@ class SpeakerApplyPreviewTarget:
     duration_seconds: float
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectRunSummary:
+    """Summary for the full project run workflow."""
+
+    project: ProjectCreateSummary
+    transcription: ProjectTranscribeSummary
+    matches: SpeakerMatchSummary
+    applied_mapping: dict[int, str]
+
+
 @app.command("create")
 def create(
     input: Path = typer.Argument(..., metavar="INPUT", exists=True, file_okay=True, dir_okay=False),
@@ -111,12 +122,16 @@ def create(
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     project_dir: Optional[Path] = typer.Option(None, "--project-dir", file_okay=False, dir_okay=True),
     meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
-    hash_source: bool = typer.Option(False, "--hash-source/--no-hash-source"),
+    hash_source: bool = typer.Option(
+        False,
+        "--hash-source/--no-hash-source",
+        help="Deprecated compatibility flag. Source identity is always hashed.",
+    ),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Create a project directory with project.json metadata."""
-    manifest = run_with_progress(
-        lambda reporter: create_project(
+    summary = run_with_progress(
+        lambda reporter: create_or_reuse_project(
             input,
             title=title,
             projects_dir=projects_dir,
@@ -128,7 +143,7 @@ def create(
         description="Creating project",
         enabled=progress,
     )
-    _echo_project_created(_created_project_root(project_dir, projects_dir, manifest), manifest, projects_dir)
+    _echo_project_created(summary.project_dir, summary.manifest, projects_dir, created=summary.created)
 
 
 @app.command("prepare")
@@ -207,9 +222,22 @@ def run(
     oss_upload: str = typer.Option("auto", "--oss-upload", autocompletion=complete_oss_upload_mode),
     file_url: Optional[str] = typer.Option(None, "--file-url"),
     audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    voiceprint_provider: Optional[str] = typer.Option(
+        None,
+        "--voiceprint-provider",
+        autocompletion=complete_voiceprint_provider,
+    ),
+    voiceprint_endpoint: Optional[str] = typer.Option(None, "--voiceprint-endpoint"),
+    voiceprint_model: Optional[str] = typer.Option(
+        None,
+        "--voiceprint-model",
+        autocompletion=complete_voiceprint_model,
+    ),
+    match_threshold: float = typer.Option(0.75, "--match-threshold", min=0.0, max=1.0),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
-    """Create a project and run the default transcription workflow."""
+    """Create a project and run the automatic transcription and speaker matching workflow."""
     configure_logging()
     options = _project_transcribe_options(
         speaker_count=speaker_count,
@@ -222,26 +250,25 @@ def run(
         disfluency_removal=False,
         audio_format=audio_format,
     )
-    _, summary = run_with_progress(
-        lambda reporter: _create_and_transcribe_project(
+    summary = run_with_progress(
+        lambda reporter: _run_project_workflow(
             input,
             title=title,
             projects_dir=projects_dir,
             project_dir=project_dir,
             meeting_time=meeting_time,
             options=options,
+            store_dir=store_dir,
+            voiceprint_provider=voiceprint_provider,
+            voiceprint_endpoint=voiceprint_endpoint,
+            voiceprint_model=voiceprint_model,
+            match_threshold=match_threshold,
             progress=reporter,
         ),
         description="Running project workflow",
         enabled=progress,
     )
-    _echo_transcribe_summary(
-        summary.project_dir,
-        summary.task_id,
-        summary.detected_speaker_count,
-        summary.sentence_count,
-        projects_dir=projects_dir,
-    )
+    _echo_run_summary(summary, projects_dir)
 
 
 @app.command("list")
@@ -274,7 +301,7 @@ def review(
     _run_speaker_review(project_dir, page_size=page_size, store_dir=store_dir, summary=summary)
 
 
-def _create_and_transcribe_project(
+def _run_project_workflow(
     input_path: Path,
     *,
     title: str | None,
@@ -282,10 +309,15 @@ def _create_and_transcribe_project(
     project_dir: Path | None,
     meeting_time: str | None,
     options: ProjectTranscribeOptions,
+    store_dir: Path | None,
+    voiceprint_provider: str | None,
+    voiceprint_endpoint: str | None,
+    voiceprint_model: str | None,
+    match_threshold: float,
     progress: CliProgressReporter | None,
-) -> tuple[ProjectManifest, ProjectTranscribeSummary]:
+) -> ProjectRunSummary:
     """
-    Create a project and immediately transcribe it.
+    Create or reuse a project, then run the automatic workflow.
 
     Args:
         input_path: Local source media file.
@@ -294,12 +326,18 @@ def _create_and_transcribe_project(
         project_dir: Optional explicit project directory.
         meeting_time: Optional meeting start time string.
         options: Project transcription options.
+        store_dir: Optional voiceprint store directory.
+        voiceprint_provider: Optional voiceprint provider override.
+        voiceprint_endpoint: Optional voiceprint endpoint override.
+        voiceprint_model: Optional voiceprint model override.
+        match_threshold: Voiceprint match acceptance threshold.
         progress: Optional progress reporter.
 
     Returns:
-        Created manifest and transcription summary.
+        Project run summary.
     """
-    manifest = create_project(
+    emit_progress(progress, "Creating or reusing project", step_index=1, step_total=9, reset_total=True)
+    project = create_or_reuse_project(
         input_path,
         title=title,
         projects_dir=projects_dir,
@@ -308,9 +346,26 @@ def _create_and_transcribe_project(
         hash_source=False,
         progress=progress,
     )
-    root = _created_project_root(project_dir, projects_dir, manifest)
-    summary = transcribe_project(root, options, progress=progress)
-    return manifest, summary
+    transcription = transcribe_project(project.project_dir, options, progress=progress, step_offset=1, step_total=9)
+    emit_progress(progress, "Matching speakers with voiceprints", step_index=8, step_total=9, reset_total=True)
+    matches = match_project_speakers(
+        project.project_dir,
+        store_dir=store_dir,
+        provider=voiceprint_provider,
+        endpoint=voiceprint_endpoint,
+        model=voiceprint_model,
+        threshold=match_threshold,
+        sample_count=2,
+        max_seconds=12.0,
+        padding_seconds=0.5,
+        progress=progress,
+    )
+    emit_progress(progress, "Applying accepted speaker matches", step_index=9, step_total=9, reset_total=True)
+    applied_mapping = matches.accepted_mapping
+    if applied_mapping:
+        apply_project_speakers(project.project_dir, applied_mapping)
+    emit_progress(progress, "Project run complete", completed=1, total=1)
+    return ProjectRunSummary(project, transcription, matches, applied_mapping)
 
 
 @app.command("status")
@@ -635,6 +690,60 @@ def _echo_transcribe_summary(
     typer.echo(f"  meeting-asr project speakers preview {shlex.quote(project_ref)}")
 
 
+def _echo_run_summary(summary: ProjectRunSummary, projects_dir: Path | None) -> None:
+    """
+    Print full project run results.
+
+    Args:
+        summary: Full run summary.
+        projects_dir: Optional projects parent directory.
+    """
+    project_dir = summary.project.project_dir
+    manifest = load_manifest(project_dir)
+    project_ref = _project_cli_ref(project_dir, manifest, projects_dir)
+    total_matches = len(summary.matches.matches)
+    accepted = len(summary.applied_mapping)
+    unresolved = total_matches - accepted
+    typer.echo("")
+    typer.echo("Project automation completed." if unresolved == 0 else "Project automation needs review.")
+    typer.echo(f"Project: {project_dir}")
+    if project_ref != manifest.project_id:
+        typer.echo(f"Project No.: {project_ref}")
+    typer.echo(f"Project ID: {manifest.project_id}")
+    typer.echo(f"Title: {manifest.title}")
+    typer.echo(f"Task ID: {summary.transcription.task_id}")
+    typer.echo(f"Detected speakers: {summary.transcription.detected_speaker_count}")
+    typer.echo(f"Sentence count: {summary.transcription.sentence_count}")
+    typer.echo(f"Voiceprint matches: {accepted}/{total_matches} accepted")
+    if summary.project.created:
+        typer.echo("Source: new project")
+    else:
+        typer.echo("Source: reused existing project")
+    typer.echo("")
+    typer.echo("Outputs:")
+    typer.echo("  exports/transcript.txt")
+    typer.echo("  exports/transcript_speakers.txt")
+    if accepted:
+        typer.echo("  exports/transcript_named.txt")
+        typer.echo("  exports/subtitle_named.srt")
+    else:
+        typer.echo("  named outputs: not ready until speaker review")
+    if unresolved == 0:
+        typer.echo("")
+        typer.echo("Next steps:")
+        typer.echo(f"  meeting-asr project transcript show {shlex.quote(project_ref)} --kind named")
+        typer.echo(f"  meeting-asr project speakers preview {shlex.quote(project_ref)}")
+        return
+    typer.echo("")
+    typer.echo("Review required:")
+    typer.echo(f"  {unresolved} speaker(s) were not accepted automatically.")
+    typer.echo(f"  meeting-asr project review {shlex.quote(project_ref)}")
+    typer.echo("")
+    typer.echo("Agent prompt:")
+    typer.echo(f"  Open project review for {project_ref}, resolve unaccepted speakers, save named outputs,")
+    typer.echo("  then rerun transcript list and preview to verify exports/transcript_named.txt.")
+
+
 def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> None:
     """
     Print project list rows.
@@ -715,12 +824,18 @@ def _project_list_timestamp(value: str) -> str:
     return value[:19]
 
 
-def _echo_project_created(project_dir: Path, manifest: ProjectManifest, projects_dir: Path | None) -> None:
+def _echo_project_created(
+    project_dir: Path,
+    manifest: ProjectManifest,
+    projects_dir: Path | None,
+    *,
+    created: bool,
+) -> None:
     """Print project creation output with copyable next commands."""
     resolved_dir = project_dir.expanduser().resolve()
     project_ref = _project_cli_ref(resolved_dir, manifest, projects_dir)
     typer.echo("")
-    typer.echo("Project created.")
+    typer.echo("Project created." if created else "Project already exists; reusing it.")
     typer.echo(f"Project: {resolved_dir}")
     if project_ref != manifest.project_id:
         typer.echo(f"Project No.: {project_ref}")
