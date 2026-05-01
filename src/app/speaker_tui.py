@@ -25,12 +25,12 @@ from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_speaker
 DEFAULT_SAMPLE_PAGE_SIZE = 6
 SAMPLE_PANE_RESERVED_ROWS = 4
 BROWSE_STATUS = (
-    "Browse mode: move speakers/samples first, flip pages when needed, "
-    "then press / only when you want to name this speaker."
+    "Browse: j/k speaker | up/down sample | PgUp/PgDn or [/] page | "
+    "Space play | a match | / edit | s save | q quit"
 )
 EDIT_STATUS = (
-    "Edit mode: type a name or search people. Tab chooses first suggestion, "
-    "Enter applies, Esc cancels."
+    "Edit: type a name or search people | Tab first suggestion | "
+    "Enter apply | Esc cancel"
 )
 
 
@@ -105,20 +105,21 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         padding: 0 1;
     }
     #speakers {
-        width: 32%;
+        width: 30%;
     }
     #samples {
-        width: 40%;
+        width: 70%;
     }
     #identity {
-        width: 28%;
+        border: round $accent;
+        height: 10;
+        padding: 0 1;
     }
     #name-input {
-        dock: bottom;
+        height: 3;
     }
     #status {
-        dock: bottom;
-        height: 1;
+        height: 2;
         color: $text-muted;
     }
     """
@@ -161,7 +162,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         with Horizontal(id="main"):
             yield Static(id="speakers", classes="pane")
             yield Static(id="samples", classes="pane")
-            yield Static(id="identity", classes="pane")
+        yield Static(id="identity")
         yield NameInput(
             placeholder="Type a name or search known people",
             id="name-input",
@@ -218,6 +219,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         field.value = self._speaker().current_name
         field.focus()
         self._set_status(EDIT_STATUS)
+        self.query_one("#identity", Static).display = True
+        self._refresh()
 
     def action_cancel_edit(self) -> None:
         """Cancel name editing and return to browse mode."""
@@ -337,13 +340,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         speaker = self._speaker()
         lines = ["[b]Identity[/b]", f"Current: [green]{escape(speaker.current_name)}[/]"]
         lines.extend(_match_lines(speaker.match))
-        lines.append("")
-        lines.append("[b]People[/b]")
+        lines.append("[b]Suggestions[/b]")
         suggestions = self._suggestions(speaker)
-        lines.extend(f"- {escape(name)}" for name in suggestions[:8])
+        lines.extend(f"- {escape(name)}" for name in suggestions[:5])
         if not suggestions:
             lines.append("- Type a new name with /")
-        lines.extend(_help_lines())
+        lines.append("[dim]Enter applies typed name. Tab chooses first suggestion. Esc cancels.[/]")
         return "\n".join(lines)
 
     def _suggestions(self, speaker: ReviewSpeaker) -> list[str]:
@@ -434,6 +436,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         field.display = False
         field.disabled = True
         field.blur()
+        self.query_one("#identity", Static).display = False
         self.search_query = ""
         self.set_focus(None)
         self._set_status(status)
@@ -626,24 +629,6 @@ def _match_lines(match: SpeakerMatchCandidate | None) -> list[str]:
     score = "-" if match.score is None else f"{match.score:.3f}"
     state = "accepted" if match.accepted else "review"
     return [f"Match: {escape(match.name)}", f"Score: {score} {state}"]
-
-
-def _help_lines() -> list[str]:
-    """Render the fixed keyboard help shown in the identity pane."""
-    return [
-        "",
-        "[b]Keys[/b]",
-        "j/k: previous/next speaker",
-        "up/down: choose sample",
-        "PageUp/PageDown: sample page",
-        "bracket keys: sample page",
-        "space: play selected sample",
-        "a: accept voiceprint match",
-        "/: edit or search name",
-        "Tab: choose first suggestion",
-        "i: keep anonymous",
-        "s: save, q: quit",
-    ]
 
 
 def _identity_candidates(speaker: ReviewSpeaker, people_names: list[str]) -> list[str]:

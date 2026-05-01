@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from textual.widgets import Input
+from textual.widgets import Input, Static
 
 from app import speaker_tui
 from app.models import SentenceSegment
@@ -18,20 +18,26 @@ def test_speaker_review_tui_starts_in_browse_mode() -> None:
     async def scenario() -> None:
         async with SpeakerReviewApp(_session()).run_test() as pilot:
             field = pilot.app.query_one("#name-input", Input)
+            identity = pilot.app.query_one("#identity", Static)
+            main = pilot.app.query_one("#main")
+            assert len(list(main.children)) == 2
             assert field.display is False
             assert field.disabled is True
+            assert identity.display is False
             assert pilot.app.focused is None
 
             await pilot.press("/")
 
             assert field.display is True
             assert field.disabled is False
+            assert identity.display is True
             assert pilot.app.focused is field
 
             await pilot.press("escape")
 
             assert field.display is False
             assert field.disabled is True
+            assert identity.display is False
             assert pilot.app.focused is None
 
     asyncio.run(scenario())
