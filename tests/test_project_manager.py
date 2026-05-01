@@ -91,12 +91,14 @@ def test_project_create_command_defaults_to_xdg_data_home(
     assert len(project_dirs) == 1
     assert "Project created." in result.output
     manifest = load_manifest(project_dirs[0])
-    assert f"meeting-asr project transcribe {manifest.project_id}" in result.output
-    assert f"meeting-asr project review {manifest.project_id}" in result.output
+    assert "Project No.: 1" in result.output
+    assert "meeting-asr project transcribe 1" in result.output
+    assert "meeting-asr project review 1" in result.output
+    assert manifest.project_id in result.output
     assert "meeting-asr project transcribe ." not in result.output
 
 
-def test_project_create_output_uses_project_id_next_steps(tmp_path: Path) -> None:
+def test_project_create_output_uses_copyable_next_steps(tmp_path: Path) -> None:
     """Project creation output should not require cd into the project."""
     source = tmp_path / "meeting.mp4"
     source.write_bytes(b"fake video")
@@ -118,6 +120,7 @@ def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(tmp_path: 
 
     assert resolve_project_ref(project_dir, projects_dir) == project_dir.resolve()
     assert resolve_project_ref(manifest.project_id, projects_dir) == project_dir.resolve()
+    assert resolve_project_ref("1", projects_dir) == project_dir.resolve()
     assert resolve_project_ref("Project Ref Demo", projects_dir) == project_dir.resolve()
     assert resolve_project_ref("Ref Demo", projects_dir) == project_dir.resolve()
 
@@ -146,10 +149,13 @@ def test_project_list_command_reads_default_projects_dir(
 
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
-    assert "Project ID | Status | Updated | Title | Path" in result.output
+    assert "Use No. with any PROJECT command" in result.output
+    assert "No." in result.output
+    assert "Project ID" in result.output
+    assert "Directory" in result.output
     assert "Demo" in result.output
     assert "created" in result.output
-    assert str(project_dir.resolve()) in result.output
+    assert project_dir.name in result.output
     assert load_manifest(project_dir).project_id in result.output
 
 
@@ -175,7 +181,7 @@ def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
     assert "Demo" in result.output
-    assert str(project_dir.resolve()) in result.output
+    assert project_dir.name in result.output
     assert "not-a-project" not in result.output
 
 

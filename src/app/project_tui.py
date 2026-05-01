@@ -24,6 +24,7 @@ q                    Quit
 
 [b]Project Reference[/b]
 You can also skip this list and run:
+meeting-asr project review PROJECT_NO
 meeting-asr project review PROJECT_ID
 meeting-asr project review PROJECT_TITLE
 """
@@ -171,7 +172,7 @@ class ProjectPickerApp(App[Path | None]):
     def _overview_pane(self) -> str:
         """Render project list summary."""
         selected = self._project()
-        selected_text = "-" if selected is None else f"{selected.project_id} | {selected.title}"
+        selected_text = "-" if selected is None else f"{selected.number} | {selected.title}"
         return "\n".join(
             [
                 f"[b]Projects[/b] {escape(str(self.session.projects_dir))}",
@@ -188,7 +189,7 @@ class ProjectPickerApp(App[Path | None]):
             return "\n".join(lines)
         for index, project in enumerate(self.session.projects):
             marker = ">" if index == self.selected_project_index else " "
-            row = f"{marker} {project.updated_at[:19]} | {project.status} | {project.project_id} | {project.title}"
+            row = f"{marker} {project.number:>2} | {project.updated_at[:19]} | {project.status} | {project.title}"
             lines.append(f"[reverse]{escape(row)}[/]" if marker == ">" else escape(row))
         return "\n".join(lines)
 
@@ -200,11 +201,12 @@ class ProjectPickerApp(App[Path | None]):
         return "\n".join(
             [
                 "[b]Detail[/b]",
+                f"Project No.: {project.number}",
                 f"Project ID: {escape(project.project_id)}",
                 f"Title: {escape(project.title)}",
                 f"Status: {escape(project.status)}",
                 f"Path: {escape(str(project.project_dir))}",
-                f"Open: meeting-asr project review {escape(project.project_id)}",
+                f"Open: meeting-asr project review {project.number}",
             ]
         )
 
@@ -257,5 +259,7 @@ def render_project_picker_summary(session: ProjectPickerSession) -> str:
         lines.append("No projects found.")
         return "\n".join(lines)
     for project in session.projects:
-        lines.append(f"{project.project_id} | {project.status} | {project.title} | {project.project_dir}")
+        lines.append(
+            f"{project.number} | {project.status} | {project.title} | {project.project_id} | {project.project_dir}"
+        )
     return "\n".join(lines)

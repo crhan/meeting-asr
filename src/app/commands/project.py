@@ -16,6 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from rich import box
+from rich.console import Console
+from rich.table import Table
 import typer
 
 from app.commands import transcript as transcript_commands
@@ -125,7 +128,7 @@ def create(
         description="Creating project",
         enabled=progress,
     )
-    _echo_project_created(_created_project_root(project_dir, projects_dir, manifest), manifest)
+    _echo_project_created(_created_project_root(project_dir, projects_dir, manifest), manifest, projects_dir)
 
 
 @app.command("prepare")
@@ -187,6 +190,7 @@ def transcribe(
         summary.task_id,
         summary.detected_speaker_count,
         summary.sentence_count,
+        projects_dir=projects_dir,
     )
 
 
@@ -236,6 +240,7 @@ def run(
         summary.task_id,
         summary.detected_speaker_count,
         summary.sentence_count,
+        projects_dir=projects_dir,
     )
 
 
@@ -602,12 +607,22 @@ def _project_transcribe_options(
     )
 
 
-def _echo_transcribe_summary(project_dir: Path, task_id: str, speaker_count: int, sentence_count: int) -> None:
+def _echo_transcribe_summary(
+    project_dir: Path,
+    task_id: str,
+    speaker_count: int,
+    sentence_count: int,
+    *,
+    projects_dir: Path | None,
+) -> None:
     """Print project transcription summary."""
     manifest = load_manifest(project_dir)
+    project_ref = _project_cli_ref(project_dir, manifest, projects_dir)
     typer.echo("")
     typer.echo("Project transcription completed.")
     typer.echo(f"Project: {project_dir}")
+    if project_ref != manifest.project_id:
+        typer.echo(f"Project No.: {project_ref}")
     typer.echo(f"Project ID: {manifest.project_id}")
     typer.echo(f"Title: {manifest.title}")
     typer.echo(f"Task ID: {task_id}")
@@ -615,9 +630,9 @@ def _echo_transcribe_summary(project_dir: Path, task_id: str, speaker_count: int
     typer.echo(f"Sentence count: {sentence_count}")
     typer.echo("")
     typer.echo("Next steps:")
-    typer.echo(f"  meeting-asr project review {shlex.quote(manifest.project_id)}")
-    typer.echo(f"  meeting-asr project transcript show {shlex.quote(manifest.project_id)}")
-    typer.echo(f"  meeting-asr project speakers preview {shlex.quote(manifest.project_id)}")
+    typer.echo(f"  meeting-asr project review {shlex.quote(project_ref)}")
+    typer.echo(f"  meeting-asr project transcript show {shlex.quote(project_ref)}")
+    typer.echo(f"  meeting-asr project speakers preview {shlex.quote(project_ref)}")
 
 
 def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> None:
@@ -632,13 +647,67 @@ def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> N
     if not projects:
         typer.echo("No projects found.")
         return
-    typer.echo("Project ID | Status | Updated | Title | Path")
-    typer.echo("--- | --- | --- | --- | ---")
+    typer.echo("Use No. with any PROJECT command, e.g. `meeting-asr project review 1`.")
+    _project_table_console().print(_project_list_table(projects))
+
+
+def _project_list_table(projects: list[ProjectListItem]) -> Table:
+    """
+    Build the project list table.
+
+    Args:
+        projects: Numbered project rows to display.
+
+    Returns:
+        Rich table ready to print.
+    """
+    table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
+    table.add_column("No.", justify="right", no_wrap=True, style="bold cyan")
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Updated", no_wrap=True)
+    table.add_column("Title")
+    table.add_column("Project ID", no_wrap=True)
+    table.add_column("Directory", no_wrap=True)
     for project in projects:
-        typer.echo(
-            f"{project.project_id} | {project.status} | {_project_list_timestamp(project.updated_at)} | "
-            f"{project.title} | {project.project_dir}"
+        table.add_row(
+            str(project.number),
+            _project_status_text(project.status),
+            _project_list_timestamp(project.updated_at),
+            project.title,
+            project.project_id,
+            project.project_dir.name,
         )
+    return table
+
+
+def _project_status_text(status: str) -> str:
+    """
+    Return a styled project status for table display.
+
+    Args:
+        status: Project lifecycle status.
+
+    Returns:
+        Rich markup string.
+    """
+    styles = {
+        "created": "yellow",
+        "prepared": "yellow",
+        "transcribed": "cyan",
+        "named": "green",
+        "voiceprinted": "green",
+    }
+    return f"[{styles.get(status, 'white')}]{status}[/]"
+
+
+def _project_table_console() -> Console:
+    """
+    Build the stdout console used for project tables.
+
+    Returns:
+        Rich console instance.
+    """
+    return Console(highlight=False, color_system="auto", width=140)
 
 
 def _project_list_timestamp(value: str) -> str:
@@ -646,20 +715,57 @@ def _project_list_timestamp(value: str) -> str:
     return value[:19]
 
 
-def _echo_project_created(project_dir: Path, manifest) -> None:
+def _echo_project_created(project_dir: Path, manifest: ProjectManifest, projects_dir: Path | None) -> None:
     """Print project creation output with copyable next commands."""
     resolved_dir = project_dir.expanduser().resolve()
+    project_ref = _project_cli_ref(resolved_dir, manifest, projects_dir)
     typer.echo("")
     typer.echo("Project created.")
     typer.echo(f"Project: {resolved_dir}")
+    if project_ref != manifest.project_id:
+        typer.echo(f"Project No.: {project_ref}")
     typer.echo(f"Project ID: {manifest.project_id}")
     typer.echo(f"Source: {manifest.source.path}")
     typer.echo(f"Status: {manifest.status}")
     typer.echo("")
     typer.echo("Next steps:")
-    typer.echo(f"  meeting-asr project transcribe {shlex.quote(manifest.project_id)}")
-    typer.echo(f"  meeting-asr project status {shlex.quote(manifest.project_id)}")
-    typer.echo(f"  meeting-asr project review {shlex.quote(manifest.project_id)}")
+    typer.echo(f"  meeting-asr project transcribe {shlex.quote(project_ref)}")
+    typer.echo(f"  meeting-asr project status {shlex.quote(project_ref)}")
+    typer.echo(f"  meeting-asr project review {shlex.quote(project_ref)}")
+
+
+def _project_cli_ref(project_dir: Path, manifest: ProjectManifest, projects_dir: Path | None) -> str:
+    """
+    Return the shortest safe project reference for follow-up commands.
+
+    Args:
+        project_dir: Resolved project root.
+        manifest: Project manifest.
+        projects_dir: Optional projects parent used by the current command.
+
+    Returns:
+        Project list number when available, otherwise the stable project id.
+    """
+    number = _project_number_for_dir(project_dir, projects_dir)
+    return str(number) if number is not None else manifest.project_id
+
+
+def _project_number_for_dir(project_dir: Path, projects_dir: Path | None) -> int | None:
+    """
+    Find the current project-list number for a project directory.
+
+    Args:
+        project_dir: Project root to find.
+        projects_dir: Optional projects parent directory.
+
+    Returns:
+        1-based project number, or ``None`` if the project is outside the list.
+    """
+    resolved_dir = project_dir.expanduser().resolve()
+    for project in list_projects(projects_dir).projects:
+        if project.project_dir == resolved_dir:
+            return project.number
+    return None
 
 
 def _echo_match_summary(summary: SpeakerMatchSummary) -> None:

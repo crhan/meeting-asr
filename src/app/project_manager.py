@@ -143,6 +143,7 @@ class ProjectListItem:
     status: str
     created_at: str
     updated_at: str
+    number: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,7 +305,7 @@ def list_projects(projects_dir: Path | None) -> ProjectListResult:
             )
         )
     projects.sort(key=lambda project: (project.created_at, project.project_id), reverse=True)
-    return ProjectListResult(root, projects)
+    return ProjectListResult(root, _number_project_list_items(projects))
 
 
 def resolve_project_ref(project_ref: Path | str, projects_dir: Path | None = None) -> Path:
@@ -325,6 +326,8 @@ def resolve_project_ref(project_ref: Path | str, projects_dir: Path | None = Non
     if _looks_like_path(ref_text, path):
         return _resolve_project_path(path)
     projects = list_projects(projects_dir).projects
+    if _is_project_number_ref(ref_text):
+        return _single_project_number_match(ref_text, projects)
     exact = [project for project in projects if _matches_project_ref(project, ref_text, partial=False)]
     if exact:
         return _single_project_match(ref_text, exact)
@@ -332,6 +335,30 @@ def resolve_project_ref(project_ref: Path | str, projects_dir: Path | None = Non
     if partial:
         return _single_project_match(ref_text, partial)
     raise FileNotFoundError(f"Project not found by path, id, or title: {ref_text}")
+
+
+def _number_project_list_items(projects: list[ProjectListItem]) -> list[ProjectListItem]:
+    """
+    Attach short project numbers to sorted project list rows.
+
+    Args:
+        projects: Project rows already sorted in display order.
+
+    Returns:
+        Rows with 1-based numbers matching ``meeting-asr project list``.
+    """
+    return [
+        ProjectListItem(
+            project_dir=project.project_dir,
+            project_id=project.project_id,
+            title=project.title,
+            status=project.status,
+            created_at=project.created_at,
+            updated_at=project.updated_at,
+            number=index,
+        )
+        for index, project in enumerate(projects, start=1)
+    ]
 
 
 def ensure_project_dirs(project_dir: Path) -> ProjectPaths:
@@ -859,6 +886,29 @@ def _resolve_project_path(path: Path) -> Path:
     if manifest.is_file():
         return resolved
     raise FileNotFoundError(f"Project manifest does not exist: {manifest}")
+
+
+def _is_project_number_ref(ref_text: str) -> bool:
+    """Return whether a reference is a short numeric project number."""
+    return ref_text.isdecimal() and int(ref_text) > 0
+
+
+def _single_project_number_match(ref_text: str, projects: list[ProjectListItem]) -> Path:
+    """
+    Resolve a short project number from the current project list.
+
+    Args:
+        ref_text: Positive decimal number typed by the user.
+        projects: Numbered project list rows.
+
+    Returns:
+        Matching project directory.
+    """
+    number = int(ref_text)
+    for project in projects:
+        if project.number == number:
+            return project.project_dir
+    raise FileNotFoundError(f"Project number not found: {ref_text}. Run `meeting-asr project list`.")
 
 
 def _matches_project_ref(project: ProjectListItem, ref_text: str, *, partial: bool) -> bool:

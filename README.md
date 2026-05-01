@@ -95,20 +95,20 @@ meeting-asr project run "/path/to/meeting.mp4" \
 ```bash
 meeting-asr project create "/path/to/meeting.mp4" --title "供应商管理AI治理"
 meeting-asr project list
-meeting-asr project transcribe PROJECT_ID
-meeting-asr project review PROJECT_ID
-meeting-asr project speakers preview PROJECT_ID
-meeting-asr project transcript show PROJECT_ID
+meeting-asr project transcribe PROJECT_NO
+meeting-asr project review PROJECT_NO
+meeting-asr project speakers preview PROJECT_NO
+meeting-asr project transcript show PROJECT_NO
 meeting-asr voiceprint capture
 meeting-asr voiceprint embed
 meeting-asr voiceprint browse
 ```
 
 `project create` 会复制源视频到 `source/`，后续命令只需要项目目录，不需要再次传视频路径。
-AutoRun 和 create 输出会打印 `Project ID`，后续命令可以直接传 project path、project id
-或 project title，不需要先 `cd`。在项目目录内执行时，项目路径参数仍默认是当前目录。
-不记得 Project ID 时，跑 `meeting-asr project review` 会打开 project list TUI，选中历史
-project 后直接进入 review。
+AutoRun、create 和 `project list` 会打印短数字 `Project No.`，后续命令优先传这个数字；
+也仍然可以传 project path、project id 或 project title，不需要先 `cd`。在项目目录内执行时，
+项目路径参数仍默认是当前目录。不记得 Project No. 时，跑 `meeting-asr project list` 看表格，
+或直接跑 `meeting-asr project review` 打开 project list TUI，选中历史 project 后进入 review。
 `project list` 默认列出 XDG 项目目录，也可以用 `--projects-dir` 指定项目父目录。
 交互式终端会在 stderr 显示 Rich 进度；脚本、管道和测试输出保持纯文本。需要关闭时加
 `--no-progress`。
@@ -129,8 +129,8 @@ Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speak
 
 1. 先跑 `meeting-asr project speakers match`。有声纹库时会生成候选；没有声纹库时会生成全 unknown 的 review 结果。
 2. 用 `meeting-asr project speakers inspect` 查看每个 speaker 的样例和声纹建议。
-3. 优先跑 `meeting-asr project review PROJECT_ID` 进入 project 层 TUI；如果不传
-   `PROJECT_ID`，会先打开 project list。进入 review 后，它顶部会显示 project 概况、
+3. 优先跑 `meeting-asr project review PROJECT_NO` 进入 project 层 TUI；如果不传
+   `PROJECT_NO`，会先打开 project list。进入 review 后，它顶部会显示 project 概况、
    match/manual/capture/embed 进度、match 分数和 conflict/mismatch；下方两栏用于切
    speaker/sample、样例翻页、播放/停止当前样例、接受 match、输入新名字并保存；按 `?`
    可查看快捷键。
