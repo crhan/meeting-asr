@@ -12,7 +12,7 @@ import requests
 from app.core.progress import CliProgressReporter, emit_progress
 from app.config import get_cache_dir, load_settings
 from app.uploader import upload_file_to_oss
-from app.utils import retry
+from app.utils import retry, suppress_noisy_dependency_info_logs
 from app.voiceprint_store import (
     get_voiceprint_db_path,
     list_all_voiceprint_samples,
@@ -175,17 +175,18 @@ def _load_speechbrain_classifier() -> Any:
     global _SPEECHBRAIN_CLASSIFIER
     if _SPEECHBRAIN_CLASSIFIER is not None:
         return _SPEECHBRAIN_CLASSIFIER
-    try:
-        from speechbrain.inference.speaker import EncoderClassifier
-    except ImportError:
+    with suppress_noisy_dependency_info_logs():
         try:
-            from speechbrain.pretrained import EncoderClassifier  # type: ignore[no-redef]
-        except ImportError as exc:
-            raise RuntimeError(_speechbrain_install_message()) from exc
-    _SPEECHBRAIN_CLASSIFIER = EncoderClassifier.from_hparams(
-        source="speechbrain/spkrec-ecapa-voxceleb",
-        savedir=str(get_cache_dir() / "models" / "speechbrain" / "spkrec-ecapa-voxceleb"),
-    )
+            from speechbrain.inference.speaker import EncoderClassifier
+        except ImportError:
+            try:
+                from speechbrain.pretrained import EncoderClassifier  # type: ignore[no-redef]
+            except ImportError as exc:
+                raise RuntimeError(_speechbrain_install_message()) from exc
+        _SPEECHBRAIN_CLASSIFIER = EncoderClassifier.from_hparams(
+            source="speechbrain/spkrec-ecapa-voxceleb",
+            savedir=str(get_cache_dir() / "models" / "speechbrain" / "spkrec-ecapa-voxceleb"),
+        )
     return _SPEECHBRAIN_CLASSIFIER
 
 

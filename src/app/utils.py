@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TypeVar
 
@@ -34,8 +35,68 @@ def configure_logging(verbose: bool = False) -> None:
     """
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(level=level, format="%(levelname)s %(message)s", force=True)
-    for logger_name in NOISY_LOGGERS:
+    _set_noisy_logger_levels(level)
+
+
+@contextmanager
+def suppress_noisy_dependency_info_logs() -> Iterator[None]:
+    """
+    Hide noisy third-party INFO logs during dependency initialization.
+
+    Some libraries reset their own loggers while loading models. Temporarily
+    disabling INFO keeps progress rendering clean without hiding warnings.
+
+    Yields:
+        None.
+    """
+    disabled_level = logging.root.manager.disable
+    logging.disable(logging.INFO)
+    try:
+        yield
+    finally:
+        logging.disable(disabled_level)
+        _set_noisy_logger_levels(logging.WARNING)
+
+
+def _set_noisy_logger_levels(level: int) -> None:
+    """
+    Set dependency logger levels in one place.
+
+    Args:
+        level: Logging level to apply to noisy dependencies.
+
+    Returns:
+        None.
+    """
+    for logger_name in _iter_noisy_logger_names():
         logging.getLogger(logger_name).setLevel(level)
+
+
+def _iter_noisy_logger_names() -> set[str]:
+    """
+    Return configured noisy loggers plus already-created descendants.
+
+    Returns:
+        Logger names to suppress.
+    """
+    logger_names = set(NOISY_LOGGERS)
+    for logger_name in logging.Logger.manager.loggerDict:
+        if _is_noisy_logger_name(logger_name):
+            logger_names.add(logger_name)
+    return logger_names
+
+
+def _is_noisy_logger_name(logger_name: str) -> bool:
+    """
+    Return whether a logger belongs to a known noisy dependency.
+
+    Args:
+        logger_name: Logger name.
+
+    Returns:
+        True when the logger should be treated as noisy.
+    """
+    return any(logger_name == noisy or logger_name.startswith(f"{noisy}.") for noisy in NOISY_LOGGERS)
 
 
 def ensure_directory(path: Path) -> Path:

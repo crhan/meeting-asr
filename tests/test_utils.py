@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 import pytest
 import requests
 
-from app.utils import configure_logging, is_retryable_exception, retry
+from app.utils import configure_logging, is_retryable_exception, retry, suppress_noisy_dependency_info_logs
 
 
 def test_retry_retries_timeout_then_returns_value() -> None:
@@ -87,3 +88,36 @@ def test_configure_logging_suppresses_noisy_dependency_info() -> None:
 
     assert logging.getLogger("speechbrain.utils.fetching").getEffectiveLevel() == logging.WARNING
     assert logging.getLogger("huggingface_hub").getEffectiveLevel() == logging.WARNING
+
+
+def test_suppress_noisy_dependency_info_logs_blocks_logger_resets(capsys: pytest.CaptureFixture[str]) -> None:
+    """Dependency INFO should stay hidden even when the library resets its logger."""
+    logger = logging.getLogger("speechbrain.utils.fetching")
+    child_logger = logging.getLogger("speechbrain.core")
+    original_level = logger.level
+    original_child_level = child_logger.level
+    original_handlers = list(logger.handlers)
+    original_propagate = logger.propagate
+    stream_handler = logging.StreamHandler(sys.stderr)
+    stream_handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+    logger.handlers = [stream_handler]
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+
+    try:
+        with suppress_noisy_dependency_info_logs():
+            logger.setLevel(logging.INFO)
+            child_logger.setLevel(logging.INFO)
+            logger.info("Fetch hyperparams.yaml")
+            logger.warning("real warning")
+    finally:
+        logger.handlers = original_handlers
+        logger.propagate = original_propagate
+        logger.setLevel(original_level)
+        child_logger.setLevel(original_child_level)
+
+    captured = capsys.readouterr()
+    assert "Fetch hyperparams.yaml" not in captured.err
+    assert "real warning" in captured.err
+    assert logger.getEffectiveLevel() >= logging.WARNING
+    assert child_logger.getEffectiveLevel() >= logging.WARNING
