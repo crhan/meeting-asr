@@ -72,15 +72,15 @@ def test_speaker_review_tui_shows_project_workflow_status() -> None:
         async with SpeakerReviewApp(_session(with_status=True)).run_test() as pilot:
             overview = pilot.app._overview_pane()
 
-            assert "Project: [b]Demo" in overview
-            assert "duration=00:00:02.500" in overview
-            assert "speakers=2" in overview
-            assert "match=[green]done" in overview
-            assert "manual=[green]saved 2/2" in overview
-            assert "capture=[yellow]todo 1" in overview
-            assert "embed=[yellow]todo 1" in overview
-            assert "conflict=1 mismatch=0" in overview
-            assert "score avg=0.875 best=0.950" in overview
+            assert "[b]Project[/b]  Demo" in overview
+            assert "00:00:02.500" in overview
+            assert "2 speakers" in overview
+            assert "1 Match=[green]done" in overview
+            assert "2 Names=[green]saved 2/2" in overview
+            assert "3 Capture=[yellow]todo 1" in overview
+            assert "4 Embed=[yellow]todo 1" in overview
+            assert "conflict 1 | mismatch 0" in overview
+            assert "score avg 0.875, best 0.950" in overview
 
     asyncio.run(scenario())
 
@@ -98,6 +98,8 @@ def test_speaker_review_tui_question_mark_shows_shortcut_help() -> None:
 
             assert isinstance(help_screen, ShortcutHelpScreen)
             assert "Speaker Review Shortcuts" in help_text
+            assert "Top status" in help_text
+            assert "Next" in help_text
             assert "h/l or left/right" in help_text
             assert "space" in help_text
 
@@ -136,12 +138,12 @@ def test_speaker_review_tui_accepts_match_updates_status_and_saves() -> None:
 
     async def scenario() -> None:
         async with app.run_test() as pilot:
-            assert "conflict=1 mismatch=0" in app._overview_pane()
+            assert "conflict 1 | mismatch 0" in app._overview_pane()
 
             await pilot.press("a")
 
             assert app._speaker().current_name == "欧丁"
-            assert "conflict=0 mismatch=0" in app._overview_pane()
+            assert "conflict 0 | mismatch 0" in app._overview_pane()
             assert "press `s` to write the updated speaker map" in app._overview_pane()
 
             await pilot.press("s")

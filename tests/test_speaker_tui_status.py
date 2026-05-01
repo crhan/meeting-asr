@@ -52,7 +52,7 @@ def test_overview_next_action_requires_match_before_review() -> None:
 
     rendered = render_overview_pane([speaker], overview, speaker)
 
-    assert "match=[yellow]pending" in rendered
+    assert "Match=[yellow]pending" in rendered
     assert "run `meeting-asr project speakers match`" in rendered
 
 
@@ -79,7 +79,7 @@ def test_overview_next_action_reports_embedding_config_problem() -> None:
 
     rendered = render_overview_pane([speaker], overview, speaker)
 
-    assert "embed=[yellow]unknown" in rendered
+    assert "Embed=[yellow]unknown" in rendered
     assert "fix voiceprint embedding config" in rendered
 
 

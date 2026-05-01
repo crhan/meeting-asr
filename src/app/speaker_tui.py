@@ -56,6 +56,15 @@ UNFOCUSED_PANE_CLASS = "unfocused-pane"
 SHORTCUT_HELP = """\
 [b]Speaker Review Shortcuts[/b]
 
+[b]Top status[/b]
+Next                 The one action to do now
+Steps 1 Match        Whether voiceprint matching has been run
+Steps 2 Names        Saved speaker_map progress and named speakers
+Steps 3 Capture      Named speakers still missing voiceprint clips
+Steps 4 Embed        Captured clips still missing embeddings
+Auto                 Automatic match counts and score quality
+Check                Conflicts, mismatches, and selected speaker state
+
 [b]Navigation[/b]
 h/l or left/right    Switch focused column
 j/k or up/down       Move within focused column

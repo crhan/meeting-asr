@@ -223,24 +223,25 @@ def _project_overview_line(overview: SpeakerReviewOverview, speaker_count: int) 
     """Render the project identity line."""
     duration = format_ms_timestamp(overview.duration_ms)
     return (
-        f"Project: [b]{escape(overview.title)}[/] "
-        f"[dim]({escape(overview.project_id)})[/] | "
-        f"status={escape(overview.project_status)} | "
-        f"media={escape(overview.source_name)} | duration={duration} | speakers={speaker_count}"
+        f"[b]Project[/b]  {escape(overview.title)} [dim]({escape(overview.project_id)})[/] | "
+        f"{duration} | {speaker_count} speakers | project={escape(overview.project_status)}"
     )
 
 
 def _workflow_overview_line(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReviewOverview) -> str:
     """Render project workflow progress."""
     voiceprint = overview.voiceprint
-    match_state = _badge("match", "done" if overview.match_file_exists else "pending", overview.match_file_exists)
+    match_state = _badge("Match", "done" if overview.match_file_exists else "pending", overview.match_file_exists)
     manual_state = _manual_state(speakers, overview)
     capture_todo = _capture_todo_count(speakers, voiceprint)
     capture_state = (
-        f"capture=[{'green' if capture_todo == 0 else 'yellow'}]todo {capture_todo}[/] "
-        f"stored {len(voiceprint.captured_names_by_speaker)} speakers/{len(voiceprint.captured_sample_ids)} samples"
+        f"Capture=[{'green' if capture_todo == 0 else 'yellow'}]todo {capture_todo}[/], "
+        f"{len(voiceprint.captured_names_by_speaker)} speakers/{len(voiceprint.captured_sample_ids)} clips"
     )
-    return f"Workflow: {match_state} | manual={manual_state} | {capture_state} | {_embed_state(voiceprint)}"
+    return (
+        f"[b]Steps[/b]    1 {match_state} | 2 Names={manual_state} | "
+        f"3 {capture_state} | 4 {_embed_state(voiceprint)}"
+    )
 
 
 def _match_overview_line(speakers: Sequence[ReviewSpeakerLike]) -> str:
@@ -251,8 +252,8 @@ def _match_overview_line(speakers: Sequence[ReviewSpeakerLike]) -> str:
     unknown = sum(1 for match in matches if match.name == "unknown")
     score_summary = _score_summary([match.score for match in matches if match.score is not None])
     return (
-        f"Match: accepted={accepted}/{len(speakers)} review={review} "
-        f"unknown={unknown} | {score_summary}"
+        f"[b]Auto[/b]     accepted {accepted}/{len(speakers)} | review {review} | "
+        f"unknown {unknown} | {score_summary}"
     )
 
 
@@ -262,29 +263,29 @@ def _risk_overview_line(speakers: Sequence[ReviewSpeakerLike], selected: ReviewS
     mismatches = sum(1 for speaker in speakers if has_mismatch(speaker))
     risk_style = "bold red" if conflicts else "yellow" if mismatches else "green"
     return (
-        f"Risk: [{risk_style}]conflict={conflicts} mismatch={mismatches}[/] | "
-        f"selected={escape(selected.label)} status={speaker_status(selected)} {match_badge(selected)}"
+        f"[b]Check[/b]    [{risk_style}]conflict {conflicts} | mismatch {mismatches}[/] | "
+        f"selected {escape(selected.label)}: {speaker_status(selected)} | {match_badge(selected)}"
     )
 
 
 def _next_action_line(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReviewOverview) -> str:
     """Render the most useful next action from current state."""
     if any(has_conflict(speaker) for speaker in speakers):
-        return "[bold red]Next:[/] resolve conflicts before saving."
+        return "[bold red]Next[/]     resolve conflicts before saving."
     if not overview.match_file_exists:
-        return "[yellow]Next:[/] run `meeting-asr project speakers match`."
+        return "[yellow]Next[/]     run `meeting-asr project speakers match`."
     if _manual_saved_count(speakers, overview) < len(speakers):
-        return "[yellow]Next:[/] review speakers, then press `s` to save."
+        return "[yellow]Next[/]     review speakers, then press `s` to save."
     if _has_unsaved_names(speakers, overview):
-        return "[yellow]Next:[/] press `s` to write the updated speaker map."
+        return "[yellow]Next[/]     press `s` to write the updated speaker map."
     if _capture_todo_count(speakers, overview.voiceprint):
-        return "[yellow]Next:[/] run `meeting-asr voiceprint capture`."
+        return "[yellow]Next[/]     run `meeting-asr voiceprint capture`."
     embed_todo = _embed_todo_count(overview.voiceprint)
     if embed_todo is None and overview.voiceprint.captured_sample_ids:
-        return "[yellow]Next:[/] fix voiceprint embedding config, then run `meeting-asr voiceprint embed`."
+        return "[yellow]Next[/]     fix voiceprint embedding config, then run `meeting-asr voiceprint embed`."
     if embed_todo:
-        return "[yellow]Next:[/] run `meeting-asr voiceprint embed`."
-    return "[green]Next:[/] preview named transcript/subtitle."
+        return "[yellow]Next[/]     run `meeting-asr voiceprint embed`."
+    return "[green]Next[/]     preview named transcript/subtitle."
 
 
 def _manual_state(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReviewOverview) -> str:
@@ -321,10 +322,10 @@ def _embed_state(progress: VoiceprintReviewProgress) -> str:
     embed_todo = _embed_todo_count(progress)
     if embed_todo is None:
         reason = _trim_status_text(progress.embed_error or "unknown config", limit=48)
-        return f"embed=[yellow]unknown[/] {escape(reason)}"
+        return f"Embed=[yellow]unknown[/] {escape(reason)}"
     embedded = len(progress.captured_sample_ids & (progress.embedded_sample_ids or frozenset()))
     style = "green" if embed_todo == 0 else "yellow"
-    return f"embed=[{style}]todo {embed_todo}[/] embedded {embedded}/{len(progress.captured_sample_ids)}"
+    return f"Embed=[{style}]todo {embed_todo}[/], embedded {embedded}/{len(progress.captured_sample_ids)}"
 
 
 def _embed_todo_count(progress: VoiceprintReviewProgress) -> int | None:
@@ -343,9 +344,9 @@ def _has_unsaved_names(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerR
 def _score_summary(scores: list[float]) -> str:
     """Render average and best match score."""
     if not scores:
-        return "score avg=- best=-"
+        return "score avg -, best -"
     average = sum(scores) / len(scores)
-    return f"score avg={average:.3f} best={max(scores):.3f}"
+    return f"score avg {average:.3f}, best {max(scores):.3f}"
 
 
 def _badge(label: str, value: str, good: bool) -> str:

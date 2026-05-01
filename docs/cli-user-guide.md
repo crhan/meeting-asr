@@ -121,12 +121,12 @@ meeting-asr project speakers review
 
 `review` 是新的键盘式入口：
 
-- 顶部状态区固定显示当前 project、媒体文件、转写时长、speaker 数量。
-- 顶部状态区会显示 `match` 是否已跑、人工校对是否已保存、当前已命名人数。
-- 顶部状态区会显示当前 project 还有多少 speaker 可以 `capture`、多少已 capture 的 sample
-  还需要 `embed`。
-- 顶部状态区会汇总自动 match 的 accepted/review/unknown 数量、平均分、最高分。
-- 如果人工结果和自动 match 冲突，会在顶部和 speaker 列用颜色标出来。
+- 顶部 `Project` 是项目事实：标题、项目 id、转写时长、speaker 数量、project 状态。
+- 顶部 `Steps` 是流程进度：`1 Match` 自动声纹匹配、`2 Names` 人工姓名确认、
+  `3 Capture` 声纹片段采集、`4 Embed` 声纹 embedding。
+- 顶部 `Auto` 是自动匹配质量：accepted/review/unknown 数量、平均分、最高分。
+- 顶部 `Check` 是需要人工注意的问题：conflict/mismatch，以及当前选中的 speaker 状态。
+- 顶部 `Next` 是最应该做的下一步；如果看不懂其它行，先看这一行。
 - 初始进入是浏览模式，不会要求输入人名；先看 speaker 和样例。
 - 默认只有两栏：左边 speaker，右边样例；姓名候选不会常驻占用空间。
 - `h/l` 和 `left/right` 切换当前关注列。
