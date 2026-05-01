@@ -247,8 +247,8 @@ def _voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> Table:
     Returns:
         Rich table ready to print.
     """
-    table = Table(box=box.ASCII, show_edge=False, pad_edge=False)
-    table.add_column("ID", justify="right", no_wrap=True)
+    table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
+    table.add_column("ID", justify="right", no_wrap=True, style="bold cyan")
     table.add_column("Speaker")
     table.add_column("Samples", justify="right", no_wrap=True)
     table.add_column("Projects", justify="right", no_wrap=True)
@@ -261,11 +261,31 @@ def _voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> Table:
             row.name,
             str(row.sample_count),
             str(row.project_count),
-            f"{row.embedded_sample_count}/{row.sample_count}",
+            _embedded_count_text(row),
             str(row.embedding_model_count),
             _format_updated_at(row.updated_at),
         )
     return table
+
+
+def _embedded_count_text(row: VoiceprintSpeakerRow) -> str:
+    """
+    Return styled embedding coverage for one speaker.
+
+    Args:
+        row: Speaker summary row.
+
+    Returns:
+        Rich markup string for embedded sample coverage.
+    """
+    text = f"{row.embedded_sample_count}/{row.sample_count}"
+    if row.sample_count == 0:
+        return f"[yellow]{text}[/]"
+    if row.embedded_sample_count == row.sample_count:
+        return f"[green]{text}[/]"
+    if row.embedded_sample_count == 0:
+        return f"[red]{text}[/]"
+    return f"[yellow]{text}[/]"
 
 
 def _voiceprint_table_console() -> Console:
@@ -275,7 +295,7 @@ def _voiceprint_table_console() -> Console:
     Returns:
         Rich console instance.
     """
-    return Console(highlight=False, color_system=None)
+    return Console(highlight=False, color_system="auto", width=140)
 
 
 def _format_updated_at(value: str | None) -> str:

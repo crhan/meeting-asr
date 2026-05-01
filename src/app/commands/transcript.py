@@ -208,8 +208,8 @@ def _transcript_artifact_table(project_dir: Path, rows: list[TranscriptArtifactR
     Returns:
         Rich table ready to print.
     """
-    table = Table(box=box.ASCII, show_edge=False, pad_edge=False)
-    table.add_column("Kind", no_wrap=True)
+    table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
+    table.add_column("Kind", no_wrap=True, style="bold cyan")
     table.add_column("Status", no_wrap=True)
     table.add_column("Location")
     for row in rows:
@@ -219,7 +219,7 @@ def _transcript_artifact_table(project_dir: Path, rows: list[TranscriptArtifactR
 
 def _artifact_status(row: TranscriptArtifactRow) -> str:
     """Return a short artifact availability label."""
-    return "available" if row.path else "missing"
+    return "[green]available[/]" if row.path else "[red]missing[/]"
 
 
 def _artifact_location(project_dir: Path, row: TranscriptArtifactRow) -> str:
@@ -263,4 +263,4 @@ def _transcript_table_console() -> Console:
     Returns:
         Rich console instance.
     """
-    return Console(highlight=False, color_system=None, width=120)
+    return Console(highlight=False, color_system="auto", width=140)

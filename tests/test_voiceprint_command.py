@@ -378,7 +378,7 @@ def _speaker_id_from_list(output: str, name: str) -> str:
         columns = [column.strip() for column in line.split("|")]
         if len(columns) >= 2 and columns[1] == name and columns[0].isdecimal():
             return columns[0]
-        cells = line.split()
-        if cells and cells[0].isdecimal():
+        cells = [cell.strip() for cell in line.split("│") if cell.strip()]
+        if len(cells) >= 2 and cells[1] == name and cells[0].isdecimal():
             return cells[0]
     raise AssertionError(f"speaker not found in list output: {name}")
