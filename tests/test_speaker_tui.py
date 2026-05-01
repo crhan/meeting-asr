@@ -3,19 +3,31 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from textual.widgets import Input, Static
 
 from app import speaker_tui
 from app.models import SentenceSegment
+from app.project_manager import create_project, project_paths
 from app.speaker_tui import (
     ReviewSpeaker,
     SpeakerMatchCandidate,
     SpeakerReviewApp,
+    SpeakerReviewDecision,
     SpeakerReviewOverview,
     SpeakerReviewSession,
     VoiceprintReviewProgress,
+    load_speaker_review_session,
+)
+from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
+from app.voiceprint_store import (
+    StoredVoiceprintSample,
+    get_voiceprint_db_path,
+    list_voiceprint_samples_for_project,
+    store_voiceprint_samples,
+    upsert_voiceprint_embedding,
 )
 
 
@@ -66,6 +78,50 @@ def test_speaker_review_tui_shows_project_workflow_status() -> None:
             assert "embed=[yellow]todo 1" in overview
             assert "conflict=1 mismatch=0" in overview
             assert "score avg=0.875 best=0.950" in overview
+
+    asyncio.run(scenario())
+
+
+def test_speaker_review_tui_accepts_match_updates_status_and_saves() -> None:
+    """Pilot-driven key flow should update review state and return a save result."""
+    app = SpeakerReviewApp(_session(with_status=True))
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            assert "conflict=1 mismatch=0" in app._overview_pane()
+
+            await pilot.press("a")
+
+            assert app._speaker().current_name == "欧丁"
+            assert "conflict=0 mismatch=0" in app._overview_pane()
+            assert "press `s` to write the updated speaker map" in app._overview_pane()
+
+            await pilot.press("s")
+
+    asyncio.run(scenario())
+
+    assert app.return_value == SpeakerReviewDecision(
+        saved=True,
+        mapping={0: "欧丁", 1: "欧丁"},
+    )
+
+
+def test_speaker_review_tui_recomputes_page_size_after_resize() -> None:
+    """The Pilot should verify responsive pagination instead of fixed row counts."""
+    app = SpeakerReviewApp(_session(many_samples=True))
+
+    async def scenario() -> None:
+        async with app.run_test(size=(80, 18)) as pilot:
+            small_page_size = app._sample_page_size()
+
+            await pilot.resize_terminal(80, 30)
+            await pilot.pause()
+
+            large_page_size = app._sample_page_size()
+            visible_segments = app._visible_segments(app._speaker())[1]
+
+            assert large_page_size > small_page_size
+            assert len(visible_segments) == min(app._speaker().segment_count, large_page_size)
 
     asyncio.run(scenario())
 
@@ -147,6 +203,25 @@ def test_speaker_review_tui_pages_samples() -> None:
     asyncio.run(scenario())
 
 
+def test_load_speaker_review_session_builds_project_overview_from_disk(tmp_path: Path) -> None:
+    """Session loading should combine project files, match files, and voiceprint DB state."""
+    project_dir, store_dir = _project_with_voiceprint_state(tmp_path)
+
+    session = load_speaker_review_session(project_dir, store_dir=store_dir)
+    overview = session.overview
+
+    assert overview.project_id == "20260429-tui-test"
+    assert overview.title == "TUI Test"
+    assert overview.duration_ms == 3500
+    assert overview.match_file_exists is True
+    assert overview.saved_names_by_speaker == {0: "欧丁", 1: "Speaker B"}
+    assert overview.voiceprint.captured_names_by_speaker == {0: frozenset({"欧丁"})}
+    assert len(overview.voiceprint.captured_sample_ids) == 1
+    assert overview.voiceprint.embedded_sample_ids == overview.voiceprint.captured_sample_ids
+    assert session.people_names == ["欧丁"]
+    assert [speaker.current_name for speaker in session.speakers] == ["欧丁", "Speaker B"]
+
+
 class _FakeProcess:
     """Minimal fake process for playback tests."""
 
@@ -170,6 +245,7 @@ def _session(
     page_size: int | None = None,
     two_speakers: bool = False,
     with_status: bool = False,
+    many_samples: bool = False,
 ) -> SpeakerReviewSession:
     """Build a minimal review session."""
     segments = [
@@ -188,6 +264,17 @@ def _session(
             sentence_id=2,
         ),
     ]
+    if many_samples:
+        for sentence_id in range(3, 13):
+            segments.append(
+                SentenceSegment(
+                    begin_time_ms=sentence_id * 1000,
+                    end_time_ms=sentence_id * 1000 + 500,
+                    text=f"第 {sentence_id} 句",
+                    speaker_id=0,
+                    sentence_id=sentence_id,
+                )
+            )
     match = SpeakerMatchCandidate("欧丁", 0.95, True) if with_status else None
     current_name = "别人" if with_status else "Speaker A"
     speakers = [ReviewSpeaker(0, "Speaker A", segments, current_name, match)]
@@ -232,3 +319,101 @@ def _overview(*, with_status: bool) -> SpeakerReviewOverview:
         saved_names_by_speaker=saved_names,
         voiceprint=voiceprint,
     )
+
+
+def _project_with_voiceprint_state(tmp_path: Path) -> tuple[Path, Path]:
+    """Build a project fixture with match, manual map, capture, and embedding state."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"media")
+    project_dir = tmp_path / "project"
+    create_project(
+        source,
+        title="TUI Test",
+        projects_dir=None,
+        project_dir=project_dir,
+        meeting_time="2026-04-29T10:00:00+08:00",
+        hash_source=False,
+    )
+    _force_project_identity(project_dir)
+    _write_project_review_files(project_dir)
+    store_dir = tmp_path / "voiceprints"
+    sample_id = _store_project_voiceprint(project_dir, store_dir)
+    upsert_voiceprint_embedding(sample_id, LOCAL_SPEECHBRAIN_MODEL, [0.1, 0.2], get_voiceprint_db_path(store_dir))
+    return project_dir, store_dir
+
+
+def _force_project_identity(project_dir: Path) -> None:
+    """Make the project id stable for status assertions."""
+    manifest_path = project_dir / "project.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["project_id"] = "20260429-tui-test"
+    payload["title"] = "TUI Test"
+    payload["status"] = "named"
+    payload["source"]["filename"] = "meeting.mp4"
+    manifest_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _write_project_review_files(project_dir: Path) -> None:
+    """Write transcript, map, and match fixtures for session loading."""
+    paths = project_paths(project_dir)
+    paths.asr_dir.mkdir(parents=True, exist_ok=True)
+    paths.speakers_dir.mkdir(parents=True, exist_ok=True)
+    transcript = {
+        "full_text": "你好。收到。",
+        "detected_speakers": [0, 1],
+        "sentences": [
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 1500,
+                "text": "你好，我是欧丁。",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 2500,
+                "end_time_ms": 3500,
+                "text": "收到。",
+                "speaker_id": 1,
+                "sentence_id": 2,
+            },
+        ],
+    }
+    paths.asr_dir.joinpath("sentences.json").write_text(json.dumps(transcript, ensure_ascii=False), encoding="utf-8")
+    paths.speakers_dir.joinpath("speaker_map.json").write_text(
+        json.dumps({"0": "欧丁", "1": "Speaker B"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    matches = {
+        "matches": [
+            {"speaker_id": 0, "name": "欧丁", "score": 0.91, "accepted": True},
+            {"speaker_id": 1, "name": "unknown", "score": 0.0, "accepted": False},
+        ]
+    }
+    paths.speakers_dir.joinpath("speaker_matches.json").write_text(
+        json.dumps(matches, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _store_project_voiceprint(project_dir: Path, store_dir: Path) -> int:
+    """Store one voiceprint sample for the project fixture and return its id."""
+    clip_path = store_dir / "clips" / "clip_001.wav"
+    clip_path.parent.mkdir(parents=True, exist_ok=True)
+    clip_path.write_bytes(b"wav")
+    sample = StoredVoiceprintSample(
+        speaker_name="欧丁",
+        project_id="20260429-tui-test",
+        project_path=project_dir,
+        project_speaker_id=0,
+        source_path=project_dir / "source" / "meeting.mp4",
+        clip_path=clip_path,
+        clip_rel_path="clips/clip_001.wav",
+        source_begin_time_ms=0,
+        source_end_time_ms=1500,
+        clip_begin_time_ms=0,
+        clip_end_time_ms=1500,
+        transcript_text="你好，我是欧丁。",
+    )
+    db_path = store_voiceprint_samples([sample], get_voiceprint_db_path(store_dir))
+    rows = list_voiceprint_samples_for_project("20260429-tui-test", db_path)
+    return rows[0].sample_id
