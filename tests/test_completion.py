@@ -51,6 +51,7 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
     assert "audio" not in root_commands
     assert "voiceprint" in root_commands
     assert "list" in project_commands
+    assert "review" in project_commands
     assert "transcribe" in project_commands
     assert "transcript" in project_commands
     assert "speakers" in project_commands

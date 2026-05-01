@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 import subprocess
+from typing import Optional
 
 from rich import box
 from rich.console import Console
@@ -13,7 +14,7 @@ from rich.table import Table
 import typer
 
 from app.cli_errors import run_with_cli_errors
-from app.project_manager import project_paths
+from app.project_manager import project_paths, resolve_project_ref
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
 
@@ -42,9 +43,11 @@ class TranscriptArtifactRow:
 @app.command("list")
 def list_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
 ) -> None:
     """List transcript artifacts for a project."""
-    paths = project_paths(project_dir)
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    paths = project_paths(resolved_project_dir)
     rows = _transcript_artifact_rows(paths.root)
     _echo_transcript_artifact_rows(paths.root, rows)
 
@@ -52,30 +55,36 @@ def list_command(
 @app.command("path")
 def path_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     kind: TranscriptKind = typer.Option(TranscriptKind.auto, "--kind", "-k"),
 ) -> None:
     """Print one transcript artifact path."""
-    path = run_with_cli_errors(lambda: _resolve_transcript_path(project_dir, kind, required=True))
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    path = run_with_cli_errors(lambda: _resolve_transcript_path(resolved_project_dir, kind, required=True))
     typer.echo(path)
 
 
 @app.command("show")
 def show_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     kind: TranscriptKind = typer.Option(TranscriptKind.auto, "--kind", "-k"),
 ) -> None:
     """Print one transcript artifact."""
-    path = run_with_cli_errors(lambda: _resolve_transcript_path(project_dir, kind, required=True))
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    path = run_with_cli_errors(lambda: _resolve_transcript_path(resolved_project_dir, kind, required=True))
     typer.echo(path.read_text(encoding="utf-8"), nl=False)
 
 
 @app.command("open")
 def open_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     kind: TranscriptKind = typer.Option(TranscriptKind.auto, "--kind", "-k"),
 ) -> None:
     """Open one transcript artifact with the OS default application."""
-    path = run_with_cli_errors(lambda: _resolve_transcript_path(project_dir, kind, required=True))
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    path = run_with_cli_errors(lambda: _resolve_transcript_path(resolved_project_dir, kind, required=True))
     run_with_cli_errors(lambda: subprocess.run(["open", str(path)], check=True))
     typer.echo(f"Opened: {path}")
 

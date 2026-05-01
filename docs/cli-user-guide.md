@@ -88,11 +88,11 @@ meeting-asr project transcribe \
 ```bash
 meeting-asr project speakers match
 meeting-asr project speakers inspect
-meeting-asr project speakers review
+meeting-asr project review PROJECT
 meeting-asr project speakers apply
-meeting-asr project speakers preview
-meeting-asr project speakers preview --speaker-id 3
-meeting-asr project transcript show
+meeting-asr project speakers preview PROJECT
+meeting-asr project speakers preview PROJECT --speaker-id 3
+meeting-asr project transcript show PROJECT
 ```
 
 这一步的核心原则：`match` 只给建议，`apply` 才真正写名字。
@@ -113,11 +113,20 @@ Speaker E (speaker_id=4)
   Voiceprint match: 敬悦 score=0.775 accepted
 ```
 
-优先跑 `review` 进入 TUI 完成确认和人工补足：
+优先跑 project 层 `review` 进入 TUI 完成确认和人工补足。`PROJECT` 可以是 project
+目录、AutoRun 输出的 `Project ID`，也可以是唯一匹配的标题：
 
 ```bash
-meeting-asr project speakers review
+meeting-asr project review PROJECT
 ```
+
+如果忘了 Project ID，直接运行：
+
+```bash
+meeting-asr project review
+```
+
+它会先打开 project list TUI，看到历史项目后按 Enter 进入选中项目的 review。
 
 `review` 是新的键盘式入口：
 
@@ -146,7 +155,13 @@ meeting-asr project speakers review
 如果当前终端不能打开 TUI，可以先看队列：
 
 ```bash
-meeting-asr project speakers review --summary
+meeting-asr project review PROJECT --summary
+```
+
+如果只想列出可进入的历史 project：
+
+```bash
+meeting-asr project review --summary
 ```
 
 纯终端 prompt 入口仍然是 `apply`：

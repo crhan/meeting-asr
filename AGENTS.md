@@ -12,3 +12,8 @@
 - IINA may ignore CLI-provided `--mpv-sub-file` for external subtitles.
 - Its mpv log showed only `Loading external files in .../source/` and no open of `exports/subtitle.srt`.
 - For IINA preview, stage a same-stem `.srt` next to the source video so IINA/mpv auto-loads it as a sidecar subtitle.
+
+## Project TUI Notes
+
+- `src/app/commands/project.py` is already oversized; do not put Textual UI implementations there.
+- Keep project selection/review UI modules separate, such as `src/app/project_tui.py` and `src/app/speaker_tui.py`, and leave command modules as thin Typer adapters.

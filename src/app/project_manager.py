@@ -307,6 +307,33 @@ def list_projects(projects_dir: Path | None) -> ProjectListResult:
     return ProjectListResult(root, projects)
 
 
+def resolve_project_ref(project_ref: Path | str, projects_dir: Path | None = None) -> Path:
+    """
+    Resolve a project path, id, title, or directory name to a project root.
+
+    Args:
+        project_ref: Project directory path, project id, title, or directory name.
+        projects_dir: Optional projects parent directory used for id/title lookup.
+
+    Returns:
+        Resolved project root.
+    """
+    ref_text = str(project_ref).strip()
+    if not ref_text:
+        raise ValueError("Project reference must not be empty.")
+    path = Path(ref_text).expanduser()
+    if _looks_like_path(ref_text, path):
+        return _resolve_project_path(path)
+    projects = list_projects(projects_dir).projects
+    exact = [project for project in projects if _matches_project_ref(project, ref_text, partial=False)]
+    if exact:
+        return _single_project_match(ref_text, exact)
+    partial = [project for project in projects if _matches_project_ref(project, ref_text, partial=True)]
+    if partial:
+        return _single_project_match(ref_text, partial)
+    raise FileNotFoundError(f"Project not found by path, id, or title: {ref_text}")
+
+
 def ensure_project_dirs(project_dir: Path) -> ProjectPaths:
     """
     Ensure standard project directories exist.
@@ -818,6 +845,37 @@ def _parse_mapping_item(item: str) -> tuple[int, str]:
         return int(raw_key.strip()), raw_value.strip()
     except ValueError as exc:
         raise typer.BadParameter(f"Speaker id must be an integer in --map: {item}") from exc
+
+
+def _looks_like_path(ref_text: str, path: Path) -> bool:
+    """Return whether a project reference should be treated as a filesystem path."""
+    return path.exists() or path.is_absolute() or ref_text in {".", ".."} or "/" in ref_text
+
+
+def _resolve_project_path(path: Path) -> Path:
+    """Resolve and validate a project directory path."""
+    resolved = path.resolve()
+    manifest = resolved / "project.json"
+    if manifest.is_file():
+        return resolved
+    raise FileNotFoundError(f"Project manifest does not exist: {manifest}")
+
+
+def _matches_project_ref(project: ProjectListItem, ref_text: str, *, partial: bool) -> bool:
+    """Return whether one project list item matches a user reference."""
+    targets = (project.project_id, project.title, project.project_dir.name)
+    normalized_ref = ref_text.casefold()
+    if partial:
+        return any(normalized_ref in target.casefold() for target in targets)
+    return any(normalized_ref == target.casefold() for target in targets)
+
+
+def _single_project_match(ref_text: str, projects: list[ProjectListItem]) -> Path:
+    """Return a unique project match or raise a clear ambiguity error."""
+    if len(projects) == 1:
+        return projects[0].project_dir
+    choices = ", ".join(f"{project.project_id} ({project.title})" for project in projects[:5])
+    raise ValueError(f"Project reference is ambiguous: {ref_text}. Matches: {choices}")
 
 
 def _parse_languages(language: str | None) -> list[str]:

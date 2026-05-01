@@ -44,8 +44,14 @@ from app.project_manager import (
     parse_mapping_items,
     prepare_project_audio,
     project_paths,
+    resolve_project_ref,
     resolve_project_source_path,
     transcribe_project,
+)
+from app.project_tui import (
+    load_project_picker_session,
+    render_project_picker_summary,
+    run_project_picker_tui,
 )
 from app.speaker_labeling import build_speaker_summaries, load_transcript_result
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
@@ -125,13 +131,15 @@ def create(
 @app.command("prepare")
 def prepare(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Extract project audio without starting cloud transcription."""
     configure_logging()
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     audio_path = run_with_progress(
-        lambda reporter: prepare_project_audio(project_dir, audio_format=audio_format, progress=reporter),
+        lambda reporter: prepare_project_audio(resolved_project_dir, audio_format=audio_format, progress=reporter),
         description="Preparing project audio",
         total=1,
         enabled=progress,
@@ -142,6 +150,7 @@ def prepare(
 @app.command("transcribe")
 def transcribe(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     speaker_count: Optional[int] = typer.Option(None, "--speaker-count", min=1),
     language: Optional[str] = typer.Option("zh,en", "--language"),
     model: str = typer.Option("fun-asr", "--model", autocompletion=complete_model),
@@ -155,6 +164,7 @@ def transcribe(
 ) -> None:
     """Transcribe a project and write structured artifacts."""
     configure_logging()
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     options = _project_transcribe_options(
         speaker_count=speaker_count,
         language=language,
@@ -167,7 +177,7 @@ def transcribe(
         audio_format=audio_format,
     )
     summary = run_with_progress(
-        lambda reporter: transcribe_project(project_dir, options, progress=reporter),
+        lambda reporter: transcribe_project(resolved_project_dir, options, progress=reporter),
         description="Transcribing project",
         total=7,
         enabled=progress,
@@ -238,6 +248,27 @@ def list_command(
     _echo_project_list(result.projects_dir, result.projects)
 
 
+@app.command("review")
+def review(
+    project: Optional[str] = typer.Argument(None, metavar="PROJECT"),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    page_size: Optional[int] = typer.Option(
+        None,
+        "--page-size",
+        min=1,
+        max=50,
+        help="Override samples per page. By default the TUI uses the pane height.",
+    ),
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    summary: bool = typer.Option(False, "--summary", help="Print without opening a TUI."),
+) -> None:
+    """Open project-level review, selecting from project history when PROJECT is omitted."""
+    project_dir = _resolve_review_project(project, projects_dir, summary=summary)
+    if project_dir is None:
+        return
+    _run_speaker_review(project_dir, page_size=page_size, store_dir=store_dir, summary=summary)
+
+
 def _create_and_transcribe_project(
     input_path: Path,
     *,
@@ -280,10 +311,12 @@ def _create_and_transcribe_project(
 @app.command("status")
 def status(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
 ) -> None:
     """Print a project status summary."""
-    manifest = run_with_cli_errors(lambda: load_manifest(project_dir))
-    paths = project_paths(project_dir)
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
+    paths = project_paths(resolved_project_dir)
     typer.echo(f"Project: {paths.root}")
     typer.echo(f"Project ID: {manifest.project_id}")
     typer.echo(f"Title: {manifest.title}")
@@ -299,26 +332,32 @@ def status(
 @app.command("git-init")
 def git_init(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
 ) -> None:
     """Initialize optional Git tracking for human-edited project files."""
-    gitignore_path = run_with_cli_errors(lambda: init_project_git(project_dir))
-    typer.echo(f"Git initialized: {project_dir.expanduser().resolve()}")
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    gitignore_path = run_with_cli_errors(lambda: init_project_git(resolved_project_dir))
+    typer.echo(f"Git initialized: {resolved_project_dir}")
     typer.echo(f"Git ignore written to: {gitignore_path}")
 
 
 @speakers_app.command("inspect")
 def speakers_inspect(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     sample_count: int = typer.Option(5, "--sample-count", min=1, max=20),
 ) -> None:
     """Print per-speaker samples for a project."""
-    result = run_with_cli_errors(lambda: load_transcript_result(project_paths(project_dir).asr_dir / "sentences.json"))
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    result = run_with_cli_errors(
+        lambda: load_transcript_result(project_paths(resolved_project_dir).asr_dir / "sentences.json")
+    )
     summaries = build_speaker_summaries(result, sample_count=sample_count)
     if not summaries:
         typer.echo("No detected speakers found in the transcript.")
         raise typer.Exit(code=1)
-    speaker_mapping = run_with_cli_errors(lambda: _load_existing_speaker_mapping(project_dir))
-    speaker_matches = run_with_cli_errors(lambda: _load_speaker_match_summaries(project_dir, speaker_mapping))
+    speaker_mapping = run_with_cli_errors(lambda: _load_existing_speaker_mapping(resolved_project_dir))
+    speaker_matches = run_with_cli_errors(lambda: _load_speaker_match_summaries(resolved_project_dir, speaker_mapping))
     for index, summary in enumerate(summaries):
         if index:
             typer.echo("")
@@ -334,13 +373,15 @@ def speakers_inspect(
 @speakers_app.command("preview")
 def speakers_preview(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     speaker_id: Optional[int] = typer.Option(None, "--speaker-id"),
     padding_seconds: int = typer.Option(8, "--padding-seconds", min=0),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
     """Open the source video with the project's subtitle for speaker review."""
-    manifest = run_with_cli_errors(lambda: load_manifest(project_dir))
-    paths = project_paths(project_dir)
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
+    paths = project_paths(resolved_project_dir)
     start_seconds = preview_start_seconds(
         paths.asr_dir / "sentences.json",
         speaker_id,
@@ -360,21 +401,23 @@ def speakers_preview(
 @speakers_app.command("apply")
 def speakers_apply(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     mappings: list[str] = typer.Option([], "--map", help="Non-interactive speaker_id=name mapping."),
     sample_count: int = typer.Option(3, "--sample-count", min=1, max=20, help="Samples shown per speaker."),
 ) -> None:
     """Interactively apply speaker names to a project."""
-    sentences_path = project_paths(project_dir).asr_dir / "sentences.json"
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    sentences_path = project_paths(resolved_project_dir).asr_dir / "sentences.json"
     result = run_with_cli_errors(lambda: load_transcript_result(sentences_path))
     resolved = _resolve_speaker_mappings(
-        project_dir=project_dir,
+        project_dir=resolved_project_dir,
         mappings=mappings,
         sample_count=sample_count,
         known_speakers=set(result.detected_speakers),
         result=result,
     )
     mapping_path, transcript_path, srt_path = run_with_cli_errors(
-        lambda: apply_project_speakers(project_dir, resolved)
+        lambda: apply_project_speakers(resolved_project_dir, resolved)
     )
     typer.echo(f"Mapping written to: {mapping_path}")
     typer.echo(f"Named transcript written to: {transcript_path}")
@@ -395,6 +438,7 @@ def speakers_review(
         file_okay=False,
         dir_okay=True,
     ),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     page_size: Optional[int] = typer.Option(
         None,
         "--page-size",
@@ -410,6 +454,18 @@ def speakers_review(
     ),
 ) -> None:
     """Open a TUI for speaker identity review."""
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    _run_speaker_review(resolved_project_dir, page_size=page_size, store_dir=store_dir, summary=summary)
+
+
+def _run_speaker_review(
+    project_dir: Path,
+    *,
+    page_size: int | None,
+    store_dir: Path | None,
+    summary: bool,
+) -> None:
+    """Run speaker review for one resolved project directory."""
     session = run_with_cli_errors(
         lambda: load_speaker_review_session(
             project_dir,
@@ -442,9 +498,29 @@ def speakers_review(
     typer.echo("  meeting-asr voiceprint embed")
 
 
+def _resolve_review_project(project: str | None, projects_dir: Path | None, *, summary: bool) -> Path | None:
+    """Resolve a project review target or run the project picker."""
+    if project is not None:
+        return run_with_cli_errors(lambda: resolve_project_ref(project, projects_dir))
+    session = run_with_cli_errors(lambda: load_project_picker_session(projects_dir))
+    if summary:
+        typer.echo(render_project_picker_summary(session))
+        return None
+    if not session.projects:
+        typer.echo("No projects found.")
+        return None
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise typer.BadParameter("Project review TUI requires an interactive terminal. Provide PROJECT or use --summary.")
+    selected = run_project_picker_tui(session)
+    if selected is None:
+        typer.echo("Project review exited without selecting a project.")
+    return selected
+
+
 @speakers_app.command("match")
 def speakers_match(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     provider: Optional[str] = typer.Option(None, "--provider", autocompletion=complete_voiceprint_provider),
     endpoint: Optional[str] = typer.Option(None, "--endpoint"),
@@ -457,9 +533,10 @@ def speakers_match(
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Match project speakers against the cross-project voiceprint library."""
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     summary = run_with_progress(
         lambda reporter: match_project_speakers(
-            project_dir,
+            resolved_project_dir,
             store_dir=store_dir,
             provider=provider,
             endpoint=endpoint,
@@ -475,18 +552,20 @@ def speakers_match(
     )
     _echo_match_summary(summary)
     if apply_matches and summary.accepted_mapping:
-        run_with_cli_errors(lambda: apply_project_speakers(project_dir, summary.accepted_mapping))
+        run_with_cli_errors(lambda: apply_project_speakers(resolved_project_dir, summary.accepted_mapping))
         typer.echo("Applied accepted speaker matches.")
 
 
 @speakers_app.command("compare-srt")
 def speakers_compare_srt(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     dingtalk_srt: Path = typer.Option(..., "--dingtalk-srt", exists=True, file_okay=True, dir_okay=False),
     output: Optional[Path] = typer.Option(None, "--output"),
 ) -> None:
     """Compare a DingTalk SRT with the project's subtitle."""
-    paths = project_paths(project_dir)
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    paths = project_paths(resolved_project_dir)
     local_srt = _preferred_project_srt(paths)
     output_path = output or paths.exports_dir / "speaker_comparison.md"
     report = build_report(
@@ -525,17 +604,20 @@ def _project_transcribe_options(
 
 def _echo_transcribe_summary(project_dir: Path, task_id: str, speaker_count: int, sentence_count: int) -> None:
     """Print project transcription summary."""
+    manifest = load_manifest(project_dir)
     typer.echo("")
     typer.echo("Project transcription completed.")
     typer.echo(f"Project: {project_dir}")
+    typer.echo(f"Project ID: {manifest.project_id}")
+    typer.echo(f"Title: {manifest.title}")
     typer.echo(f"Task ID: {task_id}")
     typer.echo(f"Detected speakers: {speaker_count}")
     typer.echo(f"Sentence count: {sentence_count}")
     typer.echo("")
     typer.echo("Next steps:")
-    typer.echo(f"  cd {_shell_quote_path(project_dir)}")
-    typer.echo("  meeting-asr project speakers inspect")
-    typer.echo("  meeting-asr project speakers preview")
+    typer.echo(f"  meeting-asr project review {shlex.quote(manifest.project_id)}")
+    typer.echo(f"  meeting-asr project transcript show {shlex.quote(manifest.project_id)}")
+    typer.echo(f"  meeting-asr project speakers preview {shlex.quote(manifest.project_id)}")
 
 
 def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> None:
@@ -568,9 +650,9 @@ def _echo_project_created(project_dir: Path, manifest) -> None:
     typer.echo(f"Status: {manifest.status}")
     typer.echo("")
     typer.echo("Next steps:")
-    typer.echo(f"  cd {_shell_quote_path(resolved_dir)}")
-    typer.echo("  meeting-asr project transcribe")
-    typer.echo("  meeting-asr project status")
+    typer.echo(f"  meeting-asr project transcribe {shlex.quote(manifest.project_id)}")
+    typer.echo(f"  meeting-asr project status {shlex.quote(manifest.project_id)}")
+    typer.echo(f"  meeting-asr project review {shlex.quote(manifest.project_id)}")
 
 
 def _echo_match_summary(summary: SpeakerMatchSummary) -> None:

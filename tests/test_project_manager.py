@@ -20,6 +20,7 @@ from app.project_manager import (
     create_project,
     init_project_git,
     load_manifest,
+    resolve_project_ref,
     resolve_project_source_path,
 )
 
@@ -89,13 +90,14 @@ def test_project_create_command_defaults_to_xdg_data_home(
     assert result.exit_code == 0
     assert len(project_dirs) == 1
     assert "Project created." in result.output
-    assert f"cd {project_dirs[0].resolve()}" in result.output
-    assert "meeting-asr project transcribe" in result.output
+    manifest = load_manifest(project_dirs[0])
+    assert f"meeting-asr project transcribe {manifest.project_id}" in result.output
+    assert f"meeting-asr project review {manifest.project_id}" in result.output
     assert "meeting-asr project transcribe ." not in result.output
 
 
-def test_project_create_output_quotes_copyable_cd_command(tmp_path: Path) -> None:
-    """Project creation output should be pasteable when paths contain spaces."""
+def test_project_create_output_uses_project_id_next_steps(tmp_path: Path) -> None:
+    """Project creation output should not require cd into the project."""
     source = tmp_path / "meeting.mp4"
     source.write_bytes(b"fake video")
     project_dir = tmp_path / "project with space"
@@ -103,9 +105,21 @@ def test_project_create_output_quotes_copyable_cd_command(tmp_path: Path) -> Non
     result = runner.invoke(app, ["project", "create", str(source), "--project-dir", str(project_dir)])
 
     assert result.exit_code == 0
-    assert f"cd '{project_dir.resolve()}'" in result.output
+    assert "cd " not in result.output
     assert "meeting-asr project status" in result.output
     assert "meeting-asr project status ." not in result.output
+
+
+def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(tmp_path: Path) -> None:
+    """Project references should work without changing into the project directory."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Project Ref Demo")
+    manifest = load_manifest(project_dir)
+
+    assert resolve_project_ref(project_dir, projects_dir) == project_dir.resolve()
+    assert resolve_project_ref(manifest.project_id, projects_dir) == project_dir.resolve()
+    assert resolve_project_ref("Project Ref Demo", projects_dir) == project_dir.resolve()
+    assert resolve_project_ref("Ref Demo", projects_dir) == project_dir.resolve()
 
 
 def test_project_list_command_reads_default_projects_dir(
@@ -183,6 +197,19 @@ def test_project_status_command_reads_manifest(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Title: Demo" in result.output
     assert "Source: source/meeting.mp4" in result.output
+
+
+def test_project_status_accepts_project_id(tmp_path: Path) -> None:
+    """Project status should resolve project ids from the projects parent."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir)
+    manifest = load_manifest(project_dir)
+
+    result = runner.invoke(app, ["project", "status", manifest.project_id, "--projects-dir", str(projects_dir)])
+
+    assert result.exit_code == 0
+    assert f"Project: {project_dir.resolve()}" in result.output
+    assert "Title: Demo" in result.output
 
 
 def test_project_status_defaults_to_current_directory(
@@ -378,6 +405,45 @@ def test_project_speakers_review_summary_shows_tui_queue(tmp_path: Path) -> None
     assert "Speaker review queue:" in result.output
     assert "Known people: 0" in result.output
     assert "Speaker B speaker_id=1 status=conflict name=敬悦 match=墨泪" in result.output
+
+
+def test_project_review_summary_accepts_project_id(tmp_path: Path) -> None:
+    """Project-level review should resolve an AutoRun project id."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir)
+    manifest = load_manifest(project_dir)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "review",
+            manifest.project_id,
+            "--summary",
+            "--projects-dir",
+            str(projects_dir),
+            "--store-dir",
+            str(tmp_path / "voiceprints"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"Speaker review queue: {project_dir.resolve()}" in result.output
+    assert "Speaker A speaker_id=0" in result.output
+
+
+def test_project_review_summary_without_project_lists_history(tmp_path: Path) -> None:
+    """Project-level review without PROJECT should expose the historical project list."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir)
+    manifest = load_manifest(project_dir)
+
+    result = runner.invoke(app, ["project", "review", "--summary", "--projects-dir", str(projects_dir)])
+
+    assert result.exit_code == 0
+    assert f"Projects: {projects_dir.resolve()}" in result.output
+    assert manifest.project_id in result.output
 
 
 def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
@@ -606,15 +672,15 @@ def test_project_git_init_writes_safe_ignore_file(tmp_path: Path) -> None:
     assert "audio/" in content
 
 
-def _sample_project(tmp_path: Path) -> Path:
+def _sample_project(tmp_path: Path, *, projects_dir: Path | None = None, title: str = "Demo") -> Path:
     """Create a minimal project for tests."""
     source = tmp_path / "meeting.mp4"
     source.write_bytes(b"fake video")
-    project_dir = tmp_path / "project"
+    project_dir = (projects_dir or tmp_path) / "project"
     create_project(
         source,
-        title="Demo",
-        projects_dir=tmp_path,
+        title=title,
+        projects_dir=projects_dir or tmp_path,
         project_dir=project_dir,
         meeting_time=None,
         hash_source=False,

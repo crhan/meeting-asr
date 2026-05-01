@@ -7,7 +7,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from app.cli import app
-from app.project_manager import create_project
+from app.project_manager import create_project, load_manifest
 
 runner = CliRunner()
 
@@ -18,6 +18,22 @@ def test_project_transcript_show_prefers_named_output(tmp_path: Path) -> None:
     _write_transcript_outputs(project_dir)
 
     result = runner.invoke(app, ["project", "transcript", "show", str(project_dir)])
+
+    assert result.exit_code == 0
+    assert result.output == "欧丁: 你好\n"
+
+
+def test_project_transcript_show_accepts_project_id(tmp_path: Path) -> None:
+    """Transcript commands should resolve project ids from the project store."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir)
+    manifest = load_manifest(project_dir)
+    _write_transcript_outputs(project_dir)
+
+    result = runner.invoke(
+        app,
+        ["project", "transcript", "show", manifest.project_id, "--projects-dir", str(projects_dir)],
+    )
 
     assert result.exit_code == 0
     assert result.output == "欧丁: 你好\n"
@@ -81,15 +97,15 @@ def test_top_level_transcript_command_is_not_registered() -> None:
     assert "No such command" in result.output
 
 
-def _sample_project(tmp_path: Path) -> Path:
+def _sample_project(tmp_path: Path, *, projects_dir: Path | None = None) -> Path:
     """Create a minimal project for transcript command tests."""
     source = tmp_path / "meeting.mp4"
     source.write_bytes(b"fake video")
-    project_dir = tmp_path / "project"
+    project_dir = (projects_dir or tmp_path) / "project"
     create_project(
         source,
         title="Demo",
-        projects_dir=tmp_path,
+        projects_dir=projects_dir or tmp_path,
         project_dir=project_dir,
         meeting_time=None,
         hash_source=False,
