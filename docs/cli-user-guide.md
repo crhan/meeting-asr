@@ -14,6 +14,10 @@ meeting-asr doctor --oss-upload-probe
 默认 provider 是 `local-speechbrain`，只检查本地依赖；切到 `bailian` 后才检查阿里云 endpoint 和 OSS。
 `doctor` 遇到 fail/warn 会输出 `Repair prompts`，可以直接交给大模型继续修复。
 
+运行其他 CLI 命令时，如果遇到配置、OSS、DashScope、ffmpeg 或声纹依赖类错误，CLI 会在
+`Error:` 后给出对应的 `meeting-asr doctor ...` 命令。网络超时、限流、5xx 这类临时错误会先自动
+重试；如果重试后仍失败，再按提示重新运行或交给 `doctor` 排查本地配置。
+
 配置上传目录 7 天过期删除：
 
 ```bash

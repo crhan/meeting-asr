@@ -12,6 +12,7 @@ import requests
 from app.cli_ui import CliProgressReporter, emit_progress
 from app.config import get_cache_dir, load_settings
 from app.uploader import upload_file_to_oss
+from app.utils import retry
 from app.voiceprint_store import (
     get_voiceprint_db_path,
     list_all_voiceprint_samples,
@@ -263,15 +264,47 @@ def _embed_audio_with_bailian(path: Path, endpoint: str | None) -> list[float]:
             "or pass `--endpoint`."
         )
     audio_url = _upload_embedding_audio(path)
-    response = requests.post(
-        resolved_endpoint,
-        headers={"Authorization": f"Bearer {settings.dashscope_api_key}"},
-        json={"input_audio": audio_url},
-        timeout=120,
+    response = _post_bailian_embedding(
+        endpoint=resolved_endpoint,
+        api_key=settings.dashscope_api_key,
+        audio_url=audio_url,
     )
-    if response.status_code >= 400:
-        raise RuntimeError(f"Bailian voiceprint embedding failed: HTTP {response.status_code} {response.text}")
     return _extract_embedding_vector(response.json())
+
+
+def _post_bailian_embedding(*, endpoint: str, api_key: str, audio_url: str) -> requests.Response:
+    """
+    Post one embedding request with retry for transient HTTP failures.
+
+    Args:
+        endpoint: Bailian/AnalyticDB embedding endpoint.
+        api_key: DashScope-compatible API key.
+        audio_url: Signed URL for the WAV clip.
+
+    Returns:
+        Successful HTTP response.
+    """
+
+    def _post() -> requests.Response:
+        response = requests.post(
+            endpoint,
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"input_audio": audio_url},
+            timeout=120,
+        )
+        if response.status_code >= 400:
+            response.raise_for_status()
+        return response
+
+    try:
+        return retry(_post, attempts=3, delay_seconds=1.0)
+    except requests.HTTPError as exc:
+        response = exc.response
+        if response is not None:
+            raise RuntimeError(
+                f"Bailian voiceprint embedding failed: HTTP {response.status_code} {response.text}"
+            ) from exc
+        raise
 
 
 def _upload_embedding_audio(path: Path) -> str:

@@ -84,3 +84,4 @@ meeting-asr voiceprint embed
 - 如果自动完成，直接看 `transcript_named.txt`。
 - 如果需要 review，跑 `project review PROJECT_NO`。
 - 以后同一个视频再次运行，会复用已有项目，不会因为日期变化生成新 ID。
+- 如果命令失败，先看 `Next step` 提示；配置/环境问题会给出对应的 `meeting-asr doctor ...` 命令。

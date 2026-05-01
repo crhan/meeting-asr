@@ -49,9 +49,12 @@ def submit_transcription(
         kwargs["language_hints"] = language_hints
     if speaker_count is not None:
         kwargs["speaker_count"] = speaker_count
-    response = Transcription.async_call(**kwargs)
-    _raise_for_task_error(response, stage="submit")
-    return response
+    def _submit() -> Any:
+        response = Transcription.async_call(**kwargs)
+        _raise_for_task_error(response, stage="submit")
+        return response
+
+    return retry(_submit, attempts=3, delay_seconds=1.0)
 
 
 def wait_transcription(*, settings: Settings, task: Any) -> Any:
@@ -66,10 +69,13 @@ def wait_transcription(*, settings: Settings, task: Any) -> Any:
         DashScope wait response.
     """
     _configure_dashscope(settings)
-    response = Transcription.wait(task=task)
-    _raise_for_task_error(response, stage="wait")
-    _check_subtasks(response)
-    return response
+    def _wait() -> Any:
+        response = Transcription.wait(task=task)
+        _raise_for_task_error(response, stage="wait")
+        _check_subtasks(response)
+        return response
+
+    return retry(_wait, attempts=3, delay_seconds=2.0)
 
 
 def download_transcription_json(wait_response: Any) -> dict:
@@ -109,7 +115,7 @@ def _raise_for_task_error(response: Any, *, stage: str) -> None:
     status_code = getattr(response, "status_code", None)
     if status_code and int(status_code) >= 400:
         message = getattr(response, "message", None) or getattr(response, "code", None) or response
-        raise RuntimeError(f"DashScope {stage} failed: {message}")
+        raise RuntimeError(f"DashScope {stage} failed: HTTP {status_code} {message}")
 
 
 def _check_subtasks(response: Any) -> None:
