@@ -273,8 +273,12 @@ uv sync --extra local-voiceprint
 如果 CLI 是 `uv tool install` 安装的，改用：
 
 ```bash
-uv tool install --python 3.14 --force --reinstall --refresh-package meeting-asr ".[local-voiceprint]"
+scripts/install-tool.sh
 ```
+
+这个脚本是独立安装入口，不是 `meeting-asr` 子命令。它显式传
+`uv tool install --python 3.14 --force --reinstall --refresh`，避免 uv tool 默认解释器落到
+不满足 `Python>=3.14` 的版本，也避免本地 wheel 缓存导致安装后仍是旧代码。
 
 默认配置：
 

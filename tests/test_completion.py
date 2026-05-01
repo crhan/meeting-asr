@@ -14,6 +14,7 @@ from app.commands.completion import (
     CompletionShell,
     _bash_script,
     _csh_script,
+    _detect_cli_bin_dir,
     _fish_script,
     _install_completion,
     _profile_script,
@@ -38,6 +39,24 @@ def test_profile_script_adds_cli_path() -> None:
 
     assert "export PATH=/tmp/meeting-asr-bin:$PATH" in script
     assert "_MEETING_ASR_COMPLETE=complete_zsh" in script
+
+
+def test_detect_cli_bin_dir_preserves_user_facing_symlink(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Completion PATH should use ~/.local/bin, not the uv tool private venv bin."""
+    user_bin = tmp_path / "home" / ".local" / "bin"
+    tool_bin = tmp_path / "home" / ".local" / "share" / "uv" / "tools" / "meeting-asr" / "bin"
+    user_bin.mkdir(parents=True)
+    tool_bin.mkdir(parents=True)
+    tool_executable = tool_bin / "meeting-asr"
+    tool_executable.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+    user_executable = user_bin / "meeting-asr"
+    user_executable.symlink_to(tool_executable)
+    monkeypatch.setattr(shutil, "which", lambda command: str(user_executable))
+
+    assert _detect_cli_bin_dir() == user_bin
 
 
 def test_bash_completion_runtime_uses_command_tree() -> None:

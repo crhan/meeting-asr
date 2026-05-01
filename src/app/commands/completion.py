@@ -242,14 +242,14 @@ def _default_completion_target(shell: CompletionShell) -> Path:
 
 def _detect_cli_bin_dir() -> Path:
     """
-    Detect the directory containing ``meeting-asr``.
+    Detect the user-facing directory containing ``meeting-asr``.
 
     Returns:
         Executable directory, or the user bin fallback.
     """
     executable = shutil.which(COMMAND_NAME)
     if executable:
-        return Path(executable).resolve().parent
+        return Path(executable).expanduser().parent
     return Path.home() / ".local" / "bin"
 
 

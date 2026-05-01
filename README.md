@@ -17,9 +17,24 @@ uv run meeting-asr --help
 安装成可直接运行的命令：
 
 ```bash
-uv tool install --python 3.14 --force .
+scripts/install-tool.sh
 meeting-asr completion install zsh
 exec zsh
+```
+
+`scripts/install-tool.sh` 是独立安装入口，不属于业务 CLI。它固定使用：
+
+- `uv tool install --python 3.14 --force --reinstall --refresh`
+- 默认安装 `local-voiceprint` extra
+- 安装后验证 `meeting-asr` wrapper 实际使用的 Python 和包来源
+
+`uv` 可以使用 pyenv 提供的 Python；这里显式传 `--python 3.14` 是为了避免
+`uv tool install` 默认解释器落到不满足本项目 `Python>=3.14` 的版本。
+
+如果只想看当前安装状态：
+
+```bash
+scripts/install-tool.sh --check
 ```
 
 如果要使用默认的本地声纹 embedding provider，安装本地声纹依赖：
@@ -31,7 +46,7 @@ uv sync --extra local-voiceprint
 如果是 `uv tool install` 安装方式：
 
 ```bash
-uv tool install --python 3.14 --force --reinstall --refresh-package meeting-asr ".[local-voiceprint]"
+scripts/install-tool.sh
 ```
 
 `completion install` 支持 `bash`、`zsh`、`fish`、`powershell` 和 `pwsh`；也可以用

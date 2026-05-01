@@ -329,8 +329,8 @@ def _local_speechbrain_fix() -> str:
             "Install local voiceprint dependencies.",
             "In the repository:",
             "uv sync --extra local-voiceprint",
-            "For uv tool installs:",
-            'uv tool install --editable ".[local-voiceprint]" --force',
+            "For global uv tool installs:",
+            "scripts/install-tool.sh",
         ]
     )
 

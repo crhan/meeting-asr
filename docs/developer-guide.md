@@ -11,6 +11,27 @@ uv run pytest -q
 
 代码使用 `src` 布局，包入口是 `src/app`。
 
+## 全局安装
+
+全局命令用独立脚本刷新，不做成 `meeting-asr` 子命令：
+
+```bash
+scripts/install-tool.sh
+scripts/install-tool.sh --check
+```
+
+这个脚本显式执行 `uv tool install --python 3.14 --force --reinstall --refresh`。
+原因：
+
+- `uv tool install` 可以使用 pyenv 提供的 Python，但要通过 `--python 3.14`
+  或 `UV_PYTHON=$(pyenv which python3.14)` 明确指定。
+- 不指定 `--python` 时，uv tool 的默认解释器可能落到 uv managed Python 3.13，
+  与本项目 `Python>=3.14` 冲突。
+- `--refresh` 避免本地 wheel 缓存导致安装后仍是旧代码。
+- completion 只能把 `~/.local/bin` 这类用户命令目录加入 PATH，不能把
+  `~/.local/share/uv/tools/meeting-asr/bin` 加进去；后者会泄漏 tool 私有
+  `python/python3` 到用户 shell。
+
 ## 验证
 
 ```bash
