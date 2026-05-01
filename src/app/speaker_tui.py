@@ -79,6 +79,16 @@ class SpeakerReviewDecision:
     mapping: dict[int, str]
 
 
+class NameInput(Input):
+    """Name entry widget with an explicit cancel key."""
+
+    BINDINGS = [Binding("escape", "cancel_edit", "Cancel edit", show=False)]
+
+    def action_cancel_edit(self) -> None:
+        """Return the parent review app to browse mode."""
+        self.app.action_cancel_edit()
+
+
 class SpeakerReviewApp(App[SpeakerReviewDecision]):
     """Keyboard-first TUI for reviewing project speaker identities."""
 
@@ -152,7 +162,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             yield Static(id="speakers", classes="pane")
             yield Static(id="samples", classes="pane")
             yield Static(id="identity", classes="pane")
-        yield Input(
+        yield NameInput(
             placeholder="Type a name or search known people",
             id="name-input",
             disabled=True,

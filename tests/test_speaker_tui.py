@@ -28,6 +28,12 @@ def test_speaker_review_tui_starts_in_browse_mode() -> None:
             assert field.disabled is False
             assert pilot.app.focused is field
 
+            await pilot.press("escape")
+
+            assert field.display is False
+            assert field.disabled is True
+            assert pilot.app.focused is None
+
     asyncio.run(scenario())
 
 
