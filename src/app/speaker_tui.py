@@ -16,14 +16,31 @@ from textual.widgets import Footer, Header, Input, Static
 
 from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
-from app.project_manager import load_manifest, project_paths, resolve_project_source_path
+from app.project_manager import ProjectManifest, load_manifest, project_paths, resolve_project_source_path
 from app.speaker_labeling import load_transcript_result
 from app.speaker_review import build_audio_preview_command
+from app.speaker_tui_status import (
+    SpeakerReviewOverview,
+    VoiceprintReviewProgress,
+    match_badge,
+    render_match_lines,
+    render_overview_pane,
+    render_selected_speaker_line,
+    speaker_status,
+    status_icon,
+    status_style,
+)
 from app.utils import format_ms_timestamp
-from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_speakers
+from app.voiceprint_embedding import resolve_voiceprint_embedding_options
+from app.voiceprint_store import (
+    get_voiceprint_db_path,
+    list_embedded_sample_ids,
+    list_voiceprint_samples_for_project,
+    list_voiceprint_speakers,
+)
 
 DEFAULT_SAMPLE_PAGE_SIZE = 6
-SAMPLE_PANE_RESERVED_ROWS = 4
+SAMPLE_PANE_RESERVED_ROWS = 5
 BROWSE_STATUS = (
     "Browse: h/l or left/right choose column | j/k or up/down move | "
     "PgUp/PgDn page samples | Space play | / edit | s save"
@@ -67,6 +84,7 @@ class SpeakerReviewSession:
 
     project_dir: Path
     source_media: Path
+    overview: SpeakerReviewOverview
     speakers: list[ReviewSpeaker]
     people_names: list[str]
     page_size: int | None = None
@@ -96,6 +114,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     CSS = """
     Screen {
         layout: vertical;
+    }
+    #overview {
+        border: round $accent;
+        height: 7;
+        padding: 0 1;
     }
     #main {
         height: 1fr;
@@ -165,6 +188,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def compose(self) -> ComposeResult:
         """Build the TUI layout."""
         yield Header()
+        yield Static(id="overview")
         with Horizontal(id="main"):
             yield Static(id="speakers", classes="pane")
             yield Static(id="samples", classes="pane")
@@ -322,17 +346,22 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def _refresh(self) -> None:
         """Refresh all panes from current state."""
+        self.query_one("#overview", Static).update(self._overview_pane())
         self.query_one("#speakers", Static).update(self._speaker_pane())
         self.query_one("#samples", Static).update(self._sample_pane())
         self.query_one("#identity", Static).update(self._identity_pane())
+
+    def _overview_pane(self) -> str:
+        """Render stable project and workflow state."""
+        return render_overview_pane(self.session.speakers, self.session.overview, self._speaker())
 
     def _speaker_pane(self) -> str:
         """Render the left speaker list."""
         lines = [self._pane_title("Speakers", "speakers")]
         for index, speaker in enumerate(self.session.speakers):
             marker = ">" if index == self.selected_speaker_index else " "
-            style = _status_style(_speaker_status(speaker))
-            label = f"{marker} {_status_icon(speaker)} {speaker.label}  {speaker.current_name}"
+            style = status_style(speaker_status(speaker))
+            label = f"{marker} {status_icon(speaker)} {speaker.label}  {speaker.current_name}  {match_badge(speaker)}"
             lines.append(f"[{style}]{escape(label)}[/]")
         return "\n".join(lines)
 
@@ -340,6 +369,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Render the selected speaker samples."""
         speaker = self._speaker()
         lines = [self._pane_title(f"{speaker.label} samples", "samples")]
+        lines.append(render_selected_speaker_line(speaker))
         page_start, segments = self._visible_segments(speaker)
         for offset, segment in enumerate(segments):
             index = page_start + offset
@@ -358,7 +388,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Render current identity state and suggestions."""
         speaker = self._speaker()
         lines = ["[b]Identity[/b]", f"Current: [green]{escape(speaker.current_name)}[/]"]
-        lines.extend(_match_lines(speaker.match))
+        lines.extend(render_match_lines(speaker.match))
         lines.append("[b]Suggestions[/b]")
         suggestions = self._suggestions(speaker)
         lines.extend(f"- {escape(name)}" for name in suggestions[:5])
@@ -495,12 +525,24 @@ def load_speaker_review_session(
     if not segments_by_speaker:
         raise RuntimeError("No detected speakers found in the transcript.")
     manifest = load_manifest(paths.root)
-    mapping = _load_existing_mapping(paths.speakers_dir / "speaker_map.json")
-    matches = _load_match_candidates(paths.speakers_dir / "speaker_matches.json")
+    source_media = resolve_project_source_path(paths.root, manifest)
+    mapping_path = paths.speakers_dir / "speaker_map.json"
+    match_path = paths.speakers_dir / "speaker_matches.json"
+    mapping = _load_existing_mapping(mapping_path)
+    matches = _load_match_candidates(match_path)
+    speakers = _build_review_speakers(segments_by_speaker, mapping, matches)
     return SpeakerReviewSession(
         project_dir=paths.root,
-        source_media=resolve_project_source_path(paths.root, manifest),
-        speakers=_build_review_speakers(segments_by_speaker, mapping, matches),
+        source_media=source_media,
+        overview=_build_review_overview(
+            manifest=manifest,
+            source_media=source_media,
+            sentences=result.sentences,
+            match_file_exists=match_path.exists(),
+            saved_names_by_speaker=mapping,
+            store_dir=store_dir,
+        ),
+        speakers=speakers,
         people_names=_load_people_names(store_dir),
         page_size=page_size,
     )
@@ -537,6 +579,100 @@ def render_speaker_review_summary(session: SpeakerReviewSession) -> str:
     for speaker in session.speakers:
         lines.append(_summary_line(speaker))
     return "\n".join(lines)
+
+
+def _build_review_overview(
+    *,
+    manifest: ProjectManifest,
+    source_media: Path,
+    sentences: list[SentenceSegment],
+    match_file_exists: bool,
+    saved_names_by_speaker: dict[int, str],
+    store_dir: Path | None,
+) -> SpeakerReviewOverview:
+    """
+    Build the immutable project state shown by the TUI.
+
+    Args:
+        manifest: Project manifest.
+        source_media: Resolved source media path.
+        sentences: Transcript sentences.
+        match_file_exists: Whether a match result file exists.
+        saved_names_by_speaker: Existing speaker map loaded from disk.
+        store_dir: Optional voiceprint store directory.
+
+    Returns:
+        Project overview for display.
+    """
+    return SpeakerReviewOverview(
+        project_id=manifest.project_id,
+        title=manifest.title,
+        project_status=manifest.status,
+        source_name=manifest.source.filename or source_media.name,
+        duration_ms=_project_duration_ms(sentences),
+        match_file_exists=match_file_exists,
+        saved_names_by_speaker=dict(saved_names_by_speaker),
+        voiceprint=_load_voiceprint_review_progress(manifest.project_id, store_dir),
+    )
+
+
+def _load_voiceprint_review_progress(project_id: str, store_dir: Path | None) -> VoiceprintReviewProgress:
+    """
+    Load project-scoped voiceprint capture and embedding state.
+
+    Args:
+        project_id: Project id from the manifest.
+        store_dir: Optional voiceprint store directory.
+
+    Returns:
+        Voiceprint progress for the current project.
+    """
+    db_path = get_voiceprint_db_path(store_dir)
+    samples = list_voiceprint_samples_for_project(project_id, db_path)
+    names_by_speaker: dict[int, set[str]] = defaultdict(set)
+    for sample in samples:
+        names_by_speaker[sample.project_speaker_id].add(sample.speaker_name)
+    model, embedded_ids, embed_error = _load_embedding_state(db_path)
+    return VoiceprintReviewProgress(
+        captured_names_by_speaker={
+            speaker_id: frozenset(names)
+            for speaker_id, names in names_by_speaker.items()
+        },
+        captured_sample_ids=frozenset(sample.sample_id for sample in samples),
+        embed_model=model,
+        embedded_sample_ids=embedded_ids,
+        embed_error=embed_error,
+    )
+
+
+def _load_embedding_state(db_path: Path) -> tuple[str | None, frozenset[int] | None, str | None]:
+    """
+    Load embedded sample ids for the configured voiceprint model.
+
+    Args:
+        db_path: Voiceprint SQLite path.
+
+    Returns:
+        Model, embedded sample ids, and optional error text.
+    """
+    try:
+        _, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+        return model, frozenset(list_embedded_sample_ids(model, db_path)), None
+    except Exception as exc:  # noqa: BLE001
+        return None, None, str(exc)
+
+
+def _project_duration_ms(sentences: list[SentenceSegment]) -> int:
+    """
+    Return the transcript duration from the latest sentence end.
+
+    Args:
+        sentences: Transcript sentences.
+
+    Returns:
+        Duration in milliseconds.
+    """
+    return max((sentence.end_time_ms for sentence in sentences), default=0)
 
 
 def _segments_by_speaker(sentences: list[SentenceSegment]) -> dict[int, list[SentenceSegment]]:
@@ -616,47 +752,6 @@ def _accepted_match_name(match: SpeakerMatchCandidate | None) -> str | None:
     return match.name
 
 
-def _speaker_status(speaker: ReviewSpeaker) -> str:
-    """Return the review status for one speaker."""
-    if _has_conflict(speaker):
-        return "conflict"
-    if speaker.current_name == speaker.label:
-        return "review"
-    if speaker.match and speaker.current_name == speaker.match.name:
-        return "matched"
-    return "confirmed"
-
-
-def _has_conflict(speaker: ReviewSpeaker) -> bool:
-    """Return whether the current name conflicts with an accepted match."""
-    if speaker.match is None or not speaker.match.accepted:
-        return False
-    if speaker.match.name == "unknown" or speaker.current_name == speaker.label:
-        return False
-    return speaker.current_name != speaker.match.name
-
-
-def _status_style(status: str) -> str:
-    """Map a status to a Rich style."""
-    styles = {"conflict": "bold red", "review": "yellow", "matched": "green"}
-    return styles.get(status, "bold green")
-
-
-def _status_icon(speaker: ReviewSpeaker) -> str:
-    """Return a compact status marker."""
-    status = _speaker_status(speaker)
-    return {"conflict": "!", "review": "?", "matched": "~"}.get(status, "+")
-
-
-def _match_lines(match: SpeakerMatchCandidate | None) -> list[str]:
-    """Render the selected speaker's voiceprint match."""
-    if match is None:
-        return ["Match: -"]
-    score = "-" if match.score is None else f"{match.score:.3f}"
-    state = "accepted" if match.accepted else "review"
-    return [f"Match: {escape(match.name)}", f"Score: {score} {state}"]
-
-
 def _identity_candidates(speaker: ReviewSpeaker, people_names: list[str]) -> list[str]:
     """Build deduplicated identity suggestions for one speaker."""
     candidates = [speaker.current_name]
@@ -700,7 +795,7 @@ def _clamp(value: int, minimum: int, maximum: int) -> int:
 
 def _summary_line(speaker: ReviewSpeaker) -> str:
     """Render one plain summary row."""
-    status = _speaker_status(speaker)
+    status = speaker_status(speaker)
     match = "-" if speaker.match is None else speaker.match.name
     return (
         f"{speaker.label} speaker_id={speaker.speaker_id} "

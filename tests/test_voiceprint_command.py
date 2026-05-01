@@ -11,7 +11,7 @@ from app.cli import app
 from app.config import save_config_values
 from app.project_manager import create_project, load_manifest
 from app.voiceprint_embedding import BAILIAN_VOICEPRINT_MODEL, LOCAL_SPEECHBRAIN_MODEL
-from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
+from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings, list_voiceprint_samples_for_project
 
 runner = CliRunner()
 
@@ -41,6 +41,9 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert (store_dir / "clips" / manifest.project_id / "speaker_0" / "clip_001.wav").exists()
     assert not (project_dir / "speakers" / "voiceprints").exists()
     assert manifest.speakers["voiceprints"]["sample_count"] == 2
+    project_samples = list_voiceprint_samples_for_project(manifest.project_id, get_voiceprint_db_path(store_dir))
+    assert len(project_samples) == 2
+    assert {sample.project_id for sample in project_samples} == {manifest.project_id}
 
     list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
     speaker_id = _speaker_id_from_list(list_result.output, "欧丁")

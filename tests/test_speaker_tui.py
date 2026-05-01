@@ -9,7 +9,14 @@ from textual.widgets import Input, Static
 
 from app import speaker_tui
 from app.models import SentenceSegment
-from app.speaker_tui import ReviewSpeaker, SpeakerReviewApp, SpeakerReviewSession
+from app.speaker_tui import (
+    ReviewSpeaker,
+    SpeakerMatchCandidate,
+    SpeakerReviewApp,
+    SpeakerReviewOverview,
+    SpeakerReviewSession,
+    VoiceprintReviewProgress,
+)
 
 
 def test_speaker_review_tui_starts_in_browse_mode() -> None:
@@ -39,6 +46,26 @@ def test_speaker_review_tui_starts_in_browse_mode() -> None:
             assert field.disabled is True
             assert identity.display is False
             assert pilot.app.focused is None
+
+    asyncio.run(scenario())
+
+
+def test_speaker_review_tui_shows_project_workflow_status() -> None:
+    """The top overview should expose project, workflow, match, and risk state."""
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session(with_status=True)).run_test() as pilot:
+            overview = pilot.app._overview_pane()
+
+            assert "Project: [b]Demo" in overview
+            assert "duration=00:00:02.500" in overview
+            assert "speakers=2" in overview
+            assert "match=[green]done" in overview
+            assert "manual=[green]saved 2/2" in overview
+            assert "capture=[yellow]todo 1" in overview
+            assert "embed=[yellow]todo 1" in overview
+            assert "conflict=1 mismatch=0" in overview
+            assert "score avg=0.875 best=0.950" in overview
 
     asyncio.run(scenario())
 
@@ -142,6 +169,7 @@ def _session(
     *,
     page_size: int | None = None,
     two_speakers: bool = False,
+    with_status: bool = False,
 ) -> SpeakerReviewSession:
     """Build a minimal review session."""
     segments = [
@@ -160,13 +188,47 @@ def _session(
             sentence_id=2,
         ),
     ]
-    speakers = [ReviewSpeaker(0, "Speaker A", segments, "Speaker A", None)]
+    match = SpeakerMatchCandidate("欧丁", 0.95, True) if with_status else None
+    current_name = "别人" if with_status else "Speaker A"
+    speakers = [ReviewSpeaker(0, "Speaker A", segments, current_name, match)]
     if two_speakers:
         speakers.append(ReviewSpeaker(1, "Speaker B", segments, "Speaker B", None))
+    if with_status:
+        speakers.append(
+            ReviewSpeaker(
+                1,
+                "Speaker B",
+                segments,
+                "欧丁",
+                SpeakerMatchCandidate("欧丁", 0.8, True),
+            )
+        )
     return SpeakerReviewSession(
         project_dir=Path("."),
         source_media=Path("source.mp4"),
+        overview=_overview(with_status=with_status),
         speakers=speakers,
         people_names=["欧丁"],
         page_size=page_size,
+    )
+
+
+def _overview(*, with_status: bool) -> SpeakerReviewOverview:
+    """Build a minimal project overview."""
+    saved_names = {0: "别人", 1: "欧丁"} if with_status else {}
+    voiceprint = VoiceprintReviewProgress(
+        captured_names_by_speaker={1: frozenset({"欧丁"})} if with_status else {},
+        captured_sample_ids=frozenset({101, 102}) if with_status else frozenset(),
+        embed_model="test-model",
+        embedded_sample_ids=frozenset({102}) if with_status else frozenset(),
+    )
+    return SpeakerReviewOverview(
+        project_id="project-1",
+        title="Demo",
+        project_status="named",
+        source_name="source.mp4",
+        duration_ms=2500,
+        match_file_exists=with_status,
+        saved_names_by_speaker=saved_names,
+        voiceprint=voiceprint,
     )

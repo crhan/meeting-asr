@@ -327,6 +327,40 @@ def list_all_voiceprint_samples(db_path: Path | None = None) -> list[VoiceprintS
     return [_sample_row(row) for row in rows]
 
 
+def list_voiceprint_samples_for_project(project_id: str, db_path: Path | None = None) -> list[VoiceprintSampleRow]:
+    """
+    List voiceprint samples captured from one project.
+
+    Args:
+        project_id: Project id stored in the sample registry.
+        db_path: Optional SQLite path.
+
+    Returns:
+        Matching voiceprint sample rows.
+    """
+    database_path = _resolve_db_path(db_path)
+    if not database_path.exists():
+        return []
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        rows = connection.execute(
+            """
+            SELECT samples.id, speakers.id AS speaker_id, speakers.name,
+                   samples.project_id, samples.project_speaker_id,
+                   samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
+                   samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.transcript_text
+            FROM voiceprint_samples AS samples
+            JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
+            WHERE samples.project_id = ?
+            ORDER BY samples.project_speaker_id, samples.source_begin_time_ms
+            """,
+            (project_id,),
+        ).fetchall()
+    return [_sample_row(row) for row in rows]
+
+
 def list_embedded_sample_ids(model: str, db_path: Path | None = None) -> set[int]:
     """
     List sample ids that already have an embedding for a model.
