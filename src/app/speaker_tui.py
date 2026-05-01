@@ -22,6 +22,15 @@ from app.speaker_review import build_audio_preview_command
 from app.utils import format_ms_timestamp
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_speakers
 
+BROWSE_STATUS = (
+    "Browse mode: move first, listen with Space, then press / only when you "
+    "want to name this speaker."
+)
+EDIT_STATUS = (
+    "Edit mode: type a name or search people. Tab chooses first suggestion, "
+    "Enter applies, Esc cancels."
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SpeakerMatchCandidate:
@@ -111,6 +120,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("space", "play_sample", "Play sample"),
         Binding("/", "edit_name", "Edit name"),
         Binding("tab", "accept_suggestion", "Accept suggestion", show=False),
+        Binding("escape", "cancel_edit", "Cancel edit", show=False),
         Binding("a", "accept_match", "Accept match"),
         Binding("i", "ignore_speaker", "Ignore"),
         Binding("s", "save", "Save"),
@@ -137,16 +147,17 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             yield Static(id="speakers", classes="pane")
             yield Static(id="samples", classes="pane")
             yield Static(id="identity", classes="pane")
-        yield Input(placeholder="Press / to type a name, Enter to apply it", id="name-input")
-        yield Static(
-            "j/k speaker  up/down sample  space play  / edit  tab choose  a match  s save",
-            id="status",
+        yield Input(
+            placeholder="Type a name or search known people",
+            id="name-input",
+            disabled=True,
         )
+        yield Static(BROWSE_STATUS, id="status")
         yield Footer()
 
     def on_mount(self) -> None:
         """Render the initial review state."""
-        self.query_one("#name-input", Input).display = False
+        self._enter_browse_mode(BROWSE_STATUS)
         self._refresh()
 
     def on_unmount(self) -> None:
@@ -186,8 +197,15 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Focus the name input for manual entry."""
         field = self.query_one("#name-input", Input)
         field.display = True
+        field.disabled = False
         field.value = self._speaker().current_name
         field.focus()
+        self._set_status(EDIT_STATUS)
+
+    def action_cancel_edit(self) -> None:
+        """Cancel name editing and return to browse mode."""
+        self._enter_browse_mode(BROWSE_STATUS)
+        self._refresh()
 
     def action_accept_match(self) -> None:
         """Accept the current voiceprint match candidate."""
@@ -196,6 +214,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._set_status("No usable match for this speaker.")
             return
         speaker.current_name = speaker.match.name
+        self._set_status(f"Accepted match for {speaker.label}: {speaker.match.name}.")
         self._refresh()
 
     def action_accept_suggestion(self) -> None:
@@ -205,12 +224,13 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._set_status("No matching person suggestion.")
             return
         self._speaker().current_name = suggestions[0]
-        self._hide_input()
+        self._enter_browse_mode(f"Set {self._speaker().label} to {suggestions[0]}.")
         self._refresh()
 
     def action_ignore_speaker(self) -> None:
         """Keep the anonymous speaker label so voiceprint capture skips it."""
         self._speaker().current_name = self._speaker().label
+        self._set_status(f"Kept {self._speaker().label} anonymous.")
         self._refresh()
 
     def action_save(self) -> None:
@@ -231,16 +251,17 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         name = event.value.strip()
         if name:
             self._speaker().current_name = name
-            self._set_status(f"Set {self._speaker().label} to {name}.")
-        self._hide_input()
+            status = f"Set {self._speaker().label} to {name}."
+        else:
+            status = BROWSE_STATUS
+        self._enter_browse_mode(status)
         self._refresh()
 
     def _move_speaker(self, delta: int) -> None:
         """Move the selected speaker index."""
         total = len(self.session.speakers)
         self.selected_speaker_index = (self.selected_speaker_index + delta) % total
-        self.search_query = ""
-        self._hide_input()
+        self._enter_browse_mode(BROWSE_STATUS)
         self._refresh()
 
     def _move_sample(self, delta: int) -> None:
@@ -274,7 +295,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             prefix = ">" if index == speaker.selected_sample_index else " "
             time_range = _segment_time_range(segment)
             text = _trim_sample_text(segment.text)
-            lines.append(f"{prefix} [cyan]{time_range}[/] {escape(text)}")
+            sample_line = f"{prefix} [cyan]{time_range}[/] {escape(text)}"
+            if index == speaker.selected_sample_index:
+                sample_line = f"[reverse]{sample_line}[/]"
+            lines.append(sample_line)
         lines.append(
             f"\nShowing {speaker.visible_count}/{speaker.segment_count}. "
             "Press m for more."
@@ -292,6 +316,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         lines.extend(f"- {escape(name)}" for name in suggestions[:8])
         if not suggestions:
             lines.append("- Type a new name with /")
+        lines.extend(_help_lines())
         return "\n".join(lines)
 
     def _suggestions(self, speaker: ReviewSpeaker) -> list[str]:
@@ -318,7 +343,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self._set_status(f"Playing {self._speaker().label} sample.")
+        self._set_status(f"Playing selected sample: {_segment_time_range(segment)}.")
 
     def _stop_playback(self) -> None:
         """Stop the current playback child process if it is still running."""
@@ -352,11 +377,16 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Return currently visible samples for one speaker."""
         return speaker.segments[: max(1, speaker.visible_count)]
 
-    def _hide_input(self) -> None:
-        """Hide and blur the name input."""
+    def _enter_browse_mode(self, status: str) -> None:
+        """Disable name input and return keyboard handling to browse mode."""
         field = self.query_one("#name-input", Input)
+        field.value = ""
         field.display = False
+        field.disabled = True
         field.blur()
+        self.search_query = ""
+        self.set_focus(None)
+        self._set_status(status)
 
     def _set_status(self, message: str) -> None:
         """Show a short status message."""
@@ -548,6 +578,23 @@ def _match_lines(match: SpeakerMatchCandidate | None) -> list[str]:
     score = "-" if match.score is None else f"{match.score:.3f}"
     state = "accepted" if match.accepted else "review"
     return [f"Match: {escape(match.name)}", f"Score: {score} {state}"]
+
+
+def _help_lines() -> list[str]:
+    """Render the fixed keyboard help shown in the identity pane."""
+    return [
+        "",
+        "[b]Keys[/b]",
+        "j/k: previous/next speaker",
+        "up/down: choose sample",
+        "space: play selected sample",
+        "m: show more samples",
+        "a: accept voiceprint match",
+        "/: edit or search name",
+        "Tab: choose first suggestion",
+        "i: keep anonymous",
+        "s: save, q: quit",
+    ]
 
 
 def _identity_candidates(speaker: ReviewSpeaker, people_names: list[str]) -> list[str]:

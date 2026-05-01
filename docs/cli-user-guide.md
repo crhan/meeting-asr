@@ -121,12 +121,13 @@ meeting-asr project speakers review
 
 `review` 是新的键盘式入口：
 
+- 初始进入是浏览模式，不会要求输入人名；先看 speaker 和样例。
 - `j/k` 切 speaker。
-- `up/down` 切样例。
-- `space` 播放当前样例。
+- `up/down` 切样例；高亮的样例就是当前选中的样例。
+- `space` 只播放当前选中的单条样例。
 - `m` 加载更多样例。
 - `a` 接受当前声纹 match。
-- `/` 输入或搜索人名；可以输入新人名。
+- `/` 才进入姓名输入/搜索模式；可以输入新人名。
 - `Tab` 接受当前搜索结果里的第一个人名建议。
 - `i` 保留匿名 label，后续 `voiceprint capture` 会跳过它。
 - `s` 保存并写出 named transcript/SRT。
