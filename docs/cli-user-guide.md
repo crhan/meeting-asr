@@ -209,6 +209,7 @@ project 目录。默认存放位置遵循 XDG：
 ```bash
 meeting-asr voiceprint capture
 meeting-asr voiceprint embed
+meeting-asr voiceprint browse
 meeting-asr voiceprint list
 meeting-asr voiceprint show 1
 meeting-asr voiceprint play 1 --sample 1
@@ -220,6 +221,17 @@ meeting-asr voiceprint path
 `voiceprints/clips/`，索引写入 `voiceprints/voiceprints.sqlite`。
 仍然是 `Speaker A`、`Speaker C` 这种匿名 label 的人会跳过，不进入声纹库。
 `list` 会显示 speaker ID，并按 speaker 汇总样本数、项目数和 embedding 覆盖率。
+
+`browse` 是声纹库 TUI：
+
+- 左边是跨项目声纹库里已有的人。
+- 右边是当前人的 WAV 样本，包含来源 project、project 内 speaker id、时间戳和转写文本。
+- `h/l` 或左右方向键切换关注列。
+- `j/k` 或上下方向键在当前列移动。
+- `PageUp/PageDown` 或 `[`、`]` 翻样本页。
+- `space` 播放当前样本；播放中再次按 `space` 停止。
+- `?` 查看快捷键。
+- 删除样本或整个人仍用显式 CLI，不放在浏览 TUI 里，避免误删。
 
 `embed` 默认使用本地 `local-speechbrain` provider。先安装本地声纹依赖：
 

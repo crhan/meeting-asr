@@ -66,6 +66,31 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert "clip_001.wav" in show_result.output
 
 
+def test_voiceprint_browse_summary_uses_global_store(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Browse summary should expose the same global library data as the TUI."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+    runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
+
+    result = runner.invoke(app, ["voiceprint", "browse", "--summary", "--store-dir", str(store_dir)])
+    tui_result = runner.invoke(app, ["voiceprint", "browse", "--store-dir", str(store_dir)])
+
+    assert result.exit_code == 0
+    assert f"Voiceprint library: {store_dir.resolve() / 'voiceprints.sqlite'}" in result.output
+    assert "Speakers: 2 | Samples: 2 | Embedded: 0/2" in result.output
+    assert "欧丁 id=" in result.output
+    assert tui_result.exit_code != 0
+    assert "requires an interactive terminal" in tui_result.output
+
+
 def test_voiceprint_capture_skips_anonymous_speaker_labels(
     monkeypatch,
     tmp_path: Path,

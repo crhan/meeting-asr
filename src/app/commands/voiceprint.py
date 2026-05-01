@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import shlex
-import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +17,7 @@ from app.cli_errors import run_with_cli_errors
 from app.cli_ui import run_with_progress
 from app.completion_helpers import complete_voiceprint_model, complete_voiceprint_provider
 from app.utils import format_ms_timestamp
+from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_store import (
     delete_voiceprint_sample,
     delete_voiceprint_speaker,
@@ -26,6 +27,11 @@ from app.voiceprint_store import (
     list_voiceprint_speakers,
     VoiceprintSampleRow,
     VoiceprintSpeakerRow,
+)
+from app.voiceprint_tui import (
+    load_voiceprint_library_session,
+    render_voiceprint_library_summary,
+    run_voiceprint_library_tui,
 )
 from app.voiceprint_embedding import embed_voiceprint_samples
 from app.voiceprints import VoiceprintCaptureSummary, capture_voiceprints
@@ -72,6 +78,35 @@ def list_command(
         typer.echo("No voiceprints recorded.")
         return
     _echo_voiceprint_speaker_table(rows)
+
+
+@app.command("browse")
+def browse_command(
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    page_size: Optional[int] = typer.Option(
+        None,
+        "--page-size",
+        min=1,
+        max=50,
+        help="Override samples per page. By default the TUI uses the pane height.",
+    ),
+    summary: bool = typer.Option(False, "--summary", help="Print the library without opening the TUI."),
+) -> None:
+    """Open a TUI for browsing the global voiceprint library."""
+    session = run_with_cli_errors(
+        lambda: load_voiceprint_library_session(store_dir=store_dir, page_size=page_size)
+    )
+    if summary:
+        typer.echo(render_voiceprint_library_summary(session))
+        return
+    if not session.speakers:
+        typer.echo("No voiceprints recorded.")
+        return
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise typer.BadParameter(
+            "Voiceprint browser TUI requires an interactive terminal. Use --summary to inspect."
+        )
+    run_voiceprint_library_tui(session)
 
 
 @app.command("embed")
@@ -137,7 +172,7 @@ def play_command(
     """Play one numbered voiceprint sample."""
     db_path = get_voiceprint_db_path(store_dir)
     row = run_with_cli_errors(lambda: _select_sample(speaker, sample, db_path))
-    command = _play_command(row.clip_path)
+    command = build_voiceprint_play_command(row.clip_path)
     if dry_run:
         typer.echo(" ".join(command))
         return
@@ -281,6 +316,7 @@ def _echo_capture_summary(summary: VoiceprintCaptureSummary) -> None:
         typer.echo("")
         typer.echo("Next steps:")
         typer.echo(f"  {_voiceprint_embed_command(summary.store_dir)}")
+        typer.echo("  meeting-asr voiceprint browse")
         typer.echo("  meeting-asr voiceprint list")
 
 
@@ -333,24 +369,6 @@ def _speaker_label(speaker: str, db_path: Path) -> str:
     if not rows:
         return speaker
     return f"{rows[0].speaker_name} (id {rows[0].speaker_id})"
-
-
-def _play_command(path: Path) -> list[str]:
-    """
-    Build a local playback command for one clip.
-
-    Args:
-        path: Clip path.
-
-    Returns:
-        Playback command.
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"Voiceprint clip does not exist: {path}")
-    player = shutil.which("afplay")
-    if player:
-        return [player, str(path)]
-    return [shutil.which("open") or "open", str(path)]
 
 
 def _echo_deleted_sample(path: Path, clip_deleted: bool, *, kept: bool = False) -> None:

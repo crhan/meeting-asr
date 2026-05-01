@@ -104,6 +104,7 @@ meeting-asr project speakers preview
 meeting-asr project transcript show
 meeting-asr voiceprint capture
 meeting-asr voiceprint embed
+meeting-asr voiceprint browse
 ```
 
 `project create` 会复制源视频到 `source/`，后续命令只需要项目目录，不需要再次传视频路径。
@@ -165,6 +166,7 @@ meeting-asr project transcript open --kind named
 ```bash
 meeting-asr voiceprint capture
 meeting-asr voiceprint embed
+meeting-asr voiceprint browse
 meeting-asr voiceprint list
 meeting-asr voiceprint show 1
 meeting-asr voiceprint play 1 --sample 1
@@ -178,6 +180,9 @@ meeting-asr voiceprint path
 汇总样本数、项目数和 embedding 覆盖率；`show`、`play`、`delete-sample` 和
 `delete-speaker` 可用姓名或 ID 引用同一个人。`show` 会显示样本编号，`play` 和
 `delete-sample` 都按这个编号精确操作。
+`voiceprint browse` 是声纹库 TUI：左边选人，右边看这个人的 WAV 样本、来源项目、
+时间戳和转写文本；`space` 播放/停止当前样本，`?` 看快捷键。删除仍用显式 CLI，
+避免在浏览界面里误删。
 
 声纹 embedding 默认走 `local-speechbrain`。生成 embedding 后，可以匹配新项目：
 
