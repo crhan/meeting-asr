@@ -156,7 +156,7 @@ def asr_wait_description(task_id: str, estimate: AsrWaitEstimate | None, status:
     Returns:
         Human-readable progress description.
     """
-    parts = [f"Waiting for DashScope transcription ({task_id})"]
+    parts = [f"Waiting for DashScope ASR ({task_id})"]
     if status:
         parts.append(status)
     if estimate is None:

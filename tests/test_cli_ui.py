@@ -46,6 +46,41 @@ def test_reset_progress_event_clears_finished_unknown_total() -> None:
     assert task.fields["workflow_started_at"] == 1.0
 
 
+def test_long_progress_description_moves_metadata_to_detail_line() -> None:
+    """Long poll metadata should not stay in the primary progress prefix."""
+    progress = Progress(console=Console(file=io.StringIO()))
+    task_id = progress.add_task("submitted", total=1, step_label="[4/10]", detail_label="")
+
+    cli_ui._apply_progress_event(
+        progress,
+        task_id,
+        CliProgressEvent(
+            "Waiting for DashScope ASR (0204d7fb-f068-46b2-995c-540aa2f1e8d7) "
+            "| RUNNING | baseline: collecting",
+            step_index=5,
+            step_total=10,
+            reset_total=True,
+        ),
+    )
+    task = progress.tasks[0]
+    rendered = cli_ui._DescriptionColumn().render(task)
+
+    assert task.description == "Waiting for DashScope ASR"
+    assert task.fields["detail_label"] == "RUNNING | ETA collecting | task 0204d7fb"
+    assert rendered.plain.splitlines() == [
+        "[5/10] Waiting for DashScope ASR",
+        "  RUNNING | ETA collecting | task 0204d7fb",
+    ]
+
+
+def test_progress_description_split_handles_eta_without_task_id() -> None:
+    """ETA metadata should become detail even when there is no task id."""
+    main_action, detail_label = cli_ui._split_progress_description("Uploading audio to OSS | ETA ~8s | medium n=3")
+
+    assert main_action == "Uploading audio to OSS"
+    assert detail_label == "ETA ~8s | medium n=3"
+
+
 def test_total_elapsed_column_uses_workflow_clock(monkeypatch) -> None:
     """Total elapsed time should keep moving even when the Rich task is finished."""
     monkeypatch.setattr(cli_ui.time, "monotonic", lambda: 100.0)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import timedelta
+import re
 import time
 from typing import TypeVar
 
@@ -17,6 +18,7 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
 )
+from rich.table import Column
 from rich.text import Text
 
 from app.core.progress import CliProgressEvent, CliProgressReporter, emit_progress
@@ -68,10 +70,11 @@ def _run_with_rich_progress(
     Returns:
         Operation result.
     """
+    display_description, detail_label = _split_progress_description(description)
     with Progress(
         SpinnerColumn(),
-        TextColumn("[bold cyan]{task.fields[step_label]}[/] [progress.description]{task.description}"),
-        BarColumn(),
+        _DescriptionColumn(),
+        BarColumn(bar_width=28),
         TaskProgressColumn(),
         TextColumn("[dim]step[/]"),
         _StepElapsedColumn(),
@@ -81,9 +84,10 @@ def _run_with_rich_progress(
     ) as progress:
         now = time.monotonic()
         task_id = progress.add_task(
-            description,
+            display_description,
             total=total,
             step_label="",
+            detail_label=detail_label,
             step_started_at=now,
             workflow_started_at=now,
         )
@@ -111,7 +115,9 @@ def _apply_progress_event(progress: Progress, task_id, event: CliProgressEvent) 
         updates["step_label"] = _format_step_label(event.step_index, event.step_total)
         updates["step_started_at"] = time.monotonic()
     if event.description is not None:
-        updates["description"] = event.description
+        display_description, detail_label = _split_progress_description(event.description)
+        updates["description"] = display_description
+        updates["detail_label"] = detail_label
     if event.reset_total:
         _reset_progress_task(progress, task_id, event, updates)
         return
@@ -145,10 +151,10 @@ def _reset_progress_task(progress: Progress, task_id, event: CliProgressEvent, f
         task._reset()
         task.total = event.total
         task.completed = 0 if event.completed is None else event.completed
-        if event.description is not None:
-            task.description = event.description
         field_updates = dict(fields)
-        field_updates.pop("description", None)
+        description = field_updates.pop("description", None)
+        if isinstance(description, str):
+            task.description = description
         task.fields.update(field_updates)
         if task.total is not None and task.completed >= task.total:
             task.finished_time = task.elapsed
@@ -158,8 +164,52 @@ def _reset_progress_task(progress: Progress, task_id, event: CliProgressEvent, f
         progress.refresh()
 
 
+class _DescriptionColumn(ProgressColumn):
+    """Render the step label, main action, and optional detail line."""
+
+    def get_table_column(self) -> Column:
+        """
+        Return a non-wrapping table column for progress descriptions.
+
+        Returns:
+            Rich table column configuration.
+        """
+        return Column(width=42, no_wrap=True, overflow="ellipsis")
+
+    def render(self, task: Task) -> Text:
+        """
+        Render a compact multiline progress description.
+
+        Args:
+            task: Rich progress task.
+
+        Returns:
+            Description text for the current task.
+        """
+        text = Text()
+        step_label = str(task.fields.get("step_label") or "")
+        if step_label:
+            text.append(step_label, style="bold cyan")
+            text.append(" ")
+        text.append(task.description, style="progress.description")
+        detail_label = str(task.fields.get("detail_label") or "")
+        if detail_label:
+            text.append("\n  ")
+            text.append(detail_label, style="dim")
+        return text
+
+
 class _StepElapsedColumn(ProgressColumn):
     """Render elapsed time for the current workflow step."""
+
+    def get_table_column(self) -> Column:
+        """
+        Return a fixed-width elapsed-time column.
+
+        Returns:
+            Rich table column configuration.
+        """
+        return Column(width=7, no_wrap=True)
 
     def render(self, task: Task) -> Text:
         """
@@ -179,6 +229,15 @@ class _StepElapsedColumn(ProgressColumn):
 
 class _TotalElapsedColumn(ProgressColumn):
     """Render elapsed time for the whole workflow."""
+
+    def get_table_column(self) -> Column:
+        """
+        Return a fixed-width elapsed-time column.
+
+        Returns:
+            Rich table column configuration.
+        """
+        return Column(width=7, no_wrap=True)
 
     def render(self, task: Task) -> Text:
         """
@@ -223,6 +282,73 @@ def _format_elapsed_seconds(seconds: float) -> str:
         Human-readable duration.
     """
     return str(timedelta(seconds=max(0, int(seconds))))
+
+
+def _split_progress_description(description: str) -> tuple[str, str]:
+    """
+    Split a long progress description into main action and detail metadata.
+
+    Args:
+        description: Raw workflow description.
+
+    Returns:
+        Tuple of ``(main_action, detail_label)``.
+    """
+    segments = [segment.strip() for segment in description.split(" | ") if segment.strip()]
+    if not segments:
+        return description, ""
+    main_action, task_id = _extract_trailing_task_id(segments[0])
+    details = [_compact_detail_segment(segment) for segment in segments[1:]]
+    if task_id:
+        details.append(f"task {_short_task_id(task_id)}")
+    return main_action, " | ".join(details)
+
+
+def _extract_trailing_task_id(text: str) -> tuple[str, str | None]:
+    """
+    Extract a long parenthesized task id from a description prefix.
+
+    Args:
+        text: Candidate description prefix.
+
+    Returns:
+        ``(cleaned_text, task_id)`` when an id is found, otherwise ``(text, None)``.
+    """
+    match = re.fullmatch(r"(?P<label>.+) \((?P<token>[0-9A-Za-z][0-9A-Za-z_.:-]{7,})\)", text)
+    if match is None:
+        return text, None
+    return match.group("label"), match.group("token")
+
+
+def _short_task_id(task_id: str) -> str:
+    """
+    Shorten a provider task id for live progress output.
+
+    Args:
+        task_id: Provider task identifier.
+
+    Returns:
+        Short id safe for compact terminal rendering.
+    """
+    first_segment = task_id.split("-", 1)[0]
+    if len(first_segment) >= 8:
+        return first_segment
+    return task_id[:12]
+
+
+def _compact_detail_segment(segment: str) -> str:
+    """
+    Compact known progress metadata phrases for live rendering.
+
+    Args:
+        segment: Raw detail segment.
+
+    Returns:
+        Shorter detail segment.
+    """
+    if segment == "baseline: collecting":
+        return "ETA collecting"
+    return segment
 
 
 def _console() -> Console:
