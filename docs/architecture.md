@@ -26,6 +26,8 @@ src/app/
 
 - `core/asr_metrics.py`: SQLite observations and precomputed ASR ETA baselines.
 - `core/asr_wait.py`: provider-scoped ETA estimate/record helpers and progress event generation.
+- `core/oss_metrics.py`: SQLite upload throughput observations and precomputed OSS ETA baselines.
+- `core/oss_upload.py`: provider-scoped OSS upload ETA estimate/record helpers and progress events.
 - `core/progress.py`: presentation-neutral progress event dataclasses.
 - `infra/dashscope_asr.py`: DashScope ASR submit/fetch/download adapter.
 - `infra/ffmpeg.py`: ffmpeg/ffprobe media adapter.

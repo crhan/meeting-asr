@@ -44,6 +44,12 @@ from app.core.project_refs import (
     list_projects,
     resolve_project_ref,
 )
+from app.core.oss_upload import (
+    emit_oss_upload_progress,
+    emit_oss_upload_start,
+    estimate_oss_upload,
+    record_oss_upload,
+)
 from app.infra.dashscope_asr import download_transcription_json, submit_transcription, wait_transcription
 from app.infra.ffmpeg import SUPPORTED_AUDIO_FORMATS, extract_audio_for_asr, probe_media_duration_seconds
 from app.meeting_summary import MeetingSummary, generate_meeting_summary, render_meeting_summary_markdown
@@ -789,13 +795,38 @@ def _resolve_project_file_url(
         manifest.oss = {"mode": "provided_url"}
         emit_progress(progress, "Using provided file URL", advance=1)
         return options.file_url, "provided_url"
-    emit_progress(progress, "Uploading audio to OSS")
     object_key = f"meeting-asr/projects/{manifest.project_id}/{audio_path.name}"
-    file_url = upload_file_to_oss(audio_path, object_name=object_key, settings=settings)
+    size_bytes = audio_path.stat().st_size
+    upload_estimate = estimate_oss_upload(settings, size_bytes=size_bytes)
+    emit_oss_upload_start(progress, estimate=upload_estimate, size_bytes=size_bytes)
+    upload_started_at = time.monotonic()
+    upload_status = "failed"
+    try:
+        file_url = upload_file_to_oss(
+            audio_path,
+            object_name=object_key,
+            settings=settings,
+            progress_callback=lambda consumed, total: emit_oss_upload_progress(
+                progress,
+                estimate=upload_estimate,
+                consumed_bytes=consumed,
+                total_bytes=total or size_bytes,
+            ),
+        )
+        upload_status = "succeeded"
+    finally:
+        record_oss_upload(
+            settings,
+            project_id=manifest.project_id,
+            object_key=object_key,
+            size_bytes=size_bytes,
+            upload_seconds=time.monotonic() - upload_started_at,
+            status=upload_status,
+        )
     expires_at = datetime.now(UTC) + timedelta(seconds=SIGNED_URL_EXPIRES_SECONDS)
     manifest.oss = _oss_metadata(settings.oss_bucket_name, object_key, expires_at)
     save_manifest(paths.root, manifest)
-    emit_progress(progress, "Audio uploaded to OSS", advance=1)
+    emit_progress(progress, "Audio uploaded to OSS", total=size_bytes, completed=size_bytes)
     return file_url, "oss_signed_url"
 
 def _oss_metadata(bucket_name: str | None, object_key: str, expires_at: datetime) -> dict[str, str | None]:

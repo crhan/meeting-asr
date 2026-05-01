@@ -142,10 +142,11 @@ AutoRun、create 和 `project list` 会打印短数字 `Project No.`，后续命
 交互式终端会在 stderr 显示 Rich 进度；脚本、管道和测试输出保持纯文本。需要关闭时加
 `--no-progress`。
 
-`project run` 会在远程 ASR 等待完成后记录一条耗时样本，并刷新动态 ETA baseline。
-记录按 provider、service、model、endpoint 分组，默认写入
-`~/.local/share/meeting-asr/metrics/runtime.sqlite`。后续同一后端会根据音频时长显示
-DashScope 等待阶段的预计耗时；没有历史样本时显示 `baseline: collecting`。
+`project run` 会记录两类动态 ETA baseline：OSS 上传吞吐和远程 ASR 等待耗时。
+OSS 上传按 provider、endpoint、bucket 分组，用文件大小估算；DashScope 等待按
+provider、service、model、endpoint 分组，用音频时长估算。样本默认写入
+`~/.local/share/meeting-asr/metrics/runtime.sqlite`。没有历史样本时显示
+`baseline: collecting`。
 
 Project 元数据和删除：
 

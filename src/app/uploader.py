@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 import warnings
 from uuid import uuid4
@@ -63,6 +64,7 @@ def upload_file_to_oss(
     *,
     settings: Settings | None = None,
     expires_seconds: int = SIGNED_URL_EXPIRES_SECONDS,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> str:
     """
     Upload a file to private OSS and return a signed GET URL.
@@ -72,6 +74,7 @@ def upload_file_to_oss(
         object_name: Optional OSS object key.
         settings: Optional loaded settings.
         expires_seconds: Signed URL lifetime.
+        progress_callback: Optional callback receiving uploaded and total bytes.
 
     Returns:
         Signed HTTPS URL.
@@ -82,5 +85,5 @@ def upload_file_to_oss(
     resolved_settings = settings or load_settings(require_oss=True)
     bucket = build_oss_bucket(resolved_settings)
     key = object_name or f"{DEFAULT_OSS_PREFIX}/{uuid4().hex}{source.suffix}"
-    bucket.put_object_from_file(key, str(source))
+    bucket.put_object_from_file(key, str(source), progress_callback=progress_callback)
     return bucket.sign_url("GET", key, expires_seconds, slash_safe=True)
