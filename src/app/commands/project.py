@@ -38,11 +38,14 @@ from app.project_manager import (
     ProjectListItem,
     ProjectManifest,
     ProjectCreateSummary,
+    ProjectDeleteSummary,
     ProjectTranscribeOptions,
     ProjectTranscribeSummary,
+    ProjectUpdateSummary,
     ProjectMeetingSummary,
     apply_project_speakers,
     create_or_reuse_project,
+    delete_project,
     init_project_git,
     list_projects,
     load_manifest,
@@ -53,6 +56,7 @@ from app.project_manager import (
     resolve_project_source_path,
     summarize_project,
     transcribe_project,
+    update_project_metadata,
 )
 from app.project_tui import (
     load_project_picker_session,
@@ -318,6 +322,42 @@ def list_command(
     """List projects under the default or specified projects directory."""
     result = run_with_cli_errors(lambda: list_projects(projects_dir))
     _echo_project_list(result.projects_dir, result.projects)
+
+
+@app.command("update")
+def update(
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    title: Optional[str] = typer.Option(None, "--title", "-t"),
+    meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
+) -> None:
+    """Update editable project metadata."""
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    summary = run_with_cli_errors(
+        lambda: update_project_metadata(
+            resolved_project_dir,
+            title=title,
+            meeting_time=meeting_time,
+        )
+    )
+    _echo_project_updated(summary, projects_dir)
+
+
+@app.command("delete")
+def delete(
+    project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not prompt for confirmation."),
+    permanent: bool = typer.Option(False, "--permanent", help="Physically remove instead of moving to trash."),
+) -> None:
+    """Delete a project. By default the project is moved to Meeting-ASR trash."""
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
+    if not yes and not _confirm_project_delete(resolved_project_dir, manifest, permanent=permanent):
+        typer.echo("Project delete cancelled.")
+        return
+    summary = run_with_cli_errors(lambda: delete_project(resolved_project_dir, permanent=permanent))
+    _echo_project_deleted(summary)
 
 
 @app.command("review")
@@ -922,6 +962,61 @@ def _echo_project_created(
     typer.echo(f"  meeting-asr project transcribe {shlex.quote(project_ref)}")
     typer.echo(f"  meeting-asr project status {shlex.quote(project_ref)}")
     typer.echo(f"  meeting-asr project review {shlex.quote(project_ref)}")
+
+
+def _echo_project_updated(summary: ProjectUpdateSummary, projects_dir: Path | None) -> None:
+    """
+    Print project metadata update output.
+
+    Args:
+        summary: Project update summary.
+        projects_dir: Optional projects parent directory.
+
+    Returns:
+        None.
+    """
+    project_ref = _project_cli_ref(summary.project_dir, summary.manifest, projects_dir)
+    typer.echo("Project updated.")
+    if project_ref != summary.manifest.project_id:
+        typer.echo(f"Project No.: {project_ref}")
+    typer.echo(f"Project ID: {summary.manifest.project_id}")
+    typer.echo(f"Title: {summary.manifest.title}")
+    typer.echo(f"Meeting time: {summary.manifest.source.meeting_time or '-'}")
+
+
+def _confirm_project_delete(project_dir: Path, manifest: ProjectManifest, *, permanent: bool) -> bool:
+    """
+    Ask for destructive project delete confirmation.
+
+    Args:
+        project_dir: Project root.
+        manifest: Project manifest.
+        permanent: Whether this is a physical delete.
+
+    Returns:
+        True when deletion should proceed.
+    """
+    mode = "permanently delete" if permanent else "move to trash"
+    return typer.confirm(f"{mode} project '{manifest.title}' at {project_dir}?")
+
+
+def _echo_project_deleted(summary: ProjectDeleteSummary) -> None:
+    """
+    Print project deletion output.
+
+    Args:
+        summary: Project deletion summary.
+
+    Returns:
+        None.
+    """
+    if summary.permanent:
+        typer.echo("Project permanently deleted.")
+        typer.echo(f"Project: {summary.project_dir}")
+        return
+    typer.echo("Project moved to trash.")
+    typer.echo(f"Project: {summary.project_dir}")
+    typer.echo(f"Trash: {summary.destination}")
 
 
 def _project_cli_ref(project_dir: Path, manifest: ProjectManifest, projects_dir: Path | None) -> str:

@@ -412,6 +412,82 @@ def test_project_list_command_handles_empty_projects_dir(tmp_path: Path) -> None
     assert "No projects found." in result.output
 
 
+def test_project_update_command_changes_title_and_meeting_time(tmp_path: Path) -> None:
+    """Project update should change editable manifest metadata."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Old Title")
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "update",
+            "1",
+            "--projects-dir",
+            str(projects_dir),
+            "--title",
+            "New Title",
+            "--meeting-time",
+            "2026-05-02T10:00:00+08:00",
+        ],
+    )
+    manifest = load_manifest(project_dir)
+
+    assert result.exit_code == 0
+    assert "Project updated." in result.output
+    assert "Title: New Title" in result.output
+    assert manifest.title == "New Title"
+    assert manifest.source.meeting_time == "2026-05-02T10:00:00+08:00"
+
+
+def test_project_update_requires_a_field(tmp_path: Path) -> None:
+    """Project update without updates should fail with a clear message."""
+    projects_dir = tmp_path / "projects"
+    _sample_project(tmp_path, projects_dir=projects_dir, title="Demo")
+
+    result = runner.invoke(app, ["project", "update", "1", "--projects-dir", str(projects_dir)])
+
+    assert result.exit_code == 1
+    assert "Nothing to update" in result.output
+
+
+def test_project_delete_moves_project_to_trash(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project delete should move the project to Meeting-ASR trash by default."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Delete Me")
+
+    result = runner.invoke(app, ["project", "delete", "1", "--projects-dir", str(projects_dir), "--yes"])
+    list_result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
+    trash_root = tmp_path / "data" / "meeting-asr" / "trash" / "projects"
+    trashed = [path for path in trash_root.iterdir() if path.is_dir()]
+
+    assert result.exit_code == 0
+    assert "Project moved to trash." in result.output
+    assert not project_dir.exists()
+    assert len(trashed) == 1
+    assert (trashed[0] / "project.json").exists()
+    assert "Delete Me" not in list_result.output
+
+
+def test_project_delete_permanent_removes_project(tmp_path: Path) -> None:
+    """Permanent delete should physically remove the project only when requested."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Delete Me")
+
+    result = runner.invoke(
+        app,
+        ["project", "delete", "1", "--projects-dir", str(projects_dir), "--permanent", "--yes"],
+    )
+
+    assert result.exit_code == 0
+    assert "Project permanently deleted." in result.output
+    assert not project_dir.exists()
+
+
 def test_project_create_command_reuses_existing_source(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

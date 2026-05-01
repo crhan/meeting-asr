@@ -71,6 +71,24 @@ meeting-asr project list
 meeting-asr project list --projects-dir "/path/to/projects"
 ```
 
+更新 project 元数据：
+
+```bash
+meeting-asr project update PROJECT_NO --title "新的会议标题"
+meeting-asr project update PROJECT_NO --meeting-time "2026-05-02T10:00:00+08:00"
+```
+
+删除 project：
+
+```bash
+meeting-asr project delete PROJECT_NO
+meeting-asr project delete PROJECT_NO --permanent --yes
+```
+
+默认删除是安全删除：项目会移动到
+`~/.local/share/meeting-asr/trash/projects/`，不再出现在 `project list`。
+只有 `--permanent --yes` 会直接物理删除项目目录。
+
 ## 4. 转写
 
 全自动入口优先用：

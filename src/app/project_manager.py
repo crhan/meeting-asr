@@ -16,7 +16,7 @@ import typer
 
 from app.asr_client import download_transcription_json, submit_transcription, wait_transcription
 from app.cli_ui import CliProgressReporter, emit_progress
-from app.config import get_default_projects_dir, load_settings
+from app.config import get_data_dir, get_default_projects_dir, load_settings
 from app.ffmpeg_utils import SUPPORTED_AUDIO_FORMATS, extract_audio_for_asr
 from app.meeting_summary import MeetingSummary, generate_meeting_summary, render_meeting_summary_markdown
 from app.models import TranscriptResult
@@ -202,6 +202,23 @@ class ProjectMeetingSummary:
     title_updated: bool
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectUpdateSummary:
+    """Result of updating project metadata."""
+
+    project_dir: Path
+    manifest: ProjectManifest
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectDeleteSummary:
+    """Result of deleting or trashing a project."""
+
+    project_dir: Path
+    destination: Path | None
+    permanent: bool
+
+
 def create_project(
     input_path: Path,
     *,
@@ -334,6 +351,60 @@ def save_manifest(project_dir: Path, manifest: ProjectManifest) -> Path:
     """
     manifest.updated_at = _now_iso()
     return safe_write_json(project_paths(project_dir).manifest, manifest.to_dict())
+
+
+def update_project_metadata(
+    project_dir: Path,
+    *,
+    title: str | None,
+    meeting_time: str | None,
+) -> ProjectUpdateSummary:
+    """
+    Update editable project metadata.
+
+    Args:
+        project_dir: Project root.
+        title: Optional replacement title.
+        meeting_time: Optional replacement meeting time.
+
+    Returns:
+        Updated project summary.
+    """
+    if title is None and meeting_time is None:
+        raise ValueError("Nothing to update. Pass --title or --meeting-time.")
+    paths = project_paths(project_dir)
+    manifest = load_manifest(paths.root)
+    if title is not None:
+        cleaned_title = title.strip()
+        if not cleaned_title:
+            raise ValueError("Project title must not be empty.")
+        manifest.title = cleaned_title
+    if meeting_time is not None:
+        manifest.source.meeting_time = meeting_time.strip() or None
+    save_manifest(paths.root, manifest)
+    return ProjectUpdateSummary(paths.root, manifest)
+
+
+def delete_project(project_dir: Path, *, permanent: bool) -> ProjectDeleteSummary:
+    """
+    Delete a project, moving it to Meeting-ASR trash by default.
+
+    Args:
+        project_dir: Project root.
+        permanent: Physically remove the project when true.
+
+    Returns:
+        Deletion summary.
+    """
+    paths = project_paths(project_dir)
+    load_manifest(paths.root)
+    if permanent:
+        shutil.rmtree(paths.root)
+        return ProjectDeleteSummary(paths.root, None, True)
+    destination = _unique_trash_project_path(paths.root)
+    ensure_directory(destination.parent)
+    shutil.move(str(paths.root), str(destination))
+    return ProjectDeleteSummary(paths.root, destination, False)
 
 
 def project_paths(project_dir: Path) -> ProjectPaths:
@@ -822,6 +893,27 @@ def _projects_parent_dir(projects_dir: Path | None) -> Path:
     if projects_dir is not None:
         return projects_dir.expanduser().resolve()
     return get_default_projects_dir().resolve()
+
+
+def _unique_trash_project_path(project_dir: Path) -> Path:
+    """
+    Return a unique trash destination for a project directory.
+
+    Args:
+        project_dir: Project directory being deleted.
+
+    Returns:
+        Non-existing trash path.
+    """
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    trash_dir = get_data_dir() / "trash" / "projects"
+    base = trash_dir / f"{stamp}_{project_dir.name}"
+    candidate = base
+    index = 2
+    while candidate.exists():
+        candidate = trash_dir / f"{base.name}_{index}"
+        index += 1
+    return candidate
 
 
 def _create_project_dirs(root: Path) -> None:

@@ -138,6 +138,19 @@ AutoRun、create 和 `project list` 会打印短数字 `Project No.`，后续命
 交互式终端会在 stderr 显示 Rich 进度；脚本、管道和测试输出保持纯文本。需要关闭时加
 `--no-progress`。
 
+Project 元数据和删除：
+
+```bash
+meeting-asr project update PROJECT_NO --title "新的会议标题"
+meeting-asr project update PROJECT_NO --meeting-time "2026-05-02T10:00:00+08:00"
+meeting-asr project delete PROJECT_NO
+meeting-asr project delete PROJECT_NO --permanent --yes
+```
+
+`project delete` 默认不会物理删除，会移动到
+`~/.local/share/meeting-asr/trash/projects/`；只有显式传 `--permanent --yes`
+才会直接删除项目目录。
+
 Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speaker_matches.json`，
 不改转写结果；`speakers apply` 才会把自动候选和人工输入合并，写入
 `speakers/speaker_map.json`、`exports/transcript_named.txt` 和
