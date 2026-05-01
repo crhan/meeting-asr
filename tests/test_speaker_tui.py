@@ -12,6 +12,7 @@ from app import speaker_tui
 from app.models import SentenceSegment
 from app.project_manager import create_project, project_paths
 from app.speaker_tui import (
+    FOCUSED_PANE_CLASS,
     ReviewSpeaker,
     SpeakerMatchCandidate,
     SpeakerReviewApp,
@@ -19,6 +20,7 @@ from app.speaker_tui import (
     SpeakerReviewOverview,
     SpeakerReviewSession,
     ShortcutHelpScreen,
+    UNFOCUSED_PANE_CLASS,
     VoiceprintReviewProgress,
     load_speaker_review_session,
 )
@@ -103,6 +105,27 @@ def test_speaker_review_tui_question_mark_shows_shortcut_help() -> None:
             await pilot.pause()
 
             assert not isinstance(pilot.app.screen, ShortcutHelpScreen)
+
+    asyncio.run(scenario())
+
+
+def test_speaker_review_tui_highlights_focused_pane() -> None:
+    """The focused column should be visible at the pane level, not only in the title."""
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session()).run_test() as pilot:
+            speakers = pilot.app.query_one("#speakers", Static)
+            samples = pilot.app.query_one("#samples", Static)
+
+            assert speakers.has_class(FOCUSED_PANE_CLASS)
+            assert samples.has_class(UNFOCUSED_PANE_CLASS)
+            assert "FOCUS" in pilot.app._speaker_pane()
+
+            await pilot.press("right")
+
+            assert speakers.has_class(UNFOCUSED_PANE_CLASS)
+            assert samples.has_class(FOCUSED_PANE_CLASS)
+            assert "FOCUS" in pilot.app._sample_pane()
 
     asyncio.run(scenario())
 

@@ -51,6 +51,8 @@ EDIT_STATUS = (
     "Enter apply | Esc cancel"
 )
 COLUMNS = ("speakers", "samples")
+FOCUSED_PANE_CLASS = "focused-pane"
+UNFOCUSED_PANE_CLASS = "unfocused-pane"
 SHORTCUT_HELP = """\
 [b]Speaker Review Shortcuts[/b]
 
@@ -183,6 +185,13 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         border: round $accent;
         height: 100%;
         padding: 0 1;
+    }
+    .pane.focused-pane {
+        border: heavy $accent;
+        background: $boost;
+    }
+    .pane.unfocused-pane {
+        border: round #555555;
     }
     #speakers {
         width: 30%;
@@ -407,10 +416,19 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def _refresh(self) -> None:
         """Refresh all panes from current state."""
+        self._refresh_focus_styles()
         self.query_one("#overview", Static).update(self._overview_pane())
         self.query_one("#speakers", Static).update(self._speaker_pane())
         self.query_one("#samples", Static).update(self._sample_pane())
         self.query_one("#identity", Static).update(self._identity_pane())
+
+    def _refresh_focus_styles(self) -> None:
+        """Make the focused pane visually obvious."""
+        for column in COLUMNS:
+            pane = self.query_one(f"#{column}", Static)
+            focused = column == self.focused_column
+            pane.set_class(focused, FOCUSED_PANE_CLASS)
+            pane.set_class(not focused, UNFOCUSED_PANE_CLASS)
 
     def _overview_pane(self) -> str:
         """Render stable project and workflow state."""
@@ -543,8 +561,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Render a pane title with focused-column state."""
         escaped = escape(title)
         if self.focused_column == column:
-            return f"[reverse][b] {escaped} [/b][/]"
-        return f"[b]{escaped}[/b]"
+            return f"[reverse][b] FOCUS [/b][/] [b]{escaped}[/b]"
+        return f"[dim]{escaped}[/dim]"
 
     def _enter_browse_mode(self, status: str) -> None:
         """Disable name input and return keyboard handling to browse mode."""
