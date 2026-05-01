@@ -632,11 +632,18 @@ def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> N
     if not projects:
         typer.echo("No projects found.")
         return
+    typer.echo("Project ID | Status | Updated | Title | Path")
+    typer.echo("--- | --- | --- | --- | ---")
     for project in projects:
         typer.echo(
-            f"- {project.created_at} | {project.status} | {project.project_id} | "
+            f"{project.project_id} | {project.status} | {_project_list_timestamp(project.updated_at)} | "
             f"{project.title} | {project.project_dir}"
         )
+
+
+def _project_list_timestamp(value: str) -> str:
+    """Return a compact timestamp for project list rows."""
+    return value[:19]
 
 
 def _echo_project_created(project_dir: Path, manifest) -> None:

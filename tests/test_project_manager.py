@@ -146,9 +146,11 @@ def test_project_list_command_reads_default_projects_dir(
 
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
+    assert "Project ID | Status | Updated | Title | Path" in result.output
     assert "Demo" in result.output
     assert "created" in result.output
     assert str(project_dir.resolve()) in result.output
+    assert load_manifest(project_dir).project_id in result.output
 
 
 def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:
