@@ -55,6 +55,11 @@ from app.speaker_review import (
     preview_start_seconds,
     render_speaker_summary,
 )
+from app.speaker_tui import (
+    load_speaker_review_session,
+    render_speaker_review_summary,
+    run_speaker_review_tui,
+)
 from app.srt_compare import build_report, parse_srt
 from app.utils import configure_logging, format_ms_timestamp, safe_write_text
 
@@ -380,6 +385,61 @@ def speakers_apply(
     typer.echo("  meeting-asr project transcript show")
     typer.echo("  meeting-asr voiceprint capture")
     typer.echo(f"  open {_shell_quote_path(transcript_path)}")
+
+
+@speakers_app.command("review")
+def speakers_review(
+    project_dir: Path = typer.Argument(
+        Path("."),
+        metavar="PROJECT",
+        file_okay=False,
+        dir_okay=True,
+    ),
+    sample_count: int = typer.Option(
+        3,
+        "--sample-count",
+        min=1,
+        max=20,
+        help="Initial samples per speaker.",
+    ),
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    summary: bool = typer.Option(
+        False,
+        "--summary",
+        help="Print the review queue without opening the TUI.",
+    ),
+) -> None:
+    """Open a TUI for speaker identity review."""
+    session = run_with_cli_errors(
+        lambda: load_speaker_review_session(
+            project_dir,
+            sample_count=sample_count,
+            store_dir=store_dir,
+        )
+    )
+    if summary:
+        typer.echo(render_speaker_review_summary(session))
+        return
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise typer.BadParameter(
+            "Speaker review TUI requires an interactive terminal. Use --summary to inspect."
+        )
+    decision = run_speaker_review_tui(session)
+    if not decision.saved:
+        typer.echo("Speaker review exited without saving.")
+        return
+    mapping_path, transcript_path, srt_path = run_with_cli_errors(
+        lambda: apply_project_speakers(project_dir, decision.mapping)
+    )
+    typer.echo(f"Mapping written to: {mapping_path}")
+    typer.echo(f"Named transcript written to: {transcript_path}")
+    typer.echo(f"Named subtitle written to: {srt_path}")
+    typer.echo("")
+    typer.echo("Next steps:")
+    typer.echo("  meeting-asr project speakers preview")
+    typer.echo("  meeting-asr project transcript show")
+    typer.echo("  meeting-asr voiceprint capture")
+    typer.echo("  meeting-asr voiceprint embed")
 
 
 @speakers_app.command("match")

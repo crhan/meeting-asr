@@ -339,6 +339,47 @@ def test_speaker_match_summary_colors_review_states() -> None:
     assert "CONFLICT" in conflict
 
 
+def test_project_speakers_review_summary_shows_tui_queue(tmp_path: Path) -> None:
+    """Speaker review should expose a non-interactive queue summary."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    apply_project_speakers(project_dir, {1: "敬悦"})
+    (project_dir / "speakers" / "speaker_matches.json").write_text(
+        json.dumps(
+            {
+                "matches": [
+                    {
+                        "speaker_id": 1,
+                        "name": "墨泪",
+                        "score": 0.80123,
+                        "accepted": True,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "speakers",
+            "review",
+            str(project_dir),
+            "--summary",
+            "--store-dir",
+            str(tmp_path / "voiceprints"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Speaker review queue:" in result.output
+    assert "Known people: 0" in result.output
+    assert "Speaker B speaker_id=1 status=conflict name=敬悦 match=墨泪" in result.output
+
+
 def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     """Speaker apply should support the human review flow."""
     project_dir = _sample_project(tmp_path)

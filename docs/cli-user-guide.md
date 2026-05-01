@@ -88,6 +88,7 @@ meeting-asr project transcribe \
 ```bash
 meeting-asr project speakers match
 meeting-asr project speakers inspect
+meeting-asr project speakers review
 meeting-asr project speakers apply
 meeting-asr project speakers preview
 meeting-asr project speakers preview --speaker-id 3
@@ -112,7 +113,31 @@ Speaker E (speaker_id=4)
   Voiceprint match: 敬悦 score=0.775 accepted
 ```
 
-然后跑 `apply` 完成确认和人工补足：
+优先跑 `review` 进入 TUI 完成确认和人工补足：
+
+```bash
+meeting-asr project speakers review
+```
+
+`review` 是新的键盘式入口：
+
+- `j/k` 切 speaker。
+- `up/down` 切样例。
+- `space` 播放当前样例。
+- `m` 加载更多样例。
+- `a` 接受当前声纹 match。
+- `/` 输入或搜索人名；可以输入新人名。
+- `Tab` 接受当前搜索结果里的第一个人名建议。
+- `i` 保留匿名 label，后续 `voiceprint capture` 会跳过它。
+- `s` 保存并写出 named transcript/SRT。
+
+如果当前终端不能打开 TUI，可以先看队列：
+
+```bash
+meeting-asr project speakers review --summary
+```
+
+纯终端 prompt 入口仍然是 `apply`：
 
 ```bash
 meeting-asr project speakers apply
