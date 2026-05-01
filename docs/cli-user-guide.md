@@ -123,7 +123,8 @@ meeting-asr project speakers review
 
 - 顶部状态区固定显示当前 project、媒体文件、转写时长、speaker 数量。
 - 顶部状态区会显示 `match` 是否已跑、人工校对是否已保存、当前已命名人数。
-- 顶部状态区会显示当前 project 还有多少 speaker 可以 `capture`、多少已 capture 的 sample 还需要 `embed`。
+- 顶部状态区会显示当前 project 还有多少 speaker 可以 `capture`、多少已 capture 的 sample
+  还需要 `embed`。
 - 顶部状态区会汇总自动 match 的 accepted/review/unknown 数量、平均分、最高分。
 - 如果人工结果和自动 match 冲突，会在顶部和 speaker 列用颜色标出来。
 - 初始进入是浏览模式，不会要求输入人名；先看 speaker 和样例。
@@ -134,6 +135,7 @@ meeting-asr project speakers review
 - 高亮列表示当前关注列，高亮行表示当前选中项。
 - `PageUp/PageDown` 翻样例页；`[` 和 `]` 也可以翻页。
 - `space` 只播放当前选中的单条样例。
+- `?` 弹出快捷键指引，`Esc`、`q` 或再次按 `?` 关闭。
 - `a` 接受当前声纹 match。
 - `/` 才打开底部姓名输入/搜索面板；可以输入新人名。
 - `Tab` 接受当前搜索结果里的第一个人名建议。

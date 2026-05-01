@@ -12,6 +12,7 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Input, Static
 
 from app.models import SentenceSegment
@@ -43,13 +44,37 @@ DEFAULT_SAMPLE_PAGE_SIZE = 6
 SAMPLE_PANE_RESERVED_ROWS = 5
 BROWSE_STATUS = (
     "Browse: h/l or left/right choose column | j/k or up/down move | "
-    "PgUp/PgDn page samples | Space play | / edit | s save"
+    "PgUp/PgDn page samples | Space play | / edit | ? help | s save"
 )
 EDIT_STATUS = (
     "Edit: type a name or search people | Tab first suggestion | "
     "Enter apply | Esc cancel"
 )
 COLUMNS = ("speakers", "samples")
+SHORTCUT_HELP = """\
+[b]Speaker Review Shortcuts[/b]
+
+[b]Navigation[/b]
+h/l or left/right    Switch focused column
+j/k or up/down       Move within focused column
+PageUp/PageDown      Previous/next sample page
+[ / ]                Previous/next sample page
+
+[b]Actions[/b]
+space                Play selected sample
+a                    Accept current voiceprint match
+i                    Keep anonymous speaker label
+/                    Edit or search speaker name
+s                    Save speaker mapping and outputs
+q                    Quit without saving
+
+[b]Name edit[/b]
+Enter                Apply typed name
+Tab                  Use first suggestion
+Esc                  Cancel edit
+
+[dim]Press Esc, q, or ? to close this help.[/]
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +131,37 @@ class NameInput(Input):
     def action_cancel_edit(self) -> None:
         """Return the parent review app to browse mode."""
         self.app.action_cancel_edit()
+
+
+class ShortcutHelpScreen(ModalScreen[None]):
+    """Modal shortcut help for the speaker review TUI."""
+
+    CSS = """
+    ShortcutHelpScreen {
+        align: center middle;
+    }
+    #shortcut-help {
+        width: 76;
+        height: auto;
+        border: thick $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close_help", "Close", show=False),
+        Binding("q", "close_help", "Close"),
+        Binding("?", "close_help", "Close", show=False),
+    ]
+
+    def compose(self) -> ComposeResult:
+        """Build the help popup."""
+        yield Static(SHORTCUT_HELP, id="shortcut-help")
+
+    def action_close_help(self) -> None:
+        """Close the shortcut help popup."""
+        self.dismiss(None)
 
 
 class SpeakerReviewApp(App[SpeakerReviewDecision]):
@@ -167,6 +223,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("escape", "cancel_edit", "Cancel edit", show=False),
         Binding("a", "accept_match", "Accept match"),
         Binding("i", "ignore_speaker", "Ignore"),
+        Binding("?", "show_shortcuts", "Help"),
         Binding("s", "save", "Save"),
         Binding("q", "quit_review", "Quit"),
     ]
@@ -282,6 +339,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self._speaker().current_name = self._speaker().label
         self._set_status(f"Kept {self._speaker().label} anonymous.")
         self._refresh()
+
+    def action_show_shortcuts(self) -> None:
+        """Show keyboard shortcut help."""
+        self.push_screen(ShortcutHelpScreen())
 
     def action_save(self) -> None:
         """Return the reviewed mapping to the CLI command."""

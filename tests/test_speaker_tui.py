@@ -18,6 +18,7 @@ from app.speaker_tui import (
     SpeakerReviewDecision,
     SpeakerReviewOverview,
     SpeakerReviewSession,
+    ShortcutHelpScreen,
     VoiceprintReviewProgress,
     load_speaker_review_session,
 )
@@ -78,6 +79,30 @@ def test_speaker_review_tui_shows_project_workflow_status() -> None:
             assert "embed=[yellow]todo 1" in overview
             assert "conflict=1 mismatch=0" in overview
             assert "score avg=0.875 best=0.950" in overview
+
+    asyncio.run(scenario())
+
+
+def test_speaker_review_tui_question_mark_shows_shortcut_help() -> None:
+    """The ? key should open and close a shortcut help modal."""
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session()).run_test() as pilot:
+            await pilot.press("?")
+            await pilot.pause()
+
+            help_screen = pilot.app.screen
+            help_text = str(help_screen.query_one("#shortcut-help", Static).render())
+
+            assert isinstance(help_screen, ShortcutHelpScreen)
+            assert "Speaker Review Shortcuts" in help_text
+            assert "h/l or left/right" in help_text
+            assert "space" in help_text
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert not isinstance(pilot.app.screen, ShortcutHelpScreen)
 
     asyncio.run(scenario())
 
