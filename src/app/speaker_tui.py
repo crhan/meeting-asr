@@ -44,7 +44,7 @@ DEFAULT_SAMPLE_PAGE_SIZE = 6
 SAMPLE_PANE_RESERVED_ROWS = 5
 BROWSE_STATUS = (
     "Browse: h/l or left/right choose column | j/k or up/down move | "
-    "PgUp/PgDn page samples | Space play | / edit | ? help | s save"
+    "PgUp/PgDn page samples | Space play/stop | / edit | ? help | s save"
 )
 EDIT_STATUS = (
     "Edit: type a name or search people | Tab first suggestion | "
@@ -57,9 +57,10 @@ SHORTCUT_HELP = """\
 [b]Speaker Review Shortcuts[/b]
 
 [b]Top status[/b]
-Next                 The one action to do now
+Output               Final project files written by Save
+Next/Done            Next command, or final preview/read commands
 Steps 1 Match        Whether voiceprint matching has been run
-Steps 2 Names        Saved speaker_map progress and named speakers
+Steps 2 Names        Saved speaker_map progress, named speakers, ignored speakers
 Steps 3 Capture      Named speakers still missing voiceprint clips
 Steps 4 Embed        Captured clips still missing embeddings
 Auto                 Automatic match counts and score quality
@@ -74,7 +75,7 @@ PageUp/PageDown      Previous/next sample page
 [b]Actions[/b]
 space                Play or stop selected sample
 a                    Accept current voiceprint match
-i                    Keep anonymous speaker label
+i                    Ignore this speaker: keep anonymous and skip capture
 /                    Edit or search speaker name
 s                    Save speaker mapping and outputs
 q                    Quit without saving
@@ -107,6 +108,7 @@ class ReviewSpeaker:
     current_name: str
     match: SpeakerMatchCandidate | None
     selected_sample_index: int = 0
+    ignored: bool = False
 
     @property
     def segment_count(self) -> int:
@@ -184,7 +186,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     }
     #overview {
         border: round $accent;
-        height: 7;
+        height: 8;
         padding: 0 1;
     }
     #main {
@@ -342,7 +344,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         if speaker.match is None or speaker.match.name == "unknown":
             self._set_status("No usable match for this speaker.")
             return
-        speaker.current_name = speaker.match.name
+        self._set_speaker_name(speaker, speaker.match.name)
         self._set_status(f"Accepted match for {speaker.label}: {speaker.match.name}.")
         self._refresh()
 
@@ -352,14 +354,17 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         if not suggestions:
             self._set_status("No matching person suggestion.")
             return
-        self._speaker().current_name = suggestions[0]
-        self._enter_browse_mode(f"Set {self._speaker().label} to {suggestions[0]}.")
+        speaker = self._speaker()
+        self._set_speaker_name(speaker, suggestions[0])
+        self._enter_browse_mode(f"Set {speaker.label} to {suggestions[0]}.")
         self._refresh()
 
     def action_ignore_speaker(self) -> None:
         """Keep the anonymous speaker label so voiceprint capture skips it."""
-        self._speaker().current_name = self._speaker().label
-        self._set_status(f"Kept {self._speaker().label} anonymous.")
+        speaker = self._speaker()
+        speaker.current_name = speaker.label
+        speaker.ignored = True
+        self._set_status(f"Ignored {speaker.label}; it will stay anonymous and be skipped by capture.")
         self._refresh()
 
     def action_show_shortcuts(self) -> None:
@@ -383,8 +388,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Apply the typed name to the selected speaker."""
         name = event.value.strip()
         if name:
-            self._speaker().current_name = name
-            status = f"Set {self._speaker().label} to {name}."
+            speaker = self._speaker()
+            self._set_speaker_name(speaker, name)
+            status = f"Set {speaker.label} to {name}."
         else:
             status = BROWSE_STATUS
         self._enter_browse_mode(status)
@@ -538,6 +544,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             speaker.speaker_id: speaker.current_name.strip() or speaker.label
             for speaker in self.session.speakers
         }
+
+    def _set_speaker_name(self, speaker: ReviewSpeaker, name: str) -> None:
+        """Set a speaker name and clear ignore unless the anonymous label is chosen."""
+        speaker.current_name = name.strip() or speaker.label
+        speaker.ignored = speaker.current_name == speaker.label
 
     def _speaker(self) -> ReviewSpeaker:
         """Return the selected speaker."""
@@ -839,7 +850,8 @@ def _review_speaker(
     label = speaker_id_to_label(speaker_id)
     match = matches.get(speaker_id)
     current_name = mapping.get(speaker_id) or _accepted_match_name(match) or label
-    return ReviewSpeaker(speaker_id, label, segments, current_name, match)
+    ignored = speaker_id in mapping and current_name == label
+    return ReviewSpeaker(speaker_id, label, segments, current_name, match, ignored=ignored)
 
 
 def _accepted_match_name(match: SpeakerMatchCandidate | None) -> str | None:

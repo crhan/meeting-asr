@@ -26,6 +26,7 @@ class ReviewSpeakerLike(Protocol):
     label: str
     current_name: str
     match: SpeakerMatchLike | None
+    ignored: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,7 @@ def render_overview_pane(
         _workflow_overview_line(speakers, overview),
         _match_overview_line(speakers),
         _risk_overview_line(speakers, selected),
+        _output_overview_line(),
         _next_action_line(speakers, overview),
     ]
     return "\n".join(lines)
@@ -93,11 +95,26 @@ def speaker_status(speaker: ReviewSpeakerLike) -> str:
         return "conflict"
     if has_mismatch(speaker):
         return "mismatch"
+    if is_ignored(speaker):
+        return "ignored"
     if speaker.current_name == speaker.label:
         return "review"
     if speaker.match and speaker.current_name == speaker.match.name:
         return "matched"
     return "confirmed"
+
+
+def is_ignored(speaker: ReviewSpeakerLike) -> bool:
+    """
+    Return whether a speaker has been deliberately kept anonymous.
+
+    Args:
+        speaker: Speaker row.
+
+    Returns:
+        True when the anonymous label was explicitly confirmed.
+    """
+    return speaker.ignored and speaker.current_name == speaker.label
 
 
 def has_conflict(speaker: ReviewSpeakerLike) -> bool:
@@ -147,6 +164,7 @@ def status_style(status: str) -> str:
     styles = {
         "conflict": "bold red",
         "mismatch": "orange1",
+        "ignored": "cyan",
         "review": "yellow",
         "matched": "green",
     }
@@ -164,7 +182,7 @@ def status_icon(speaker: ReviewSpeakerLike) -> str:
         Single-character marker.
     """
     status = speaker_status(speaker)
-    return {"conflict": "!", "mismatch": "*", "review": "?", "matched": "~"}.get(status, "+")
+    return {"conflict": "!", "mismatch": "*", "ignored": "-", "review": "?", "matched": "~"}.get(status, "+")
 
 
 def match_badge(speaker: ReviewSpeakerLike) -> str:
@@ -178,10 +196,12 @@ def match_badge(speaker: ReviewSpeakerLike) -> str:
         Human-readable match summary.
     """
     if speaker.match is None:
-        return "match=-"
+        return "match=- ignored" if is_ignored(speaker) else "match=-"
     score = "-" if speaker.match.score is None else f"{speaker.match.score:.3f}"
     state = "accepted" if speaker.match.accepted else "review"
-    if has_conflict(speaker):
+    if is_ignored(speaker):
+        state = "ignored"
+    elif has_conflict(speaker):
         state = "CONFLICT"
     elif has_mismatch(speaker):
         state = "mismatch"
@@ -261,11 +281,18 @@ def _risk_overview_line(speakers: Sequence[ReviewSpeakerLike], selected: ReviewS
     """Render conflict, mismatch, and selected speaker state."""
     conflicts = sum(1 for speaker in speakers if has_conflict(speaker))
     mismatches = sum(1 for speaker in speakers if has_mismatch(speaker))
+    ignored = sum(1 for speaker in speakers if is_ignored(speaker))
     risk_style = "bold red" if conflicts else "yellow" if mismatches else "green"
     return (
         f"[b]Check[/b]    [{risk_style}]conflict {conflicts} | mismatch {mismatches}[/] | "
+        f"ignored {ignored} | "
         f"selected {escape(selected.label)}: {speaker_status(selected)} | {match_badge(selected)}"
     )
+
+
+def _output_overview_line() -> str:
+    """Render the final project artifacts users should look for."""
+    return "[b]Output[/b]   final: exports/transcript_named.txt + exports/subtitle_named.srt"
 
 
 def _next_action_line(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReviewOverview) -> str:
@@ -279,23 +306,30 @@ def _next_action_line(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerRe
     if _has_unsaved_names(speakers, overview):
         return "[yellow]Next[/]     press `s` to write the updated speaker map."
     if _capture_todo_count(speakers, overview.voiceprint):
-        return "[yellow]Next[/]     run `meeting-asr voiceprint capture`."
+        return "[green]Done[/]     project outputs ready. Optional voiceprint: `meeting-asr voiceprint capture`."
     embed_todo = _embed_todo_count(overview.voiceprint)
     if embed_todo is None and overview.voiceprint.captured_sample_ids:
-        return "[yellow]Next[/]     fix voiceprint embedding config, then run `meeting-asr voiceprint embed`."
+        return (
+            "[green]Done[/]     project outputs ready. Optional voiceprint: "
+            "fix voiceprint embedding config, then `meeting-asr voiceprint embed`."
+        )
     if embed_todo:
-        return "[yellow]Next[/]     run `meeting-asr voiceprint embed`."
-    return "[green]Next[/]     preview named transcript/subtitle."
+        return "[green]Done[/]     project outputs ready. Optional voiceprint: `meeting-asr voiceprint embed`."
+    return (
+        "[green]Done[/]     preview: `meeting-asr project speakers preview`; "
+        "read: `meeting-asr project transcript show`."
+    )
 
 
 def _manual_state(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReviewOverview) -> str:
     """Render manual review save and naming progress."""
     saved = _manual_saved_count(speakers, overview)
     named = sum(1 for speaker in speakers if speaker.current_name != speaker.label)
+    ignored = sum(1 for speaker in speakers if is_ignored(speaker))
     total = len(speakers)
     state = "saved" if saved == total else "partial" if saved else "pending"
     style = "green" if saved == total else "yellow" if saved else "red"
-    return f"[{style}]{state} {saved}/{total}[/], named {named}/{total}"
+    return f"[{style}]{state} {saved}/{total}[/], named {named}/{total}, ignored {ignored}"
 
 
 def _manual_saved_count(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReviewOverview) -> int:

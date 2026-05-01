@@ -77,8 +77,11 @@ def test_speaker_review_tui_shows_project_workflow_status() -> None:
             assert "2 speakers" in overview
             assert "1 Match=[green]done" in overview
             assert "2 Names=[green]saved 2/2" in overview
+            assert "ignored 0" in overview
             assert "3 Capture=[yellow]todo 1" in overview
             assert "4 Embed=[yellow]todo 1" in overview
+            assert "exports/transcript_named.txt" in overview
+            assert "exports/subtitle_named.srt" in overview
             assert "conflict 1 | mismatch 0" in overview
             assert "score avg 0.875, best 0.950" in overview
 
@@ -99,7 +102,8 @@ def test_speaker_review_tui_question_mark_shows_shortcut_help() -> None:
             assert isinstance(help_screen, ShortcutHelpScreen)
             assert "Speaker Review Shortcuts" in help_text
             assert "Top status" in help_text
-            assert "Next" in help_text
+            assert "Next/Done" in help_text
+            assert "Output" in help_text
             assert "h/l or left/right" in help_text
             assert "space" in help_text
 
@@ -153,6 +157,29 @@ def test_speaker_review_tui_accepts_match_updates_status_and_saves() -> None:
     assert app.return_value == SpeakerReviewDecision(
         saved=True,
         mapping={0: "欧丁", 1: "欧丁"},
+    )
+
+
+def test_speaker_review_tui_can_ignore_anonymous_speaker() -> None:
+    """Ignoring a speaker should be visible and persist as the anonymous label."""
+    app = SpeakerReviewApp(_session())
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("i")
+
+            assert app._speaker().ignored is True
+            assert "selected Speaker A: ignored" in app._overview_pane()
+            assert "ignored 1" in app._overview_pane()
+            assert "match=- ignored" in app._speaker_pane()
+
+            await pilot.press("s")
+
+    asyncio.run(scenario())
+
+    assert app.return_value == SpeakerReviewDecision(
+        saved=True,
+        mapping={0: "Speaker A"},
     )
 
 
@@ -304,6 +331,7 @@ def test_load_speaker_review_session_builds_project_overview_from_disk(tmp_path:
     assert overview.voiceprint.embedded_sample_ids == overview.voiceprint.captured_sample_ids
     assert session.people_names == ["欧丁"]
     assert [speaker.current_name for speaker in session.speakers] == ["欧丁", "Speaker B"]
+    assert [speaker.ignored for speaker in session.speakers] == [False, True]
 
 
 class _FakeProcess:

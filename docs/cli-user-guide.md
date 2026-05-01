@@ -126,7 +126,8 @@ meeting-asr project speakers review
   `3 Capture` 声纹片段采集、`4 Embed` 声纹 embedding。
 - 顶部 `Auto` 是自动匹配质量：accepted/review/unknown 数量、平均分、最高分。
 - 顶部 `Check` 是需要人工注意的问题：conflict/mismatch，以及当前选中的 speaker 状态。
-- 顶部 `Next` 是最应该做的下一步；如果看不懂其它行，先看这一行。
+- 顶部 `Output` 是项目最终产物：人名版文本 `exports/transcript_named.txt` 和人名版字幕 `exports/subtitle_named.srt`。
+- 顶部 `Next/Done` 是状态结论：`Next` 说明还缺什么命令；`Done` 说明产物已经就绪，并给出 preview 和查看文本的命令。
 - 初始进入是浏览模式，不会要求输入人名；先看 speaker 和样例。
 - 默认只有两栏：左边 speaker，右边样例；姓名候选不会常驻占用空间。
 - `h/l` 和 `left/right` 切换当前关注列。
@@ -139,7 +140,7 @@ meeting-asr project speakers review
 - `a` 接受当前声纹 match。
 - `/` 才打开底部姓名输入/搜索面板；可以输入新人名。
 - `Tab` 接受当前搜索结果里的第一个人名建议。
-- `i` 保留匿名 label，后续 `voiceprint capture` 会跳过它。
+- `i` 明确忽略当前 speaker：保留匿名 label，在顶部显示为 `ignored`，后续 `voiceprint capture` 会跳过它。
 - `s` 保存并写出 named transcript/SRT。
 
 如果当前终端不能打开 TUI，可以先看队列：
@@ -176,6 +177,13 @@ exports/subtitle_named.srt
 ```bash
 meeting-asr project speakers preview
 meeting-asr project transcript show
+```
+
+`preview` 只是检查字幕和视频是否对齐，不是新的产物。项目完成后的核心产物是：
+
+```text
+exports/transcript_named.txt
+exports/subtitle_named.srt
 ```
 
 如果要脚本化执行，仍可使用：

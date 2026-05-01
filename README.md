@@ -116,6 +116,10 @@ Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speak
 不改转写结果；`speakers apply` 才会把自动候选和人工输入合并，写入
 `speakers/speaker_map.json`、`exports/transcript_named.txt` 和
 `exports/subtitle_named.srt`。
+这个项目的终点不是 preview，而是人名版文本和字幕已经写出。`preview` 只是用播放器检查
+`exports/subtitle_named.srt` 是否和视频对得上；看完没问题就可以直接用
+`meeting-asr project transcript show` 或 `meeting-asr project transcript open --kind named`
+读取最终结果。
 
 没有声纹库也可以跑 `speakers match`；这时所有 speaker 都会是
 `unknown score=0.000 review`。这不是错误，只表示当前声纹库没有可匹配的人。
@@ -128,10 +132,12 @@ Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speak
    match/manual/capture/embed 进度、match 分数和 conflict/mismatch；下方两栏用于切
    speaker/sample、样例翻页、播放/停止当前样例、接受 match、输入新名字并保存；按 `?`
    可查看快捷键。
-   如果顶部信息太多，先看 `Next` 行；它会告诉你当前最应该做的下一步。
+   顶部 `Output` 会直接列出最终项目产物；如果顶部信息太多，先看 `Next/Done` 行。
+   `Next` 表示还没完成，按它给的命令继续；`Done` 表示产物已就绪，并给出 preview 和查看文本的命令。
 4. 如果只想用纯终端 prompt，仍可跑 `meeting-asr project speakers apply`。已 accepted 的 match 会作为默认值，直接回车确认；未匹配的人手动输入姓名；不确定就输入 `/more` 继续看样例，或用 `/audio` 播放当前可见样例的短预览。
 5. 用 `meeting-asr project speakers preview` 复核带名字的字幕。
-6. 确认无误后跑 `meeting-asr voiceprint capture && meeting-asr voiceprint embed`，把新确认的人补进跨项目声纹库。
+6. 确认无误后，最终项目产物就是 `exports/transcript_named.txt` 和 `exports/subtitle_named.srt`。
+7. 如果有新确认的人，再跑 `meeting-asr voiceprint capture && meeting-asr voiceprint embed`，把他们补进跨项目声纹库。
 
 `meeting-asr project speakers match --apply` 只是快捷路径：它只会应用已 accepted
 的匹配，适合你确定自动结果已经足够时使用；如果还有未匹配的人，应使用交互式

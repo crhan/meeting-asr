@@ -45,6 +45,21 @@ def test_speaker_status_distinguishes_conflict_mismatch_and_match() -> None:
     assert "accepted" in match_badge(matched)
 
 
+def test_speaker_status_distinguishes_explicit_ignore() -> None:
+    """An intentionally anonymous speaker should not look like unreviewed work."""
+    ignored = ReviewSpeaker(
+        3,
+        "Speaker D",
+        _segments(),
+        "Speaker D",
+        SpeakerMatchCandidate("unknown", 0.0, False),
+        ignored=True,
+    )
+
+    assert speaker_status(ignored) == "ignored"
+    assert "ignored" in match_badge(ignored)
+
+
 def test_overview_next_action_requires_match_before_review() -> None:
     """Missing match output should be the first next action."""
     speaker = ReviewSpeaker(0, "Speaker A", _segments(), "Speaker A", None)
@@ -53,6 +68,8 @@ def test_overview_next_action_requires_match_before_review() -> None:
     rendered = render_overview_pane([speaker], overview, speaker)
 
     assert "Match=[yellow]pending" in rendered
+    assert "Output" in rendered
+    assert "exports/transcript_named.txt" in rendered
     assert "run `meeting-asr project speakers match`" in rendered
 
 
@@ -81,6 +98,33 @@ def test_overview_next_action_reports_embedding_config_problem() -> None:
 
     assert "Embed=[yellow]unknown" in rendered
     assert "fix voiceprint embedding config" in rendered
+
+
+def test_overview_done_state_names_final_commands() -> None:
+    """Completed review should point to final read and preview commands."""
+    speaker = ReviewSpeaker(
+        0,
+        "Speaker A",
+        _segments(),
+        "欧丁",
+        SpeakerMatchCandidate("欧丁", 0.92, True),
+    )
+    overview = _overview(
+        match_file_exists=True,
+        saved_names={0: "欧丁"},
+        voiceprint=VoiceprintReviewProgress(
+            captured_names_by_speaker={0: frozenset({"欧丁"})},
+            captured_sample_ids=frozenset({1}),
+            embed_model="test-model",
+            embedded_sample_ids=frozenset({1}),
+        ),
+    )
+
+    rendered = render_overview_pane([speaker], overview, speaker)
+
+    assert "[green]Done[/]" in rendered
+    assert "meeting-asr project speakers preview" in rendered
+    assert "meeting-asr project transcript show" in rendered
 
 
 def _overview(
