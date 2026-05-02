@@ -30,6 +30,9 @@ def test_project_correct_edit_writes_corrected_outputs_and_learns_context(tmp_pa
             str(project_dir),
             "--editor",
             f"{sys.executable} {editor_script}",
+            "--no-ai",
+            "--no-proposal-open",
+            "--yes",
             "--lexicon-db",
             str(lexicon_db),
             "--category",
@@ -38,7 +41,7 @@ def test_project_correct_edit_writes_corrected_outputs_and_learns_context(tmp_pa
     )
 
     assert result.exit_code == 0
-    assert "Vocabulary correction review complete." in result.output
+    assert "Vocabulary correction accepted." in result.output
     assert "Changed sentences: 1" in result.output
     assert "Learned contexts: 1" in result.output
     assert "艾赛" in (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8")
@@ -66,12 +69,110 @@ def test_project_correct_edit_no_open_only_creates_review_file(tmp_path: Path) -
     assert not (project_dir / "asr" / "sentences_corrected.json").exists()
 
 
+def test_project_correct_edit_can_leave_proposal_pending(tmp_path: Path) -> None:
+    """Without acceptance, edit should produce proposal files but not final artifacts."""
+    project_dir = _sample_project(tmp_path)
+    editor_script = _editor_script(tmp_path, "艾赛", "iSee")
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "correct",
+            "edit",
+            str(project_dir),
+            "--editor",
+            f"{sys.executable} {editor_script}",
+            "--no-ai",
+            "--no-proposal-open",
+        ],
+        input="n\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Vocabulary correction proposal ready." in result.output
+    assert "Correction proposal left pending." in result.output
+    assert list((project_dir / "tmp" / "corrections").glob("proposal_*.json"))
+    assert not (project_dir / "asr" / "sentences_corrected.json").exists()
+
+
+def test_project_correct_accept_applies_latest_proposal(tmp_path: Path) -> None:
+    """Accept command should apply a pending proposal and learn contexts."""
+    project_dir = _sample_project(tmp_path)
+    editor_script = _editor_script(tmp_path, "艾赛", "iSee")
+    lexicon_db = tmp_path / "lexicon.sqlite"
+    runner.invoke(
+        app,
+        [
+            "project",
+            "correct",
+            "edit",
+            str(project_dir),
+            "--editor",
+            f"{sys.executable} {editor_script}",
+            "--no-ai",
+            "--no-proposal-open",
+        ],
+        input="n\n",
+    )
+
+    result = runner.invoke(
+        app,
+        ["project", "correct", "accept", str(project_dir), "--lexicon-db", str(lexicon_db)],
+    )
+
+    assert result.exit_code == 0
+    assert "Vocabulary correction accepted." in result.output
+    assert "iSee" in (project_dir / "asr" / "sentences_corrected.json").read_text(encoding="utf-8")
+    assert _fetch_one(lexicon_db, "SELECT canonical FROM terms") == "iSee"
+
+
+def test_project_correct_edit_can_use_existing_review_file(tmp_path: Path) -> None:
+    """Existing edited review files should be reusable for proposal generation."""
+    project_dir = _sample_project(tmp_path)
+    runner.invoke(app, ["project", "correct", "edit", str(project_dir), "--no-open"])
+    review_file = next((project_dir / "tmp" / "corrections").glob("review_*.md"))
+    review_file.write_text(review_file.read_text(encoding="utf-8").replace("艾赛", "iSee"), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "correct",
+            "edit",
+            str(project_dir),
+            "--review-file",
+            str(review_file),
+            "--from-original",
+            "--no-ai",
+            "--no-proposal-open",
+        ],
+        input="n\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Sample changes: 1" in result.output
+
+
 def test_project_transcript_show_can_select_corrected_output(tmp_path: Path) -> None:
     """Corrected transcript artifacts should be viewable through project transcript show."""
     project_dir = _sample_project(tmp_path)
     editor_script = _editor_script(tmp_path, "艾赛", "iSee")
 
-    runner.invoke(app, ["project", "correct", "edit", str(project_dir), "--editor", f"{sys.executable} {editor_script}"])
+    runner.invoke(
+        app,
+        [
+            "project",
+            "correct",
+            "edit",
+            str(project_dir),
+            "--editor",
+            f"{sys.executable} {editor_script}",
+            "--no-ai",
+            "--no-proposal-open",
+            "--yes",
+        ],
+    )
     result = runner.invoke(app, ["project", "transcript", "show", str(project_dir), "--kind", "corrected"])
 
     assert result.exit_code == 0

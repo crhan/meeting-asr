@@ -179,17 +179,24 @@ Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speak
 ```bash
 meeting-asr project correct edit PROJECT_NO
 meeting-asr project correct edit PROJECT_NO --editor "code --wait"
+meeting-asr project correct edit PROJECT_NO --model qwen-plus
+meeting-asr project correct accept PROJECT_NO
 meeting-asr config set ui.editor "code --wait"
+meeting-asr config set dashscope.correction_model qwen-plus
 meeting-asr project transcript show PROJECT_NO --kind corrected
 ```
 
 `correct edit` 会生成带稳定锚点的 `tmp/corrections/review_*.md`，打开编辑器等待你修改。
-退出编辑器后，Meeting-ASR 会解析你改过的句子，写出
+退出编辑器后，Meeting-ASR 会解析你改过的样例句子，用 DashScope 文本模型生成全篇
+`tmp/corrections/proposal_*.md`、`proposal_*.diff` 和 `proposal_*.json`，先让你确认。
+接受 proposal 后才会写出
 `asr/sentences_corrected.json`、`exports/transcript_named_corrected.txt`、
 `exports/subtitle_named_corrected.srt` 和 `corrections/applied.json`。原始
 `asr/sentences.json` 和 `exports/transcript_named.txt` 不会被覆盖。可学习的替换会写入
 `~/.local/share/meeting-asr/lexicon/lexicon.sqlite`，作为跨项目词汇库。
+如果想复用已经编辑过的 review 文件，可以用 `--review-file tmp/corrections/review_*.md`。
 如果没有传 `--editor`，编辑器优先级是 `ui.editor`、`VISUAL`、`EDITOR`、`code --wait`、`vim`。
+纠错模型优先使用 `--model`，否则使用 `dashscope.correction_model`；模型不可用时会退回本地替换规则，并在 proposal 里标出 fallback 原因。
 
 这个项目的终点不是 preview，而是人名版文本和字幕已经写出。`preview` 只是用播放器检查
 `exports/subtitle_named.srt` 是否和视频对得上；看完没问题就可以直接用

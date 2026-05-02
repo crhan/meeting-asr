@@ -147,14 +147,25 @@ meeting-asr project transcribe \
 ```bash
 meeting-asr project correct edit PROJECT_NO
 meeting-asr project correct edit PROJECT_NO --editor "code --wait"
+meeting-asr project correct edit PROJECT_NO --model qwen-plus
+meeting-asr project correct accept PROJECT_NO
 meeting-asr config set ui.editor "code --wait"
+meeting-asr config set dashscope.correction_model qwen-plus
 meeting-asr project correct edit PROJECT_NO --no-open
 meeting-asr project transcript show PROJECT_NO --kind corrected
 ```
 
 `correct edit` 会生成 `tmp/corrections/review_*.md`，每句前面有
 `meeting-asr` HTML 锚点。只修改转写正文，保留锚点；退出编辑器后，CLI 会通过前后
-对比识别改动，输出：
+对比识别样例改动，再调用 DashScope 文本模型生成全篇 proposal。你会先看到：
+
+```text
+tmp/corrections/proposal_*.md
+tmp/corrections/proposal_*.diff
+tmp/corrections/proposal_*.json
+```
+
+确认 proposal 后，才会输出最终产物：
 
 ```text
 asr/sentences_corrected.json
@@ -172,6 +183,9 @@ corrections/applied.json
 ```
 
 如果没有传 `--editor`，编辑器优先级是 `ui.editor`、`VISUAL`、`EDITOR`、`code --wait`、`vim`。
+纠错模型优先使用 `--model`，否则使用 `dashscope.correction_model`。如果 DashScope 不可用，
+会退回本地替换规则，并在 proposal 里显示 fallback 原因。已经编辑过的 review 文件可以用
+`--review-file tmp/corrections/review_*.md` 复用。
 
 ## 5. 自动匹配 + 人工确认 speaker
 

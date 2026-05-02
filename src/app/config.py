@@ -12,6 +12,7 @@ APP_CONFIG_DIR = "meeting-asr"
 CONFIG_FILENAME = "config.json"
 DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
 DEFAULT_DASHSCOPE_SUMMARY_MODEL = "qwen-plus"
+DEFAULT_DASHSCOPE_CORRECTION_MODEL = DEFAULT_DASHSCOPE_SUMMARY_MODEL
 DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER = "local-speechbrain"
 
 
@@ -33,6 +34,7 @@ class Settings:
     dashscope_api_key: str
     dashscope_base_url: str
     dashscope_summary_model: str = DEFAULT_DASHSCOPE_SUMMARY_MODEL
+    dashscope_correction_model: str = DEFAULT_DASHSCOPE_CORRECTION_MODEL
     oss_access_key_id: str | None = None
     oss_access_key_secret: str | None = None
     oss_bucket_name: str | None = None
@@ -52,6 +54,12 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "dashscope_summary_model",
         "DASHSCOPE_SUMMARY_MODEL",
         default=DEFAULT_DASHSCOPE_SUMMARY_MODEL,
+    ),
+    ConfigKey(
+        "dashscope.correction_model",
+        "dashscope_correction_model",
+        "DASHSCOPE_CORRECTION_MODEL",
+        default=DEFAULT_DASHSCOPE_CORRECTION_MODEL,
     ),
     ConfigKey("oss.access_key_id", "oss_access_key_id", "OSS_ACCESS_KEY_ID", secret=True),
     ConfigKey("oss.access_key_secret", "oss_access_key_secret", "OSS_ACCESS_KEY_SECRET", secret=True),
@@ -226,6 +234,9 @@ def load_settings(*, require_oss: bool = False, require_dashscope: bool = True) 
         dashscope_base_url=_read_value(values, "dashscope.base_url", required=False) or DEFAULT_DASHSCOPE_BASE_URL,
         dashscope_summary_model=(
             _read_value(values, "dashscope.summary_model", required=False) or DEFAULT_DASHSCOPE_SUMMARY_MODEL
+        ),
+        dashscope_correction_model=(
+            _read_value(values, "dashscope.correction_model", required=False) or DEFAULT_DASHSCOPE_CORRECTION_MODEL
         ),
         oss_access_key_id=_read_value(values, "oss.access_key_id", required=require_oss),
         oss_access_key_secret=_read_value(values, "oss.access_key_secret", required=require_oss),
