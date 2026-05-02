@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -15,7 +17,7 @@ from uuid import uuid4
 
 import typer
 
-from app.config import load_settings
+from app.config import get_configured_editor, load_settings
 from app.uploader import build_oss_bucket, import_oss2
 from app.voiceprint_embedding import (
     LOCAL_SPEECHBRAIN_MODEL,
@@ -69,6 +71,7 @@ def command(
         _check_python_packages(require_oss=effective_require_oss),
         _check_ffmpeg(),
         _check_preview_player(),
+        _check_editor(),
         _check_settings(require_oss=effective_require_oss),
         _check_voiceprint_embedding_settings(required=require_voiceprint_embedding),
     ]
@@ -143,6 +146,53 @@ def _check_preview_player() -> CheckResult:
         "meeting-asr doctor",
     )
     return CheckResult("preview-player", "warn", detail, prompt)
+
+
+def _check_editor() -> CheckResult:
+    """Check the editor used by project vocabulary correction."""
+    editor, source = _resolve_editor_for_doctor()
+    if not editor:
+        detail = "no editor configured and neither code nor vim was found"
+        return CheckResult("editor", "warn", detail, _editor_fix_prompt(detail))
+    try:
+        parts = shlex.split(editor)
+    except ValueError as exc:
+        detail = f"{source} editor command is invalid: {exc}"
+        return CheckResult("editor", "warn", detail, _editor_fix_prompt(detail))
+    if not parts:
+        detail = f"{source} editor command is empty"
+        return CheckResult("editor", "warn", detail, _editor_fix_prompt(detail))
+    executable = shutil.which(parts[0])
+    if executable is None:
+        detail = f"{source} editor executable not found: {parts[0]}"
+        return CheckResult("editor", "warn", detail, _editor_fix_prompt(detail))
+    return CheckResult("editor", "ok", f"{source}: {editor}; executable={executable}")
+
+
+def _resolve_editor_for_doctor() -> tuple[str | None, str]:
+    """Resolve editor command for diagnostics."""
+    if editor := get_configured_editor():
+        return editor, "ui.editor"
+    if editor := os.environ.get("VISUAL"):
+        return editor, "VISUAL"
+    if editor := os.environ.get("EDITOR"):
+        return editor, "EDITOR"
+    if shutil.which("code"):
+        return "code --wait", "auto"
+    if shutil.which("vim"):
+        return "vim", "auto"
+    return None, "auto"
+
+
+def _editor_fix_prompt(detail: str) -> str:
+    """Build editor repair prompt."""
+    return _fix_prompt(
+        "editor",
+        detail,
+        'Set a blocking editor command, for example `meeting-asr config set ui.editor "code --wait"` or '
+        '`meeting-asr config set ui.editor vim`. Then rerun `meeting-asr doctor`.',
+        "meeting-asr doctor",
+    )
 
 
 def _check_settings(*, require_oss: bool) -> CheckResult:

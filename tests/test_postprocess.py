@@ -28,6 +28,40 @@ def test_parse_transcription_result_nested_sentences() -> None:
     assert result.sentences[0].text == "hi"
 
 
+def test_parse_transcription_result_filters_filler_only_speaker() -> None:
+    """Pure filler speaker tracks should be removed before users review speakers."""
+    raw = {
+        "sentences": [
+            {"begin_time": 1, "end_time": 2, "text": "嗯", "speaker_id": 0, "id": 1},
+            {"begin_time": 3, "end_time": 4, "text": "呃", "speaker_id": 0, "id": 2},
+            {"begin_time": 5, "end_time": 6, "text": "我们开始看 iSee 系统。", "speaker_id": 1, "id": 3},
+        ]
+    }
+
+    result = parse_transcription_result(raw)
+
+    assert result.detected_speakers == [1]
+    assert [sentence.text for sentence in result.sentences] == ["我们开始看 iSee 系统。"]
+    assert "嗯" not in result.full_text
+
+
+def test_parse_transcription_result_keeps_empty_text_after_filtering_all_speakers() -> None:
+    """Filtering all parsed sentences must not fall back to raw filler text."""
+    raw = {
+        "text": "嗯呃",
+        "sentences": [
+            {"begin_time": 1, "end_time": 2, "text": "嗯", "speaker_id": 0, "id": 1},
+            {"begin_time": 3, "end_time": 4, "text": "呃", "speaker_id": 0, "id": 2},
+        ],
+    }
+
+    result = parse_transcription_result(raw)
+
+    assert result.full_text == ""
+    assert result.sentences == []
+    assert result.detected_speakers == []
+
+
 def test_merge_adjacent_sentences_same_speaker() -> None:
     """Adjacent same-speaker sentences should merge for readable output."""
     sentences = [

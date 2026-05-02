@@ -97,7 +97,7 @@ def _agent_prompt_panel(view: ProjectRunSummaryView) -> Panel:
     """Build an agent-friendly remediation prompt."""
     prompt = (
         f"Open project review for {view.project_ref}, resolve {view.unresolved_matches} unaccepted speaker(s), "
-        "save named outputs, then run transcript show and subtitle preview to verify the final artifacts."
+        "save named outputs, run vocabulary correction, then verify the corrected transcript and subtitle preview."
     )
     return Panel(prompt, title="[bold yellow]Agent prompt:[/]", border_style="yellow", expand=False)
 
@@ -143,12 +143,14 @@ def _next_step_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
     quoted_ref = shlex.quote(view.project_ref)
     if view.unresolved_matches == 0:
         return [
-            ("View final transcript", f"meeting-asr project transcript show {quoted_ref} --kind named"),
+            ("Correct vocabulary", f"meeting-asr project correct edit {quoted_ref}"),
+            ("View corrected transcript", f"meeting-asr project transcript show {quoted_ref} --kind corrected"),
             ("Preview subtitles", f"meeting-asr project speakers preview {quoted_ref}"),
         ]
     return [
         ("Resolve speakers", f"meeting-asr project review {quoted_ref}"),
-        ("Then view transcript", f"meeting-asr project transcript show {quoted_ref} --kind named"),
+        ("Then correct vocabulary", f"meeting-asr project correct edit {quoted_ref}"),
+        ("Then view corrected transcript", f"meeting-asr project transcript show {quoted_ref} --kind corrected"),
         ("Then preview subtitles", f"meeting-asr project speakers preview {quoted_ref}"),
     ]
 

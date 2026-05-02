@@ -7,6 +7,28 @@ from typing import Any
 from app.models import SentenceSegment, TranscriptResult
 from app.utils import format_ms_timestamp
 
+FILLER_CHARS = set("嗯呃啊哦额呐呢哎唉诶哈呵呀呦哟嘛吧啦喔噢")
+FILLER_WORDS = {
+    "嗯",
+    "呃",
+    "啊",
+    "哦",
+    "额",
+    "呐",
+    "哎",
+    "唉",
+    "诶",
+    "这个",
+    "那个",
+    "就是",
+    "然后",
+    "对",
+    "是",
+    "好",
+    "行",
+    "可以",
+}
+
 
 def parse_transcription_result(raw_json: dict[str, Any]) -> TranscriptResult:
     """
@@ -18,9 +40,11 @@ def parse_transcription_result(raw_json: dict[str, Any]) -> TranscriptResult:
     Returns:
         Normalized transcript result.
     """
-    sentences = [_segment_from_payload(item, idx) for idx, item in enumerate(_find_sentence_payloads(raw_json))]
-    sentences = [item for item in sentences if item is not None]
-    full_text = _find_text(raw_json) or "".join(sentence.text for sentence in sentences)
+    parsed_sentences = [_segment_from_payload(item, idx) for idx, item in enumerate(_find_sentence_payloads(raw_json))]
+    sentences = [item for item in parsed_sentences if item is not None]
+    has_sentence_payloads = bool(sentences)
+    sentences = filter_filler_speakers(sentences)
+    full_text = "".join(sentence.text for sentence in sentences) if has_sentence_payloads else (_find_text(raw_json) or "")
     detected = detect_speaker_ids(TranscriptResult(full_text=full_text, sentences=sentences, detected_speakers=[]))
     return TranscriptResult(full_text=full_text, sentences=sentences, detected_speakers=detected)
 
@@ -121,11 +145,51 @@ def detect_speaker_ids(result: TranscriptResult) -> list[int]:
     return sorted(speakers)
 
 
+def filter_filler_speakers(sentences: list[SentenceSegment]) -> list[SentenceSegment]:
+    """
+    Remove diarized speakers that contain only filler utterances.
+
+    Args:
+        sentences: Parsed sentence segments.
+
+    Returns:
+        Sentences without pure-filler speaker tracks.
+    """
+    filler_speakers = _filler_speaker_ids(sentences)
+    if not filler_speakers:
+        return sentences
+    return [sentence for sentence in sentences if sentence.speaker_id not in filler_speakers]
+
+
 def _can_merge(first: SentenceSegment, second: SentenceSegment, max_gap_ms: int, same_speaker_only: bool) -> bool:
     """Return whether two segments can be merged."""
     if same_speaker_only and first.speaker_id != second.speaker_id:
         return False
     return second.begin_time_ms - first.end_time_ms <= max_gap_ms
+
+
+def _filler_speaker_ids(sentences: list[SentenceSegment]) -> set[int]:
+    """Return speaker ids whose whole track is filler-only."""
+    grouped: dict[int, list[SentenceSegment]] = {}
+    for sentence in sentences:
+        if sentence.speaker_id is None:
+            continue
+        grouped.setdefault(sentence.speaker_id, []).append(sentence)
+    return {
+        speaker_id
+        for speaker_id, speaker_sentences in grouped.items()
+        if speaker_sentences and all(_is_filler_text(sentence.text) for sentence in speaker_sentences)
+    }
+
+
+def _is_filler_text(text: str) -> bool:
+    """Return whether text is only a meaningless filler utterance."""
+    normalized = "".join(char for char in text.strip() if char.isalnum())
+    if not normalized:
+        return True
+    if normalized in FILLER_WORDS:
+        return True
+    return len(normalized) <= 8 and all(char in FILLER_CHARS for char in normalized)
 
 
 def _find_sentence_payloads(raw_json: dict[str, Any]) -> list[dict[str, Any]]:

@@ -27,7 +27,7 @@ def test_doctor_warns_when_local_voiceprint_dependencies_are_missing(
 
     assert result.exit_code == 0
     assert "Meeting-ASR Doctor" in result.output
-    assert "Summary: 5 ok, 1 warn, 0 fail" in result.output
+    assert "Summary: 6 ok, 1 warn, 0 fail" in result.output
     assert "  WARN  voiceprint-embedding" in result.output
     assert "provider=local-speechbrain" in result.output
     assert "missing optional packages: speechbrain" in result.output
@@ -47,7 +47,7 @@ def test_doctor_can_require_local_voiceprint_dependencies(
     result = runner.invoke(app, ["doctor", "--require-voiceprint-embedding"])
 
     assert result.exit_code == 1
-    assert "Summary: 5 ok, 0 warn, 1 fail" in result.output
+    assert "Summary: 6 ok, 0 warn, 1 fail" in result.output
     assert "  FAIL  voiceprint-embedding" in result.output
     assert "missing optional packages: speechbrain, torch" in result.output
     assert "meeting-asr doctor --require-voiceprint-embedding" in result.output
@@ -75,7 +75,7 @@ def test_doctor_accepts_bailian_voiceprint_embedding_endpoint(
     result = runner.invoke(app, ["doctor", "--require-voiceprint-embedding"])
 
     assert result.exit_code == 0
-    assert "Summary: 6 ok, 0 warn, 0 fail" in result.output
+    assert "Summary: 7 ok, 0 warn, 0 fail" in result.output
     assert "  OK    voiceprint-embedding" in result.output
     assert "provider=bailian" in result.output
     assert "Repair Prompts:" not in result.output
@@ -103,6 +103,7 @@ def _prepare_doctor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     )
     monkeypatch.setattr(doctor, "_check_ffmpeg", lambda: doctor.CheckResult("ffmpeg", "ok", "test"))
     monkeypatch.setattr(doctor, "_check_preview_player", lambda: doctor.CheckResult("preview-player", "ok", "test"))
+    monkeypatch.setattr(doctor, "_check_editor", lambda: doctor.CheckResult("editor", "ok", "test"))
 
 
 _CONFIG_ENV_NAMES = (
@@ -115,4 +116,5 @@ _CONFIG_ENV_NAMES = (
     "OSS_ENDPOINT",
     "VOICEPRINT_EMBEDDING_ENDPOINT",
     "VOICEPRINT_EMBEDDING_PROVIDER",
+    "MEETING_ASR_EDITOR",
 )

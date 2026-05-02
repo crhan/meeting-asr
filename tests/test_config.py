@@ -64,6 +64,21 @@ def test_load_settings_reads_global_config(monkeypatch: pytest.MonkeyPatch, tmp_
     assert settings.voiceprint_embedding_provider == DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER
 
 
+def test_ui_editor_config_is_supported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The editor used by correction review should be configurable."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _clear_runtime_env(monkeypatch)
+    set_config_value("ui.editor", "code --wait")
+
+    settings = load_settings(require_dashscope=False)
+    keys_result = runner.invoke(app, ["config", "keys"])
+    show_result = runner.invoke(app, ["config", "show"])
+
+    assert settings.ui_editor == "code --wait"
+    assert "ui.editor" in keys_result.output
+    assert "ui.editor=code --wait" in show_result.output
+
+
 def test_load_settings_can_read_voiceprint_config_without_dashscope(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -130,5 +145,6 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "OSS_ENDPOINT",
         "VOICEPRINT_EMBEDDING_ENDPOINT",
         "VOICEPRINT_EMBEDDING_PROVIDER",
+        "MEETING_ASR_EDITOR",
     ):
         monkeypatch.delenv(name, raising=False)

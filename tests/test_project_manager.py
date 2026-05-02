@@ -204,6 +204,8 @@ def test_project_run_applies_accepted_voiceprint_matches(
     assert "exports/meeting_summary.md" in result.output
     assert "Voiceprint matches" in result.output
     assert "2/2 accepted" in result.output
+    assert "meeting-asr project correct edit 1" in result.output
+    assert "meeting-asr project transcript show 1 --kind corrected" in result.output
     assert "meeting-asr project review" not in result.output
     assert "欧丁" in transcript.read_text(encoding="utf-8")
     assert "敬悦" in transcript.read_text(encoding="utf-8")
@@ -254,6 +256,7 @@ def test_project_run_reports_review_when_matches_are_incomplete(
     assert "1/2 accepted" in result.output
     assert "partial" in result.output
     assert "meeting-asr project review 1" in result.output
+    assert "meeting-asr project correct edit 1" in result.output
     assert "Agent prompt:" in result.output
 
 
@@ -1014,6 +1017,31 @@ def test_project_speakers_preview_prefers_named_subtitle(
     assert result.exit_code == 0
     assert captured["subtitle"] == project_dir.resolve() / "exports" / "subtitle_named.srt"
     assert "subtitle_named.srt" in result.output
+
+
+def test_project_speakers_preview_prefers_corrected_named_subtitle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Preview after vocabulary correction should use corrected named subtitles."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    (project_dir / "exports").mkdir(exist_ok=True)
+    (project_dir / "exports" / "subtitle_named.srt").write_text("named", encoding="utf-8")
+    (project_dir / "exports" / "subtitle_named_corrected.srt").write_text("corrected", encoding="utf-8")
+    captured: dict[str, Path] = {}
+
+    def fake_build_preview_command(*, video: Path, subtitle: Path, start_seconds: float) -> list[str]:
+        captured["subtitle"] = subtitle
+        return ["player", str(subtitle)]
+
+    monkeypatch.setattr("app.commands.project.build_preview_command", fake_build_preview_command)
+
+    result = runner.invoke(app, ["project", "speakers", "preview", str(project_dir), "--dry-run"])
+
+    assert result.exit_code == 0
+    assert captured["subtitle"] == project_dir.resolve() / "exports" / "subtitle_named_corrected.srt"
+    assert "subtitle_named_corrected.srt" in result.output
 
 
 def test_project_git_init_writes_safe_ignore_file(tmp_path: Path) -> None:

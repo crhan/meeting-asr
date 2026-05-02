@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
+from app.config import get_configured_editor
 from app.core.project_models import ProjectManifest, ProjectPaths
 from app.lexicon_store import LexiconContext, default_lexicon_db_path, record_lexicon_contexts
 from app.models import SentenceSegment, TranscriptResult
@@ -188,7 +189,13 @@ def _review_sentence_line(sentence: SentenceSegment, speaker_mapping: dict[int, 
 def _open_editor(path: Path, editor: str | None) -> None:
     """Open the review file and wait until the editor exits."""
     command = _editor_command(editor, path)
-    subprocess.run(command, check=True)
+    try:
+        subprocess.run(command, check=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(_editor_failure_message(command, "command not found")) from exc
+    except subprocess.CalledProcessError as exc:
+        detail = f"exited with status {exc.returncode}"
+        raise RuntimeError(_editor_failure_message(command, detail)) from exc
 
 
 def _editor_command(editor: str | None, path: Path) -> list[str]:
@@ -207,12 +214,21 @@ def _default_editor() -> str:
     """Return a practical default editor command."""
     import os
 
-    configured = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    configured = get_configured_editor() or os.environ.get("VISUAL") or os.environ.get("EDITOR")
     if configured:
         return configured
     if shutil.which("code"):
         return "code --wait"
     return "vim"
+
+
+def _editor_failure_message(command: list[str], detail: str) -> str:
+    """Return actionable editor failure guidance."""
+    command_text = shlex.join(command)
+    return (
+        f"Editor failed: {command_text} ({detail}). "
+        'Configure it with `meeting-asr config set ui.editor "code --wait"` or pass `--editor`.'
+    )
 
 
 def _extract_changes(

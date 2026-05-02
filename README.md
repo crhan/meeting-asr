@@ -71,6 +71,7 @@ meeting-asr config set oss.bucket_name "<your-bucket>"
 meeting-asr config set oss.region "<your-region>"
 meeting-asr config set oss.endpoint "<your-oss-endpoint>"
 meeting-asr config set voiceprint.embedding_provider "local-speechbrain"
+meeting-asr config set ui.editor "code --wait"
 meeting-asr doctor --require-voiceprint-embedding
 ```
 
@@ -178,6 +179,7 @@ Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speak
 ```bash
 meeting-asr project correct edit PROJECT_NO
 meeting-asr project correct edit PROJECT_NO --editor "code --wait"
+meeting-asr config set ui.editor "code --wait"
 meeting-asr project transcript show PROJECT_NO --kind corrected
 ```
 
@@ -187,6 +189,7 @@ meeting-asr project transcript show PROJECT_NO --kind corrected
 `exports/subtitle_named_corrected.srt` 和 `corrections/applied.json`。原始
 `asr/sentences.json` 和 `exports/transcript_named.txt` 不会被覆盖。可学习的替换会写入
 `~/.local/share/meeting-asr/lexicon/lexicon.sqlite`，作为跨项目词汇库。
+如果没有传 `--editor`，编辑器优先级是 `ui.editor`、`VISUAL`、`EDITOR`、`code --wait`、`vim`。
 
 这个项目的终点不是 preview，而是人名版文本和字幕已经写出。`preview` 只是用播放器检查
 `exports/subtitle_named.srt` 是否和视频对得上；看完没问题就可以直接用

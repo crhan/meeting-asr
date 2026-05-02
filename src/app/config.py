@@ -40,6 +40,7 @@ class Settings:
     oss_endpoint: str | None = None
     voiceprint_embedding_endpoint: str | None = None
     voiceprint_embedding_provider: str = DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER
+    ui_editor: str | None = None
     config_path: Path | None = None
 
 
@@ -64,6 +65,7 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "VOICEPRINT_EMBEDDING_PROVIDER",
         default=DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER,
     ),
+    ConfigKey("ui.editor", "ui_editor", "MEETING_ASR_EDITOR"),
 )
 
 _KEYS_BY_NAME = {item.name: item for item in CONFIG_KEYS}
@@ -235,8 +237,23 @@ def load_settings(*, require_oss: bool = False, require_dashscope: bool = True) 
             _read_value(values, "voiceprint.embedding_provider", required=False)
             or DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER
         ),
+        ui_editor=_read_value(values, "ui.editor", required=False),
         config_path=get_config_path(),
     )
+
+
+def get_configured_editor(path: Path | None = None) -> str | None:
+    """
+    Return the configured editor command without requiring cloud credentials.
+
+    Args:
+        path: Optional config path override.
+
+    Returns:
+        Editor command, or None when unset.
+    """
+    values = load_config_values(path)
+    return _read_value(values, "ui.editor", required=False)
 
 
 def visible_config_items(*, reveal: bool = False, path: Path | None = None) -> list[tuple[str, str]]:

@@ -1125,9 +1125,14 @@ def _created_project_root(project_dir: Path | None, projects_dir: Path | None, m
 
 def _preferred_project_srt(paths) -> Path:
     """Prefer named subtitles after speaker mapping, otherwise anonymous subtitles."""
-    named_srt = paths.exports_dir / "subtitle_named.srt"
-    if named_srt.exists():
-        return named_srt
+    for candidate in (
+        paths.exports_dir / "subtitle_named_corrected.srt",
+        paths.exports_dir / "subtitle_named.srt",
+        paths.exports_dir / "subtitle_corrected.srt",
+        paths.exports_dir / "subtitle.srt",
+    ):
+        if candidate.exists():
+            return candidate
     return paths.exports_dir / "subtitle.srt"
 
 

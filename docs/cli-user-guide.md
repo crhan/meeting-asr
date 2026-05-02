@@ -147,6 +147,7 @@ meeting-asr project transcribe \
 ```bash
 meeting-asr project correct edit PROJECT_NO
 meeting-asr project correct edit PROJECT_NO --editor "code --wait"
+meeting-asr config set ui.editor "code --wait"
 meeting-asr project correct edit PROJECT_NO --no-open
 meeting-asr project transcript show PROJECT_NO --kind corrected
 ```
@@ -169,6 +170,8 @@ corrections/applied.json
 ```text
 ~/.local/share/meeting-asr/lexicon/lexicon.sqlite
 ```
+
+如果没有传 `--editor`，编辑器优先级是 `ui.editor`、`VISUAL`、`EDITOR`、`code --wait`、`vim`。
 
 ## 5. 自动匹配 + 人工确认 speaker
 
