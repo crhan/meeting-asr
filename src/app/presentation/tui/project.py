@@ -193,7 +193,7 @@ class ProjectPickerApp(App[Path | None]):
             workflow = load_project_workflow_summary(project.project_dir, project_ref=str(project.number))
             row = (
                 f"{marker} {project.number:>2} | {project.updated_at[:19]} | "
-                f"{workflow.state} | {workflow.next_command_short} | {project.title}"
+                f"{workflow.state} | {project.title}"
             )
             lines.append(f"[reverse]{escape(row)}[/]" if marker == ">" else escape(row))
         return "\n".join(lines)

@@ -88,10 +88,12 @@ def project_workflow_summary(
     if flags.corrected_transcript:
         return _workflow_summary("corrected", ref, outputs)
     if flags.named_transcript:
-        return _workflow_summary("ready", ref, outputs)
+        return _workflow_summary("completed", ref, outputs)
     if flags.sentences:
-        return _workflow_summary("needs_speakers", ref, outputs)
-    return _workflow_summary("needs_asr", ref, outputs)
+        return _workflow_summary("transcribed", ref, outputs)
+    if flags.audio:
+        return _workflow_summary("prepared", ref, outputs)
+    return _workflow_summary("created", ref, outputs)
 
 
 def project_outputs_text(outputs: Iterable[str]) -> str:
@@ -196,9 +198,10 @@ def _workflow_summary(
 ) -> ProjectWorkflowSummary:
     """Build a workflow summary for one state key."""
     labels = {
-        "needs_asr": ("Needs ASR", "Transcribe", ("transcribe", project_ref)),
-        "needs_speakers": ("Needs speakers", "Resolve speakers", ("review", project_ref)),
-        "ready": ("Ready", "Correct vocabulary", ("correct", "edit", project_ref)),
+        "created": ("Created", "Transcribe", ("transcribe", project_ref)),
+        "prepared": ("Prepared", "Transcribe", ("transcribe", project_ref)),
+        "transcribed": ("Transcribed", "Resolve speakers", ("review", project_ref)),
+        "completed": ("Completed", "Correct vocabulary", ("correct", "edit", project_ref)),
         "corrected": (
             "Corrected",
             "View corrected transcript",

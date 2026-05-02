@@ -9,42 +9,58 @@ from app.core.project_workflow import project_workflow_summary
 from app.project_manager import apply_project_speakers, create_project, load_manifest, save_manifest
 
 
-def test_created_project_needs_asr(tmp_path: Path) -> None:
-    """A new project should point users at transcription."""
+def test_created_project_points_to_transcription(tmp_path: Path) -> None:
+    """A new project should show its current stage and detail next action."""
     project_dir = _sample_project(tmp_path)
     manifest = load_manifest(project_dir)
 
     summary = project_workflow_summary(project_dir, manifest, project_ref="1")
 
-    assert summary.state == "Needs ASR"
+    assert summary.state == "Created"
     assert summary.next_command_short == "transcribe 1"
     assert summary.outputs == ()
 
 
-def test_transcribed_project_needs_speaker_review(tmp_path: Path) -> None:
-    """A transcribed project without named outputs should point at review."""
+def test_prepared_project_stays_before_transcription(tmp_path: Path) -> None:
+    """A project with audio but no ASR result should be in the prepared stage."""
     project_dir = _sample_project(tmp_path)
-    _write_transcribed_outputs(project_dir)
+    (project_dir / "audio" / "audio.flac").write_bytes(b"fake audio")
+    manifest = load_manifest(project_dir)
+    manifest.audio = {"path": "audio/audio.flac", "format": "flac"}
+    save_manifest(project_dir, manifest)
     manifest = load_manifest(project_dir)
 
     summary = project_workflow_summary(project_dir, manifest, project_ref="2")
 
-    assert summary.state == "Needs speakers"
-    assert summary.next_command_short == "review 2"
+    assert summary.state == "Prepared"
+    assert summary.next_command_short == "transcribe 2"
+    assert summary.outputs == ("audio",)
+
+
+def test_transcribed_project_points_to_speaker_review(tmp_path: Path) -> None:
+    """A transcribed project without named outputs should remain transcribed."""
+    project_dir = _sample_project(tmp_path)
+    _write_transcribed_outputs(project_dir)
+    manifest = load_manifest(project_dir)
+
+    summary = project_workflow_summary(project_dir, manifest, project_ref="3")
+
+    assert summary.state == "Transcribed"
+    assert summary.next_command_short == "review 3"
     assert summary.outputs == ("plain-txt", "speaker-txt", "srt")
 
 
-def test_named_project_is_ready_for_correction(tmp_path: Path) -> None:
-    """Named outputs should make the project ready for vocabulary correction."""
+def test_named_project_is_completed(tmp_path: Path) -> None:
+    """Named outputs should make the main project workflow complete."""
     project_dir = _sample_project(tmp_path)
     _write_transcribed_outputs(project_dir)
     apply_project_speakers(project_dir, {0: "敬悦"})
     manifest = load_manifest(project_dir)
 
-    summary = project_workflow_summary(project_dir, manifest, project_ref="3")
+    summary = project_workflow_summary(project_dir, manifest, project_ref="4")
 
-    assert summary.state == "Ready"
-    assert summary.next_command_short == "correct edit 3"
+    assert summary.state == "Completed"
+    assert summary.next_command_short == "correct edit 4"
     assert summary.outputs == ("named-txt", "named-srt")
 
 
@@ -55,10 +71,10 @@ def test_corrected_project_points_at_corrected_transcript(tmp_path: Path) -> Non
     _write_corrected_outputs(project_dir)
     manifest = load_manifest(project_dir)
 
-    summary = project_workflow_summary(project_dir, manifest, project_ref="4")
+    summary = project_workflow_summary(project_dir, manifest, project_ref="5")
 
     assert summary.state == "Corrected"
-    assert summary.next_command_short == "transcript show 4 --kind corrected"
+    assert summary.next_command_short == "transcript show 5 --kind corrected"
     assert summary.outputs == ("corrected-txt", "corrected-srt")
 
 

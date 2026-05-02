@@ -151,8 +151,8 @@ AutoRun、create 和 `project list` 会打印短数字 `Project No.`，后续命
 项目路径参数仍默认是当前目录。不记得 Project No. 时，跑 `meeting-asr project list` 看表格，
 或直接跑 `meeting-asr project review` 打开 project list TUI，选中历史 project 后进入 review。
 `project list` 默认列出 XDG 项目目录，也可以用 `--projects-dir` 指定项目父目录。表格里的
-`State` 从实际产物文件推导，`Next` 给出下一条可复制的 project 子命令，`Outputs` 只列关键产物；
-需要 Project ID、目录或原始内部 status 时用 `--json`。
+`State` 从实际产物文件推导，只表达当前项目阶段。下一步命令、关键产物、Project ID、
+目录和原始内部 status 放在 `project status PROJECT_NO` 或 `--json` 里看。
 交互式终端会在 stderr 显示 Rich 进度；脚本、管道和测试输出保持纯文本。需要关闭时加
 `--no-progress`。
 

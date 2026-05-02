@@ -374,11 +374,9 @@ def test_project_list_command_reads_default_projects_dir(
     assert "Use No. with any PROJECT command" in result.output
     assert "No." in result.output
     assert "State" in result.output
-    assert "Next" in result.output
-    assert "Outputs" in result.output
     assert "Demo" in result.output
-    assert "Needs ASR" in result.output
-    assert "transcribe 1" in result.output
+    assert "Created" in result.output
+    assert "transcribe 1" not in result.output
 
 
 def test_project_list_command_prints_json(tmp_path: Path) -> None:
@@ -406,7 +404,7 @@ def test_project_list_command_prints_json(tmp_path: Path) -> None:
     assert payload["projects"][0]["title"] == "Demo"
     assert payload["projects"][0]["project_dir"] == str(project_dir.resolve())
     assert payload["projects"][0]["status"] == "created"
-    assert payload["projects"][0]["workflow"]["state"] == "Needs ASR"
+    assert payload["projects"][0]["workflow"]["state"] == "Created"
     assert payload["projects"][0]["workflow"]["next_command_short"] == "transcribe 1"
 
 
@@ -432,7 +430,7 @@ def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
     assert "Demo" in result.output
-    assert "Needs ASR" in result.output
+    assert "Created" in result.output
     assert "not-a-project" not in result.output
 
 
@@ -584,7 +582,7 @@ def test_project_status_command_reads_manifest(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Title: Demo" in result.output
-    assert "Workflow: Needs ASR" in result.output
+    assert "State: Created" in result.output
     assert "Next: transcribe" in result.output
     assert "Source: source/meeting.mp4" in result.output
 
@@ -601,7 +599,7 @@ def test_project_status_command_prints_json(tmp_path: Path) -> None:
     assert payload["project"] == str(project_dir.resolve())
     assert payload["project_id"] == manifest.project_id
     assert payload["title"] == "Demo"
-    assert payload["workflow"]["state"] == "Needs ASR"
+    assert payload["workflow"]["state"] == "Created"
     assert payload["source"] == "source/meeting.mp4"
 
 

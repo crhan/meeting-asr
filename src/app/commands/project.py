@@ -559,7 +559,7 @@ def status(
     typer.echo(f"Project ID: {manifest.project_id}")
     typer.echo(f"Title: {manifest.title}")
     typer.echo(f"Status: {manifest.status}")
-    typer.echo(f"Workflow: {workflow.state}")
+    typer.echo(f"State: {workflow.state}")
     typer.echo(f"Next: {workflow.next_command_short}")
     typer.echo(f"Outputs: {project_outputs_text(workflow.outputs)}")
     if workflow.missing:
@@ -936,8 +936,6 @@ def _project_list_table(projects: list[ProjectListItem]) -> Table:
     table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
     table.add_column("No.", justify="right", no_wrap=True, style="bold cyan")
     table.add_column("State", no_wrap=True)
-    table.add_column("Next", no_wrap=True)
-    table.add_column("Outputs", no_wrap=True)
     table.add_column("Updated", no_wrap=True)
     table.add_column("Title")
     for project in projects:
@@ -945,8 +943,6 @@ def _project_list_table(projects: list[ProjectListItem]) -> Table:
         table.add_row(
             str(project.number),
             _project_workflow_state_text(workflow),
-            workflow.next_command_short,
-            project_outputs_text(workflow.outputs),
             _project_list_timestamp(project.updated_at),
             project.title,
         )
@@ -964,9 +960,10 @@ def _project_workflow_state_text(workflow: ProjectWorkflowSummary) -> str:
         Rich markup string.
     """
     styles = {
-        "needs_asr": "yellow",
-        "needs_speakers": "yellow",
-        "ready": "green",
+        "created": "yellow",
+        "prepared": "yellow",
+        "transcribed": "cyan",
+        "completed": "green",
         "corrected": "green",
         "broken": "red",
     }
