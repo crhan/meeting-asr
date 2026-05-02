@@ -202,6 +202,7 @@ def test_project_run_applies_accepted_voiceprint_matches(
     assert "Title" in result.output
     assert "自动会议标题" in result.output
     assert "exports/meeting_summary.md" in result.output
+    assert str((project_dir / "exports" / "meeting_summary.md").resolve()) in result.output
     assert "Voiceprint matches" in result.output
     assert "2/2 accepted" in result.output
     assert "meeting-asr project correct edit 1" in result.output
@@ -333,6 +334,44 @@ def test_summarize_project_preserves_manual_title(
 
     assert summary.title_updated is False
     assert load_manifest(project_dir).title == "手工标题"
+
+
+def test_project_summarize_command_prints_absolute_summary_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project summary command should print directly openable artifact paths."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    projects_dir = tmp_path / "projects"
+    project_dir = projects_dir / "project"
+    create_project(
+        source,
+        title="Demo",
+        projects_dir=projects_dir,
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+
+    def fake_summarize_project(project_dir, model=None, update_title=True, progress=None):
+        summary_path = project_dir / "exports" / "meeting_summary.md"
+        json_path = project_dir / "exports" / "meeting_summary.json"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text("# Demo\n", encoding="utf-8")
+        json_path.write_text('{"model":"qwen-test"}\n', encoding="utf-8")
+        return ProjectMeetingSummary(project_dir, "Demo", summary_path, json_path, "qwen-test", False)
+
+    monkeypatch.setattr(project_commands, "summarize_project", fake_summarize_project)
+
+    result = runner.invoke(
+        app,
+        ["project", "summarize", "1", "--projects-dir", str(projects_dir), "--no-progress"],
+    )
+
+    assert result.exit_code == 0
+    assert f"Summary: {(project_dir / 'exports' / 'meeting_summary.md').resolve()}" in result.output
+    assert f"Summary JSON: {(project_dir / 'exports' / 'meeting_summary.json').resolve()}" in result.output
 
 
 def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(tmp_path: Path) -> None:

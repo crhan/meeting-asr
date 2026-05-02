@@ -255,8 +255,8 @@ def summarize(
     if project_ref != manifest.project_id:
         typer.echo(f"Project No.: {project_ref}")
     typer.echo(f"Title: {manifest.title}")
-    typer.echo(f"Summary: {_relative_project_output(resolved_project_dir, summary.summary_path)}")
-    typer.echo(f"Summary JSON: {_relative_project_output(resolved_project_dir, summary.json_path)}")
+    typer.echo(f"Summary: {summary.summary_path.resolve()}")
+    typer.echo(f"Summary JSON: {summary.json_path.resolve()}")
 
 
 @app.command("run")
@@ -870,6 +870,9 @@ def _echo_run_summary(summary: ProjectRunSummary, projects_dir: Path | None) -> 
     view = _run_summary_view(summary, projects_dir)
     typer.echo("")
     render_project_run_summary(view)
+    if summary.meeting_summary is not None:
+        typer.echo(f"Summary: {summary.meeting_summary.summary_path.resolve()}")
+        typer.echo(f"Summary JSON: {summary.meeting_summary.json_path.resolve()}")
 
 
 def _run_summary_view(summary: ProjectRunSummary, projects_dir: Path | None) -> ProjectRunSummaryView:
