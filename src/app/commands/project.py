@@ -24,6 +24,7 @@ import typer
 from app.commands import transcript as transcript_commands
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.progress import CliProgressReporter, emit_progress, run_with_progress
+from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
 from app.completion_helpers import (
     complete_audio_format,
     complete_model,
@@ -806,57 +807,28 @@ def _echo_run_summary(summary: ProjectRunSummary, projects_dir: Path | None) -> 
         summary: Full run summary.
         projects_dir: Optional projects parent directory.
     """
+    view = _run_summary_view(summary, projects_dir)
+    typer.echo("")
+    render_project_run_summary(view)
+
+
+def _run_summary_view(summary: ProjectRunSummary, projects_dir: Path | None) -> ProjectRunSummaryView:
+    """Build presentation data for project run output."""
     project_dir = summary.project.project_dir
     manifest = load_manifest(project_dir)
-    project_ref = _project_cli_ref(project_dir, manifest, projects_dir)
     total_matches = len(summary.matches.matches)
-    accepted = len(summary.applied_mapping)
-    unresolved = total_matches - accepted
-    typer.echo("")
-    typer.echo("Project automation completed." if unresolved == 0 else "Project automation needs review.")
-    typer.echo(f"Project: {project_dir}")
-    if project_ref != manifest.project_id:
-        typer.echo(f"Project No.: {project_ref}")
-    typer.echo(f"Project ID: {manifest.project_id}")
-    typer.echo(f"Title: {manifest.title}")
-    if summary.meeting_summary is not None:
-        typer.echo(f"Meeting summary: {_relative_project_output(project_dir, summary.meeting_summary.summary_path)}")
-        if summary.meeting_summary.title_updated:
-            typer.echo(f"Auto title: {summary.meeting_summary.title}")
-    typer.echo(f"Task ID: {summary.transcription.task_id}")
-    typer.echo(f"Detected speakers: {summary.transcription.detected_speaker_count}")
-    typer.echo(f"Sentence count: {summary.transcription.sentence_count}")
-    typer.echo(f"Voiceprint matches: {accepted}/{total_matches} accepted")
-    if summary.project.created:
-        typer.echo("Source: new project")
-    else:
-        typer.echo("Source: reused existing project")
-    typer.echo("")
-    typer.echo("Outputs:")
-    typer.echo("  exports/transcript.txt")
-    typer.echo("  exports/transcript_speakers.txt")
-    if summary.meeting_summary is not None:
-        typer.echo("  exports/meeting_summary.md")
-        typer.echo("  exports/meeting_summary.json")
-    if accepted:
-        typer.echo("  exports/transcript_named.txt")
-        typer.echo("  exports/subtitle_named.srt")
-    else:
-        typer.echo("  named outputs: not ready until speaker review")
-    if unresolved == 0:
-        typer.echo("")
-        typer.echo("Next steps:")
-        typer.echo(f"  meeting-asr project transcript show {shlex.quote(project_ref)} --kind named")
-        typer.echo(f"  meeting-asr project speakers preview {shlex.quote(project_ref)}")
-        return
-    typer.echo("")
-    typer.echo("Review required:")
-    typer.echo(f"  {unresolved} speaker(s) were not accepted automatically.")
-    typer.echo(f"  meeting-asr project review {shlex.quote(project_ref)}")
-    typer.echo("")
-    typer.echo("Agent prompt:")
-    typer.echo(f"  Open project review for {project_ref}, resolve unaccepted speakers, save named outputs,")
-    typer.echo("  then rerun transcript list and preview to verify exports/transcript_named.txt.")
+    accepted_matches = len(summary.applied_mapping)
+    return ProjectRunSummaryView(
+        project_dir=project_dir,
+        project_ref=_project_cli_ref(project_dir, manifest, projects_dir),
+        manifest=manifest,
+        total_matches=total_matches,
+        accepted_matches=accepted_matches,
+        unresolved_matches=total_matches - accepted_matches,
+        source_label="new project" if summary.project.created else "reused project",
+        meeting_summary=summary.meeting_summary,
+        transcription=summary.transcription,
+    )
 
 
 def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> None:

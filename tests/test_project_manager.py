@@ -199,9 +199,11 @@ def test_project_run_applies_accepted_voiceprint_matches(
     transcript = project_dir / "exports" / "transcript_named.txt"
     assert result.exit_code == 0
     assert "Project automation completed." in result.output
-    assert "Title: 自动会议标题" in result.output
+    assert "Title" in result.output
+    assert "自动会议标题" in result.output
     assert "exports/meeting_summary.md" in result.output
-    assert "Voiceprint matches: 2/2 accepted" in result.output
+    assert "Voiceprint matches" in result.output
+    assert "2/2 accepted" in result.output
     assert "meeting-asr project review" not in result.output
     assert "欧丁" in transcript.read_text(encoding="utf-8")
     assert "敬悦" in transcript.read_text(encoding="utf-8")
@@ -248,7 +250,9 @@ def test_project_run_reports_review_when_matches_are_incomplete(
 
     assert result.exit_code == 0
     assert "Project automation needs review." in result.output
-    assert "Voiceprint matches: 1/2 accepted" in result.output
+    assert "Voiceprint matches" in result.output
+    assert "1/2 accepted" in result.output
+    assert "partial" in result.output
     assert "meeting-asr project review 1" in result.output
     assert "Agent prompt:" in result.output
 
