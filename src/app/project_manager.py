@@ -29,8 +29,6 @@ from app.core.project_models import (
     SCHEMA_VERSION,
     ProjectCreateSummary,
     ProjectDeleteSummary,
-    ProjectListItem,
-    ProjectListResult,
     ProjectManifest,
     ProjectMeetingSummary,
     ProjectPaths,
@@ -42,8 +40,6 @@ from app.core.project_models import (
 from app.core.project_refs import (
     _projects_parent_dir,
     find_project_by_source,
-    list_projects,
-    resolve_project_ref,
 )
 from app.project_trash import move_project_to_trash
 from app.core.oss_upload import (

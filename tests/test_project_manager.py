@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from app.cli import app
 from app.commands import project as project_commands
+from app.core.project_refs import list_projects, resolve_project_ref
 from app.models import SentenceSegment
 from app.project_manager import (
     _parse_project_oss_upload,
@@ -20,11 +21,9 @@ from app.project_manager import (
     create_project,
     find_project_by_source,
     init_project_git,
-    list_projects,
     load_manifest,
     ProjectMeetingSummary,
     ProjectTranscribeSummary,
-    resolve_project_ref,
     resolve_project_source_path,
     save_manifest,
     summarize_project,

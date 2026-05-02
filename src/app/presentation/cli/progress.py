@@ -20,7 +20,7 @@ from rich.progress import (
 from rich.table import Column
 from rich.text import Text
 
-from app.core.progress import CliProgressEvent, CliProgressReporter, emit_progress
+from app.core.progress import CliProgressEvent, CliProgressReporter
 from app.presentation.cli.errors import run_with_cli_errors
 
 T = TypeVar("T")

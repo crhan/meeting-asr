@@ -11,7 +11,8 @@ from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Static
 
-from app.project_manager import ProjectListItem, ProjectListResult, list_projects
+from app.core.project_models import ProjectListItem
+from app.core.project_refs import list_projects
 
 SHORTCUT_HELP = """\
 [b]Project List Shortcuts[/b]

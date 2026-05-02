@@ -24,9 +24,10 @@ import typer
 from app.commands import project_correct as project_correct_commands
 from app.commands import project_trash as project_trash_commands
 from app.commands import transcript as transcript_commands
+from app.core.progress import CliProgressReporter, emit_progress
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
-from app.presentation.cli.progress import CliProgressReporter, emit_progress, run_with_progress
+from app.presentation.cli.progress import run_with_progress
 from app.presentation.cli.project_payloads import project_list_payload, project_status_payload
 from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
 from app.completion_helpers import (
@@ -38,27 +39,28 @@ from app.completion_helpers import (
     complete_voiceprint_provider,
 )
 from app.config import get_default_projects_dir
-from app.infra.ffmpeg import extract_audio_clip
-from app.models import SentenceSegment, TranscriptResult
-from app.project_manager import (
-    ProjectListItem,
-    ProjectManifest,
+from app.core.project_models import (
     ProjectCreateSummary,
     ProjectDeleteSummary,
+    ProjectListItem,
+    ProjectManifest,
+    ProjectMeetingSummary,
     ProjectTranscribeOptions,
     ProjectTranscribeSummary,
     ProjectUpdateSummary,
-    ProjectMeetingSummary,
+)
+from app.core.project_refs import list_projects, resolve_project_ref
+from app.infra.ffmpeg import extract_audio_clip
+from app.models import SentenceSegment, TranscriptResult
+from app.project_manager import (
     apply_project_speakers,
     create_or_reuse_project,
     delete_project,
     init_project_git,
-    list_projects,
     load_manifest,
     parse_mapping_items,
     prepare_project_audio,
     project_paths,
-    resolve_project_ref,
     resolve_project_source_path,
     summarize_project,
     transcribe_project,

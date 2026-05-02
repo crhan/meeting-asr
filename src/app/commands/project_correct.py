@@ -10,8 +10,9 @@ from typing import Optional
 import typer
 
 from app.core.project_models import ProjectManifest
+from app.core.project_refs import resolve_project_ref
 from app.presentation.cli.errors import run_with_cli_errors
-from app.project_manager import load_manifest, project_paths, resolve_project_ref, save_manifest
+from app.project_manager import load_manifest, project_paths, save_manifest
 from app.speaker_labeling import build_default_mapping, load_transcript_result
 from app.transcript_corrections import (
     CorrectionEditOptions,
