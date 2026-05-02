@@ -130,11 +130,11 @@ meeting-asr project run "/path/to/meeting.mp4" \
 ```bash
 meeting-asr project create "/path/to/meeting.mp4" --title "供应商管理AI治理"
 meeting-asr project list
-meeting-asr project transcribe PROJECT_NO
-meeting-asr project speakers match PROJECT_NO --apply
-meeting-asr project review PROJECT_NO
-meeting-asr project speakers preview PROJECT_NO
-meeting-asr project transcript show PROJECT_NO
+meeting-asr project transcribe PROJECT_ID
+meeting-asr project speakers match PROJECT_ID --apply
+meeting-asr project review PROJECT_ID
+meeting-asr project speakers preview PROJECT_ID
+meeting-asr project transcript show PROJECT_ID
 meeting-asr voiceprint capture
 meeting-asr voiceprint embed
 meeting-asr voiceprint browse
@@ -146,10 +146,10 @@ meeting-asr voiceprint browse
 `--title`，模型仍会生成摘要，但不会覆盖手工标题。
 同一个源视频再次创建或 run 会复用已有项目；新项目 ID 基于源文件内容 hash，形如 `p-...`，
 不依赖创建日期。
-AutoRun、create 和 `project list` 会打印短数字 `Project No.`，后续命令优先传这个数字；
-也仍然可以传 project path、project id 或 project title，不需要先 `cd`。在项目目录内执行时，
-项目路径参数仍默认是当前目录。不记得 Project No. 时，跑 `meeting-asr project list` 看表格，
-或直接跑 `meeting-asr project review` 打开 project list TUI，选中历史 project 后进入 review。
+AutoRun 和 create 输出的后续命令使用稳定的 project id；也可以传 project path 或 project title，
+不需要先 `cd`。在项目目录内执行时，项目路径参数仍默认是当前目录。`project list` 会打印短数字
+`No.` 方便临时选择，但不要把它写进脚本或长期记录；精确引用项目时用 project id 或项目目录。
+也可以直接跑 `meeting-asr project review` 打开 project list TUI，选中历史 project 后进入 review。
 `project list` 默认列出 XDG 项目目录，也可以用 `--projects-dir` 指定项目父目录。
 交互式终端会在 stderr 显示 Rich 进度；脚本、管道和测试输出保持纯文本。需要关闭时加
 `--no-progress`。
@@ -163,14 +163,14 @@ provider、service、model、endpoint 分组，用音频时长估算。样本默
 Project 元数据和删除：
 
 ```bash
-meeting-asr project update PROJECT_NO --title "新的会议标题"
-meeting-asr project update PROJECT_NO --meeting-time "2026-05-02T10:00:00+08:00"
-meeting-asr project delete PROJECT_NO
+meeting-asr project update PROJECT_ID --title "新的会议标题"
+meeting-asr project update PROJECT_ID --meeting-time "2026-05-02T10:00:00+08:00"
+meeting-asr project delete PROJECT_ID
 meeting-asr project trash list
-meeting-asr project trash restore TRASH_NO
-meeting-asr project trash purge TRASH_NO --yes
+meeting-asr project trash restore TRASH_REF
+meeting-asr project trash purge TRASH_REF --yes
 meeting-asr project trash cleanup --older-than-days 30 --yes
-meeting-asr project delete PROJECT_NO --permanent --yes
+meeting-asr project delete PROJECT_ID --permanent --yes
 ```
 
 `project delete` 默认不会物理删除，会移动到
@@ -188,16 +188,16 @@ Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speak
 词汇纠错可以直接用编辑器完成：
 
 ```bash
-meeting-asr project correct edit PROJECT_NO
-meeting-asr project correct edit PROJECT_NO --editor "code --wait"
-meeting-asr project correct edit PROJECT_NO --model qwen-plus
-meeting-asr project correct accept PROJECT_NO
+meeting-asr project correct edit PROJECT_ID
+meeting-asr project correct edit PROJECT_ID --editor "code --wait"
+meeting-asr project correct edit PROJECT_ID --model qwen-plus
+meeting-asr project correct accept PROJECT_ID
 meeting-asr lexicon hotwords export
 meeting-asr lexicon hotwords sync --target-model fun-asr
-meeting-asr project transcribe PROJECT_NO --asr-hotwords auto
+meeting-asr project transcribe PROJECT_ID --asr-hotwords auto
 meeting-asr config set ui.editor "code --wait"
 meeting-asr config set dashscope.correction_model qwen-plus
-meeting-asr project transcript show PROJECT_NO --kind corrected
+meeting-asr project transcript show PROJECT_ID --kind corrected
 ```
 
 `correct edit` 会生成带稳定锚点的 `tmp/corrections/review_*.md`，打开编辑器等待你修改。
@@ -230,8 +230,8 @@ meeting-asr project transcript show PROJECT_NO --kind corrected
 
 1. 先跑 `meeting-asr project speakers match`。有声纹库时会生成候选；没有声纹库时会生成全 unknown 的 review 结果。
 2. 用 `meeting-asr project speakers inspect` 查看每个 speaker 的样例和声纹建议。
-3. 优先跑 `meeting-asr project review PROJECT_NO` 进入 project 层 TUI；如果不传
-   `PROJECT_NO`，会先打开 project list。进入 review 后，它顶部会显示 project 概况、
+3. 优先跑 `meeting-asr project review PROJECT_ID` 进入 project 层 TUI；如果不传
+   `PROJECT_ID`，会先打开 project list。进入 review 后，它顶部会显示 project 概况、
    match/manual/capture/embed 进度、match 分数和 conflict/mismatch；下方两栏用于切
    speaker/sample、样例翻页、播放/停止当前样例、接受 match、输入新名字并保存；按 `?`
    可查看快捷键。

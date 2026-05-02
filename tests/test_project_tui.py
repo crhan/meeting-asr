@@ -63,8 +63,8 @@ def test_project_picker_tui_question_mark_shows_help(tmp_path: Path) -> None:
 
             assert isinstance(help_screen, ProjectPickerHelpScreen)
             assert "Project List Shortcuts" in help_text
-            assert "project review PROJECT_NO" in help_text
             assert "project review PROJECT_ID" in help_text
+            assert "project review PROJECT_PATH" in help_text
 
             await pilot.press("escape")
             await pilot.pause()

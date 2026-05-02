@@ -20,6 +20,7 @@ from app.project_manager import (
     create_project,
     find_project_by_source,
     init_project_git,
+    list_projects,
     load_manifest,
     ProjectMeetingSummary,
     ProjectTranscribeSummary,
@@ -132,9 +133,9 @@ def test_project_create_command_defaults_to_xdg_data_home(
     assert len(project_dirs) == 1
     assert "Project created." in result.output
     manifest = load_manifest(project_dirs[0])
-    assert "Project No.: 1" in result.output
-    assert "meeting-asr project transcribe 1" in result.output
-    assert "meeting-asr project review 1" in result.output
+    assert "Project No.:" not in result.output
+    assert f"meeting-asr project transcribe {manifest.project_id}" in result.output
+    assert f"meeting-asr project review {manifest.project_id}" in result.output
     assert manifest.project_id in result.output
     assert "meeting-asr project transcribe ." not in result.output
 
@@ -196,6 +197,7 @@ def test_project_run_applies_accepted_voiceprint_matches(
     result = runner.invoke(app, ["project", "run", str(source), "--projects-dir", str(projects_dir)])
 
     project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
+    manifest = load_manifest(project_dir)
     transcript = project_dir / "exports" / "transcript_named.txt"
     assert result.exit_code == 0
     assert "Project automation completed." in result.output
@@ -205,8 +207,8 @@ def test_project_run_applies_accepted_voiceprint_matches(
     assert str((project_dir / "exports" / "meeting_summary.md").resolve()) in result.output
     assert "Voiceprint matches" in result.output
     assert "2/2 accepted" in result.output
-    assert "meeting-asr project correct edit 1" in result.output
-    assert "meeting-asr project transcript show 1 --kind corrected" in result.output
+    assert f"meeting-asr project correct edit {manifest.project_id}" in result.output
+    assert f"meeting-asr project transcript show {manifest.project_id} --kind corrected" in result.output
     assert "meeting-asr project review" not in result.output
     assert "欧丁" in transcript.read_text(encoding="utf-8")
     assert "敬悦" in transcript.read_text(encoding="utf-8")
@@ -250,14 +252,16 @@ def test_project_run_reports_review_when_matches_are_incomplete(
     monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
 
     result = runner.invoke(app, ["project", "run", str(source), "--projects-dir", str(projects_dir)])
+    project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
+    manifest = load_manifest(project_dir)
 
     assert result.exit_code == 0
     assert "Project automation needs review." in result.output
     assert "Voiceprint matches" in result.output
     assert "1/2 accepted" in result.output
     assert "partial" in result.output
-    assert "meeting-asr project review 1" in result.output
-    assert "meeting-asr project correct edit 1" in result.output
+    assert f"meeting-asr project review {manifest.project_id}" in result.output
+    assert f"meeting-asr project correct edit {manifest.project_id}" in result.output
     assert "Agent prompt:" in result.output
 
 
@@ -387,6 +391,45 @@ def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(tmp_path: 
     assert resolve_project_ref("Ref Demo", projects_dir) == project_dir.resolve()
 
 
+def test_project_numbers_do_not_follow_updated_at(tmp_path: Path) -> None:
+    """Project list numbers should not change when one project is updated."""
+    projects_dir = tmp_path / "projects"
+    older_source = tmp_path / "older.mp4"
+    newer_source = tmp_path / "newer.mp4"
+    older_source.write_bytes(b"older video")
+    newer_source.write_bytes(b"newer video")
+    older = projects_dir / "older"
+    newer = projects_dir / "newer"
+    create_project(
+        older_source,
+        title="Older Project",
+        projects_dir=projects_dir,
+        project_dir=older,
+        meeting_time=None,
+        hash_source=False,
+    )
+    create_project(
+        newer_source,
+        title="Newer Project",
+        projects_dir=projects_dir,
+        project_dir=newer,
+        meeting_time=None,
+        hash_source=False,
+    )
+    older_manifest = load_manifest(older)
+    newer_manifest = load_manifest(newer)
+    older_manifest.created_at = "2026-05-01T10:00:00+08:00"
+    older_manifest.updated_at = "2026-05-03T10:00:00+08:00"
+    newer_manifest.created_at = "2026-05-02T10:00:00+08:00"
+    newer_manifest.updated_at = "2026-05-02T10:00:00+08:00"
+    save_manifest(older, older_manifest)
+    save_manifest(newer, newer_manifest)
+
+    projects = list_projects(projects_dir).projects
+
+    assert [(project.number, project.title) for project in projects] == [(1, "Newer Project"), (2, "Older Project")]
+
+
 def test_project_list_command_reads_default_projects_dir(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -411,7 +454,7 @@ def test_project_list_command_reads_default_projects_dir(
 
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
-    assert "Use No. with any PROJECT command" in result.output
+    assert "Use Project ID or Directory" in result.output
     assert "No." in result.output
     assert "Project ID" in result.output
     assert "Directory" in result.output
@@ -580,7 +623,7 @@ def test_project_create_command_reuses_existing_source(
     assert len(project_dirs) == 1
     assert "Project created." in first.output
     assert "Project already exists; reusing it." in second.output
-    assert "meeting-asr project review 1" in second.output
+    assert f"meeting-asr project review {load_manifest(project_dirs[0]).project_id}" in second.output
 
 
 def test_find_project_by_source_prefers_more_complete_duplicate(tmp_path: Path) -> None:

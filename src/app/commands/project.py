@@ -158,7 +158,7 @@ def create(
         description="Creating project",
         enabled=progress,
     )
-    _echo_project_created(summary.project_dir, summary.manifest, projects_dir, created=summary.created)
+    _echo_project_created(summary.project_dir, summary.manifest, created=summary.created)
 
 
 @app.command("prepare")
@@ -222,7 +222,6 @@ def transcribe(
         summary.task_id,
         summary.detected_speaker_count,
         summary.sentence_count,
-        projects_dir=projects_dir,
     )
 
 
@@ -249,11 +248,8 @@ def summarize(
         enabled=progress,
     )
     manifest = load_manifest(resolved_project_dir)
-    project_ref = _project_cli_ref(resolved_project_dir, manifest, projects_dir)
     typer.echo("Project summary completed.")
     typer.echo(f"Project ID: {manifest.project_id}")
-    if project_ref != manifest.project_id:
-        typer.echo(f"Project No.: {project_ref}")
     typer.echo(f"Title: {manifest.title}")
     typer.echo(f"Summary: {summary.summary_path.resolve()}")
     typer.echo(f"Summary JSON: {summary.json_path.resolve()}")
@@ -324,7 +320,7 @@ def run(
         description="Running project workflow",
         enabled=progress,
     )
-    _echo_run_summary(summary, projects_dir)
+    _echo_run_summary(summary)
 
 
 @app.command("list")
@@ -356,7 +352,7 @@ def update(
             meeting_time=meeting_time,
         )
     )
-    _echo_project_updated(summary, projects_dir)
+    _echo_project_updated(summary)
 
 
 @app.command("delete")
@@ -831,22 +827,13 @@ def _project_transcribe_options(
     )
 
 
-def _echo_transcribe_summary(
-    project_dir: Path,
-    task_id: str,
-    speaker_count: int,
-    sentence_count: int,
-    *,
-    projects_dir: Path | None,
-) -> None:
+def _echo_transcribe_summary(project_dir: Path, task_id: str, speaker_count: int, sentence_count: int) -> None:
     """Print project transcription summary."""
     manifest = load_manifest(project_dir)
-    project_ref = _project_cli_ref(project_dir, manifest, projects_dir)
+    project_ref = manifest.project_id
     typer.echo("")
     typer.echo("Project transcription completed.")
     typer.echo(f"Project: {project_dir}")
-    if project_ref != manifest.project_id:
-        typer.echo(f"Project No.: {project_ref}")
     typer.echo(f"Project ID: {manifest.project_id}")
     typer.echo(f"Title: {manifest.title}")
     typer.echo(f"Task ID: {task_id}")
@@ -859,15 +846,14 @@ def _echo_transcribe_summary(
     typer.echo(f"  meeting-asr project speakers preview {shlex.quote(project_ref)}")
 
 
-def _echo_run_summary(summary: ProjectRunSummary, projects_dir: Path | None) -> None:
+def _echo_run_summary(summary: ProjectRunSummary) -> None:
     """
     Print full project run results.
 
     Args:
         summary: Full run summary.
-        projects_dir: Optional projects parent directory.
     """
-    view = _run_summary_view(summary, projects_dir)
+    view = _run_summary_view(summary)
     typer.echo("")
     render_project_run_summary(view)
     if summary.meeting_summary is not None:
@@ -875,7 +861,7 @@ def _echo_run_summary(summary: ProjectRunSummary, projects_dir: Path | None) -> 
         typer.echo(f"Summary JSON: {summary.meeting_summary.json_path.resolve()}")
 
 
-def _run_summary_view(summary: ProjectRunSummary, projects_dir: Path | None) -> ProjectRunSummaryView:
+def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
     """Build presentation data for project run output."""
     project_dir = summary.project.project_dir
     manifest = load_manifest(project_dir)
@@ -883,7 +869,7 @@ def _run_summary_view(summary: ProjectRunSummary, projects_dir: Path | None) -> 
     accepted_matches = len(summary.applied_mapping)
     return ProjectRunSummaryView(
         project_dir=project_dir,
-        project_ref=_project_cli_ref(project_dir, manifest, projects_dir),
+        project_ref=manifest.project_id,
         manifest=manifest,
         total_matches=total_matches,
         accepted_matches=accepted_matches,
@@ -906,7 +892,7 @@ def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> N
     if not projects:
         typer.echo("No projects found.")
         return
-    typer.echo("Use No. with any PROJECT command, e.g. `meeting-asr project review 1`.")
+    typer.echo("Use Project ID or Directory with PROJECT commands. No. is only a list shortcut.")
     _project_table_console().print(_project_list_table(projects))
 
 
@@ -978,18 +964,15 @@ def _project_list_timestamp(value: str) -> str:
 def _echo_project_created(
     project_dir: Path,
     manifest: ProjectManifest,
-    projects_dir: Path | None,
     *,
     created: bool,
 ) -> None:
     """Print project creation output with copyable next commands."""
     resolved_dir = project_dir.expanduser().resolve()
-    project_ref = _project_cli_ref(resolved_dir, manifest, projects_dir)
+    project_ref = manifest.project_id
     typer.echo("")
     typer.echo("Project created." if created else "Project already exists; reusing it.")
     typer.echo(f"Project: {resolved_dir}")
-    if project_ref != manifest.project_id:
-        typer.echo(f"Project No.: {project_ref}")
     typer.echo(f"Project ID: {manifest.project_id}")
     typer.echo(f"Source: {manifest.source.path}")
     typer.echo(f"Status: {manifest.status}")
@@ -1000,21 +983,17 @@ def _echo_project_created(
     typer.echo(f"  meeting-asr project review {shlex.quote(project_ref)}")
 
 
-def _echo_project_updated(summary: ProjectUpdateSummary, projects_dir: Path | None) -> None:
+def _echo_project_updated(summary: ProjectUpdateSummary) -> None:
     """
     Print project metadata update output.
 
     Args:
         summary: Project update summary.
-        projects_dir: Optional projects parent directory.
 
     Returns:
         None.
     """
-    project_ref = _project_cli_ref(summary.project_dir, summary.manifest, projects_dir)
     typer.echo("Project updated.")
-    if project_ref != summary.manifest.project_id:
-        typer.echo(f"Project No.: {project_ref}")
     typer.echo(f"Project ID: {summary.manifest.project_id}")
     typer.echo(f"Title: {summary.manifest.title}")
     typer.echo(f"Meeting time: {summary.manifest.source.meeting_time or '-'}")
@@ -1062,22 +1041,6 @@ def _echo_project_deleted(summary: ProjectDeleteSummary) -> None:
         typer.echo("  meeting-asr project trash cleanup --older-than-days 30 --yes")
 
 
-def _project_cli_ref(project_dir: Path, manifest: ProjectManifest, projects_dir: Path | None) -> str:
-    """
-    Return the shortest safe project reference for follow-up commands.
-
-    Args:
-        project_dir: Resolved project root.
-        manifest: Project manifest.
-        projects_dir: Optional projects parent used by the current command.
-
-    Returns:
-        Project list number when available, otherwise the stable project id.
-    """
-    number = _project_number_for_dir(project_dir, projects_dir)
-    return str(number) if number is not None else manifest.project_id
-
-
 def _relative_project_output(project_dir: Path, output_path: Path) -> str:
     """
     Return a project-relative output path for display.
@@ -1093,24 +1056,6 @@ def _relative_project_output(project_dir: Path, output_path: Path) -> str:
         return output_path.resolve().relative_to(project_dir.resolve()).as_posix()
     except ValueError:
         return str(output_path.resolve())
-
-
-def _project_number_for_dir(project_dir: Path, projects_dir: Path | None) -> int | None:
-    """
-    Find the current project-list number for a project directory.
-
-    Args:
-        project_dir: Project root to find.
-        projects_dir: Optional projects parent directory.
-
-    Returns:
-        1-based project number, or ``None`` if the project is outside the list.
-    """
-    resolved_dir = project_dir.expanduser().resolve()
-    for project in list_projects(projects_dir).projects:
-        if project.project_dir == resolved_dir:
-            return project.number
-    return None
 
 
 def _echo_match_summary(summary: SpeakerMatchSummary) -> None:

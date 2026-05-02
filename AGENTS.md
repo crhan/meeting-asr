@@ -23,6 +23,7 @@
 - Do not build new project identity from creation date or title. That created duplicate projects for the same video and made IDs change across runs.
 - New project IDs are content-based (`p-<sha16>`). `project create` / `project run` should reuse an existing project for the same source video when no explicit `--project-dir` is provided.
 - Existing date/title IDs must keep resolving for backward compatibility; do not rewrite old manifests unless a migration command is added.
+- Generated next-step commands must use stable `project_id` or paths, not project list `No.` values. Numeric `No.` is only a list shortcut and must not be printed as `Project No.` in command output.
 
 ## Install And Verification Notes
 

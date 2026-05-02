@@ -114,8 +114,6 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         ("Voiceprint matches", _voiceprint_label(view)),
         ("ASR task", view.transcription.task_id),
     ]
-    if view.project_ref != view.manifest.project_id:
-        rows.insert(2, ("Project No.", view.project_ref))
     if view.meeting_summary is not None:
         rows.append(("Summary", _relative_project_output(view.project_dir, view.meeting_summary.summary_path)))
         if view.meeting_summary.title_updated:

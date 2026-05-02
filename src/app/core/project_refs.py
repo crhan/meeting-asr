@@ -125,7 +125,6 @@ def _load_manifest_or_none(project_dir: Path) -> ProjectManifest | None:
 
 def _number_project_list_items(projects: list[ProjectListItem]) -> list[ProjectListItem]:
     """Assign stable short numbers for display and CLI references."""
-    ordered = sorted(projects, key=lambda item: (item.updated_at, item.created_at, item.project_id), reverse=True)
     return [
         ProjectListItem(
             item.project_dir,
@@ -136,7 +135,7 @@ def _number_project_list_items(projects: list[ProjectListItem]) -> list[ProjectL
             item.updated_at,
             index,
         )
-        for index, item in enumerate(ordered, start=1)
+        for index, item in enumerate(projects, start=1)
     ]
 
 

@@ -24,8 +24,8 @@ q                    Quit
 
 [b]Project Reference[/b]
 You can also skip this list and run:
-meeting-asr project review PROJECT_NO
 meeting-asr project review PROJECT_ID
+meeting-asr project review PROJECT_PATH
 meeting-asr project review PROJECT_TITLE
 """
 
@@ -201,12 +201,12 @@ class ProjectPickerApp(App[Path | None]):
         return "\n".join(
             [
                 "[b]Detail[/b]",
-                f"Project No.: {project.number}",
+                f"List No.: {project.number}",
                 f"Project ID: {escape(project.project_id)}",
                 f"Title: {escape(project.title)}",
                 f"Status: {escape(project.status)}",
                 f"Path: {escape(str(project.project_dir))}",
-                f"Open: meeting-asr project review {project.number}",
+                f"Open: meeting-asr project review {escape(project.project_id)}",
             ]
         )
 

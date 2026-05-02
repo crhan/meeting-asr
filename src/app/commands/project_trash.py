@@ -12,13 +12,11 @@ from rich.table import Table
 import typer
 
 from app.core.project_models import (
-    ProjectManifest,
     ProjectPurgeSummary,
     ProjectRestoreSummary,
     ProjectTrashCleanupSummary,
     TrashedProjectListItem,
 )
-from app.core.project_refs import list_projects
 from app.presentation.cli.errors import run_with_cli_errors
 from app.project_trash import (
     cleanup_project_trash,
@@ -47,7 +45,7 @@ def restore_command(
     summary = run_with_cli_errors(
         lambda: restore_trashed_project(trash_ref, projects_dir=projects_dir, project_dir=project_dir)
     )
-    _echo_project_restored(summary, projects_dir)
+    _echo_project_restored(summary)
 
 
 @app.command("purge")
@@ -91,7 +89,7 @@ def _echo_project_trash_list(trash_dir: Path, projects: list[TrashedProjectListI
     if not projects:
         typer.echo("No trashed projects found.")
         return
-    typer.echo("Use No. with restore/purge, e.g. `meeting-asr project trash restore 1`.")
+    typer.echo("Use Project ID or trash directory with restore/purge. No. is only a list shortcut.")
     _project_table_console().print(_project_trash_table(projects))
 
 
@@ -126,22 +124,19 @@ def _project_trash_table(projects: list[TrashedProjectListItem]) -> Table:
     return table
 
 
-def _echo_project_restored(summary: ProjectRestoreSummary, projects_dir: Path | None) -> None:
+def _echo_project_restored(summary: ProjectRestoreSummary) -> None:
     """
     Print project restore output.
 
     Args:
         summary: Restore summary.
-        projects_dir: Optional projects parent used by the command.
 
     Returns:
         None.
     """
-    project_ref = _project_cli_ref(summary.project_dir, summary.manifest, projects_dir)
+    project_ref = summary.manifest.project_id
     typer.echo("Project restored.")
     typer.echo(f"Project: {summary.project_dir}")
-    if project_ref != summary.manifest.project_id:
-        typer.echo(f"Project No.: {project_ref}")
     typer.echo(f"Project ID: {summary.manifest.project_id}")
     typer.echo(f"Title: {summary.manifest.title}")
     typer.echo("")
@@ -181,26 +176,6 @@ def _echo_project_trash_cleanup(summary: ProjectTrashCleanupSummary) -> None:
     typer.echo(f"Removed: {len(summary.removed)}")
     for item in summary.removed:
         typer.echo(f"  - {item.manifest.title} ({item.manifest.project_id})")
-
-
-def _project_cli_ref(project_dir: Path, manifest: ProjectManifest, projects_dir: Path | None) -> str:
-    """
-    Return the shortest safe project reference for follow-up commands.
-
-    Args:
-        project_dir: Resolved project root.
-        manifest: Project manifest.
-        projects_dir: Optional projects parent used by the current command.
-
-    Returns:
-        Project list number when available, otherwise the stable project id.
-    """
-    resolved = project_dir.expanduser().resolve()
-    for project in list_projects(projects_dir).projects:
-        if project.project_dir == resolved:
-            return str(project.number)
-    return manifest.project_id
-
 
 def _project_status_text(status: str) -> str:
     """Return a styled project status for table display."""
