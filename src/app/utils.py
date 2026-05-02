@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import json
 import logging
+import os
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -125,7 +126,9 @@ def safe_write_text(path: Path, content: str) -> Path:
         Written path.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(path)
     return path
 
 

@@ -23,3 +23,8 @@
 - Do not build new project identity from creation date or title. That created duplicate projects for the same video and made IDs change across runs.
 - New project IDs are content-based (`p-<sha16>`). `project create` / `project run` should reuse an existing project for the same source video when no explicit `--project-dir` is provided.
 - Existing date/title IDs must keep resolving for backward compatibility; do not rewrite old manifests unless a migration command is added.
+
+## File Copy Notes
+
+- Do not validate destructive project workflows on `rsync --link-dest` or other hardlink-based copies. Project outputs are rewritten in place during ASR, and hardlinked test copies can mutate the user's real project artifacts.
+- If a non-destructive validation copy is needed, use a plain copy for writable metadata/output files (`project.json`, `asr/`, `exports/`, `speakers/`) and only link immutable large media (`source/`, `audio/`) when the command will not rewrite them.
