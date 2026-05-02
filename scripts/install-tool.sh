@@ -9,7 +9,8 @@ Install or refresh the user-facing meeting-asr uv tool from this checkout.
 
 Options:
   --python VALUE          Python interpreter or version for uv tool install. Default: 3.14
-  --editable             Install this checkout in editable mode.
+  --editable             Install this checkout in editable mode. Default for local development.
+  --wheel                Install a built wheel. Use for release/user-install verification.
   --force                Overwrite executable conflicts. Not needed for normal refreshes.
   --no-local-voiceprint  Do not install the local SpeechBrain voiceprint extra.
   --print-only           Print the install plan without executing it.
@@ -130,7 +131,7 @@ EOF
 }
 
 python_value="3.14"
-editable=0
+editable=1
 force=0
 local_voiceprint=1
 print_only=0
@@ -148,6 +149,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --editable)
       editable=1
+      shift
+      ;;
+    --wheel)
+      editable=0
       shift
       ;;
     --force)

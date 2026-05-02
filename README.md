@@ -18,7 +18,7 @@ uv sync --all-groups
 uv run meeting-asr --help
 ```
 
-安装成可直接运行的命令：
+本地开发安装成可直接运行的命令：
 
 ```bash
 scripts/install-tool.sh
@@ -28,13 +28,20 @@ exec zsh
 
 `scripts/install-tool.sh` 是独立安装入口，不属于业务 CLI。它固定使用：
 
-- `uv tool install --python 3.14`
+- `uv tool install --python 3.14 --editable`
 - 默认安装 `local-voiceprint` extra
 - 安装后验证 `meeting-asr` wrapper 实际使用的 Python、包来源和源码指纹
 
 `uv` 可以使用 pyenv 提供的 Python；这里显式传 `--python 3.14` 是为了避免
 `uv tool install` 默认解释器落到不满足本项目 `Python>=3.14` 的版本。
-项目在 `pyproject.toml` 里配置了 `tool.uv.cache-keys`，让 uv 在 `src/**/*.py`
+本地开发默认 editable，源码修改会直接反映到全局命令，不需要重复构建 wheel。
+如果要模拟正式用户安装或发布验证，使用：
+
+```bash
+scripts/install-tool.sh --wheel
+```
+
+`pyproject.toml` 配置了 `tool.uv.cache-keys`，让 wheel 模式在 `src/**/*.py`
 变化时重建本地 wheel；安装后再比对当前 checkout 和实际 site-packages 的源码指纹。
 只有遇到已有非 uv 可执行文件冲突时，才使用 `scripts/install-tool.sh --force`。
 

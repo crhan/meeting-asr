@@ -20,16 +20,18 @@ scripts/install-tool.sh
 scripts/install-tool.sh --check
 ```
 
-这个脚本显式执行 `uv tool install --python 3.14`。
+这个脚本默认执行 `uv tool install --python 3.14 --editable`。
 原因：
 
 - `uv tool install` 可以使用 pyenv 提供的 Python，但要通过 `--python 3.14`
   或 `UV_PYTHON=$(pyenv which python3.14)` 明确指定。
 - 不指定 `--python` 时，uv tool 的默认解释器可能落到 uv managed Python 3.13，
   与本项目 `Python>=3.14` 冲突。
+- 本地开发默认 editable，源码修改直接生效，不需要重复构建 wheel。
+- `scripts/install-tool.sh --wheel` 用于正式用户安装模拟和发布验证。
 - uv 对本地目录的默认缓存只跟踪 `pyproject.toml` / `setup.py` / `setup.cfg`，
   不会因为普通源码文件变化自动重建 wheel。
-- 项目通过 `tool.uv.cache-keys` 显式跟踪 `src/**/*.py`，源码变化会触发重建。
+- 项目通过 `tool.uv.cache-keys` 显式跟踪 `src/**/*.py`，保证 wheel 模式下源码变化会触发重建。
 - 安装后会比对当前 checkout 和实际 `site-packages/app` 的源码指纹；不一致就失败。
 - 只有已有非 uv 可执行文件冲突时才传 `scripts/install-tool.sh --force`。
 - completion 只能把 `~/.local/bin` 这类用户命令目录加入 PATH，不能把

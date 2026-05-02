@@ -15,7 +15,7 @@ def test_install_script_has_valid_bash_syntax() -> None:
 
 
 def test_install_script_print_only_uses_stable_uv_tool_command() -> None:
-    """The normal installer should not rely on force or global cache refreshes."""
+    """The normal developer installer should use editable mode."""
     result = subprocess.run(
         ["scripts/install-tool.sh", "--print-only"],
         capture_output=True,
@@ -27,7 +27,20 @@ def test_install_script_print_only_uses_stable_uv_tool_command() -> None:
     assert "--force" not in result.stdout
     assert "--refresh" not in result.stdout
     assert "--reinstall" not in result.stdout
+    assert "--editable" in result.stdout
     assert "local-voiceprint" in result.stdout
+
+
+def test_install_script_wheel_mode_is_explicit() -> None:
+    """Wheel installation should be an explicit release/user verification mode."""
+    result = subprocess.run(
+        ["scripts/install-tool.sh", "--print-only", "--wheel"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert "Mode: wheel" in result.stdout
     assert "--editable" not in result.stdout
 
 
@@ -40,7 +53,7 @@ def test_install_script_force_is_explicit() -> None:
         check=True,
     )
 
-    assert "uv tool install --python 3.14 --force" in result.stdout
+    assert "uv tool install --python 3.14 --force --editable" in result.stdout
 
 
 def test_pyproject_tracks_source_files_for_uv_cache() -> None:
