@@ -140,6 +140,36 @@ meeting-asr project transcribe \
   --oss-upload false
 ```
 
+## 4.1 词汇纠错
+
+专有名词、人名昵称和系统名可以通过编辑器纠错：
+
+```bash
+meeting-asr project correct edit PROJECT_NO
+meeting-asr project correct edit PROJECT_NO --editor "code --wait"
+meeting-asr project correct edit PROJECT_NO --no-open
+meeting-asr project transcript show PROJECT_NO --kind corrected
+```
+
+`correct edit` 会生成 `tmp/corrections/review_*.md`，每句前面有
+`meeting-asr` HTML 锚点。只修改转写正文，保留锚点；退出编辑器后，CLI 会通过前后
+对比识别改动，输出：
+
+```text
+asr/sentences_corrected.json
+exports/transcript_corrected.txt
+exports/transcript_named_corrected.txt
+exports/subtitle_named_corrected.srt
+corrections/applied.json
+```
+
+原始 `asr/sentences.json`、`exports/transcript.txt` 和
+`exports/transcript_named.txt` 不会被覆盖。可学习的替换会写入跨项目词汇库：
+
+```text
+~/.local/share/meeting-asr/lexicon/lexicon.sqlite
+```
+
 ## 5. 自动匹配 + 人工确认 speaker
 
 ```bash

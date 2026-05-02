@@ -209,6 +209,7 @@ def _project_status_text(status: str) -> str:
         "prepared": "yellow",
         "transcribed": "cyan",
         "named": "green",
+        "corrected": "green",
         "voiceprinted": "green",
     }
     return f"[{styles.get(status, 'white')}]{status}[/]"

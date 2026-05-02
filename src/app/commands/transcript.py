@@ -26,7 +26,10 @@ class TranscriptKind(str, Enum):
     plain = "plain"
     speakers = "speakers"
     named = "named"
+    corrected = "corrected"
+    named_corrected = "named-corrected"
     srt = "srt"
+    srt_corrected = "srt-corrected"
     raw = "raw"
     sentences = "sentences"
 
@@ -135,8 +138,14 @@ def _transcript_candidates(project_dir: Path, kind: TranscriptKind) -> list[Path
         return [paths.exports_dir / "transcript_speakers.txt"]
     if kind == TranscriptKind.named:
         return [paths.exports_dir / "transcript_named.txt"]
+    if kind == TranscriptKind.corrected:
+        return [paths.exports_dir / "transcript_named_corrected.txt", paths.exports_dir / "transcript_corrected.txt"]
+    if kind == TranscriptKind.named_corrected:
+        return [paths.exports_dir / "transcript_named_corrected.txt"]
     if kind == TranscriptKind.srt:
         return [paths.exports_dir / "subtitle_named.srt", paths.exports_dir / "subtitle.srt"]
+    if kind == TranscriptKind.srt_corrected:
+        return [paths.exports_dir / "subtitle_named_corrected.srt", paths.exports_dir / "subtitle_corrected.srt"]
     if kind == TranscriptKind.raw:
         return [paths.asr_dir / "raw_result.json"]
     return [paths.asr_dir / "sentences.json"]
@@ -157,14 +166,22 @@ def _transcript_artifact_rows(project_dir: Path) -> list[TranscriptArtifactRow]:
         if kind == TranscriptKind.auto:
             continue
         candidates = _transcript_candidates(project_dir, kind)
+        path = _first_existing_path(candidates)
+        if _is_optional_corrected_kind(kind) and path is None:
+            continue
         rows.append(
             TranscriptArtifactRow(
                 kind=kind,
-                path=_first_existing_path(candidates),
+                path=path,
                 candidates=candidates,
             )
         )
     return rows
+
+
+def _is_optional_corrected_kind(kind: TranscriptKind) -> bool:
+    """Return whether a transcript kind should only show after correction exists."""
+    return kind in {TranscriptKind.corrected, TranscriptKind.named_corrected, TranscriptKind.srt_corrected}
 
 
 def _first_existing_path(candidates: list[Path]) -> Path | None:

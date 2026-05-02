@@ -172,6 +172,22 @@ Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speak
 不改转写结果；`speakers apply` 才会把自动候选和人工输入合并，写入
 `speakers/speaker_map.json`、`exports/transcript_named.txt` 和
 `exports/subtitle_named.srt`。
+
+词汇纠错可以直接用编辑器完成：
+
+```bash
+meeting-asr project correct edit PROJECT_NO
+meeting-asr project correct edit PROJECT_NO --editor "code --wait"
+meeting-asr project transcript show PROJECT_NO --kind corrected
+```
+
+`correct edit` 会生成带稳定锚点的 `tmp/corrections/review_*.md`，打开编辑器等待你修改。
+退出编辑器后，Meeting-ASR 会解析你改过的句子，写出
+`asr/sentences_corrected.json`、`exports/transcript_named_corrected.txt`、
+`exports/subtitle_named_corrected.srt` 和 `corrections/applied.json`。原始
+`asr/sentences.json` 和 `exports/transcript_named.txt` 不会被覆盖。可学习的替换会写入
+`~/.local/share/meeting-asr/lexicon/lexicon.sqlite`，作为跨项目词汇库。
+
 这个项目的终点不是 preview，而是人名版文本和字幕已经写出。`preview` 只是用播放器检查
 `exports/subtitle_named.srt` 是否和视频对得上；看完没问题就可以直接用
 `meeting-asr project transcript show` 或 `meeting-asr project transcript open --kind named`

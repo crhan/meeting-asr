@@ -175,7 +175,8 @@ def _project_reuse_rank(project: ProjectListItem) -> tuple[int, str, str]:
         "prepared": 1,
         "transcribed": 2,
         "named": 3,
-        "voiceprinted": 4,
+        "corrected": 4,
+        "voiceprinted": 5,
     }
     return status_rank.get(project.status, 0), project.updated_at, project.created_at
 

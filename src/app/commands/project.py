@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.table import Table
 import typer
 
+from app.commands import project_correct as project_correct_commands
 from app.commands import project_trash as project_trash_commands
 from app.commands import transcript as transcript_commands
 from app.presentation.cli.errors import run_with_cli_errors
@@ -86,6 +87,7 @@ speakers_app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_ex
 app.add_typer(speakers_app, name="speakers", help="Review and name project speakers.")
 app.add_typer(transcript_commands.app, name="transcript", help="View project transcript artifacts.")
 app.add_typer(project_trash_commands.app, name="trash", help="Restore or permanently remove deleted projects.")
+app.add_typer(project_correct_commands.app, name="correct", help="Review and apply vocabulary corrections.")
 
 MORE_SAMPLES_COMMAND = "/more"
 AUDIO_PREVIEW_COMMAND = "/audio"
@@ -932,6 +934,7 @@ def _project_status_text(status: str) -> str:
         "prepared": "yellow",
         "transcribed": "cyan",
         "named": "green",
+        "corrected": "green",
         "voiceprinted": "green",
     }
     return f"[{styles.get(status, 'white')}]{status}[/]"
