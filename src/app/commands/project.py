@@ -36,6 +36,7 @@ from app.completion_helpers import (
     complete_voiceprint_provider,
 )
 from app.config import get_default_projects_dir
+from app.asr_pricing import AsrCostEstimate, format_asr_cost
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
 from app.project_manager import (
@@ -220,6 +221,7 @@ def transcribe(
         summary.task_id,
         summary.detected_speaker_count,
         summary.sentence_count,
+        summary.cost,
         projects_dir=projects_dir,
     )
 
@@ -826,6 +828,7 @@ def _echo_transcribe_summary(
     task_id: str,
     speaker_count: int,
     sentence_count: int,
+    cost: AsrCostEstimate | None,
     *,
     projects_dir: Path | None,
 ) -> None:
@@ -842,6 +845,7 @@ def _echo_transcribe_summary(
     typer.echo(f"Task ID: {task_id}")
     typer.echo(f"Detected speakers: {speaker_count}")
     typer.echo(f"Sentence count: {sentence_count}")
+    typer.echo(f"ASR cost: {format_asr_cost(cost)}")
     typer.echo("")
     typer.echo("Next steps:")
     typer.echo(f"  meeting-asr project review {shlex.quote(project_ref)}")
