@@ -25,3 +25,12 @@ def test_install_script_print_only_uses_stable_uv_tool_command() -> None:
     assert "uv tool install --python 3.14 --force --reinstall --refresh" in result.stdout
     assert "local-voiceprint" in result.stdout
     assert "--editable" not in result.stdout
+
+
+def test_install_script_verifies_installed_source_fingerprint() -> None:
+    """The installer should fail fast when uv serves a stale local wheel."""
+    script = Path("scripts/install-tool.sh").read_text(encoding="utf-8")
+
+    assert "Code match:" in script
+    assert "Installed package code does not match this checkout" in script
+    assert "UV_NO_CACHE=1" in script

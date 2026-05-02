@@ -52,6 +52,7 @@ inspect_environment() {
 }
 
 inspect_install() {
+  local source_dir="${1:-$(repo_root)}"
   local executable
   executable="$(command -v meeting-asr || true)"
   if [[ -z "$executable" ]]; then
@@ -69,17 +70,48 @@ inspect_install() {
   echo "Meeting-ASR install status"
   echo "Executable: $executable"
   echo "Python: $python_path"
-  "$python_path" - <<'PY'
+  "$python_path" - "$source_dir" <<'PY'
+import hashlib
 from importlib.metadata import distribution
 import json
+from pathlib import Path
 import sys
 
+import app
+
+
+def tree_hash(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        rel_path = path.relative_to(root).as_posix()
+        digest.update(rel_path.encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+source_package = Path(sys.argv[1]) / "src" / "app"
+installed_package = Path(app.__file__).resolve().parent
 dist = distribution("meeting-asr")
 direct_url = dist.read_text("direct_url.json")
 source_url = json.loads(direct_url).get("url") if direct_url else "<unknown>"
+source_hash = tree_hash(source_package)
+installed_hash = tree_hash(installed_package)
 print("Python version:", ".".join(str(part) for part in sys.version_info[:3]))
 print("Package:", dist.locate_file(""))
 print("Source:", source_url)
+print("Installed app:", installed_package)
+print("Code match:", "yes" if source_hash == installed_hash else "no")
+if source_hash != installed_hash:
+    print("Checkout hash:", source_hash)
+    print("Installed hash:", installed_hash)
+    raise SystemExit(
+        "Installed package code does not match this checkout. "
+        "Run `scripts/install-tool.sh`; if it still mismatches, rerun with `UV_NO_CACHE=1`."
+    )
 PY
 }
 
@@ -141,9 +173,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$check_only" -eq 1 ]]; then
+  source_dir="$(repo_root)"
   inspect_environment
   echo
-  inspect_install
+  inspect_install "$source_dir"
   warn_path_pollution
   exit 0
 fi
@@ -182,5 +215,5 @@ fi
   cd "$source_dir"
   "${command[@]}"
 )
-inspect_install
+inspect_install "$source_dir"
 warn_path_pollution
