@@ -16,8 +16,8 @@ ROOT_HELP = """Project-based CLI for DashScope meeting transcription workflows.
 
 Quick start:
   meeting-asr project run <video>
-  meeting-asr project review <project-no-or-id>
-  meeting-asr project transcript show <project-no-or-id> --kind corrected
+  meeting-asr project review <project-id-or-path>
+  meeting-asr project transcript show <project-id-or-path> --kind corrected
 
 Inspect state:
   meeting-asr project list

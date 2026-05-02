@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 
 from app.presentation.cli.errors import run_with_cli_errors
+from app.presentation.cli.json_output import emit_json
 from app.completion_helpers import complete_config_key
 from app.config import (
     CONFIG_KEYS,
@@ -27,10 +28,23 @@ def path_command() -> None:
 
 
 @app.command("show")
-def show(reveal: bool = typer.Option(False, "--reveal", help="Show secret values.")) -> None:
+def show(
+    reveal: bool = typer.Option(False, "--reveal", help="Show secret values."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
     """Show configured values with secrets masked by default."""
+    items = run_with_cli_errors(lambda: visible_config_items(reveal=reveal))
+    if as_json:
+        emit_json(
+            {
+                "config_file": get_config_path(),
+                "revealed": reveal,
+                "values": {key: value for key, value in items},
+            }
+        )
+        return
     typer.echo(f"Config file: {get_config_path()}")
-    for key, value in run_with_cli_errors(lambda: visible_config_items(reveal=reveal)):
+    for key, value in items:
         typer.echo(f"{key}={value}")
 
 

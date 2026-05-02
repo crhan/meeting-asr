@@ -18,6 +18,7 @@ from app.core.project_models import (
     TrashedProjectListItem,
 )
 from app.presentation.cli.errors import run_with_cli_errors
+from app.presentation.cli.json_output import emit_json
 from app.project_trash import (
     cleanup_project_trash,
     list_trashed_projects,
@@ -29,9 +30,12 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_
 
 
 @app.command("list")
-def list_command() -> None:
+def list_command(as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON.")) -> None:
     """List projects currently stored in Meeting-ASR trash."""
     result = run_with_cli_errors(list_trashed_projects)
+    if as_json:
+        emit_json(_project_trash_payload(result.trash_dir, result.projects))
+        return
     _echo_project_trash_list(result.trash_dir, result.projects)
 
 
@@ -122,6 +126,48 @@ def _project_trash_table(projects: list[TrashedProjectListItem]) -> Table:
             project.trash_dir.name,
         )
     return table
+
+
+def _project_trash_payload(trash_dir: Path, projects: list[TrashedProjectListItem]) -> dict[str, object]:
+    """
+    Build a machine-readable project trash payload.
+
+    Args:
+        trash_dir: Project trash directory.
+        projects: Trashed project rows.
+
+    Returns:
+        JSON-ready trash list payload.
+    """
+    return {
+        "trash_dir": trash_dir,
+        "count": len(projects),
+        "projects": [_trashed_project_payload(project) for project in projects],
+    }
+
+
+def _trashed_project_payload(project: TrashedProjectListItem) -> dict[str, object]:
+    """
+    Build one trashed project JSON row.
+
+    Args:
+        project: Trashed project row.
+
+    Returns:
+        JSON-ready project row.
+    """
+    return {
+        "number": project.number,
+        "project_id": project.project_id,
+        "title": project.title,
+        "status": project.status,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+        "trashed_at": project.trashed_at,
+        "trash_dir": project.trash_dir,
+        "restore_project_dir": project.restore_project_dir,
+        "trash_directory": project.trash_dir.name,
+    }
 
 
 def _echo_project_restored(summary: ProjectRestoreSummary) -> None:

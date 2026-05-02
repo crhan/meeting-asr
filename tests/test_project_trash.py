@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,8 @@ def test_project_trash_restore_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     delete_result = runner.invoke(app, ["project", "delete", "1", "--projects-dir", str(projects_dir), "--yes"])
     trash_list_result = runner.invoke(app, ["project", "trash", "list"])
+    trash_json_result = runner.invoke(app, ["project", "trash", "list", "--json"])
+    trash_payload = json.loads(trash_json_result.output)
     project_missing_after_delete = not project_dir.exists()
     restore_result = runner.invoke(app, ["project", "trash", "restore", "1", "--projects-dir", str(projects_dir)])
     project_list_result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
@@ -31,6 +34,10 @@ def test_project_trash_restore_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert project_missing_after_delete
     assert trash_list_result.exit_code == 0
     assert "Review Me" in trash_list_result.output
+    assert trash_json_result.exit_code == 0
+    assert trash_payload["count"] == 1
+    assert trash_payload["projects"][0]["title"] == "Review Me"
+    assert trash_payload["projects"][0]["restore_project_dir"] == str(project_dir.resolve())
     assert restore_result.exit_code == 0
     assert "Project restored." in restore_result.output
     assert project_dir.exists()

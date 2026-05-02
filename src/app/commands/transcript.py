@@ -15,6 +15,7 @@ import typer
 
 from app.core.project_refs import resolve_project_ref
 from app.presentation.cli.errors import run_with_cli_errors
+from app.presentation.cli.json_output import emit_json
 from app.project_manager import project_paths
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
@@ -48,11 +49,15 @@ class TranscriptArtifactRow:
 def list_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """List transcript artifacts for a project."""
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     paths = project_paths(resolved_project_dir)
     rows = _transcript_artifact_rows(paths.root)
+    if as_json:
+        emit_json(_transcript_artifacts_payload(paths.root, rows))
+        return
     _echo_transcript_artifact_rows(paths.root, rows)
 
 
@@ -213,6 +218,44 @@ def _echo_transcript_artifact_rows(project_dir: Path, rows: list[TranscriptArtif
     typer.echo(f"Project: {project_dir}")
     typer.echo(f"Artifacts: {available_count}/{len(rows)} available")
     _transcript_table_console().print(_transcript_artifact_table(project_dir, rows))
+
+
+def _transcript_artifacts_payload(project_dir: Path, rows: list[TranscriptArtifactRow]) -> dict[str, object]:
+    """
+    Build a machine-readable transcript artifact payload.
+
+    Args:
+        project_dir: Project root.
+        rows: Artifact rows to serialize.
+
+    Returns:
+        JSON-ready artifact payload.
+    """
+    available_count = sum(row.path is not None for row in rows)
+    return {
+        "project": project_dir,
+        "count": len(rows),
+        "available_count": available_count,
+        "artifacts": [_transcript_artifact_payload(row) for row in rows],
+    }
+
+
+def _transcript_artifact_payload(row: TranscriptArtifactRow) -> dict[str, object]:
+    """
+    Build one transcript artifact JSON row.
+
+    Args:
+        row: Artifact row to serialize.
+
+    Returns:
+        JSON-ready artifact row.
+    """
+    return {
+        "kind": row.kind.value,
+        "available": row.path is not None,
+        "path": row.path,
+        "candidates": row.candidates,
+    }
 
 
 def _transcript_artifact_table(project_dir: Path, rows: list[TranscriptArtifactRow]) -> Table:

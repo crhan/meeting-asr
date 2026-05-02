@@ -49,6 +49,10 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     speaker_id = _speaker_id_from_list(list_result.output, "欧丁")
     show_result = runner.invoke(app, ["voiceprint", "show", speaker_id, "--store-dir", str(store_dir)])
     show_by_name_result = runner.invoke(app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)])
+    list_json_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir), "--json"])
+    show_json_result = runner.invoke(app, ["voiceprint", "show", speaker_id, "--store-dir", str(store_dir), "--json"])
+    list_payload = json.loads(list_json_result.output)
+    show_payload = json.loads(show_json_result.output)
 
     assert list_result.exit_code == 0
     assert "Speakers: 2 | Samples: 2 | Embedded samples: 0/2" in list_result.output
@@ -64,6 +68,17 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert "sample_id:" in show_result.output
     assert manifest.project_id in show_result.output
     assert "clip_001.wav" in show_result.output
+    assert list_json_result.exit_code == 0
+    assert list_payload["database"] == str(store_dir.resolve() / "voiceprints.sqlite")
+    assert list_payload["count"] == 2
+    assert list_payload["sample_count"] == 2
+    assert any(speaker["name"] == "欧丁" for speaker in list_payload["speakers"])
+    assert show_json_result.exit_code == 0
+    assert show_payload["speaker"] == speaker_id
+    assert show_payload["count"] == 1
+    assert show_payload["samples"][0]["speaker_name"] == "欧丁"
+    assert show_payload["samples"][0]["project_id"] == manifest.project_id
+    assert show_payload["samples"][0]["clip_path"].endswith("clip_001.wav")
 
 
 def test_voiceprint_browse_summary_uses_global_store(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -63,6 +64,24 @@ def test_transcript_list_shows_available_artifacts(tmp_path: Path) -> None:
     assert "exports/transcript_named.txt" in result.output
     assert "asr/raw_result.json" in result.output
     assert "asr/sentences.json" in result.output
+
+
+def test_transcript_list_prints_json(tmp_path: Path) -> None:
+    """List mode should expose stable JSON for scripts and agents."""
+    project_dir = _sample_project(tmp_path)
+    _write_transcript_outputs(project_dir)
+
+    result = runner.invoke(app, ["project", "transcript", "list", str(project_dir), "--json"])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert payload["project"] == str(project_dir)
+    assert payload["count"] == 6
+    assert payload["available_count"] == 6
+    named = next(item for item in payload["artifacts"] if item["kind"] == "named")
+    assert named["available"] is True
+    assert named["path"] == str(project_dir / "exports" / "transcript_named.txt")
+    assert str(project_dir / "exports" / "transcript_named.txt") in named["candidates"]
 
 
 def test_transcript_list_shows_missing_artifacts(tmp_path: Path) -> None:

@@ -14,6 +14,7 @@ from rich.table import Table
 import typer
 
 from app.presentation.cli.errors import run_with_cli_errors
+from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.progress import run_with_progress
 from app.completion_helpers import complete_voiceprint_model, complete_voiceprint_provider
 from app.utils import format_ms_timestamp
@@ -69,10 +70,14 @@ def capture_command(
 @app.command("list")
 def list_command(
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """List speakers recorded in the global voiceprint registry."""
     db_path = get_voiceprint_db_path(store_dir)
     rows = run_with_cli_errors(lambda: list_voiceprint_speakers(db_path))
+    if as_json:
+        emit_json(_voiceprint_speakers_payload(db_path, rows))
+        return
     typer.echo(f"Database: {db_path}")
     if not rows:
         typer.echo("No voiceprints recorded.")
@@ -142,10 +147,14 @@ def embed_command(
 def show_command(
     speaker: str = typer.Argument(..., metavar="SPEAKER"),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show voiceprint samples for one speaker name or id."""
     db_path = get_voiceprint_db_path(store_dir)
     rows = run_with_cli_errors(lambda: list_voiceprint_samples(speaker, db_path))
+    if as_json:
+        emit_json(_voiceprint_samples_payload(db_path, speaker, rows))
+        return
     typer.echo(f"Database: {db_path}")
     if not rows:
         typer.echo(f"No voiceprint samples found for: {speaker}")
@@ -266,6 +275,100 @@ def _voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> Table:
             _format_updated_at(row.updated_at),
         )
     return table
+
+
+def _voiceprint_speakers_payload(db_path: Path, rows: list[VoiceprintSpeakerRow]) -> dict[str, object]:
+    """
+    Build a machine-readable voiceprint speaker list payload.
+
+    Args:
+        db_path: Voiceprint SQLite database path.
+        rows: Speaker summary rows.
+
+    Returns:
+        JSON-ready speaker list payload.
+    """
+    sample_total = sum(row.sample_count for row in rows)
+    embedded_total = sum(row.embedded_sample_count for row in rows)
+    return {
+        "database": db_path,
+        "count": len(rows),
+        "sample_count": sample_total,
+        "embedded_sample_count": embedded_total,
+        "speakers": [_voiceprint_speaker_payload(row) for row in rows],
+    }
+
+
+def _voiceprint_speaker_payload(row: VoiceprintSpeakerRow) -> dict[str, object]:
+    """
+    Build one voiceprint speaker JSON row.
+
+    Args:
+        row: Speaker summary row.
+
+    Returns:
+        JSON-ready speaker row.
+    """
+    return {
+        "speaker_id": row.speaker_id,
+        "name": row.name,
+        "sample_count": row.sample_count,
+        "project_count": row.project_count,
+        "embedded_sample_count": row.embedded_sample_count,
+        "embedding_model_count": row.embedding_model_count,
+        "updated_at": row.updated_at,
+    }
+
+
+def _voiceprint_samples_payload(
+    db_path: Path,
+    speaker: str,
+    rows: list[VoiceprintSampleRow],
+) -> dict[str, object]:
+    """
+    Build a machine-readable voiceprint sample payload.
+
+    Args:
+        db_path: Voiceprint SQLite database path.
+        speaker: User-provided speaker reference.
+        rows: Sample rows.
+
+    Returns:
+        JSON-ready sample list payload.
+    """
+    return {
+        "database": db_path,
+        "speaker": speaker,
+        "count": len(rows),
+        "samples": [_voiceprint_sample_payload(index, row) for index, row in enumerate(rows, start=1)],
+    }
+
+
+def _voiceprint_sample_payload(index: int, row: VoiceprintSampleRow) -> dict[str, object]:
+    """
+    Build one voiceprint sample JSON row.
+
+    Args:
+        index: One-based sample index for CLI selection.
+        row: Sample row.
+
+    Returns:
+        JSON-ready sample row.
+    """
+    return {
+        "index": index,
+        "sample_id": row.sample_id,
+        "speaker_id": row.speaker_id,
+        "speaker_name": row.speaker_name,
+        "project_id": row.project_id,
+        "project_speaker_id": row.project_speaker_id,
+        "clip_path": row.clip_path,
+        "clip_rel_path": row.clip_rel_path,
+        "clip_sha256": row.clip_sha256,
+        "source_begin_time_ms": row.source_begin_time_ms,
+        "source_end_time_ms": row.source_end_time_ms,
+        "transcript_text": row.transcript_text,
+    }
 
 
 def _embedded_count_text(row: VoiceprintSpeakerRow) -> str:

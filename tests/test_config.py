@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,22 @@ def test_ui_editor_config_is_supported(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert settings.ui_editor == "code --wait"
     assert "ui.editor" in keys_result.output
     assert "ui.editor=code --wait" in show_result.output
+
+
+def test_config_show_prints_masked_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Config show should have a script-friendly JSON mode without leaking secrets."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _clear_runtime_env(monkeypatch)
+    save_config_values({"dashscope.api_key": "secret", "ui.editor": "vim"})
+
+    result = runner.invoke(app, ["config", "show", "--json"])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert payload["config_file"] == str(get_config_path())
+    assert payload["revealed"] is False
+    assert payload["values"]["dashscope.api_key"] == "********"
+    assert payload["values"]["ui.editor"] == "vim"
 
 
 def test_load_settings_can_read_voiceprint_config_without_dashscope(
