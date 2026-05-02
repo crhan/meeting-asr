@@ -20,16 +20,18 @@ scripts/install-tool.sh
 scripts/install-tool.sh --check
 ```
 
-这个脚本显式执行 `uv tool install --python 3.14 --force --reinstall --refresh`。
+这个脚本显式执行 `uv tool install --python 3.14`。
 原因：
 
 - `uv tool install` 可以使用 pyenv 提供的 Python，但要通过 `--python 3.14`
   或 `UV_PYTHON=$(pyenv which python3.14)` 明确指定。
 - 不指定 `--python` 时，uv tool 的默认解释器可能落到 uv managed Python 3.13，
   与本项目 `Python>=3.14` 冲突。
-- `--force` 只重建 tool 环境，不保证本地 path 包的 wheel 重新构建。
-- `--reinstall --refresh` 避免本地 wheel 缓存导致安装后仍是旧代码。
+- uv 对本地目录的默认缓存只跟踪 `pyproject.toml` / `setup.py` / `setup.cfg`，
+  不会因为普通源码文件变化自动重建 wheel。
+- 项目通过 `tool.uv.cache-keys` 显式跟踪 `src/**/*.py`，源码变化会触发重建。
 - 安装后会比对当前 checkout 和实际 `site-packages/app` 的源码指纹；不一致就失败。
+- 只有已有非 uv 可执行文件冲突时才传 `scripts/install-tool.sh --force`。
 - completion 只能把 `~/.local/bin` 这类用户命令目录加入 PATH，不能把
   `~/.local/share/uv/tools/meeting-asr/bin` 加进去；后者会泄漏 tool 私有
   `python/python3` 到用户 shell。

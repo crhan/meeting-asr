@@ -10,6 +10,7 @@ Install or refresh the user-facing meeting-asr uv tool from this checkout.
 Options:
   --python VALUE          Python interpreter or version for uv tool install. Default: 3.14
   --editable             Install this checkout in editable mode.
+  --force                Overwrite executable conflicts. Not needed for normal refreshes.
   --no-local-voiceprint  Do not install the local SpeechBrain voiceprint extra.
   --print-only           Print the install plan without executing it.
   --check                Inspect the current meeting-asr executable and exit.
@@ -130,6 +131,7 @@ EOF
 
 python_value="3.14"
 editable=0
+force=0
 local_voiceprint=1
 print_only=0
 check_only=0
@@ -146,6 +148,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --editable)
       editable=1
+      shift
+      ;;
+    --force)
+      force=1
       shift
       ;;
     --no-local-voiceprint)
@@ -192,7 +198,10 @@ if [[ "$local_voiceprint" -eq 1 ]]; then
   package=".[local-voiceprint]"
 fi
 
-command=(uv tool install --python "$python_value" --force --reinstall --refresh)
+command=(uv tool install --python "$python_value")
+if [[ "$force" -eq 1 ]]; then
+  command+=(--force)
+fi
 if [[ "$editable" -eq 1 ]]; then
   command+=(--editable)
 fi
@@ -201,6 +210,7 @@ command+=("$package")
 echo "Meeting-ASR install plan"
 echo "Source: $source_dir"
 echo "Mode: $([[ "$editable" -eq 1 ]] && echo editable || echo wheel)"
+echo "Force: $([[ "$force" -eq 1 ]] && echo yes || echo no)"
 echo "Local voiceprint: $([[ "$local_voiceprint" -eq 1 ]] && echo yes || echo no)"
 echo "Command:"
 echo "  cd $(printf '%q' "$source_dir")"

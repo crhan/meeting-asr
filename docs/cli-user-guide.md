@@ -375,8 +375,9 @@ scripts/install-tool.sh
 ```
 
 这个脚本是独立安装入口，不是 `meeting-asr` 子命令。它显式传
-`uv tool install --python 3.14 --force --reinstall --refresh`，避免 uv tool 默认解释器落到
-不满足 `Python>=3.14` 的版本，也避免本地 wheel 缓存导致安装后仍是旧代码。
+`uv tool install --python 3.14`，避免 uv tool 默认解释器落到不满足 `Python>=3.14`
+的版本。项目已配置 `tool.uv.cache-keys` 跟踪 `src/**/*.py`，源码变化会触发本地
+wheel 重建。
 脚本安装后会比对当前 checkout 和实际安装包的源码指纹；如果不一致会直接失败。
 
 默认配置：

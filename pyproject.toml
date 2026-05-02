@@ -31,6 +31,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/app"]
 
+[tool.uv]
+cache-keys = [
+  { file = "pyproject.toml" },
+  { file = "src/**/*.py" },
+]
+
 [dependency-groups]
 dev = [
   "pytest>=9.0.3",

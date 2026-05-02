@@ -28,14 +28,15 @@ exec zsh
 
 `scripts/install-tool.sh` 是独立安装入口，不属于业务 CLI。它固定使用：
 
-- `uv tool install --python 3.14 --force --reinstall --refresh`
+- `uv tool install --python 3.14`
 - 默认安装 `local-voiceprint` extra
 - 安装后验证 `meeting-asr` wrapper 实际使用的 Python、包来源和源码指纹
 
 `uv` 可以使用 pyenv 提供的 Python；这里显式传 `--python 3.14` 是为了避免
 `uv tool install` 默认解释器落到不满足本项目 `Python>=3.14` 的版本。
-`--force` 只重建 tool 环境，不保证本地 path 包的 wheel 重新构建；所以脚本固定加
-`--reinstall --refresh`，并在安装后比对当前 checkout 和实际 site-packages 的源码指纹。
+项目在 `pyproject.toml` 里配置了 `tool.uv.cache-keys`，让 uv 在 `src/**/*.py`
+变化时重建本地 wheel；安装后再比对当前 checkout 和实际 site-packages 的源码指纹。
+只有遇到已有非 uv 可执行文件冲突时，才使用 `scripts/install-tool.sh --force`。
 
 如果只想看当前安装状态：
 

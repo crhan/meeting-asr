@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import tomllib
 
 
 def test_install_script_has_valid_bash_syntax() -> None:
@@ -14,7 +15,7 @@ def test_install_script_has_valid_bash_syntax() -> None:
 
 
 def test_install_script_print_only_uses_stable_uv_tool_command() -> None:
-    """The installer should encode the uv tool flags that avoid stale Python/cache issues."""
+    """The normal installer should not rely on force or global cache refreshes."""
     result = subprocess.run(
         ["scripts/install-tool.sh", "--print-only"],
         capture_output=True,
@@ -22,9 +23,32 @@ def test_install_script_print_only_uses_stable_uv_tool_command() -> None:
         check=True,
     )
 
-    assert "uv tool install --python 3.14 --force --reinstall --refresh" in result.stdout
+    assert "uv tool install --python 3.14" in result.stdout
+    assert "--force" not in result.stdout
+    assert "--refresh" not in result.stdout
+    assert "--reinstall" not in result.stdout
     assert "local-voiceprint" in result.stdout
     assert "--editable" not in result.stdout
+
+
+def test_install_script_force_is_explicit() -> None:
+    """Force should be an opt-in escape hatch for executable conflicts."""
+    result = subprocess.run(
+        ["scripts/install-tool.sh", "--print-only", "--force"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert "uv tool install --python 3.14 --force" in result.stdout
+
+
+def test_pyproject_tracks_source_files_for_uv_cache() -> None:
+    """uv should rebuild local wheels when source files change."""
+    payload = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    assert {"file": "pyproject.toml"} in payload["tool"]["uv"]["cache-keys"]
+    assert {"file": "src/**/*.py"} in payload["tool"]["uv"]["cache-keys"]
 
 
 def test_install_script_verifies_installed_source_fingerprint() -> None:
