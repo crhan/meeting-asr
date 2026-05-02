@@ -72,7 +72,7 @@ meeting-asr project list --projects-dir "/path/to/projects"
 ```
 
 `project list` 的 `State` 不是内部 manifest status，而是从实际文件推导出的当前项目阶段。
-下一步命令、关键产物、Project ID、项目目录或原始内部 status 放在
+下一步命令、`Artifacts`、Project ID、项目目录或原始内部 status 放在
 `project status PROJECT_NO` 或 `--json` 里看。
 
 更新 project 元数据：

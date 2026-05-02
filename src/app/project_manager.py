@@ -81,6 +81,35 @@ tmp/
 asr/raw_result.json
 *.signed-url
 """
+DOWNSTREAM_OUTPUT_KEYS = (
+    "meeting_summary",
+    "meeting_summary_json",
+    "named_transcript",
+    "named_subtitle",
+    "corrected_sentences",
+    "corrected_transcript",
+    "corrected_named_transcript",
+    "corrected_named_subtitle",
+    "asr_hotwords",
+    "vocabulary_corrections",
+)
+DOWNSTREAM_ARTIFACT_PATHS = (
+    "exports/meeting_summary.md",
+    "exports/meeting_summary.json",
+    "exports/transcript_named.txt",
+    "exports/subtitle_named.srt",
+    "asr/sentences_corrected.json",
+    "exports/transcript_corrected.txt",
+    "exports/transcript_speakers_corrected.txt",
+    "exports/transcript_named_corrected.txt",
+    "exports/subtitle_corrected.srt",
+    "exports/subtitle_named_corrected.srt",
+    "corrections/asr_hotwords.json",
+    "corrections/applied.json",
+    "speakers/speaker_map.json",
+    "speakers/speaker_matches.json",
+)
+DOWNSTREAM_SPEAKER_KEYS = ("mapped", "matches", "voiceprints")
 
 LOGGER = logging.getLogger(__name__)
 
@@ -433,6 +462,7 @@ def transcribe_project(
         step_total=transcribe_steps,
         reset_total=True,
     )
+    _invalidate_downstream_artifacts(paths, manifest)
     _write_project_asr_outputs(paths, raw_result, parsed_result, options.generate_srt)
     emit_progress(progress, "Transcription complete", completed=1, total=1)
     _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result, hotwords)
@@ -864,6 +894,62 @@ def _write_project_asr_outputs(
     safe_write_text(paths.exports_dir / "transcript_speakers.txt", _render_merged_speaker_text(parsed_result))
     if generate_srt:
         safe_write_text(paths.exports_dir / "subtitle.srt", build_srt(parsed_result.sentences))
+
+def _invalidate_downstream_artifacts(paths: ProjectPaths, manifest: ProjectManifest) -> None:
+    """
+    Remove artifacts that depend on a previous ASR result.
+
+    Args:
+        paths: Project paths.
+        manifest: Manifest to mutate.
+
+    Returns:
+        None.
+    """
+    for key in DOWNSTREAM_OUTPUT_KEYS:
+        value = manifest.outputs.pop(key, None)
+        if isinstance(value, str):
+            _unlink_project_file(paths.root, value)
+    for relative_path in DOWNSTREAM_ARTIFACT_PATHS:
+        _unlink_project_file(paths.root, relative_path)
+    for key in DOWNSTREAM_SPEAKER_KEYS:
+        manifest.speakers.pop(key, None)
+    manifest.asr.pop("summary_model", None)
+
+def _unlink_project_file(project_root: Path, stored_path: str) -> None:
+    """
+    Delete one project-local file when it exists.
+
+    Args:
+        project_root: Project root boundary.
+        stored_path: Relative or absolute stored path.
+
+    Returns:
+        None.
+    """
+    path = _project_local_file(project_root, stored_path)
+    if path is not None and (path.is_file() or path.is_symlink()):
+        path.unlink()
+
+def _project_local_file(project_root: Path, stored_path: str) -> Path | None:
+    """
+    Resolve a stored artifact path without escaping the project root.
+
+    Args:
+        project_root: Project root boundary.
+        stored_path: Relative or absolute stored path.
+
+    Returns:
+        Project-local path, or ``None`` when the path escapes the project.
+    """
+    root = project_root.expanduser().resolve()
+    path = Path(stored_path).expanduser()
+    candidate = path if path.is_absolute() else root / path
+    try:
+        candidate.resolve().relative_to(root)
+    except ValueError:
+        return None
+    return candidate
 
 def _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result, hotwords) -> None:
     """Record non-secret ASR metadata into the manifest."""

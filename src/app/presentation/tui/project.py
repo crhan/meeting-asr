@@ -212,7 +212,7 @@ class ProjectPickerApp(App[Path | None]):
                 f"Title: {escape(project.title)}",
                 f"State: {escape(workflow.state)}",
                 f"Next: {escape(workflow.next_command_short)}",
-                f"Outputs: {escape(project_outputs_text(workflow.outputs))}",
+                f"Artifacts: {escape(project_outputs_text(workflow.outputs))}",
                 f"Path: {escape(str(project.project_dir))}",
                 f"Open: meeting-asr project review {project.number}",
             ]

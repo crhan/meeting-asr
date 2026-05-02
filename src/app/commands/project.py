@@ -561,7 +561,7 @@ def status(
     typer.echo(f"Status: {manifest.status}")
     typer.echo(f"State: {workflow.state}")
     typer.echo(f"Next: {workflow.next_command_short}")
-    typer.echo(f"Outputs: {project_outputs_text(workflow.outputs)}")
+    typer.echo(f"Artifacts: {project_outputs_text(workflow.outputs)}")
     if workflow.missing:
         typer.echo(f"Missing: {', '.join(workflow.missing)}")
     typer.echo(f"Source: {manifest.source.path}")

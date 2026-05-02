@@ -126,6 +126,7 @@ def workflow_payload(summary: ProjectWorkflowSummary) -> dict[str, object]:
         "next_action": summary.next_action,
         "next_command": summary.next_command,
         "next_command_short": summary.next_command_short,
+        "artifacts": list(summary.outputs),
         "outputs": list(summary.outputs),
         "missing": list(summary.missing),
     }
