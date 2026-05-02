@@ -29,6 +29,12 @@ from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.progress import CliProgressReporter, emit_progress, run_with_progress
 from app.presentation.cli.project_payloads import project_list_payload, project_status_payload
 from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
+from app.core.project_workflow import (
+    ProjectWorkflowSummary,
+    load_project_workflow_summary,
+    project_outputs_text,
+    project_workflow_summary,
+)
 from app.completion_helpers import (
     complete_asr_hotwords,
     complete_audio_format,
@@ -544,10 +550,20 @@ def status(
     if as_json:
         emit_json(project_status_payload(paths, manifest))
         return
+    workflow = project_workflow_summary(
+        paths.root,
+        manifest,
+        project_ref=_project_cli_ref(paths.root, manifest, projects_dir),
+    )
     typer.echo(f"Project: {paths.root}")
     typer.echo(f"Project ID: {manifest.project_id}")
     typer.echo(f"Title: {manifest.title}")
     typer.echo(f"Status: {manifest.status}")
+    typer.echo(f"Workflow: {workflow.state}")
+    typer.echo(f"Next: {workflow.next_command_short}")
+    typer.echo(f"Outputs: {project_outputs_text(workflow.outputs)}")
+    if workflow.missing:
+        typer.echo(f"Missing: {', '.join(workflow.missing)}")
     typer.echo(f"Source: {manifest.source.path}")
     if manifest.source.original_path:
         typer.echo(f"Original source: {manifest.source.original_path}")
@@ -919,42 +935,42 @@ def _project_list_table(projects: list[ProjectListItem]) -> Table:
     """
     table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
     table.add_column("No.", justify="right", no_wrap=True, style="bold cyan")
-    table.add_column("Status", no_wrap=True)
+    table.add_column("State", no_wrap=True)
+    table.add_column("Next", no_wrap=True)
+    table.add_column("Outputs", no_wrap=True)
     table.add_column("Updated", no_wrap=True)
     table.add_column("Title")
-    table.add_column("Project ID", no_wrap=True)
-    table.add_column("Directory", no_wrap=True)
     for project in projects:
+        workflow = load_project_workflow_summary(project.project_dir, project_ref=str(project.number))
         table.add_row(
             str(project.number),
-            _project_status_text(project.status),
+            _project_workflow_state_text(workflow),
+            workflow.next_command_short,
+            project_outputs_text(workflow.outputs),
             _project_list_timestamp(project.updated_at),
             project.title,
-            project.project_id,
-            project.project_dir.name,
         )
     return table
 
 
-def _project_status_text(status: str) -> str:
+def _project_workflow_state_text(workflow: ProjectWorkflowSummary) -> str:
     """
-    Return a styled project status for table display.
+    Return a styled workflow state for table display.
 
     Args:
-        status: Project lifecycle status.
+        workflow: Project workflow summary.
 
     Returns:
         Rich markup string.
     """
     styles = {
-        "created": "yellow",
-        "prepared": "yellow",
-        "transcribed": "cyan",
-        "named": "green",
+        "needs_asr": "yellow",
+        "needs_speakers": "yellow",
+        "ready": "green",
         "corrected": "green",
-        "voiceprinted": "green",
+        "broken": "red",
     }
-    return f"[{styles.get(status, 'white')}]{status}[/]"
+    return f"[{styles.get(workflow.state_key, 'white')}]{workflow.state}[/]"
 
 
 def _project_table_console() -> Console:
@@ -969,7 +985,7 @@ def _project_table_console() -> Console:
 
 def _project_list_timestamp(value: str) -> str:
     """Return a compact timestamp for project list rows."""
-    return value[:19]
+    return value[:16].replace("T", " ")
 
 
 def _echo_project_created(

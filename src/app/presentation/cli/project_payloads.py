@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.project_models import ProjectListItem, ProjectManifest, ProjectPaths
+from app.core.project_workflow import load_project_workflow_summary, project_workflow_summary, workflow_payload
 
 
 def project_list_payload(projects_dir: Path, projects: list[ProjectListItem]) -> dict[str, Any]:
@@ -37,11 +38,13 @@ def project_status_payload(paths: ProjectPaths, manifest: ProjectManifest) -> di
     Returns:
         Stable JSON-ready project status.
     """
+    workflow = project_workflow_summary(paths.root, manifest)
     return {
         "project": paths.root,
         "project_id": manifest.project_id,
         "title": manifest.title,
         "status": manifest.status,
+        "workflow": workflow_payload(workflow),
         "source": manifest.source.path,
         "original_source": manifest.source.original_path,
         "audio": manifest.audio.get("path"),
@@ -53,11 +56,14 @@ def project_status_payload(paths: ProjectPaths, manifest: ProjectManifest) -> di
 
 def _project_item_payload(project: ProjectListItem) -> dict[str, Any]:
     """Return a JSON-ready payload for one project list item."""
+    project_ref = str(project.number or project.project_id)
+    workflow = load_project_workflow_summary(project.project_dir, project_ref=project_ref)
     return {
         "number": project.number,
         "project_id": project.project_id,
         "title": project.title,
         "status": project.status,
+        "workflow": workflow_payload(workflow),
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "project_dir": project.project_dir,

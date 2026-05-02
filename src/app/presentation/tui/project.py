@@ -11,6 +11,7 @@ from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Static
 
+from app.core.project_workflow import load_project_workflow_summary, project_outputs_text
 from app.project_manager import ProjectListItem, ProjectListResult, list_projects
 
 SHORTCUT_HELP = """\
@@ -88,7 +89,7 @@ class ProjectPickerApp(App[Path | None]):
     }
     #detail {
         border: round $accent;
-        height: 7;
+        height: 9;
         padding: 0 1;
     }
     #status {
@@ -189,7 +190,11 @@ class ProjectPickerApp(App[Path | None]):
             return "\n".join(lines)
         for index, project in enumerate(self.session.projects):
             marker = ">" if index == self.selected_project_index else " "
-            row = f"{marker} {project.number:>2} | {project.updated_at[:19]} | {project.status} | {project.title}"
+            workflow = load_project_workflow_summary(project.project_dir, project_ref=str(project.number))
+            row = (
+                f"{marker} {project.number:>2} | {project.updated_at[:19]} | "
+                f"{workflow.state} | {workflow.next_command_short} | {project.title}"
+            )
             lines.append(f"[reverse]{escape(row)}[/]" if marker == ">" else escape(row))
         return "\n".join(lines)
 
@@ -198,13 +203,16 @@ class ProjectPickerApp(App[Path | None]):
         project = self._project()
         if project is None:
             return "[b]Detail[/b]\nNo project selected."
+        workflow = load_project_workflow_summary(project.project_dir, project_ref=str(project.number))
         return "\n".join(
             [
                 "[b]Detail[/b]",
                 f"Project No.: {project.number}",
                 f"Project ID: {escape(project.project_id)}",
                 f"Title: {escape(project.title)}",
-                f"Status: {escape(project.status)}",
+                f"State: {escape(workflow.state)}",
+                f"Next: {escape(workflow.next_command_short)}",
+                f"Outputs: {escape(project_outputs_text(workflow.outputs))}",
                 f"Path: {escape(str(project.project_dir))}",
                 f"Open: meeting-asr project review {project.number}",
             ]
@@ -259,7 +267,9 @@ def render_project_picker_summary(session: ProjectPickerSession) -> str:
         lines.append("No projects found.")
         return "\n".join(lines)
     for project in session.projects:
+        workflow = load_project_workflow_summary(project.project_dir, project_ref=str(project.number))
         lines.append(
-            f"{project.number} | {project.status} | {project.title} | {project.project_id} | {project.project_dir}"
+            f"{project.number} | {workflow.state} | {workflow.next_command_short} | "
+            f"{project_outputs_text(workflow.outputs)} | {project.title} | {project.project_id} | {project.project_dir}"
         )
     return "\n".join(lines)

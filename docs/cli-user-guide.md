@@ -71,6 +71,10 @@ meeting-asr project list
 meeting-asr project list --projects-dir "/path/to/projects"
 ```
 
+`project list` 的 `State` 不是内部 manifest status，而是从实际文件推导出的当前步骤。
+`Next` 给下一条 project 子命令，`Outputs` 列已经存在的关键产物。需要 Project ID、
+项目目录或原始内部 status 时用 `--json`。
+
 更新 project 元数据：
 
 ```bash
