@@ -2,19 +2,78 @@
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
+
 import typer
 from typer.completion import completion_init
 
-from app.commands import completion, config, doctor, lexicon, oss, project, voiceprint
+from app.commands import completion, config, doctor, lexicon, oss, paths, project, voiceprint
 
 completion_init()
+
+ROOT_HELP = """Project-based CLI for DashScope meeting transcription workflows.
+
+Quick start:
+  meeting-asr project run <video>
+  meeting-asr project review <project-no-or-id>
+  meeting-asr project transcript show <project-no-or-id> --kind corrected
+
+Inspect state:
+  meeting-asr project list
+  meeting-asr paths
+  meeting-asr doctor
+"""
 
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
     pretty_exceptions_enable=False,
-    help="CLI for DashScope Fun-ASR meeting transcription workflows.",
+    help=ROOT_HELP,
 )
+
+
+def _version_callback(value: bool) -> None:
+    """
+    Print package version and exit when requested.
+
+    Args:
+        value: Whether the eager ``--version`` flag was passed.
+
+    Returns:
+        None.
+    """
+    if not value:
+        return
+    typer.echo(f"meeting-asr {_installed_version()}")
+    raise typer.Exit()
+
+
+def _installed_version() -> str:
+    """
+    Return the installed package version.
+
+    Returns:
+        Package version, or a local-development fallback.
+    """
+    try:
+        return package_version("meeting-asr")
+    except PackageNotFoundError:
+        return "0.0.0+local"
+
+
+@app.callback()
+def root(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
+    """Configure root command options."""
+
 
 app.command("doctor")(doctor.command)
 app.add_typer(config.app, name="config", help="Manage global XDG configuration.")
@@ -23,6 +82,7 @@ app.add_typer(voiceprint.app, name="voiceprint", help="Manage the cross-project 
 app.add_typer(lexicon.app, name="lexicon", help="Manage the cross-project correction lexicon.")
 app.add_typer(oss.app, name="oss", help="Upload, sign, and configure OSS objects.")
 app.add_typer(completion.app, name="completion", help="Generate or install shell completion scripts.")
+app.command("paths")(paths.command)
 
 
 def main() -> None:

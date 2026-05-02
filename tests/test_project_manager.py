@@ -382,6 +382,32 @@ def test_project_list_command_reads_default_projects_dir(
     assert load_manifest(project_dir).project_id in result.output
 
 
+def test_project_list_command_prints_json(tmp_path: Path) -> None:
+    """Project list should have a stable machine-readable form."""
+    projects_dir = tmp_path / "projects"
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = projects_dir / "demo"
+    create_project(
+        source,
+        title="Demo",
+        projects_dir=projects_dir,
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+
+    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir), "--json"])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert payload["projects_dir"] == str(projects_dir.resolve())
+    assert payload["count"] == 1
+    assert payload["projects"][0]["number"] == 1
+    assert payload["projects"][0]["title"] == "Demo"
+    assert payload["projects"][0]["project_dir"] == str(project_dir.resolve())
+
+
 def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:
     """Project list should scan the requested projects parent only."""
     projects_dir = tmp_path / "projects"
@@ -557,6 +583,21 @@ def test_project_status_command_reads_manifest(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Title: Demo" in result.output
     assert "Source: source/meeting.mp4" in result.output
+
+
+def test_project_status_command_prints_json(tmp_path: Path) -> None:
+    """Project status should be script-friendly."""
+    project_dir = _sample_project(tmp_path)
+    manifest = load_manifest(project_dir)
+
+    result = runner.invoke(app, ["project", "status", str(project_dir), "--json"])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert payload["project"] == str(project_dir.resolve())
+    assert payload["project_id"] == manifest.project_id
+    assert payload["title"] == "Demo"
+    assert payload["source"] == "source/meeting.mp4"
 
 
 def test_project_status_accepts_project_id(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,34 @@ def test_doctor_warns_when_local_voiceprint_dependencies_are_missing(
     assert "missing optional packages: speechbrain" in result.output
     assert "Repair Prompts:" in result.output
     assert "uv sync --extra local-voiceprint" in result.output
+
+
+def test_doctor_json_is_machine_readable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Doctor should expose the same checks as stable JSON."""
+    _prepare_doctor(monkeypatch, tmp_path)
+    monkeypatch.setattr(doctor, "_missing_optional_modules", lambda modules: ["speechbrain"])
+    save_config_values({"dashscope.api_key": "secret"})
+
+    result = runner.invoke(app, ["doctor", "--json"])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert payload["summary"] == {"ok": 6, "warn": 1, "fail": 0}
+    assert payload["checks"][-1]["name"] == "voiceprint-embedding"
+    assert payload["checks"][-1]["status"] == "warn"
+    assert "missing optional packages: speechbrain" in payload["checks"][-1]["detail"]
+
+
+def test_doctor_help_does_not_expose_python_docstring_sections() -> None:
+    """Typer help should be user-facing, not Python API documentation."""
+    result = runner.invoke(app, ["doctor", "--help"])
+
+    assert result.exit_code == 0
+    assert "Args:" not in result.output
+    assert "Returns:" not in result.output
 
 
 def test_doctor_can_require_local_voiceprint_dependencies(

@@ -18,6 +18,7 @@ from uuid import uuid4
 import typer
 
 from app.config import get_configured_editor, load_settings
+from app.presentation.cli.json_output import emit_json
 from app.uploader import build_oss_bucket, import_oss2
 from app.voiceprint_embedding import (
     LOCAL_SPEECHBRAIN_MODEL,
@@ -52,19 +53,9 @@ def command(
     check_oss_access: bool = typer.Option(False, "--check-oss-access"),
     oss_upload_probe: bool = typer.Option(False, "--oss-upload-probe"),
     require_voiceprint_embedding: bool = typer.Option(False, "--require-voiceprint-embedding"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
-    """
-    Check runtime dependencies and global config.
-
-    Args:
-        require_oss: Require OSS configuration values.
-        check_oss_access: Verify OSS bucket metadata with a real request.
-        oss_upload_probe: Upload, read, and delete a tiny OSS probe object.
-        require_voiceprint_embedding: Require voiceprint embedding configuration.
-
-    Returns:
-        None.
-    """
+    """Check runtime dependencies and global config."""
     effective_require_oss = require_oss or check_oss_access or oss_upload_probe
     checks = [
         _check_python(),
@@ -77,8 +68,11 @@ def command(
     ]
     if check_oss_access or oss_upload_probe:
         checks.append(_check_oss_access(upload_probe=oss_upload_probe))
-    _echo_checks(checks)
-    _echo_fix_prompts(checks)
+    if as_json:
+        _echo_checks_json(checks)
+    else:
+        _echo_checks(checks)
+        _echo_fix_prompts(checks)
     if any(check.failed for check in checks):
         raise typer.Exit(code=1)
 
@@ -492,6 +486,44 @@ def _echo_checks(checks: list[CheckResult]) -> None:
     typer.echo("Checks:")
     for check in checks:
         _echo_check(check)
+
+
+def _echo_checks_json(checks: list[CheckResult]) -> None:
+    """
+    Print diagnostic results as stable JSON.
+
+    Args:
+        checks: Diagnostic results.
+
+    Returns:
+        None.
+    """
+    emit_json(
+        {
+            "summary": _checks_summary(checks),
+            "checks": [_check_payload(check) for check in checks],
+        }
+    )
+
+
+def _checks_summary(checks: list[CheckResult]) -> dict[str, int]:
+    """Return aggregate diagnostic counts."""
+    return {
+        "ok": sum(1 for check in checks if check.status == "ok"),
+        "warn": sum(1 for check in checks if check.status == "warn"),
+        "fail": sum(1 for check in checks if check.status == "fail"),
+    }
+
+
+def _check_payload(check: CheckResult) -> dict[str, str | bool | None]:
+    """Return one JSON-ready diagnostic check."""
+    return {
+        "name": check.name,
+        "status": check.status,
+        "detail": check.detail,
+        "failed": check.failed,
+        "fix_prompt": check.fix_prompt,
+    }
 
 
 def _echo_check(check: CheckResult) -> None:

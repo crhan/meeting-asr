@@ -25,7 +25,9 @@ from app.commands import project_correct as project_correct_commands
 from app.commands import project_trash as project_trash_commands
 from app.commands import transcript as transcript_commands
 from app.presentation.cli.errors import run_with_cli_errors
+from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.progress import CliProgressReporter, emit_progress, run_with_progress
+from app.presentation.cli.project_payloads import project_list_payload, project_status_payload
 from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
 from app.completion_helpers import (
     complete_asr_hotwords,
@@ -328,9 +330,13 @@ def run(
 @app.command("list")
 def list_command(
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """List projects under the default or specified projects directory."""
     result = run_with_cli_errors(lambda: list_projects(projects_dir))
+    if as_json:
+        emit_json(project_list_payload(result.projects_dir, result.projects))
+        return
     _echo_project_list(result.projects_dir, result.projects)
 
 
@@ -529,11 +535,15 @@ def _project_run_step_descriptions(summarize: bool) -> tuple[str, ...]:
 def status(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Print a project status summary."""
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
     paths = project_paths(resolved_project_dir)
+    if as_json:
+        emit_json(project_status_payload(paths, manifest))
+        return
     typer.echo(f"Project: {paths.root}")
     typer.echo(f"Project ID: {manifest.project_id}")
     typer.echo(f"Title: {manifest.title}")
