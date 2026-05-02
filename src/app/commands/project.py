@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.table import Table
 import typer
 
+from app.commands import project_trash as project_trash_commands
 from app.commands import transcript as transcript_commands
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.progress import CliProgressReporter, emit_progress, run_with_progress
@@ -84,6 +85,7 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_
 speakers_app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
 app.add_typer(speakers_app, name="speakers", help="Review and name project speakers.")
 app.add_typer(transcript_commands.app, name="transcript", help="View project transcript artifacts.")
+app.add_typer(project_trash_commands.app, name="trash", help="Restore or permanently remove deleted projects.")
 
 MORE_SAMPLES_COMMAND = "/more"
 AUDIO_PREVIEW_COMMAND = "/audio"
@@ -1028,6 +1030,13 @@ def _echo_project_deleted(summary: ProjectDeleteSummary) -> None:
     typer.echo("Project moved to trash.")
     typer.echo(f"Project: {summary.project_dir}")
     typer.echo(f"Trash: {summary.destination}")
+    if summary.destination is not None:
+        restore_ref = shlex.quote(str(summary.destination))
+        typer.echo("")
+        typer.echo("Next steps:")
+        typer.echo(f"  meeting-asr project trash restore {restore_ref}")
+        typer.echo("  meeting-asr project trash list")
+        typer.echo("  meeting-asr project trash cleanup --older-than-days 30 --yes")
 
 
 def _project_cli_ref(project_dir: Path, manifest: ProjectManifest, projects_dir: Path | None) -> str:

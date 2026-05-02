@@ -22,7 +22,7 @@ from app.core.asr_wait import (
     estimate_dashscope_wait,
     record_dashscope_wait,
 )
-from app.config import get_data_dir, load_settings
+from app.config import load_settings
 from app.core.progress import CliProgressReporter, emit_progress
 from app.core.project_models import (
     SCHEMA_VERSION,
@@ -44,6 +44,7 @@ from app.core.project_refs import (
     list_projects,
     resolve_project_ref,
 )
+from app.project_trash import move_project_to_trash
 from app.core.oss_upload import (
     emit_oss_upload_progress,
     emit_oss_upload_start,
@@ -260,9 +261,7 @@ def delete_project(project_dir: Path, *, permanent: bool) -> ProjectDeleteSummar
     if permanent:
         shutil.rmtree(paths.root)
         return ProjectDeleteSummary(paths.root, None, True)
-    destination = _unique_trash_project_path(paths.root)
-    ensure_directory(destination.parent)
-    shutil.move(str(paths.root), str(destination))
+    destination = move_project_to_trash(paths.root)
     return ProjectDeleteSummary(paths.root, destination, False)
 
 def project_paths(project_dir: Path) -> ProjectPaths:
@@ -635,26 +634,6 @@ def _resolve_project_root(
         return project_dir.expanduser().resolve()
     base_dir = _projects_parent_dir(projects_dir)
     return (base_dir / _build_project_id(source_sha256).replace("-", "_", 1)).resolve()
-
-def _unique_trash_project_path(project_dir: Path) -> Path:
-    """
-    Return a unique trash destination for a project directory.
-
-    Args:
-        project_dir: Project directory being deleted.
-
-    Returns:
-        Non-existing trash path.
-    """
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    trash_dir = get_data_dir() / "trash" / "projects"
-    base = trash_dir / f"{stamp}_{project_dir.name}"
-    candidate = base
-    index = 2
-    while candidate.exists():
-        candidate = trash_dir / f"{base.name}_{index}"
-        index += 1
-    return candidate
 
 def _create_project_dirs(root: Path) -> None:
     """Create the project root and standard child directories."""

@@ -154,12 +154,19 @@ Project 元数据和删除：
 meeting-asr project update PROJECT_NO --title "新的会议标题"
 meeting-asr project update PROJECT_NO --meeting-time "2026-05-02T10:00:00+08:00"
 meeting-asr project delete PROJECT_NO
+meeting-asr project trash list
+meeting-asr project trash restore TRASH_NO
+meeting-asr project trash purge TRASH_NO --yes
+meeting-asr project trash cleanup --older-than-days 30 --yes
 meeting-asr project delete PROJECT_NO --permanent --yes
 ```
 
 `project delete` 默认不会物理删除，会移动到
-`~/.local/share/meeting-asr/trash/projects/`；只有显式传 `--permanent --yes`
-才会直接删除项目目录。
+`~/.local/share/meeting-asr/trash/projects/`，便于误删后恢复。`project trash restore`
+会把项目恢复回原目录；`project trash purge` 永久删除单个 trash 项；
+`project trash cleanup --older-than-days 30 --yes` 清理进入 trash 超过 30 天的项目。
+Meeting-ASR 不会自动清理 trash；只有显式执行 cleanup/purge 或 delete 时传
+`--permanent --yes` 才会物理删除项目目录。
 
 Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speaker_matches.json`，
 不改转写结果；`speakers apply` 才会把自动候选和人工输入合并，写入

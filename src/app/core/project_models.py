@@ -179,3 +179,50 @@ class ProjectDeleteSummary:
     destination: Path | None
     permanent: bool
 
+
+@dataclass(frozen=True, slots=True)
+class TrashedProjectListItem:
+    """One project row stored in Meeting-ASR trash."""
+
+    trash_dir: Path
+    restore_project_dir: Path
+    project_id: str
+    title: str
+    status: str
+    created_at: str
+    updated_at: str
+    trashed_at: str
+    number: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectTrashListResult:
+    """Projects discovered below the Meeting-ASR trash directory."""
+
+    trash_dir: Path
+    projects: list[TrashedProjectListItem]
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectRestoreSummary:
+    """Result of restoring a project from Meeting-ASR trash."""
+
+    trash_dir: Path
+    project_dir: Path
+    manifest: ProjectManifest
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectPurgeSummary:
+    """Result of permanently deleting a trashed project."""
+
+    trash_dir: Path
+    manifest: ProjectManifest
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectTrashCleanupSummary:
+    """Result of cleaning old trashed projects."""
+
+    trash_dir: Path
+    removed: list[ProjectPurgeSummary]
