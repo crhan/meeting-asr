@@ -27,6 +27,7 @@ from app.commands import transcript as transcript_commands
 from app.core.progress import CliProgressReporter, emit_progress
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
+from app.presentation.cli.output import cli_console
 from app.presentation.cli.progress import run_with_progress
 from app.presentation.cli.project_payloads import project_list_payload, project_status_payload
 from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
@@ -968,7 +969,7 @@ def _project_table_console() -> Console:
     Returns:
         Rich console instance.
     """
-    return Console(highlight=False, color_system="auto", width=140)
+    return cli_console(width=140)
 
 
 def _project_list_timestamp(value: str) -> str:

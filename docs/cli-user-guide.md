@@ -130,6 +130,9 @@ meeting-asr project transcribe
 交互式终端默认显示进度 UI；输出重定向或非 TTY 环境不会污染 stdout。所有耗时命令都可用
 `--no-progress` 关闭。
 
+如果终端或日志系统不适合彩色输出，根命令加 `--no-color`；设置 `NO_COLOR` 或 `TERM=dumb`
+时也会自动禁用 Rich 颜色。
+
 `project run` 有两类动态 ETA baseline。OSS 上传阶段会按实际上传字节回调刷新进度，并在完成后
 记录一条吞吐样本；下一次会按文件大小估算上传 ETA。DashScope 等待阶段会在远程 ASR 等待结束后
 记录一条耗时样本；下一次会按音频时长估算等待 ETA。默认数据库：

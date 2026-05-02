@@ -16,6 +16,7 @@ import typer
 from app.core.project_refs import resolve_project_ref
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
+from app.presentation.cli.output import cli_console
 from app.project_manager import project_paths
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
@@ -324,4 +325,4 @@ def _transcript_table_console() -> Console:
     Returns:
         Rich console instance.
     """
-    return Console(highlight=False, color_system="auto", width=140)
+    return cli_console(width=140)

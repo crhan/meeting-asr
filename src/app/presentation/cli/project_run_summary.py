@@ -12,6 +12,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from app.core.project_models import ProjectManifest, ProjectMeetingSummary, ProjectTranscribeSummary
+from app.presentation.cli.output import cli_console
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,4 +189,4 @@ def _relative_project_output(project_dir: Path, output_path: Path) -> str:
 
 def _summary_console() -> Console:
     """Build the stdout console used for project run summaries."""
-    return Console(highlight=False, color_system="auto", width=120)
+    return cli_console(width=120)

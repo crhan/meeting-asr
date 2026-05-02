@@ -22,6 +22,7 @@ from rich.text import Text
 
 from app.core.progress import CliProgressEvent, CliProgressReporter
 from app.presentation.cli.errors import run_with_cli_errors
+from app.presentation.cli.output import cli_console
 
 T = TypeVar("T")
 WORKFLOW_BAR_WIDTH = 12
@@ -584,7 +585,7 @@ def _console() -> Console:
     Returns:
         Rich console instance.
     """
-    return Console(stderr=True, highlight=False)
+    return cli_console(stderr=True)
 
 
 def _should_render_progress(console: Console, enabled: bool) -> bool:

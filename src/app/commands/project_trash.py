@@ -19,6 +19,7 @@ from app.core.project_models import (
 )
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
+from app.presentation.cli.output import cli_console
 from app.project_trash import (
     cleanup_project_trash,
     list_trashed_projects,
@@ -238,7 +239,7 @@ def _project_status_text(status: str) -> str:
 
 def _project_table_console() -> Console:
     """Build the stdout console used for project tables."""
-    return Console(highlight=False, color_system="auto", width=140)
+    return cli_console(width=140)
 
 
 def _project_list_timestamp(value: str) -> str:

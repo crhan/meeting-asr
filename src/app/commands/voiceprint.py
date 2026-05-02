@@ -15,6 +15,7 @@ import typer
 
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
+from app.presentation.cli.output import cli_console
 from app.presentation.cli.progress import run_with_progress
 from app.completion_helpers import complete_voiceprint_model, complete_voiceprint_provider
 from app.utils import format_ms_timestamp
@@ -398,7 +399,7 @@ def _voiceprint_table_console() -> Console:
     Returns:
         Rich console instance.
     """
-    return Console(highlight=False, color_system="auto", width=140)
+    return cli_console(width=140)
 
 
 def _format_updated_at(value: str | None) -> str:
