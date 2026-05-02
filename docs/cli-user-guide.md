@@ -55,9 +55,9 @@ meeting-asr project create "/path/to/meeting.mp4" \
 成功后 CLI 会输出可复制命令：
 
 ```bash
-meeting-asr project transcribe PROJECT_NO
-meeting-asr project status PROJECT_NO
-meeting-asr project review PROJECT_NO
+meeting-asr project transcribe PROJECT_ID
+meeting-asr project status PROJECT_ID
+meeting-asr project review PROJECT_ID
 ```
 
 同一个源视频再次创建时，CLI 会复用已有项目，不会因为日期变化生成新项目。
@@ -71,22 +71,26 @@ meeting-asr project list
 meeting-asr project list --projects-dir "/path/to/projects"
 ```
 
+`project list` 的 `State` 不是内部 manifest status，而是从实际文件推导出的当前项目阶段。
+下一步命令、`Artifacts`、Project ID、项目目录或原始内部 status 放在
+`project status PROJECT_ID` 或 `--json` 里看。
+
 更新 project 元数据：
 
 ```bash
-meeting-asr project update PROJECT_NO --title "新的会议标题"
-meeting-asr project update PROJECT_NO --meeting-time "2026-05-02T10:00:00+08:00"
+meeting-asr project update PROJECT_ID --title "新的会议标题"
+meeting-asr project update PROJECT_ID --meeting-time "2026-05-02T10:00:00+08:00"
 ```
 
 删除 project：
 
 ```bash
-meeting-asr project delete PROJECT_NO
+meeting-asr project delete PROJECT_ID
 meeting-asr project trash list
 meeting-asr project trash restore TRASH_NO
 meeting-asr project trash purge TRASH_NO --yes
 meeting-asr project trash cleanup --older-than-days 30 --yes
-meeting-asr project delete PROJECT_NO --permanent --yes
+meeting-asr project delete PROJECT_ID --permanent --yes
 ```
 
 默认删除是安全删除：项目会移动到
@@ -109,12 +113,12 @@ meeting-asr project run "/path/to/meeting.mp4"
 转写完成后还会调用 DashScope 文本模型生成会议标题和摘要。默认模型来自
 `dashscope.summary_model`，可用 `--summary-model` 临时覆盖；如果不想生成摘要，用
 `--no-summarize`。
-如果还有未确认 speaker，输出会给出 `meeting-asr project review PROJECT_NO`。
+如果还有未确认 speaker，输出会给出 `meeting-asr project review PROJECT_ID`。
 
 如果只想给已经转写完成的 project 补摘要：
 
 ```bash
-meeting-asr project summarize PROJECT_NO
+meeting-asr project summarize PROJECT_ID
 ```
 
 如果 OSS 已配置，默认使用 private OSS signed URL：
@@ -145,17 +149,17 @@ meeting-asr project transcribe \
 专有名词、人名昵称和系统名可以通过编辑器纠错：
 
 ```bash
-meeting-asr project correct edit PROJECT_NO
-meeting-asr project correct edit PROJECT_NO --editor "code --wait"
-meeting-asr project correct edit PROJECT_NO --model qwen-plus
-meeting-asr project correct accept PROJECT_NO
+meeting-asr project correct edit PROJECT_ID
+meeting-asr project correct edit PROJECT_ID --editor "code --wait"
+meeting-asr project correct edit PROJECT_ID --model qwen-plus
+meeting-asr project correct accept PROJECT_ID
 meeting-asr lexicon hotwords export
 meeting-asr lexicon hotwords sync --target-model fun-asr
-meeting-asr project transcribe PROJECT_NO --asr-hotwords auto
+meeting-asr project transcribe PROJECT_ID --asr-hotwords auto
 meeting-asr config set ui.editor "code --wait"
 meeting-asr config set dashscope.correction_model qwen-plus
-meeting-asr project correct edit PROJECT_NO --no-open
-meeting-asr project transcript show PROJECT_NO --kind corrected
+meeting-asr project correct edit PROJECT_ID --no-open
+meeting-asr project transcript show PROJECT_ID --kind corrected
 ```
 
 `correct edit` 会生成 `tmp/corrections/review_*.md`，每句前面有

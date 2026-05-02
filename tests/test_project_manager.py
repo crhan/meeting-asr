@@ -16,6 +16,7 @@ from app.commands import project as project_commands
 from app.core.project_refs import list_projects, resolve_project_ref
 from app.models import SentenceSegment
 from app.project_manager import (
+    _invalidate_downstream_artifacts,
     _parse_project_oss_upload,
     apply_project_speakers,
     create_project,
@@ -24,6 +25,7 @@ from app.project_manager import (
     load_manifest,
     ProjectMeetingSummary,
     ProjectTranscribeSummary,
+    project_paths,
     resolve_project_source_path,
     save_manifest,
     summarize_project,
@@ -338,7 +340,6 @@ def test_summarize_project_preserves_manual_title(
     assert summary.title_updated is False
     assert load_manifest(project_dir).title == "手工标题"
 
-
 def test_project_summarize_command_prints_absolute_summary_paths(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -375,6 +376,66 @@ def test_project_summarize_command_prints_absolute_summary_paths(
     assert result.exit_code == 0
     assert f"Summary: {(project_dir / 'exports' / 'meeting_summary.md').resolve()}" in result.output
     assert f"Summary JSON: {(project_dir / 'exports' / 'meeting_summary.json').resolve()}" in result.output
+
+
+def test_retranscribe_invalidates_downstream_artifacts(tmp_path: Path) -> None:
+    """A fresh ASR result should not keep stale summary, speaker, or correction outputs."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    (project_dir / "exports" / "transcript.txt").write_text("base\n", encoding="utf-8")
+    apply_project_speakers(project_dir, {0: "敬悦", 1: "欧丁"})
+    stale_paths = [
+        project_dir / "exports" / "meeting_summary.md",
+        project_dir / "exports" / "meeting_summary.json",
+        project_dir / "asr" / "sentences_corrected.json",
+        project_dir / "exports" / "transcript_corrected.txt",
+        project_dir / "exports" / "transcript_named_corrected.txt",
+        project_dir / "exports" / "subtitle_named_corrected.srt",
+        project_dir / "corrections" / "asr_hotwords.json",
+        project_dir / "corrections" / "applied.json",
+        project_dir / "speakers" / "speaker_matches.json",
+    ]
+    for path in stale_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("stale\n", encoding="utf-8")
+    manifest = load_manifest(project_dir)
+    manifest.asr["summary_model"] = "qwen-test"
+    manifest.speakers["matches"] = "speakers/speaker_matches.json"
+    manifest.speakers["voiceprints"] = {"sample_count": 1}
+    manifest.outputs.update(
+        {
+            "meeting_summary": "exports/meeting_summary.md",
+            "meeting_summary_json": "exports/meeting_summary.json",
+            "corrected_sentences": "asr/sentences_corrected.json",
+            "corrected_transcript": "exports/transcript_corrected.txt",
+            "corrected_named_transcript": "exports/transcript_named_corrected.txt",
+            "corrected_named_subtitle": "exports/subtitle_named_corrected.srt",
+            "asr_hotwords": "corrections/asr_hotwords.json",
+            "vocabulary_corrections": "corrections/applied.json",
+        }
+    )
+
+    _invalidate_downstream_artifacts(project_paths(project_dir), manifest)
+
+    assert (project_dir / "asr" / "sentences.json").exists()
+    assert (project_dir / "exports" / "transcript.txt").exists()
+    assert not (project_dir / "exports" / "transcript_named.txt").exists()
+    assert not (project_dir / "speakers" / "speaker_map.json").exists()
+    assert all(not path.exists() for path in stale_paths)
+    assert "summary_model" not in manifest.asr
+    assert not {"mapped", "matches", "voiceprints"} & set(manifest.speakers)
+    assert not set(manifest.outputs) & {
+        "meeting_summary",
+        "meeting_summary_json",
+        "named_transcript",
+        "named_subtitle",
+        "corrected_sentences",
+        "corrected_transcript",
+        "corrected_named_transcript",
+        "corrected_named_subtitle",
+        "asr_hotwords",
+        "vocabulary_corrections",
+    }
 
 
 def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(tmp_path: Path) -> None:
@@ -447,7 +508,6 @@ def test_project_list_command_reads_default_projects_dir(
         hash_source=False,
     )
     projects_dir = data_home / "meeting-asr" / "projects"
-    project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
 
     result = runner.invoke(app, ["project", "list"])
 
@@ -455,12 +515,10 @@ def test_project_list_command_reads_default_projects_dir(
     assert f"Projects: {projects_dir.resolve()}" in result.output
     assert "Use Project ID or Directory" in result.output
     assert "No." in result.output
-    assert "Project ID" in result.output
-    assert "Directory" in result.output
+    assert "State" in result.output
     assert "Demo" in result.output
-    assert "created" in result.output
-    assert project_dir.name in result.output
-    assert load_manifest(project_dir).project_id in result.output
+    assert "Created" in result.output
+    assert "transcribe 1" not in result.output
 
 
 def test_project_list_command_prints_json(tmp_path: Path) -> None:
@@ -487,6 +545,12 @@ def test_project_list_command_prints_json(tmp_path: Path) -> None:
     assert payload["projects"][0]["number"] == 1
     assert payload["projects"][0]["title"] == "Demo"
     assert payload["projects"][0]["project_dir"] == str(project_dir.resolve())
+    assert payload["projects"][0]["status"] == "created"
+    assert payload["projects"][0]["workflow"]["state"] == "Created"
+    assert payload["projects"][0]["workflow"]["artifacts"] == []
+    assert payload["projects"][0]["workflow"]["next_command_short"] == (
+        f"transcribe {load_manifest(project_dir).project_id}"
+    )
 
 
 def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:
@@ -511,7 +575,7 @@ def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
     assert "Demo" in result.output
-    assert project_dir.name in result.output
+    assert "Created" in result.output
     assert "not-a-project" not in result.output
 
 
@@ -663,6 +727,9 @@ def test_project_status_command_reads_manifest(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Title: Demo" in result.output
+    assert "State: Created" in result.output
+    assert "Next: transcribe" in result.output
+    assert "Artifacts: -" in result.output
     assert "Source: source/meeting.mp4" in result.output
 
 
@@ -678,6 +745,7 @@ def test_project_status_command_prints_json(tmp_path: Path) -> None:
     assert payload["project"] == str(project_dir.resolve())
     assert payload["project_id"] == manifest.project_id
     assert payload["title"] == "Demo"
+    assert payload["workflow"]["state"] == "Created"
     assert payload["source"] == "source/meeting.mp4"
 
 
