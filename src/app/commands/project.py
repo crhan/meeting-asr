@@ -27,7 +27,7 @@ from app.commands import transcript as transcript_commands
 from app.core.progress import CliProgressReporter, emit_progress
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
-from app.presentation.cli.output import cli_console
+from app.presentation.cli.output import cli_console, should_enable_verbose_logs
 from app.presentation.cli.progress import run_with_progress
 from app.presentation.cli.project_payloads import project_list_payload, project_status_payload
 from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
@@ -178,7 +178,7 @@ def prepare(
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Extract project audio without starting cloud transcription."""
-    configure_logging()
+    configure_logging(verbose=should_enable_verbose_logs())
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     audio_path = run_with_progress(
         lambda reporter: prepare_project_audio(resolved_project_dir, audio_format=audio_format, progress=reporter),
@@ -206,7 +206,7 @@ def transcribe(
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Transcribe a project and write structured artifacts."""
-    configure_logging()
+    configure_logging(verbose=should_enable_verbose_logs())
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     options = _project_transcribe_options(
         speaker_count=speaker_count,
@@ -243,7 +243,7 @@ def summarize(
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Generate a meeting title and summary from a transcribed project."""
-    configure_logging()
+    configure_logging(verbose=should_enable_verbose_logs())
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     summary = run_with_progress(
         lambda reporter: summarize_project(
@@ -296,7 +296,7 @@ def run(
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Create a project, transcribe, summarize, and match speakers automatically."""
-    configure_logging()
+    configure_logging(verbose=should_enable_verbose_logs())
     options = _project_transcribe_options(
         speaker_count=speaker_count,
         language=language,

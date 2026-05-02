@@ -132,6 +132,7 @@ meeting-asr project transcribe
 
 如果终端或日志系统不适合彩色输出，根命令加 `--no-color`；设置 `NO_COLOR` 或 `TERM=dumb`
 时也会自动禁用 Rich 颜色。
+需要看依赖库和内部诊断日志时，根命令加 `--verbose` 或 `-v`；默认只显示 warning 及以上日志。
 
 `project run` 有两类动态 ETA baseline。OSS 上传阶段会按实际上传字节回调刷新进度，并在完成后
 记录一条吞吐样本；下一次会按文件大小估算上传 ETA。DashScope 等待阶段会在远程 ASR 等待结束后

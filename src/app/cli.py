@@ -10,6 +10,7 @@ from typer.completion import completion_init
 
 from app.commands import completion, config, doctor, lexicon, oss, paths, project, voiceprint
 from app.presentation.cli.output import configure_cli_output
+from app.utils import configure_logging
 
 completion_init()
 
@@ -73,9 +74,11 @@ def root(
         help="Show version and exit.",
     ),
     no_color: bool = typer.Option(False, "--no-color", help="Disable colored Rich output."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose diagnostic logs."),
 ) -> None:
     """Configure root command options."""
-    configure_cli_output(no_color=no_color)
+    configure_cli_output(no_color=no_color, verbose=verbose)
+    configure_logging(verbose=verbose)
 
 
 app.command("doctor")(doctor.command)

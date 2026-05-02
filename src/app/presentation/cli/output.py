@@ -7,20 +7,23 @@ import os
 from rich.console import Console
 
 _NO_COLOR_REQUESTED = False
+_VERBOSE_REQUESTED = False
 
 
-def configure_cli_output(*, no_color: bool = False) -> None:
+def configure_cli_output(*, no_color: bool = False, verbose: bool = False) -> None:
     """
     Configure process-wide human output preferences.
 
     Args:
         no_color: Whether the user explicitly disabled colored Rich output.
+        verbose: Whether the user requested verbose diagnostic logs.
 
     Returns:
         None.
     """
-    global _NO_COLOR_REQUESTED
+    global _NO_COLOR_REQUESTED, _VERBOSE_REQUESTED
     _NO_COLOR_REQUESTED = no_color
+    _VERBOSE_REQUESTED = verbose
 
 
 def should_disable_color() -> bool:
@@ -31,6 +34,16 @@ def should_disable_color() -> bool:
         True when root options or terminal environment request plain output.
     """
     return _NO_COLOR_REQUESTED or "NO_COLOR" in os.environ or os.environ.get("TERM", "").lower() == "dumb"
+
+
+def should_enable_verbose_logs() -> bool:
+    """
+    Return whether verbose CLI logging is enabled.
+
+    Returns:
+        True when the root ``--verbose`` flag was passed.
+    """
+    return _VERBOSE_REQUESTED
 
 
 def cli_console(*, stderr: bool = False, width: int | None = None) -> Console:

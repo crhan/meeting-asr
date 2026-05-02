@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from typer.testing import CliRunner
 
 from app.cli import app
-from app.presentation.cli.output import cli_console, configure_cli_output, should_disable_color
+from app.presentation.cli.output import (
+    cli_console,
+    configure_cli_output,
+    should_disable_color,
+    should_enable_verbose_logs,
+)
+from app.utils import configure_logging
 
 runner = CliRunner()
 
@@ -20,8 +28,10 @@ def reset_cli_output() -> None:
         None.
     """
     configure_cli_output(no_color=False)
+    configure_logging(verbose=False)
     yield
     configure_cli_output(no_color=False)
+    configure_logging(verbose=False)
 
 
 def test_cli_output_uses_color_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,3 +80,16 @@ def test_root_no_color_option_is_accepted(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     assert result.exit_code == 0
     assert should_disable_color() is True
+
+
+def test_root_verbose_option_enables_debug_logging(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """The root --verbose option should enable process-wide diagnostic logging."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    result = runner.invoke(app, ["--verbose", "paths", "--json"])
+
+    assert result.exit_code == 0
+    assert should_enable_verbose_logs() is True
+    assert logging.getLogger().getEffectiveLevel() == logging.DEBUG
