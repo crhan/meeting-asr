@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import timedelta
 import re
 import time
 from typing import TypeVar
 
 from rich.console import Console
+from rich.console import RenderableType
 from rich.progress import (
     BarColumn,
     Progress,
     ProgressColumn,
-    SpinnerColumn,
     Task,
-    TaskProgressColumn,
-    TextColumn,
 )
 from rich.table import Column
 from rich.text import Text
@@ -25,6 +24,7 @@ from app.core.progress import CliProgressEvent, CliProgressReporter, emit_progre
 from app.presentation.cli.errors import run_with_cli_errors
 
 T = TypeVar("T")
+WORKFLOW_BAR_WIDTH = 12
 
 
 def run_with_progress(
@@ -72,13 +72,9 @@ def _run_with_rich_progress(
     """
     display_description, detail_label = _split_progress_description(description)
     with Progress(
-        SpinnerColumn(),
         _DescriptionColumn(),
-        BarColumn(bar_width=28),
-        TaskProgressColumn(),
-        TextColumn("[dim]step[/]"),
+        _WorkflowBarColumn(WORKFLOW_BAR_WIDTH),
         _StepElapsedColumn(),
-        TextColumn("[dim]total[/]"),
         _TotalElapsedColumn(),
         console=console,
     ) as progress:
@@ -88,14 +84,129 @@ def _run_with_rich_progress(
             total=total,
             step_label="",
             detail_label=detail_label,
+            row_kind="step",
+            step_state="active",
             step_started_at=now,
             workflow_started_at=now,
         )
+        renderer = _RichProgressRenderer(progress, task_id, now)
 
         def report(event: CliProgressEvent) -> None:
-            _apply_progress_event(progress, task_id, event)
+            renderer.report(event)
 
-        return operation(report)
+        result = operation(report)
+        renderer.finish()
+        return result
+
+
+@dataclass(slots=True)
+class _RichProgressRenderer:
+    """Stateful Rich renderer for single-step and workflow progress."""
+
+    progress: Progress
+    fallback_task_id: int
+    workflow_started_at: float
+    workflow_enabled: bool = False
+    step_total: int | None = None
+    current_step_index: int | None = None
+    total_task_id: int | None = None
+    step_task_ids: dict[int, int] = field(default_factory=dict)
+
+    def report(self, event: CliProgressEvent) -> None:
+        """
+        Apply one workflow progress event.
+
+        Args:
+            event: Progress event emitted by core workflow code.
+
+        Returns:
+            None.
+        """
+        if _is_workflow_event(event):
+            self._apply_workflow_event(event)
+            return
+        if self.workflow_enabled and self.current_step_index is not None:
+            _apply_progress_event(self.progress, self.step_task_ids[self.current_step_index], event)
+            return
+        _apply_progress_event(self.progress, self.fallback_task_id, event)
+
+    def finish(self) -> None:
+        """
+        Mark the current workflow step complete before Rich writes the final frame.
+
+        Returns:
+            None.
+        """
+        if self.workflow_enabled and self.current_step_index is not None:
+            self._finish_step(self.current_step_index)
+            self.current_step_index = None
+
+    def _apply_workflow_event(self, event: CliProgressEvent) -> None:
+        """Apply an event that identifies a workflow step."""
+        self._ensure_workflow(event.step_total or event.step_index or 1)
+        step_index = event.step_index or 1
+        if step_index != self.current_step_index:
+            if self.current_step_index is not None:
+                self._finish_step(self.current_step_index)
+            self.current_step_index = step_index
+            self._start_step(step_index)
+        _apply_progress_event(self.progress, self.step_task_ids[step_index], event)
+
+    def _ensure_workflow(self, step_total: int) -> None:
+        """Create persistent step rows once."""
+        if self.workflow_enabled:
+            return
+        self.workflow_enabled = True
+        self.step_total = max(1, step_total)
+        self.progress.update(self.fallback_task_id, visible=False)
+        for index in range(1, self.step_total + 1):
+            self.step_task_ids[index] = self.progress.add_task(
+                f"Step {index}",
+                total=1,
+                completed=0,
+                step_label=_format_step_label(index, self.step_total),
+                detail_label="",
+                row_kind="step",
+                step_state="pending",
+                step_started_at=None,
+                step_finished_at=None,
+                workflow_started_at=self.workflow_started_at,
+            )
+        self.total_task_id = self.progress.add_task(
+            "Total",
+            total=None,
+            completed=0,
+            step_label="",
+            detail_label="",
+            row_kind="total",
+            step_state="active",
+            step_started_at=None,
+            step_finished_at=None,
+            workflow_started_at=self.workflow_started_at,
+        )
+
+    def _start_step(self, step_index: int) -> None:
+        """Mark one workflow step active."""
+        task_id = self.step_task_ids[step_index]
+        self.progress.update(
+            task_id,
+            step_state="active",
+            step_started_at=time.monotonic(),
+            step_finished_at=None,
+        )
+
+    def _finish_step(self, step_index: int) -> None:
+        """Mark one workflow step complete and freeze its elapsed duration."""
+        task_id = self.step_task_ids[step_index]
+        task = self.progress._tasks[task_id]
+        total = task.total or 1
+        self.progress.update(
+            task_id,
+            total=total,
+            completed=total,
+            step_state="done",
+            step_finished_at=time.monotonic(),
+        )
 
 
 def _apply_progress_event(progress: Progress, task_id, event: CliProgressEvent) -> None:
@@ -187,6 +298,11 @@ class _DescriptionColumn(ProgressColumn):
             Description text for the current task.
         """
         text = Text()
+        state_label = _task_state_label(task)
+        if state_label:
+            label, style = state_label
+            text.append(label, style=style)
+            text.append(" ")
         step_label = str(task.fields.get("step_label") or "")
         if step_label:
             text.append(step_label, style="bold cyan")
@@ -199,6 +315,44 @@ class _DescriptionColumn(ProgressColumn):
         return text
 
 
+class _WorkflowBarColumn(ProgressColumn):
+    """Render progress bars only for active or completed step rows."""
+
+    def __init__(self, width: int) -> None:
+        """
+        Create a workflow bar column.
+
+        Args:
+            width: Bar width in terminal cells.
+        """
+        super().__init__()
+        self._width = width
+        self._bar = BarColumn(bar_width=width)
+
+    def get_table_column(self) -> Column:
+        """
+        Return a fixed-width bar column.
+
+        Returns:
+            Rich table column configuration.
+        """
+        return Column(width=self._width, no_wrap=True)
+
+    def render(self, task: Task) -> RenderableType:
+        """
+        Render a bar for active or completed steps.
+
+        Args:
+            task: Rich progress task.
+
+        Returns:
+            Bar renderable or blank text.
+        """
+        if task.fields.get("row_kind") == "total" or task.fields.get("step_state") == "pending":
+            return Text("")
+        return self._bar.render(task)
+
+
 class _StepElapsedColumn(ProgressColumn):
     """Render elapsed time for the current workflow step."""
 
@@ -209,7 +363,7 @@ class _StepElapsedColumn(ProgressColumn):
         Returns:
             Rich table column configuration.
         """
-        return Column(width=7, no_wrap=True)
+        return Column(width=8, no_wrap=True)
 
     def render(self, task: Task) -> Text:
         """
@@ -221,10 +375,14 @@ class _StepElapsedColumn(ProgressColumn):
         Returns:
             Duration text.
         """
+        if task.fields.get("row_kind") == "total" or task.fields.get("step_state") == "pending":
+            return Text("")
         started_at = task.fields.get("step_started_at")
         if not isinstance(started_at, int | float):
             started_at = task.start_time or time.monotonic()
-        return Text(_format_elapsed_seconds(time.monotonic() - float(started_at)), style="progress.elapsed")
+        finished_at = task.fields.get("step_finished_at")
+        end_at = float(finished_at) if isinstance(finished_at, int | float) else time.monotonic()
+        return Text(_format_elapsed_seconds(end_at - float(started_at)), style="progress.elapsed")
 
 
 class _TotalElapsedColumn(ProgressColumn):
@@ -237,7 +395,7 @@ class _TotalElapsedColumn(ProgressColumn):
         Returns:
             Rich table column configuration.
         """
-        return Column(width=7, no_wrap=True)
+        return Column(width=8, no_wrap=True)
 
     def render(self, task: Task) -> Text:
         """
@@ -249,6 +407,8 @@ class _TotalElapsedColumn(ProgressColumn):
         Returns:
             Duration text.
         """
+        if task.fields.get("row_kind") != "total":
+            return Text("")
         started_at = task.fields.get("workflow_started_at")
         if not isinstance(started_at, int | float):
             started_at = task.start_time or time.monotonic()
@@ -269,6 +429,41 @@ def _format_step_label(step_index: int, step_total: int | None) -> str:
     if step_total is None:
         return f"[{step_index}]"
     return f"[{step_index}/{step_total}]"
+
+
+def _task_state_label(task: Task) -> tuple[str, str] | None:
+    """
+    Return the compact state label embedded in the description column.
+
+    Args:
+        task: Rich progress task.
+
+    Returns:
+        ``(label, style)`` or None.
+    """
+    if task.fields.get("row_kind") == "total":
+        return ("T", "bold cyan")
+    state = str(task.fields.get("step_state") or "")
+    if state == "done":
+        return ("ok", "green")
+    if state == "pending":
+        return (".", "dim")
+    if state == "active":
+        return (">", "bold cyan")
+    return None
+
+
+def _is_workflow_event(event: CliProgressEvent) -> bool:
+    """
+    Return whether an event should switch the renderer into workflow mode.
+
+    Args:
+        event: Progress event.
+
+    Returns:
+        True for numbered multi-step workflow events.
+    """
+    return event.step_index is not None and event.step_total is not None and event.step_total > 1
 
 
 def _format_elapsed_seconds(seconds: float) -> str:

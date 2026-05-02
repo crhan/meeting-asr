@@ -81,11 +81,44 @@ def test_progress_description_split_handles_eta_without_task_id() -> None:
     assert detail_label == "ETA ~8s | medium n=3"
 
 
+def test_workflow_renderer_keeps_step_rows_and_total_row(monkeypatch) -> None:
+    """Multi-step workflows should keep completed steps visible with frozen duration."""
+    now = 0.0
+    monkeypatch.setattr(cli_ui.time, "monotonic", lambda: now)
+    progress = Progress(console=Console(file=io.StringIO()))
+    fallback_id = progress.add_task(
+        "initial",
+        row_kind="step",
+        step_state="active",
+        step_started_at=0.0,
+        workflow_started_at=0.0,
+    )
+    renderer = cli_ui._RichProgressRenderer(progress, fallback_id, 0.0)
+
+    renderer.report(CliProgressEvent("Step one", step_index=1, step_total=3, reset_total=True))
+    now = 8.0
+    renderer.report(CliProgressEvent("Step two", step_index=2, step_total=3, reset_total=True))
+    now = 11.0
+
+    step_one = progress._tasks[renderer.step_task_ids[1]]
+    step_two = progress._tasks[renderer.step_task_ids[2]]
+    step_three = progress._tasks[renderer.step_task_ids[3]]
+    total = progress._tasks[renderer.total_task_id]
+
+    assert not progress._tasks[fallback_id].visible
+    assert step_one.fields["step_state"] == "done"
+    assert step_two.fields["step_state"] == "active"
+    assert step_three.fields["step_state"] == "pending"
+    assert cli_ui._StepElapsedColumn().render(step_one).plain == "0:00:08"
+    assert cli_ui._StepElapsedColumn().render(step_two).plain == "0:00:03"
+    assert cli_ui._TotalElapsedColumn().render(total).plain == "0:00:11"
+
+
 def test_total_elapsed_column_uses_workflow_clock(monkeypatch) -> None:
     """Total elapsed time should keep moving even when the Rich task is finished."""
     monkeypatch.setattr(cli_ui.time, "monotonic", lambda: 100.0)
     progress = Progress(console=Console(file=io.StringIO()))
-    task_id = progress.add_task("done", total=1, completed=1, workflow_started_at=40.0)
+    task_id = progress.add_task("done", total=1, completed=1, workflow_started_at=40.0, row_kind="total")
     task = progress.tasks[0]
 
     progress.update(task_id, completed=1)
