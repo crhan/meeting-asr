@@ -23,3 +23,11 @@
 - Do not build new project identity from creation date or title. That created duplicate projects for the same video and made IDs change across runs.
 - New project IDs are content-based (`p-<sha16>`). `project create` / `project run` should reuse an existing project for the same source video when no explicit `--project-dir` is provided.
 - Existing date/title IDs must keep resolving for backward compatibility; do not rewrite old manifests unless a migration command is added.
+
+## Install And Verification Notes
+
+- Agent-side development and verification must run through `uv run ...` in the current checkout or worktree. Do not use the global `meeting-asr` binary to validate code you just edited.
+- User-facing validation on the main checkout should use the global editable tool installed by `scripts/install-tool.sh`.
+- If working from a temporary worktree, do not repoint the global editable install to that worktree unless the user explicitly asks for it.
+- `scripts/install-tool.sh` defaults to editable mode for local development. `scripts/install-tool.sh --wheel` is only for release or formal user-install simulation.
+- Historical memory entries that mention raw `uv tool install --editable . --force` are stale. Use `scripts/install-tool.sh`; only pass `--force` for executable conflicts.
