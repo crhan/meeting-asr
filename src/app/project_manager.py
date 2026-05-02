@@ -23,6 +23,7 @@ from app.core.asr_wait import (
     record_dashscope_wait,
 )
 from app.config import load_settings
+from app.asr_hotwords import AsrHotwordResolution, resolve_asr_hotwords
 from app.core.progress import CliProgressReporter, emit_progress
 from app.core.project_models import (
     SCHEMA_VERSION,
@@ -376,7 +377,8 @@ def transcribe_project(
         step_total=transcribe_steps,
         reset_total=True,
     )
-    task_response = _submit_project_task(settings, file_url, options)
+    hotwords = _resolve_project_asr_hotwords(settings, options)
+    task_response = _submit_project_task(settings, file_url, options, hotwords)
     task_id = _extract_task_id(task_response)
     emit_progress(progress, f"DashScope task submitted: {task_id}", completed=1, total=1)
     audio_duration_seconds = _audio_duration_seconds(paths.root, manifest, audio_path)
@@ -433,7 +435,7 @@ def transcribe_project(
     )
     _write_project_asr_outputs(paths, raw_result, parsed_result, options.generate_srt)
     emit_progress(progress, "Transcription complete", completed=1, total=1)
-    _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result)
+    _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result, hotwords)
     manifest.status = "transcribed"
     save_manifest(paths.root, manifest)
     return ProjectTranscribeSummary(
@@ -817,7 +819,12 @@ def _oss_metadata(bucket_name: str | None, object_key: str, expires_at: datetime
         "signed_url_expires_at": expires_at.isoformat(timespec="seconds"),
     }
 
-def _submit_project_task(settings, file_url: str, options: ProjectTranscribeOptions):
+def _submit_project_task(
+    settings,
+    file_url: str,
+    options: ProjectTranscribeOptions,
+    hotwords: AsrHotwordResolution,
+):
     """Submit the DashScope project transcription task."""
     return submit_transcription(
         settings=settings,
@@ -825,9 +832,14 @@ def _submit_project_task(settings, file_url: str, options: ProjectTranscribeOpti
         model=options.model,
         language_hints=_parse_languages(options.language),
         speaker_count=options.speaker_count,
+        vocabulary_id=hotwords.vocabulary_id,
         timestamp_alignment_enabled=options.timestamp_alignment,
         disfluency_removal_enabled=options.disfluency_removal,
     )
+
+def _resolve_project_asr_hotwords(settings, options: ProjectTranscribeOptions) -> AsrHotwordResolution:
+    """Resolve ASR hotwords for one project transcription."""
+    return resolve_asr_hotwords(mode=options.asr_hotwords, settings=settings, target_model=options.model)
 
 def _extract_task_id(task_response) -> str:
     """Extract task ID from a DashScope submission response."""
@@ -853,7 +865,7 @@ def _write_project_asr_outputs(
     if generate_srt:
         safe_write_text(paths.exports_dir / "subtitle.srt", build_srt(parsed_result.sentences))
 
-def _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result) -> None:
+def _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result, hotwords) -> None:
     """Record non-secret ASR metadata into the manifest."""
     manifest.asr = {
         "provider": "dashscope",
@@ -864,6 +876,12 @@ def _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_res
         "timestamp_alignment": options.timestamp_alignment,
         "disfluency_removal": options.disfluency_removal,
         "file_url_source": file_url_source,
+        "hotwords": options.asr_hotwords,
+        "vocabulary_id": hotwords.vocabulary_id,
+        "vocabulary_source": hotwords.source,
+        "hotword_count": hotwords.hotword_count,
+        "hotword_hash": hotwords.vocabulary_hash,
+        "hotword_error": hotwords.error,
     }
     manifest.outputs.update(_default_output_paths())
     manifest.speakers["detected_ids"] = parsed_result.detected_speakers

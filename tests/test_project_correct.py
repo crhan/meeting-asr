@@ -50,6 +50,9 @@ def test_project_correct_edit_writes_corrected_outputs_and_learns_context(tmp_pa
         project_dir / "exports" / "transcript_named_corrected.txt"
     ).read_text(encoding="utf-8")
     assert (project_dir / "exports" / "subtitle_named_corrected.srt").exists()
+    assert (project_dir / "corrections" / "asr_hotwords.json").exists()
+    hotwords = json.loads((project_dir / "corrections" / "asr_hotwords.json").read_text(encoding="utf-8"))
+    assert hotwords["dashscope_vocabulary"] == [{"text": "iSee", "weight": 4}]
     assert _fetch_one(lexicon_db, "SELECT canonical FROM terms") == "iSee"
     assert _fetch_one(lexicon_db, "SELECT alias FROM aliases") == "艾赛"
     assert _fetch_one(lexicon_db, "SELECT category FROM terms") == "system"

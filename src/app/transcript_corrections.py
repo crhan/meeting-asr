@@ -11,6 +11,7 @@ from pathlib import Path
 
 from app.config import Settings, load_settings
 from app.correction_editor import open_editor
+from app.correction_hotwords import hotwords_from_understanding, write_hotword_artifact
 from app.correction_llm import LlmCorrectionCandidate, LlmCorrectionSample, propose_vocabulary_corrections
 from app.correction_proposals import load_correction_proposal, write_correction_proposal_files
 from app.correction_types import (
@@ -98,6 +99,7 @@ def accept_correction_proposal(
     source = _load_source_path(paths, proposal.source_path)
     corrected = _apply_changes(source.result, proposal.proposed_changes)
     outputs = _write_corrected_outputs(paths, corrected, speaker_mapping, proposal.proposed_changes)
+    hotwords_path = _write_accept_hotwords(paths, proposal)
     database_path = lexicon_db or default_lexicon_db_path()
     contexts = _lexicon_contexts(proposal.proposed_changes, manifest.project_id, proposal.category, proposal.review_path)
     learned_count = record_lexicon_contexts(contexts, db_path=database_path)
@@ -118,6 +120,7 @@ def accept_correction_proposal(
         corrected_transcript_path=outputs["transcript"],
         corrected_named_transcript_path=outputs["named_transcript"],
         corrected_srt_path=outputs["srt"],
+        hotwords_path=hotwords_path,
         applied_path=outputs["applied"],
         lexicon_db=database_path,
     )
@@ -139,6 +142,12 @@ def _load_source_path(paths: ProjectPaths, source_path: Path) -> CorrectionSourc
     return CorrectionSource(result, resolved, resolved.name == "sentences.json")
 
 
+def _write_accept_hotwords(paths: ProjectPaths, proposal: CorrectionProposal) -> Path:
+    """Write ASR hotwords produced by the accepted correction proposal."""
+    hotwords = hotwords_from_understanding(proposal.understanding, category=proposal.category)
+    return write_hotword_artifact(paths.root / "corrections" / "asr_hotwords.json", hotwords)
+
+
 def _empty_summary(review_path: Path, lexicon_db: Path) -> CorrectionEditSummary:
     """Build a no-change correction summary."""
     return CorrectionEditSummary(
@@ -158,6 +167,7 @@ def _empty_summary(review_path: Path, lexicon_db: Path) -> CorrectionEditSummary
         corrected_transcript_path=None,
         corrected_named_transcript_path=None,
         corrected_srt_path=None,
+        hotwords_path=None,
         applied_path=None,
         lexicon_db=lexicon_db,
     )
@@ -182,6 +192,7 @@ def _proposal_summary(proposal: CorrectionProposal, lexicon_db: Path) -> Correct
         corrected_transcript_path=None,
         corrected_named_transcript_path=None,
         corrected_srt_path=None,
+        hotwords_path=None,
         applied_path=None,
         lexicon_db=lexicon_db,
     )

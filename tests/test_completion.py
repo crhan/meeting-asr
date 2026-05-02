@@ -69,6 +69,7 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
 
     assert "audio" not in root_commands
     assert "voiceprint" in root_commands
+    assert "lexicon" in root_commands
     assert "list" in project_commands
     assert "review" in project_commands
     assert "transcribe" in project_commands
@@ -77,6 +78,7 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
     assert "review" in speaker_commands
     assert "browse" in voiceprint_commands
     assert "--oss-upload" in transcribe_options
+    assert "--asr-hotwords" in transcribe_options
     assert "--audio-format" in transcribe_options
     assert all(not item.startswith("plain,") for item in project_commands)
 
@@ -84,15 +86,18 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
 def test_bash_completion_runtime_includes_value_completions() -> None:
     """Runtime completion should expose finite parameter values."""
     upload_modes = _bash_complete("meeting-asr project transcribe --oss-upload ", 4)
+    hotword_modes = _bash_complete("meeting-asr project transcribe --asr-hotwords ", 4)
     voiceprint_providers = _bash_complete("meeting-asr voiceprint embed --provider ", 4)
     config_keys = _bash_complete("meeting-asr config set dash", 3)
     install_shells = _bash_complete("meeting-asr completion install ", 3)
 
     assert upload_modes == ["auto", "true", "false"]
+    assert hotword_modes == ["auto", "off"]
     assert voiceprint_providers == ["local-speechbrain", "bailian"]
     assert "dashscope.api_key" in config_keys
     assert "dashscope.base_url" in config_keys
     assert "dashscope.summary_model" in config_keys
+    assert "dashscope.asr_vocabulary_id" in config_keys
     assert "zsh" in install_shells
     assert "csh" not in install_shells
 

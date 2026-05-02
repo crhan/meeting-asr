@@ -11,6 +11,7 @@ from app.voiceprint_embedding import (
 )
 
 ASR_MODELS = ("fun-asr",)
+ASR_HOTWORD_MODES = ("auto", "off")
 OSS_UPLOAD_MODES = ("auto", "true", "false")
 VOICEPRINT_MODELS = (LOCAL_SPEECHBRAIN_MODEL, BAILIAN_VOICEPRINT_MODEL)
 
@@ -55,6 +56,19 @@ def complete_model(incomplete: str) -> list[str]:
         Matching model names.
     """
     return _matching(ASR_MODELS, incomplete)
+
+
+def complete_asr_hotwords(incomplete: str) -> list[str]:
+    """
+    Complete ASR hotword mode values.
+
+    Args:
+        incomplete: Current shell token.
+
+    Returns:
+        Matching hotword mode names.
+    """
+    return _matching(ASR_HOTWORD_MODES, incomplete)
 
 
 def complete_oss_upload_mode(incomplete: str) -> list[str]:

@@ -287,6 +287,7 @@ def _echo_output_paths(summary: CorrectionEditSummary) -> None:
     typer.echo(f"  {summary.corrected_sentences_path}")
     typer.echo(f"  {summary.corrected_named_transcript_path}")
     typer.echo(f"  {summary.corrected_srt_path}")
+    typer.echo(f"  {summary.hotwords_path}")
     typer.echo(f"  {summary.applied_path}")
 
 
@@ -312,6 +313,7 @@ def _record_correction_outputs(
         "corrected_transcript": summary.corrected_transcript_path,
         "corrected_named_transcript": summary.corrected_named_transcript_path,
         "corrected_named_subtitle": summary.corrected_srt_path,
+        "asr_hotwords": summary.hotwords_path,
         "vocabulary_corrections": summary.applied_path,
     }.items():
         if path is not None:

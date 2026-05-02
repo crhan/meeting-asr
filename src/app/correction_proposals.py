@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.core.project_models import ProjectManifest, ProjectPaths
+from app.correction_hotwords import dashscope_vocabulary, hotwords_from_understanding
 from app.correction_types import (
     CorrectionChange,
     CorrectionEditOptions,
@@ -211,6 +212,8 @@ def _render_markdown(
         lines.append(f"Model fallback: {model_error}")
     lines.extend(["", "## Understanding"])
     lines.extend(_understanding_lines(understanding))
+    lines.extend(["", "## ASR Hotwords"])
+    lines.extend(_hotword_lines(understanding))
     lines.extend(["", "## Counts", f"- User-edited samples: {len(sample_changes)}"])
     lines.append(f"- Proposed changed sentences: {len(proposed_changes)}")
     lines.extend(["", "## Diff", f"Full diff: `{diff_path}`", ""])
@@ -246,6 +249,7 @@ def _payload(
         "sample_changes": [_change_payload(change) for change in sample_changes],
         "proposed_changes": [_change_payload(change) for change in proposed_changes],
         "understanding": [asdict(item) for item in understanding],
+        "asr_hotwords": dashscope_vocabulary(hotwords_from_understanding(understanding, category=options.category)),
     }
 
 
@@ -280,6 +284,14 @@ def _change_lines(changes: list[CorrectionChange]) -> list[str]:
         lines.extend(["", f"### sentence_id={change.sentence_id} speaker={change.speaker_name}"])
         lines.extend([f"- Before: {change.original_text}", f"- After: {change.corrected_text}"])
     return lines
+
+
+def _hotword_lines(understanding: list[CorrectionUnderstanding]) -> list[str]:
+    """Render ASR hotwords produced by correction understanding."""
+    hotwords = hotwords_from_understanding(understanding, category="unknown")
+    if not hotwords:
+        return ["- No ASR hotwords generated."]
+    return [f"- {item.text} (weight={item.weight})" for item in hotwords]
 
 
 def _change_payload(change: CorrectionChange) -> dict:

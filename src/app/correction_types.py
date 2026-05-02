@@ -107,5 +107,6 @@ class CorrectionEditSummary:
     corrected_transcript_path: Path | None
     corrected_named_transcript_path: Path | None
     corrected_srt_path: Path | None
+    hotwords_path: Path | None
     applied_path: Path | None
     lexicon_db: Path | None

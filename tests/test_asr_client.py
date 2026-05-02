@@ -53,6 +53,32 @@ def test_wait_transcription_fails_on_terminal_status(monkeypatch: pytest.MonkeyP
         wait_transcription(settings=_settings(), task="task-demo")
 
 
+def test_submit_transcription_passes_vocabulary_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ASR hotword vocabulary ids should be sent with the task request."""
+    captured = {}
+
+    def fake_async_call(**kwargs):
+        captured.update(kwargs)
+        return FakeResponse({"task_id": "task-demo"})
+
+    monkeypatch.setattr(asr_client.Transcription, "async_call", fake_async_call)
+
+    asr_client.submit_transcription(
+        settings=_settings(),
+        file_url="https://example.invalid/audio.wav",
+        model="fun-asr",
+        language_hints=["zh", "en"],
+        speaker_count=2,
+        vocabulary_id="vocab-demo",
+        timestamp_alignment_enabled=True,
+        disfluency_removal_enabled=False,
+    )
+
+    assert captured["vocabulary_id"] == "vocab-demo"
+    assert captured["model"] == "fun-asr"
+    assert captured["file_urls"] == ["https://example.invalid/audio.wav"]
+
+
 def _settings() -> Settings:
     """Build minimal runtime settings for client tests."""
     return Settings(dashscope_api_key="test-key", dashscope_base_url="https://dashscope.aliyuncs.com/api/v1")

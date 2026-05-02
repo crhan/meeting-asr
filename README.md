@@ -65,6 +65,7 @@ scripts/install-tool.sh
 meeting-asr config set dashscope.api_key "<your-dashscope-api-key>"
 meeting-asr config set dashscope.base_url "https://dashscope.aliyuncs.com/api/v1"
 meeting-asr config set dashscope.summary_model "qwen-plus"
+meeting-asr config set dashscope.correction_model "qwen-plus"
 meeting-asr config set oss.access_key_id "<your-oss-access-key-id>"
 meeting-asr config set oss.access_key_secret "<your-oss-access-key-secret>"
 meeting-asr config set oss.bucket_name "<your-bucket>"
@@ -181,6 +182,9 @@ meeting-asr project correct edit PROJECT_NO
 meeting-asr project correct edit PROJECT_NO --editor "code --wait"
 meeting-asr project correct edit PROJECT_NO --model qwen-plus
 meeting-asr project correct accept PROJECT_NO
+meeting-asr lexicon hotwords export
+meeting-asr lexicon hotwords sync --target-model fun-asr
+meeting-asr project transcribe PROJECT_NO --asr-hotwords auto
 meeting-asr config set ui.editor "code --wait"
 meeting-asr config set dashscope.correction_model qwen-plus
 meeting-asr project transcript show PROJECT_NO --kind corrected
@@ -191,9 +195,15 @@ meeting-asr project transcript show PROJECT_NO --kind corrected
 `tmp/corrections/proposal_*.md`、`proposal_*.diff` 和 `proposal_*.json`，先让你确认。
 接受 proposal 后才会写出
 `asr/sentences_corrected.json`、`exports/transcript_named_corrected.txt`、
-`exports/subtitle_named_corrected.srt` 和 `corrections/applied.json`。原始
+`exports/subtitle_named_corrected.srt`、`corrections/asr_hotwords.json` 和
+`corrections/applied.json`。原始
 `asr/sentences.json` 和 `exports/transcript_named.txt` 不会被覆盖。可学习的替换会写入
 `~/.local/share/meeting-asr/lexicon/lexicon.sqlite`，作为跨项目词汇库。
+`asr_hotwords.json` 是这次 correction 理解直接产出的 ASR 热词表；跨项目累计热词可以用
+`meeting-asr lexicon hotwords export` 查看，用 `meeting-asr lexicon hotwords sync --target-model fun-asr`
+同步到 DashScope。`project transcribe/run` 默认 `--asr-hotwords auto`，会复用已配置的
+`dashscope.asr_vocabulary_id`，否则根据跨项目词库同步并传入 `vocabulary_id`；不想使用热词时传
+`--asr-hotwords off`，已有热词 ID 可直接传 `--asr-hotwords vocab-...`。
 如果想复用已经编辑过的 review 文件，可以用 `--review-file tmp/corrections/review_*.md`。
 如果没有传 `--editor`，编辑器优先级是 `ui.editor`、`VISUAL`、`EDITOR`、`code --wait`、`vim`。
 纠错模型优先使用 `--model`，否则使用 `dashscope.correction_model`；模型不可用时会退回本地替换规则，并在 proposal 里标出 fallback 原因。

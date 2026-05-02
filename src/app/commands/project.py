@@ -28,6 +28,7 @@ from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.progress import CliProgressReporter, emit_progress, run_with_progress
 from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
 from app.completion_helpers import (
+    complete_asr_hotwords,
     complete_audio_format,
     complete_model,
     complete_oss_upload_mode,
@@ -190,6 +191,7 @@ def transcribe(
     timestamp_alignment: bool = typer.Option(True, "--timestamp-alignment/--no-timestamp-alignment"),
     disfluency_removal: bool = typer.Option(False, "--disfluency-removal/--no-disfluency-removal"),
     audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
+    asr_hotwords: str = typer.Option("auto", "--asr-hotwords", autocompletion=complete_asr_hotwords),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Transcribe a project and write structured artifacts."""
@@ -205,6 +207,7 @@ def transcribe(
         timestamp_alignment=timestamp_alignment,
         disfluency_removal=disfluency_removal,
         audio_format=audio_format,
+        asr_hotwords=asr_hotwords,
     )
     summary = run_with_progress(
         lambda reporter: transcribe_project(resolved_project_dir, options, progress=reporter),
@@ -267,6 +270,7 @@ def run(
     oss_upload: str = typer.Option("auto", "--oss-upload", autocompletion=complete_oss_upload_mode),
     file_url: Optional[str] = typer.Option(None, "--file-url"),
     audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
+    asr_hotwords: str = typer.Option("auto", "--asr-hotwords", autocompletion=complete_asr_hotwords),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     voiceprint_provider: Optional[str] = typer.Option(
         None,
@@ -296,6 +300,7 @@ def run(
         timestamp_alignment=True,
         disfluency_removal=False,
         audio_format=audio_format,
+        asr_hotwords=asr_hotwords,
     )
     summary = run_with_progress(
         lambda reporter: _run_project_workflow(
@@ -799,6 +804,7 @@ def _project_transcribe_options(
     timestamp_alignment: bool,
     disfluency_removal: bool,
     audio_format: str,
+    asr_hotwords: str,
 ) -> ProjectTranscribeOptions:
     """Build normalized project transcription options."""
     return ProjectTranscribeOptions(
@@ -811,6 +817,7 @@ def _project_transcribe_options(
         timestamp_alignment=timestamp_alignment,
         disfluency_removal=disfluency_removal,
         audio_format=audio_format,
+        asr_hotwords=asr_hotwords,
     )
 
 

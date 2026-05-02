@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import get_data_dir
+from app.correction_hotwords import AsrHotword, hotwords_from_terms
 
 LEXICON_SCHEMA_VERSION = 1
 LEXICON_SCHEMA_SQL = """
@@ -55,6 +56,16 @@ CREATE TABLE IF NOT EXISTS contexts (
 );
 CREATE INDEX IF NOT EXISTS idx_contexts_project ON contexts(project_id);
 CREATE INDEX IF NOT EXISTS idx_contexts_term ON contexts(term_id);
+
+CREATE TABLE IF NOT EXISTS asr_hotword_vocabularies (
+  target_model TEXT NOT NULL,
+  endpoint TEXT NOT NULL,
+  vocabulary_hash TEXT NOT NULL,
+  vocabulary_id TEXT NOT NULL,
+  hotword_count INTEGER NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(target_model, endpoint)
+);
 """
 
 
@@ -72,6 +83,17 @@ class LexiconContext:
     project_id: str
     sentence_id: int | None
     source: str
+
+
+@dataclass(frozen=True, slots=True)
+class AsrVocabularyState:
+    """Cached DashScope vocabulary state for one ASR model."""
+
+    target_model: str
+    endpoint: str
+    vocabulary_hash: str
+    vocabulary_id: str
+    hotword_count: int
 
 
 def default_lexicon_db_path() -> Path:
@@ -108,9 +130,125 @@ def record_lexicon_contexts(contexts: list[LexiconContext], *, db_path: Path | N
     return len(contexts)
 
 
+def list_asr_hotwords(*, db_path: Path | None = None, limit: int = 500) -> list[AsrHotword]:
+    """
+    Build ASR hotwords from accepted cross-project lexicon terms.
+
+    Args:
+        db_path: Optional database path override.
+        limit: Maximum number of terms to export.
+
+    Returns:
+        Hotwords suitable for DashScope ASR biasing.
+    """
+    database_path = db_path or default_lexicon_db_path()
+    if not database_path.exists():
+        return []
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        rows = connection.execute(
+            """
+            SELECT canonical, category
+            FROM terms
+            WHERE status = 'active'
+            ORDER BY updated_at DESC, canonical ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return hotwords_from_terms([(str(row[0]), str(row[1])) for row in rows])
+
+
+def get_asr_vocabulary_state(
+    *,
+    target_model: str,
+    endpoint: str,
+    db_path: Path | None = None,
+) -> AsrVocabularyState | None:
+    """
+    Return cached DashScope vocabulary state for a model and endpoint.
+
+    Args:
+        target_model: DashScope ASR model.
+        endpoint: DashScope base endpoint.
+        db_path: Optional database path override.
+
+    Returns:
+        Cached state, or None.
+    """
+    database_path = db_path or default_lexicon_db_path()
+    if not database_path.exists():
+        return None
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        row = connection.execute(
+            """
+            SELECT target_model, endpoint, vocabulary_hash, vocabulary_id, hotword_count
+            FROM asr_hotword_vocabularies
+            WHERE target_model = ? AND endpoint = ?
+            """,
+            (target_model, endpoint),
+        ).fetchone()
+    return _asr_state_from_row(row)
+
+
+def save_asr_vocabulary_state(
+    state: AsrVocabularyState,
+    *,
+    db_path: Path | None = None,
+) -> None:
+    """
+    Persist cached DashScope vocabulary state.
+
+    Args:
+        state: Vocabulary state to save.
+        db_path: Optional database path override.
+
+    Returns:
+        None.
+    """
+    database_path = db_path or default_lexicon_db_path()
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        connection.execute(
+            """
+            INSERT INTO asr_hotword_vocabularies(
+              target_model, endpoint, vocabulary_hash, vocabulary_id, hotword_count
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(target_model, endpoint) DO UPDATE SET
+              vocabulary_hash = excluded.vocabulary_hash,
+              vocabulary_id = excluded.vocabulary_id,
+              hotword_count = excluded.hotword_count,
+              updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                state.target_model,
+                state.endpoint,
+                state.vocabulary_hash,
+                state.vocabulary_id,
+                state.hotword_count,
+            ),
+        )
+
+
 def _ensure_schema(connection: sqlite3.Connection) -> None:
     """Create the lexicon schema if needed."""
     connection.executescript(LEXICON_SCHEMA_SQL)
+
+
+def _asr_state_from_row(row) -> AsrVocabularyState | None:
+    """Build a vocabulary state from one SQLite row."""
+    if row is None:
+        return None
+    return AsrVocabularyState(
+        target_model=str(row[0]),
+        endpoint=str(row[1]),
+        vocabulary_hash=str(row[2]),
+        vocabulary_id=str(row[3]),
+        hotword_count=int(row[4]),
+    )
 
 
 def _upsert_term(connection: sqlite3.Connection, canonical: str, category: str) -> int:

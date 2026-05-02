@@ -138,6 +138,7 @@ class ProjectTranscribeOptions:
     timestamp_alignment: bool
     disfluency_removal: bool
     audio_format: str
+    asr_hotwords: str | None = "auto"
 
 
 @dataclass(slots=True)

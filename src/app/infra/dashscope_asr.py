@@ -36,6 +36,7 @@ def submit_transcription(
     model: str,
     language_hints: list[str],
     speaker_count: int | None,
+    vocabulary_id: str | None,
     timestamp_alignment_enabled: bool,
     disfluency_removal_enabled: bool,
 ) -> Any:
@@ -48,6 +49,7 @@ def submit_transcription(
         model: DashScope ASR model.
         language_hints: Language hints.
         speaker_count: Optional diarization hint.
+        vocabulary_id: Optional DashScope custom vocabulary ID.
         timestamp_alignment_enabled: Enable timestamp alignment.
         disfluency_removal_enabled: Remove disfluencies.
 
@@ -66,6 +68,8 @@ def submit_transcription(
         kwargs["language_hints"] = language_hints
     if speaker_count is not None:
         kwargs["speaker_count"] = speaker_count
+    if vocabulary_id:
+        kwargs["vocabulary_id"] = vocabulary_id
     def _submit() -> Any:
         response = Transcription.async_call(**kwargs)
         _raise_for_task_error(response, stage="submit")

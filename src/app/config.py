@@ -35,6 +35,7 @@ class Settings:
     dashscope_base_url: str
     dashscope_summary_model: str = DEFAULT_DASHSCOPE_SUMMARY_MODEL
     dashscope_correction_model: str = DEFAULT_DASHSCOPE_CORRECTION_MODEL
+    dashscope_asr_vocabulary_id: str | None = None
     oss_access_key_id: str | None = None
     oss_access_key_secret: str | None = None
     oss_bucket_name: str | None = None
@@ -61,6 +62,7 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "DASHSCOPE_CORRECTION_MODEL",
         default=DEFAULT_DASHSCOPE_CORRECTION_MODEL,
     ),
+    ConfigKey("dashscope.asr_vocabulary_id", "dashscope_asr_vocabulary_id", "DASHSCOPE_ASR_VOCABULARY_ID"),
     ConfigKey("oss.access_key_id", "oss_access_key_id", "OSS_ACCESS_KEY_ID", secret=True),
     ConfigKey("oss.access_key_secret", "oss_access_key_secret", "OSS_ACCESS_KEY_SECRET", secret=True),
     ConfigKey("oss.bucket_name", "oss_bucket_name", "OSS_BUCKET_NAME"),
@@ -238,6 +240,7 @@ def load_settings(*, require_oss: bool = False, require_dashscope: bool = True) 
         dashscope_correction_model=(
             _read_value(values, "dashscope.correction_model", required=False) or DEFAULT_DASHSCOPE_CORRECTION_MODEL
         ),
+        dashscope_asr_vocabulary_id=_read_value(values, "dashscope.asr_vocabulary_id", required=False),
         oss_access_key_id=_read_value(values, "oss.access_key_id", required=require_oss),
         oss_access_key_secret=_read_value(values, "oss.access_key_secret", required=require_oss),
         oss_bucket_name=_read_value(values, "oss.bucket_name", required=require_oss),
