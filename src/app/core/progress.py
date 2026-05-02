@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 
@@ -17,6 +17,7 @@ class CliProgressEvent:
     step_index: int | None = None
     step_total: int | None = None
     reset_total: bool = False
+    step_descriptions: tuple[str, ...] = ()
 
 
 CliProgressReporter = Callable[[CliProgressEvent], None]
@@ -32,6 +33,7 @@ def emit_progress(
     step_index: int | None = None,
     step_total: int | None = None,
     reset_total: bool = False,
+    step_descriptions: Sequence[str] | None = None,
 ) -> None:
     """
     Emit one progress event when a reporter is available.
@@ -45,10 +47,22 @@ def emit_progress(
         step_index: Optional 1-based workflow step number.
         step_total: Optional total workflow step count.
         reset_total: Reset the current progress bar before applying this event.
+        step_descriptions: Optional full workflow step plan.
 
     Returns:
         None.
     """
     if reporter is None:
         return
-    reporter(CliProgressEvent(description, total, completed, advance, step_index, step_total, reset_total))
+    reporter(
+        CliProgressEvent(
+            description=description,
+            total=total,
+            completed=completed,
+            advance=advance,
+            step_index=step_index,
+            step_total=step_total,
+            reset_total=reset_total,
+            step_descriptions=tuple(step_descriptions or ()),
+        )
+    )

@@ -95,7 +95,15 @@ def test_workflow_renderer_keeps_step_rows_and_total_row(monkeypatch) -> None:
     )
     renderer = cli_ui._RichProgressRenderer(progress, fallback_id, 0.0)
 
-    renderer.report(CliProgressEvent("Step one", step_index=1, step_total=3, reset_total=True))
+    renderer.report(
+        CliProgressEvent(
+            "Step one",
+            step_index=1,
+            step_total=3,
+            reset_total=True,
+            step_descriptions=("Plan one", "Plan two", "Plan three"),
+        )
+    )
     now = 8.0
     renderer.report(CliProgressEvent("Step two", step_index=2, step_total=3, reset_total=True))
     now = 11.0
@@ -109,6 +117,7 @@ def test_workflow_renderer_keeps_step_rows_and_total_row(monkeypatch) -> None:
     assert step_one.fields["step_state"] == "done"
     assert step_two.fields["step_state"] == "active"
     assert step_three.fields["step_state"] == "pending"
+    assert step_three.description == "Plan three"
     assert cli_ui._StepElapsedColumn().render(step_one).plain == "0:00:08"
     assert cli_ui._StepElapsedColumn().render(step_two).plain == "0:00:03"
     assert cli_ui._TotalElapsedColumn().render(total).plain == "0:00:11"

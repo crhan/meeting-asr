@@ -143,7 +143,7 @@ class _RichProgressRenderer:
 
     def _apply_workflow_event(self, event: CliProgressEvent) -> None:
         """Apply an event that identifies a workflow step."""
-        self._ensure_workflow(event.step_total or event.step_index or 1)
+        self._ensure_workflow(event.step_total or event.step_index or 1, event.step_descriptions)
         step_index = event.step_index or 1
         if step_index != self.current_step_index:
             if self.current_step_index is not None:
@@ -152,16 +152,17 @@ class _RichProgressRenderer:
             self._start_step(step_index)
         _apply_progress_event(self.progress, self.step_task_ids[step_index], event)
 
-    def _ensure_workflow(self, step_total: int) -> None:
+    def _ensure_workflow(self, step_total: int, step_descriptions: tuple[str, ...]) -> None:
         """Create persistent step rows once."""
         if self.workflow_enabled:
+            self._apply_workflow_plan(step_descriptions)
             return
         self.workflow_enabled = True
         self.step_total = max(1, step_total)
         self.progress.update(self.fallback_task_id, visible=False)
         for index in range(1, self.step_total + 1):
             self.step_task_ids[index] = self.progress.add_task(
-                f"Step {index}",
+                _planned_step_description(index, step_descriptions),
                 total=1,
                 completed=0,
                 step_label=_format_step_label(index, self.step_total),
@@ -184,6 +185,18 @@ class _RichProgressRenderer:
             step_finished_at=None,
             workflow_started_at=self.workflow_started_at,
         )
+
+    def _apply_workflow_plan(self, step_descriptions: tuple[str, ...]) -> None:
+        """Fill placeholder descriptions when a workflow plan arrives late."""
+        if not step_descriptions:
+            return
+        for index, description in enumerate(step_descriptions, start=1):
+            task_id = self.step_task_ids.get(index)
+            if task_id is None:
+                continue
+            task = self.progress._tasks[task_id]
+            if task.description == f"Step {index}":
+                self.progress.update(task_id, description=description)
 
     def _start_step(self, step_index: int) -> None:
         """Mark one workflow step active."""
@@ -429,6 +442,24 @@ def _format_step_label(step_index: int, step_total: int | None) -> str:
     if step_total is None:
         return f"[{step_index}]"
     return f"[{step_index}/{step_total}]"
+
+
+def _planned_step_description(step_index: int, step_descriptions: tuple[str, ...]) -> str:
+    """
+    Return a planned step description, falling back to a numbered placeholder.
+
+    Args:
+        step_index: 1-based step number.
+        step_descriptions: Full workflow step plan.
+
+    Returns:
+        Description for the row.
+    """
+    if 1 <= step_index <= len(step_descriptions):
+        description = step_descriptions[step_index - 1].strip()
+        if description:
+            return description
+    return f"Step {step_index}"
 
 
 def _task_state_label(task: Task) -> tuple[str, str] | None:

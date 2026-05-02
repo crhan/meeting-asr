@@ -422,7 +422,15 @@ def _run_project_workflow(
         Project run summary.
     """
     step_total = 10 if summarize else 9
-    emit_progress(progress, "Creating or reusing project", step_index=1, step_total=step_total, reset_total=True)
+    step_descriptions = _project_run_step_descriptions(summarize)
+    emit_progress(
+        progress,
+        "Creating or reusing project",
+        step_index=1,
+        step_total=step_total,
+        reset_total=True,
+        step_descriptions=step_descriptions,
+    )
     project = create_or_reuse_project(
         input_path,
         title=title,
@@ -475,6 +483,37 @@ def _run_project_workflow(
         apply_project_speakers(project.project_dir, applied_mapping)
     emit_progress(progress, "Project run complete", completed=1, total=1)
     return ProjectRunSummary(project, transcription, meeting_summary, matches, applied_mapping)
+
+
+def _project_run_step_descriptions(summarize: bool) -> tuple[str, ...]:
+    """
+    Return the planned step names for ``project run``.
+
+    Args:
+        summarize: Whether the summary step is enabled.
+
+    Returns:
+        Ordered step descriptions.
+    """
+    transcription_steps = (
+        "Creating or reusing project",
+        "Preparing audio",
+        "Resolving audio URL",
+        "Submitting DashScope task",
+        "Waiting for DashScope ASR",
+        "Downloading transcription result",
+        "Writing transcript artifacts",
+    )
+    if summarize:
+        return transcription_steps + (
+            "Summarizing meeting",
+            "Matching speakers with voiceprints",
+            "Applying accepted speaker matches",
+        )
+    return transcription_steps + (
+        "Matching speakers with voiceprints",
+        "Applying accepted speaker matches",
+    )
 
 
 @app.command("status")
