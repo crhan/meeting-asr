@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.asr_models import SUPPORTED_ASR_MODELS
 from app.config import CONFIG_KEYS
 from app.infra.ffmpeg import SUPPORTED_AUDIO_FORMATS
 from app.voiceprint_embedding import (
@@ -10,7 +11,7 @@ from app.voiceprint_embedding import (
     SUPPORTED_VOICEPRINT_PROVIDERS,
 )
 
-ASR_MODELS = ("fun-asr",)
+ASR_MODELS = SUPPORTED_ASR_MODELS
 ASR_HOTWORD_MODES = ("auto", "off")
 OSS_UPLOAD_MODES = ("auto", "true", "false")
 VOICEPRINT_MODELS = (LOCAL_SPEECHBRAIN_MODEL, BAILIAN_VOICEPRINT_MODEL)
