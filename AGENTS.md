@@ -23,3 +23,9 @@
 - Do not build new project identity from creation date or title. That created duplicate projects for the same video and made IDs change across runs.
 - New project IDs are content-based (`p-<sha16>`). `project create` / `project run` should reuse an existing project for the same source video when no explicit `--project-dir` is provided.
 - Existing date/title IDs must keep resolving for backward compatibility; do not rewrite old manifests unless a migration command is added.
+
+## Install Verification Notes
+
+- The user-facing `meeting-asr` may be a uv tool wrapper under `~/.local/bin`, importing packaged code from `~/.local/share/uv/tools/meeting-asr/.../site-packages`.
+- Before claiming a worktree change is active in the CLI, verify `which meeting-asr`, `app.__file__`, and `meeting_asr-*.dist-info/direct_url.json`.
+- `direct_url.json` without `{"editable": true}` means the global command is not editable, even if it was installed from a local checkout.
