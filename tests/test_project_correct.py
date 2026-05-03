@@ -160,6 +160,32 @@ def test_project_correct_edit_can_use_existing_review_file(tmp_path: Path) -> No
     assert "Sample changes: 1" in result.output
 
 
+def test_project_correct_understands_whole_ascii_term_replacement(tmp_path: Path) -> None:
+    """Partial character diffs inside ASCII terms should learn the whole term."""
+    project_dir = _sample_project_with_text(tmp_path, "我们看一下 ic 系统。")
+    editor_script = _editor_script(tmp_path, "ic", "isee")
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "correct",
+            "edit",
+            str(project_dir),
+            "--editor",
+            f"{sys.executable} {editor_script}",
+            "--no-ai",
+            "--no-proposal-open",
+        ],
+        input="n\n",
+    )
+
+    assert result.exit_code == 0
+    assert "ic -> isee" in result.output
+    assert "C -> see" not in result.output
+    assert "c -> see" not in result.output
+
+
 def test_project_transcript_show_can_select_corrected_output(tmp_path: Path) -> None:
     """Corrected transcript artifacts should be viewable through project transcript show."""
     project_dir = _sample_project(tmp_path)
@@ -258,6 +284,11 @@ def test_project_review_inline_correction_does_not_open_editor(tmp_path: Path) -
 
 def _sample_project(tmp_path: Path) -> Path:
     """Create a project fixture with one mapped speaker and one ASR error."""
+    return _sample_project_with_text(tmp_path, "我们看一下艾赛系统。")
+
+
+def _sample_project_with_text(tmp_path: Path, text: str) -> Path:
+    """Create a project fixture with one mapped speaker and custom transcript text."""
     source = tmp_path / "meeting.mp4"
     source.write_bytes(b"fake video")
     project_dir = tmp_path / "projects" / "demo"
@@ -270,13 +301,13 @@ def _sample_project(tmp_path: Path) -> Path:
         hash_source=False,
     )
     sentences = {
-        "full_text": "我们看一下艾赛系统。",
+        "full_text": text,
         "detected_speakers": [0],
         "sentences": [
             {
                 "begin_time_ms": 1000,
                 "end_time_ms": 3000,
-                "text": "我们看一下艾赛系统。",
+                "text": text,
                 "speaker_id": 0,
                 "sentence_id": 1,
             }

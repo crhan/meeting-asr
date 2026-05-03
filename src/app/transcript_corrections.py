@@ -34,6 +34,7 @@ from app.utils import safe_write_json, safe_write_text
 ANCHOR_RE = re.compile(r"^<!-- meeting-asr: (?P<fields>.+) -->$")
 TIMESTAMP_LINE_RE = re.compile(r"^\[[^\]]+\]\s*(?P<label>.*?):\s*(?P<text>.*)$")
 WORD_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
+ASCII_TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_+.#-]*")
 REVIEW_DIR = "corrections"
 MAX_LLM_BATCH_SIZE = 80
 
@@ -772,6 +773,14 @@ def _infer_replacements(original_text: str, corrected_text: str) -> list[Correct
     for tag, first_start, first_end, second_start, second_end in matcher.get_opcodes():
         if tag != "replace":
             continue
+        first_start, first_end, second_start, second_end = _expand_replacement_span(
+            original_text,
+            corrected_text,
+            first_start,
+            first_end,
+            second_start,
+            second_end,
+        )
         wrong = original_text[first_start:first_end].strip()
         right = corrected_text[second_start:second_end].strip()
         if not _learnable_replacement(wrong, right):
@@ -785,6 +794,52 @@ def _infer_replacements(original_text: str, corrected_text: str) -> list[Correct
             )
         )
     return replacements
+
+
+def _expand_replacement_span(
+    original_text: str,
+    corrected_text: str,
+    original_start: int,
+    original_end: int,
+    corrected_start: int,
+    corrected_end: int,
+) -> tuple[int, int, int, int]:
+    """
+    Expand partial ASCII edits to whole-term boundaries.
+
+    Args:
+        original_text: Text before the user edit.
+        corrected_text: Text after the user edit.
+        original_start: Start offset of the original replacement span.
+        original_end: End offset of the original replacement span.
+        corrected_start: Start offset of the corrected replacement span.
+        corrected_end: End offset of the corrected replacement span.
+
+    Returns:
+        Replacement span offsets after safe term expansion.
+    """
+    original_start, original_end = _expand_ascii_term(original_text, original_start, original_end)
+    corrected_start, corrected_end = _expand_ascii_term(corrected_text, corrected_start, corrected_end)
+    return original_start, original_end, corrected_start, corrected_end
+
+
+def _expand_ascii_term(text: str, start: int, end: int) -> tuple[int, int]:
+    """
+    Expand a character-level edit span to the enclosing ASCII term.
+
+    Args:
+        text: Source text.
+        start: Start offset from SequenceMatcher.
+        end: End offset from SequenceMatcher.
+
+    Returns:
+        Expanded span when the edit intersects an ASCII term, otherwise the input span.
+    """
+    for match in ASCII_TERM_RE.finditer(text):
+        term_start, term_end = match.span()
+        if term_start < end and start < term_end:
+            return term_start, term_end
+    return start, end
 
 
 def _learnable_replacement(wrong_text: str, corrected_text: str) -> bool:
