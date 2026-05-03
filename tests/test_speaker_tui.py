@@ -14,6 +14,7 @@ from app.project_manager import create_project, project_paths
 from app.speaker_tui import (
     CorrectionQueuedScreen,
     FOCUSED_PANE_CLASS,
+    IdentityEditScreen,
     KnownPerson,
     ReviewSpeaker,
     SpeakerMatchCandidate,
@@ -27,6 +28,7 @@ from app.speaker_tui import (
     VoiceprintReviewProgress,
     load_speaker_review_session,
 )
+from app.presentation.tui.speaker_matches import SpeakerMatchPerson
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
     StoredVoiceprintSample,
@@ -38,31 +40,25 @@ from app.voiceprint_store import (
 
 
 def test_speaker_review_tui_starts_in_browse_mode() -> None:
-    """The TUI should not start with a hidden focused name prompt."""
+    """The TUI should open identity editing as a modal."""
 
     async def scenario() -> None:
         async with SpeakerReviewApp(_session()).run_test() as pilot:
-            field = pilot.app.query_one("#name-input", Input)
-            identity = pilot.app.query_one("#identity", Static)
             main = pilot.app.query_one("#main")
             assert len(list(main.children)) == 2
-            assert field.display is False
-            assert field.disabled is True
-            assert identity.display is False
             assert pilot.app.focused is None
 
             await pilot.press("/")
+            await pilot.pause()
 
-            assert field.display is True
-            assert field.disabled is False
-            assert identity.display is True
+            assert isinstance(pilot.app.screen, IdentityEditScreen)
+            field = pilot.app.screen.query_one("#identity-search", Input)
             assert pilot.app.focused is field
 
             await pilot.press("escape")
+            await pilot.pause()
 
-            assert field.display is False
-            assert field.disabled is True
-            assert identity.display is False
+            assert not isinstance(pilot.app.screen, IdentityEditScreen)
             assert pilot.app.focused is None
 
     asyncio.run(scenario())
@@ -252,14 +248,15 @@ def test_transcript_correction_input_uses_readline_cursor_keys() -> None:
     asyncio.run(scenario())
 
 
-def test_name_input_uses_readline_cursor_keys() -> None:
-    """Name edit should share the same non-destructive cursor keys."""
+def test_identity_input_uses_readline_cursor_keys() -> None:
+    """Identity edit should share non-destructive cursor keys."""
     app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"),)))
 
     async def scenario() -> None:
         async with app.run_test() as pilot:
             await pilot.press("/")
-            field = app.query_one("#name-input", Input)
+            await pilot.pause()
+            field = app.screen.query_one("#identity-search", Input)
             field.value = "欧丁"
             field.cursor_position = 0
 
@@ -279,7 +276,8 @@ def test_speaker_review_tui_binds_existing_person_by_name() -> None:
     async def scenario() -> None:
         async with app.run_test() as pilot:
             await pilot.press("/")
-            field = app.query_one("#name-input", Input)
+            await pilot.pause()
+            field = app.screen.query_one("#identity-search", Input)
             field.value = "欧丁"
             await pilot.press("enter")
             await pilot.press("s")
@@ -300,16 +298,17 @@ def test_speaker_review_tui_shows_filterable_people_selector() -> None:
     async def scenario() -> None:
         async with app.run_test() as pilot:
             await pilot.press("/")
-            identity = str(app.query_one("#identity", Static).render())
+            await pilot.pause()
+            identity = str(app.screen.query_one("#identity-list", Static).render())
             assert "People" in identity
             assert "欧丁" in identity
             assert "#42" in identity
 
-            field = app.query_one("#name-input", Input)
+            field = app.screen.query_one("#identity-search", Input)
             field.value = "敬"
             await pilot.pause()
 
-            identity = str(app.query_one("#identity", Static).render())
+            identity = str(app.screen.query_one("#identity-list", Static).render())
             assert "敬悦" in identity
             assert "#7" in identity
 
@@ -325,13 +324,58 @@ def test_speaker_review_tui_shows_filterable_people_selector() -> None:
     )
 
 
-def test_speaker_review_tui_arrow_selects_known_person() -> None:
-    """Up and down in name edit should move the highlighted person list row."""
-    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"), KnownPerson(7, "敬悦"))))
+def test_speaker_review_identity_modal_sorts_people_by_score() -> None:
+    """Identity modal should rank scored voiceprint candidates first."""
+    match = SpeakerMatchCandidate(
+        "墨泪",
+        0.67,
+        False,
+        best_name="墨泪",
+        best_score=0.67,
+        best_person_id=10,
+        candidates=(
+            SpeakerMatchPerson(10, "墨泪", 0.67),
+            SpeakerMatchPerson(34, "丰禾", 0.91),
+            SpeakerMatchPerson(37, "华璟", 0.72),
+        ),
+    )
+    app = SpeakerReviewApp(
+        _session(people=(KnownPerson(10, "墨泪"), KnownPerson(37, "华璟"), KnownPerson(34, "丰禾")))
+    )
+    app.session.speakers[0].match = match
 
     async def scenario() -> None:
         async with app.run_test() as pilot:
             await pilot.press("/")
+            await pilot.pause()
+
+            identity = str(app.screen.query_one("#identity-list", Static).render())
+
+            assert identity.index("丰禾") < identity.index("华璟") < identity.index("墨泪")
+            assert "score 0.910" in identity
+            assert "score 0.720" in identity
+            assert "score 0.670" in identity
+
+    asyncio.run(scenario())
+
+
+def test_speaker_review_tui_arrow_selects_known_person() -> None:
+    """Up and down in name edit should move the highlighted person list row."""
+    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"), KnownPerson(7, "敬悦"))))
+    app.session.speakers[0].match = SpeakerMatchCandidate(
+        "欧丁",
+        0.95,
+        True,
+        best_name="欧丁",
+        best_score=0.95,
+        best_person_id=42,
+        candidates=(SpeakerMatchPerson(42, "欧丁", 0.95), SpeakerMatchPerson(7, "敬悦", 0.80)),
+    )
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("/")
+            await pilot.pause()
             await pilot.press("down")
             await pilot.press("enter")
             await pilot.press("s")
@@ -353,12 +397,13 @@ def test_speaker_review_tui_requires_explicit_new_person(tmp_path: Path) -> None
     async def scenario() -> None:
         async with app.run_test() as pilot:
             await pilot.press("/")
-            field = app.query_one("#name-input", Input)
+            await pilot.pause()
+            field = app.screen.query_one("#identity-search", Input)
             field.value = "新同学"
             await pilot.press("enter")
 
             assert app._speaker().current_name == "Speaker A"
-            assert "Unknown person" in str(app.query_one("#status", Static).render())
+            assert "Unknown person" in str(app.screen.query_one("#identity-status", Static).render())
 
             field.value = "+新同学"
             await pilot.press("enter")

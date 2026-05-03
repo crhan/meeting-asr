@@ -10,7 +10,7 @@ BROWSE_STATUS = (
     "PgUp/PgDn page samples | Space play/stop | / name | e edit text | ? help | s save"
 )
 EDIT_STATUS = (
-    "Edit: type to filter people | Up/Down select | Enter choose | "
+    "Identity modal: type to filter people | Up/Down select | Enter choose | "
     "+Name create | Esc cancel"
 )
 SHORTCUT_HELP = """\
@@ -36,7 +36,7 @@ PageUp/PageDown      Previous/next sample page
 space                Play or stop selected sample
 a                    Accept current voiceprint match
 i                    Ignore this speaker: keep anonymous and skip capture
-/                    Edit or search speaker name
+/                    Open identity modal
 e                    Edit selected transcript text inside this TUI
 c                    Same as e
 s                    Save speaker mapping, then run staged text correction if present
@@ -48,7 +48,7 @@ s                    Save review state and run the full-document correction prop
 Esc                  Cancel sentence edit
 
 [b]Name edit[/b]
-Type                 Filter stable voiceprint people
+Type                 Filter stable voiceprint people in the modal
 Up/Down              Move highlighted person
 Enter                Select highlighted/exact person, or create when input starts with +
 Tab                  Use highlighted suggestion

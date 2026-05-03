@@ -68,7 +68,6 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
 
     BINDINGS = [
         Binding("escape", "cancel_correction", "Cancel", show=False),
-        Binding("q", "cancel_correction", "Cancel"),
     ]
 
     def __init__(

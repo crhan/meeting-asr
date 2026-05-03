@@ -12,7 +12,7 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
-from textual.widgets import Footer, Header, Input, Static
+from textual.widgets import Footer, Header, Static
 
 from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
@@ -20,7 +20,6 @@ from app.project_manager import ProjectManifest, load_manifest, project_paths, r
 from app.speaker_labeling import load_transcript_result
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
-    MATCH_STATUS_NO_CANDIDATE,
     best_candidate_name,
     voiceprint_match_status,
 )
@@ -31,7 +30,7 @@ from app.presentation.tui.speaker_correction import (
     SentenceCorrectionScreen,
 )
 from app.presentation.tui.speaker_help import BROWSE_STATUS, EDIT_STATUS, ShortcutHelpScreen
-from app.presentation.tui.inputs import ReadlineInput
+from app.presentation.tui.speaker_identity import IdentityEditScreen, IdentitySelection
 from app.presentation.tui.speaker_matches import (
     SpeakerMatchCandidate,
     accepted_review_name,
@@ -41,16 +40,13 @@ from app.presentation.tui.speaker_matches import (
 from app.presentation.tui.speaker_people import (
     KnownPerson,
     find_person_by_name,
-    identity_candidates,
     load_existing_person_mapping,
     load_people,
-    render_people_selection_lines,
 )
 from app.presentation.tui.speaker_status import (
     SpeakerReviewOverview,
     VoiceprintReviewProgress,
     match_badge,
-    render_match_lines,
     render_overview_pane,
     render_selected_speaker_line,
     speaker_status,
@@ -59,7 +55,6 @@ from app.presentation.tui.speaker_status import (
 )
 from app.utils import format_ms_timestamp
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
-from app.voiceprint_people import create_voiceprint_person
 from app.voiceprint_store import (
     get_voiceprint_db_path,
     list_embedded_sample_ids,
@@ -117,33 +112,6 @@ class SpeakerReviewDecision:
     correction_edit: SentenceCorrectionEdit | None = None
 
 
-class NameInput(ReadlineInput):
-    """Name entry widget with an explicit cancel key."""
-
-    BINDINGS = [
-        Binding("escape", "cancel_edit", "Cancel edit", show=False),
-        Binding("up", "previous_person", "Previous person", show=False),
-        Binding("down", "next_person", "Next person", show=False),
-        Binding("tab", "accept_person", "Accept person", show=False),
-    ]
-
-    def action_cancel_edit(self) -> None:
-        """Return the parent review app to browse mode."""
-        self.app.action_cancel_edit()
-
-    def action_previous_person(self) -> None:
-        """Move to the previous visible person while editing."""
-        self.app._move_person_selection(-1)
-
-    def action_next_person(self) -> None:
-        """Move to the next visible person while editing."""
-        self.app._move_person_selection(1)
-
-    def action_accept_person(self) -> None:
-        """Accept the highlighted person while editing."""
-        self.app.action_accept_suggestion()
-
-
 class SpeakerReviewApp(App[SpeakerReviewDecision]):
     """Keyboard-first TUI for reviewing project speaker identities."""
 
@@ -177,14 +145,6 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     #samples {
         width: 70%;
     }
-    #identity {
-        border: round $accent;
-        height: 10;
-        padding: 0 1;
-    }
-    #name-input {
-        height: 3;
-    }
     #status {
         height: 2;
         color: $text-muted;
@@ -206,8 +166,6 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("[", "previous_sample_page", "Previous page", show=False),
         Binding("space", "play_sample", "Play/stop sample"),
         Binding("/", "edit_name", "Edit name"),
-        Binding("tab", "accept_suggestion", "Accept suggestion", show=False),
-        Binding("escape", "cancel_edit", "Cancel edit", show=False),
         Binding("a", "accept_match", "Accept match"),
         Binding("i", "ignore_speaker", "Ignore"),
         Binding("e", "edit_sample_text", "Edit text"),
@@ -229,10 +187,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.selected_speaker_index = 0
         self.focused_column = "speakers"
         self.playback_process: subprocess.Popen | None = None
-        self.search_query = ""
         self.known_people = list(session.people)
-        self.name_editing = False
-        self.selected_person_index = 0
         self.correction_edit: SentenceCorrectionEdit | None = None
 
     def compose(self) -> ComposeResult:
@@ -242,12 +197,6 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         with Horizontal(id="main"):
             yield Static(id="speakers", classes="pane")
             yield Static(id="samples", classes="pane")
-        yield Static(id="identity")
-        yield NameInput(
-            placeholder="Type a name or search known people",
-            id="name-input",
-            disabled=True,
-        )
         yield Static(BROWSE_STATUS, id="status")
         yield Footer()
 
@@ -262,16 +211,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def action_down(self) -> None:
         """Move down in the focused column."""
-        if self.name_editing:
-            self._move_person_selection(1)
-            return
         self._move_focused_row(1)
 
     def action_up(self) -> None:
         """Move up in the focused column."""
-        if self.name_editing:
-            self._move_person_selection(-1)
-            return
         self._move_focused_row(-1)
 
     def action_left(self) -> None:
@@ -302,25 +245,20 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._set_status(f"Preview failed: {exc}")
 
     def action_edit_name(self) -> None:
-        """Open the explicit known-person selection flow."""
+        """Open the explicit known-person selection modal."""
         speaker = self._speaker()
-        field = self.query_one("#name-input", Input)
-        initial_value = "" if speaker.current_name == speaker.label else speaker.current_name
-        self.name_editing = True
-        self.search_query = initial_value
-        self.selected_person_index = 0
-        field.display = True
-        field.disabled = False
-        field.value = initial_value
-        field.focus()
         self._set_status(EDIT_STATUS)
-        self.query_one("#identity", Static).display = True
-        self._refresh()
-
-    def action_cancel_edit(self) -> None:
-        """Cancel name editing and return to browse mode."""
-        self._enter_browse_mode(BROWSE_STATUS)
-        self._refresh()
+        self.push_screen(
+            IdentityEditScreen(
+                speaker_label=speaker.label,
+                current_name=speaker.current_name,
+                current_person_id=speaker.person_id,
+                match=speaker.match,
+                people=self.known_people,
+                store_dir=self.session.store_dir,
+            ),
+            self._handle_identity_selection,
+        )
 
     def action_accept_match(self) -> None:
         """Accept the current voiceprint match candidate."""
@@ -335,17 +273,6 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             person_id = None if person is None else person.person_id
         self._set_speaker_identity(speaker, candidate, person_id)
         self._set_status(f"Accepted match for {speaker.label}: {candidate}.")
-        self._refresh()
-
-    def action_accept_suggestion(self) -> None:
-        """Accept the highlighted visible identity suggestion."""
-        person = self._selected_person()
-        if person is None:
-            self._set_status("No matching person suggestion.")
-            return
-        speaker = self._speaker()
-        self._set_speaker_identity(speaker, person.name, person.person_id)
-        self._enter_browse_mode(f"Set {speaker.label} to {person.name}.")
         self._refresh()
 
     def action_ignore_speaker(self) -> None:
@@ -404,31 +331,16 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self._refresh()
         self.push_screen(CorrectionQueuedScreen(edit))
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        """Refresh suggestions while the user types a name."""
-        event.stop()
-        self.search_query = event.value
-        self.selected_person_index = 0
-        self._refresh()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Apply the typed name to the selected speaker."""
-        event.stop()
-        name = event.value.strip()
+    def _handle_identity_selection(self, selection: IdentitySelection | None) -> None:
+        """Apply one identity selected in the modal."""
+        if selection is None:
+            self._set_status("Identity edit canceled.")
+            return
         speaker = self._speaker()
-        if name:
-            person = self._resolve_typed_person(name, self._selected_person())
-            if person is None:
-                self._refresh()
-                return
-            self._set_speaker_identity(speaker, person.name, person.person_id)
-            status = f"Set {speaker.label} to {person.name}."
-        elif self.name_editing and (person := self._selected_person()) is not None:
-            self._set_speaker_identity(speaker, person.name, person.person_id)
-            status = f"Set {speaker.label} to {person.name}."
-        else:
-            status = BROWSE_STATUS
-        self._enter_browse_mode(status)
+        self._remember_known_person(selection)
+        self._set_speaker_identity(speaker, selection.name, selection.person_id)
+        action = "Created" if selection.created else "Set"
+        self._set_status(f"{action} {speaker.label} to {selection.name} #{selection.person_id}.")
         self._refresh()
 
     def _move_focused_row(self, delta: int) -> None:
@@ -440,23 +352,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def _move_column(self, delta: int) -> None:
         """Move focus between the speaker and sample columns."""
-        if self.name_editing:
-            self._set_status("Finish or cancel name edit before switching panes.")
-            return
         index = COLUMNS.index(self.focused_column)
         self.focused_column = COLUMNS[_clamp(index + delta, 0, len(COLUMNS) - 1)]
         self._enter_browse_mode(BROWSE_STATUS)
-        self._refresh()
-
-    def _move_person_selection(self, delta: int) -> None:
-        """Move the highlighted known-person suggestion."""
-        suggestions = self._suggestions(self._speaker())
-        if not suggestions:
-            self.selected_person_index = 0
-            self._refresh()
-            return
-        target = self.selected_person_index + delta
-        self.selected_person_index = _clamp(target, 0, len(suggestions) - 1)
         self._refresh()
 
     def _move_speaker(self, delta: int) -> None:
@@ -488,7 +386,6 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.query_one("#overview", Static).update(self._overview_pane())
         self.query_one("#speakers", Static).update(self._speaker_pane())
         self.query_one("#samples", Static).update(self._sample_pane())
-        self.query_one("#identity", Static).update(self._identity_pane())
 
     def _refresh_focus_styles(self) -> None:
         """Make the focused pane visually obvious."""
@@ -532,31 +429,6 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         lines.append("")
         lines.append(self._sample_page_footer(speaker, page_start))
         return "\n".join(lines)
-
-    def _identity_pane(self) -> str:
-        """Render current identity state and suggestions."""
-        speaker = self._speaker()
-        person = f"person #{speaker.person_id}" if speaker.person_id is not None else "no person id"
-        lines = ["[b]Identity[/b]", f"Current: [green]{escape(speaker.current_name)}[/] ([dim]{person}[/])"]
-        lines.extend(render_match_lines(speaker.match))
-        suggestions = self._suggestions(speaker)
-        lines.extend(
-            render_people_selection_lines(
-                suggestions=suggestions,
-                known_people=self.known_people,
-                selected_index=self.selected_person_index,
-                query=self.search_query,
-            )
-        )
-        return "\n".join(lines)
-
-    def _suggestions(self, speaker: ReviewSpeaker) -> list[KnownPerson]:
-        """Return names relevant to the selected speaker and search query."""
-        names = _identity_candidates(speaker, self.known_people)
-        query = self.search_query.strip().casefold()
-        if not query:
-            return names
-        return [person for person in names if query in person.name.casefold()]
 
     def _play_sample(self, segment: SentenceSegment) -> None:
         """Start playback for the selected segment."""
@@ -619,45 +491,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         speaker.ignored = speaker.current_name == speaker.label
         speaker.person_id = None if speaker.ignored else person_id
 
-    def _resolve_typed_person(self, value: str, selected: KnownPerson | None) -> KnownPerson | None:
-        """Resolve typed input into an existing or explicitly created person."""
-        if value.startswith("+"):
-            return self._create_person_from_input(value[1:].strip())
-        person = find_person_by_name(value, self.known_people)
-        if person is not None:
-            return person
-        if selected is not None:
-            return selected
-        self._set_status(f"Unknown person: {value}. Type +{value} to create a new person.")
-        return None
-
-    def _selected_person(self) -> KnownPerson | None:
-        """Return the highlighted known-person suggestion."""
-        suggestions = self._suggestions(self._speaker())
-        if not suggestions:
-            return None
-        self.selected_person_index = _clamp(self.selected_person_index, 0, len(suggestions) - 1)
-        return suggestions[self.selected_person_index]
-
-    def _create_person_from_input(self, name: str) -> KnownPerson | None:
-        """Create a new person through an explicit TUI flow."""
-        if not name:
-            self._set_status("New person name is empty. Use +Name.")
-            return None
-        duplicate = find_person_by_name(name, self.known_people)
-        if duplicate is not None:
-            self._set_status(f"Person already exists: {duplicate.name} #{duplicate.person_id}.")
-            return None
-        db_path = get_voiceprint_db_path(self.session.store_dir)
-        try:
-            row = create_voiceprint_person(name, db_path)
-        except Exception as exc:  # noqa: BLE001
-            self._set_status(f"Failed to create person: {exc}")
-            return None
-        person = KnownPerson(row.speaker_id, row.name)
-        self.known_people.append(person)
-        self._set_status(f"Created person {person.name} #{person.person_id}.")
-        return person
+    def _remember_known_person(self, selection: IdentitySelection) -> None:
+        """Keep newly-created or match-only people available in later modal opens."""
+        if find_person_by_name(selection.name, self.known_people) is None:
+            self.known_people.append(KnownPerson(selection.person_id, selection.name))
 
     def _speaker(self) -> ReviewSpeaker:
         """Return the selected speaker."""
@@ -711,16 +548,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         return f"[dim]{escaped}[/dim]"
 
     def _enter_browse_mode(self, status: str) -> None:
-        """Disable name input and return keyboard handling to browse mode."""
-        field = self.query_one("#name-input", Input)
-        self.name_editing = False
-        self.selected_person_index = 0
-        field.value = ""
-        field.display = False
-        field.disabled = True
-        field.blur()
-        self.query_one("#identity", Static).display = False
-        self.search_query = ""
+        """Return keyboard handling to browse mode."""
         self.set_focus(None)
         self._set_status(status)
 
@@ -938,21 +766,6 @@ def _review_speaker(
         and (match is None or voiceprint_match_status(match) != MATCH_STATUS_BELOW_THRESHOLD)
     )
     return ReviewSpeaker(speaker_id, label, segments, current_name, match, ignored=ignored, person_id=person_id)
-
-
-def _identity_candidates(speaker: ReviewSpeaker, people: list[KnownPerson]) -> list[KnownPerson]:
-    """Build deduplicated identity suggestions for one speaker."""
-    match_name = None
-    match_person_id = None
-    if speaker.match and voiceprint_match_status(speaker.match) != MATCH_STATUS_NO_CANDIDATE:
-        match_name = best_candidate_name(speaker.match)
-        match_person_id = speaker.match.best_person_id or speaker.match.accepted_person_id or speaker.match.person_id
-    return identity_candidates(
-        current_person_id=speaker.person_id,
-        match_person_id=match_person_id,
-        match_name=match_name,
-        people=people,
-    )
 
 
 def _sample_page_start(selected_index: int, page_size: int) -> int:
