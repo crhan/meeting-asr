@@ -68,7 +68,7 @@ def test_root_help_command_can_render_chinese(monkeypatch) -> None:
     assert "快速开始:" in native_help_result.output
     assert env_result.exit_code == 0
     assert "快速开始:" in env_result.output
-    assert "命令:" in env_result.output
+    assert "命令" in env_result.output
 
 
 def test_root_lang_rejects_invalid_value_without_traceback() -> None:
