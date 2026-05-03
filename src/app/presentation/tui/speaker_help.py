@@ -39,8 +39,13 @@ i                    Ignore this speaker: keep anonymous and skip capture
 /                    Edit or search speaker name
 e                    Edit selected transcript text inside this TUI
 c                    Same as e
-s                    Save speaker mapping and outputs
+s                    Save speaker mapping, then run staged text correction if present
 q                    Quit without saving
+
+[b]Transcript edit[/b]
+Enter                Stage the edited sentence and show feedback
+s                    Save review state and run the full-document correction proposal
+Esc                  Cancel sentence edit
 
 [b]Name edit[/b]
 Type                 Filter stable voiceprint people

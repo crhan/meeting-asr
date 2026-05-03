@@ -130,3 +130,69 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
     def action_cancel_correction(self) -> None:
         """Cancel the correction popup."""
         self.dismiss(None)
+
+
+class CorrectionQueuedScreen(ModalScreen[None]):
+    """Modal feedback after a transcript correction is staged."""
+
+    CSS = """
+    CorrectionQueuedScreen {
+        align: center middle;
+    }
+    #queued-box {
+        width: 82;
+        height: auto;
+        border: thick $success;
+        padding: 1 2;
+        background: $surface;
+    }
+    #queued-title {
+        text-style: bold;
+        color: $success;
+    }
+    #queued-body {
+        margin: 1 0;
+    }
+    """
+
+    BINDINGS = [
+        Binding("enter", "close_feedback", "Continue"),
+        Binding("escape", "close_feedback", "Continue", show=False),
+        Binding("q", "close_feedback", "Continue"),
+        Binding("s", "save_and_run", "Save and run"),
+    ]
+
+    def __init__(self, edit: SentenceCorrectionEdit) -> None:
+        """
+        Create staged-correction feedback.
+
+        Args:
+            edit: Staged sentence correction.
+        """
+        super().__init__()
+        self.edit = edit
+
+    def compose(self) -> ComposeResult:
+        """Build staged correction feedback."""
+        body = "\n".join(
+            [
+                "[b]This edit is staged in the TUI.[/b]",
+                "",
+                f"Before: {self.edit.original_text}",
+                f"After:  {self.edit.corrected_text}",
+                "",
+                "Press [b]s[/b] to save speaker names and run full-document correction.",
+                "Press [b]Enter[/b] to keep reviewing; the sample stays marked as edited.",
+            ]
+        )
+        with Vertical(id="queued-box"):
+            yield Static("Transcript correction staged", id="queued-title")
+            yield Static(body, id="queued-body")
+
+    def action_close_feedback(self) -> None:
+        """Close feedback and continue reviewing."""
+        self.dismiss(None)
+
+    def action_save_and_run(self) -> None:
+        """Save review state so the CLI can run correction processing."""
+        self.app.action_save()

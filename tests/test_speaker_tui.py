@@ -12,6 +12,7 @@ from app import speaker_tui
 from app.models import SentenceSegment
 from app.project_manager import create_project, project_paths
 from app.speaker_tui import (
+    CorrectionQueuedScreen,
     FOCUSED_PANE_CLASS,
     KnownPerson,
     ReviewSpeaker,
@@ -201,9 +202,14 @@ def test_project_review_tui_edits_transcript_text_inline() -> None:
             await pilot.press("enter")
             await pilot.pause()
 
+            assert isinstance(app.screen, CorrectionQueuedScreen)
+            feedback = str(app.screen.query_one("#queued-body", Static).render())
+            assert "staged" in feedback
+            assert "Press s" in feedback
             assert app.return_value is None
             assert app._speaker().segments[0].text == "第一句修正"
-            assert "Press s" in str(app.query_one("#status", Static).render())
+            assert "run full-document correction" in str(app.query_one("#status", Static).render())
+            assert "edited" in app._sample_pane()
 
             await pilot.press("s")
 

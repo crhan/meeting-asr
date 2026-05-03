@@ -25,7 +25,11 @@ from app.speaker_match_status import (
     voiceprint_match_status,
 )
 from app.speaker_review import build_audio_preview_command
-from app.presentation.tui.speaker_correction import SentenceCorrectionEdit, SentenceCorrectionScreen
+from app.presentation.tui.speaker_correction import (
+    CorrectionQueuedScreen,
+    SentenceCorrectionEdit,
+    SentenceCorrectionScreen,
+)
 from app.presentation.tui.speaker_help import BROWSE_STATUS, EDIT_STATUS, ShortcutHelpScreen
 from app.presentation.tui.speaker_matches import (
     SpeakerMatchCandidate,
@@ -395,8 +399,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             return
         self.correction_edit = edit
         self._replace_segment_text(edit)
-        self._set_status("Sentence corrected in TUI. Press s to save names and apply correction.")
+        self._set_status("Text correction staged. Press s to save names and run full-document correction.")
         self._refresh()
+        self.push_screen(CorrectionQueuedScreen(edit))
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Refresh suggestions while the user types a name."""
@@ -518,6 +523,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             time_range = _segment_time_range(segment)
             text = _trim_sample_text(segment.text)
             sample_line = f"{prefix} [cyan]{time_range}[/] {escape(text)}"
+            if self.correction_edit is not None and _same_sentence(segment, self.correction_edit):
+                sample_line += " [yellow]edited[/]"
             if index == speaker.selected_sample_index:
                 sample_line = f"[reverse]{sample_line}[/]"
             lines.append(sample_line)
