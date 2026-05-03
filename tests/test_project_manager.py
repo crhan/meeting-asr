@@ -273,6 +273,13 @@ def test_project_run_reports_review_when_matches_are_incomplete(
     assert "Project automation needs review." in result.output
     assert "Voiceprint matches" in result.output
     assert "1/2 matched | below-threshold 1 | no-candidate 0" in result.output
+    assert "Voiceprint threshold" in result.output
+    assert "auto accept >= 0.750" in result.output
+    assert "Voiceprint candidates" in result.output
+    assert "Speaker B" in result.output
+    assert "below-threshold" in result.output
+    assert "best: 敬悦" in result.output
+    assert "0.120" in result.output
     assert "partial" in result.output
     assert f"meeting-asr project review {manifest.project_id}" in result.output
     assert "This opens the human review workflow for unresolved speakers." in result.output
@@ -283,6 +290,8 @@ def test_project_run_reports_review_when_matches_are_incomplete(
     )
     assert f"meeting-asr voiceprint capture {manifest.project_id}" in result.output
     assert "meeting-asr voiceprint embed" in result.output
+    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    assert mapping == {"0": "欧丁"}
     assert f"meeting-asr project correct edit {manifest.project_id}" in result.output
     assert "Agent prompt:" in result.output
 
@@ -894,6 +903,60 @@ def test_project_show_accepts_project_id(tmp_path: Path) -> None:
     assert manifest.project_id in result.output
 
 
+def test_project_show_explains_voiceprint_candidates(tmp_path: Path) -> None:
+    """Project show should expose low-score voiceprint candidates instead of anonymous names."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    manifest = load_manifest(project_dir)
+    manifest.speakers.update({"detected_ids": [0, 1], "mapped": {"0": "欧丁", "1": "Speaker B"}})
+    save_manifest(project_dir, manifest)
+    (project_dir / "speakers" / "speaker_matches.json").write_text(
+        json.dumps(
+            {
+                "threshold": 0.75,
+                "matches": [
+                    {
+                        "speaker_id": 0,
+                        "label": "Speaker A",
+                        "name": "欧丁",
+                        "score": 0.91,
+                        "accepted": True,
+                        "accepted_name": "欧丁",
+                        "threshold": 0.75,
+                    },
+                    {
+                        "speaker_id": 1,
+                        "label": "Speaker B",
+                        "name": None,
+                        "score": 0.67,
+                        "accepted": False,
+                        "best_name": "敬悦",
+                        "best_score": 0.67,
+                        "accepted_name": None,
+                        "threshold": 0.75,
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["project", "show", str(project_dir)])
+
+    assert result.exit_code == 0
+    assert "Speakers" in result.output
+    assert "2 detected; 欧丁" in result.output
+    assert "2 detected; 欧丁, Speaker B" not in result.output
+    assert "Voiceprint candidates (auto accept >= 0.750)" in result.output
+    assert "Speaker B" in result.output
+    assert "below-threshold" in result.output
+    assert "best: 敬悦" in result.output
+    assert "0.670" in result.output
+    assert "Next" in result.output
+    assert f"meeting-asr project review {manifest.project_id}" in result.output
+
+
 def test_project_status_defaults_to_current_directory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1198,6 +1261,10 @@ def test_project_review_summary_shows_below_threshold_best_candidate(tmp_path: P
         ),
         encoding="utf-8",
     )
+    (project_dir / "speakers" / "speaker_map.json").write_text(
+        json.dumps({"0": "Speaker A"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     result = runner.invoke(
         app,
@@ -1217,6 +1284,7 @@ def test_project_review_summary_shows_below_threshold_best_candidate(tmp_path: P
     assert "Speaker A: below-threshold best=墨泪 score=0.670 threshold=0.750" in result.output
     assert "Speaker A speaker_id=0 status=review name=Speaker A" in result.output
     assert "match=below-threshold:墨泪 score=0.670 threshold=0.750" in result.output
+    assert "status=ignored" not in result.output
     assert "unknown" not in result.output
     assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name" in result.output
     assert result.output.index(f"meeting-asr project review {manifest.project_id}") < result.output.index(

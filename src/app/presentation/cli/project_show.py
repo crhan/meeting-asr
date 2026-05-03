@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,9 @@ from app.asr_pricing import asr_cost_from_dict, format_asr_cost
 from app.core.project_models import ProjectManifest
 from app.core.project_workflow import ProjectWorkflowSummary
 from app.presentation.cli.output import cli_console
+from app.presentation.cli.speaker_match_table import SpeakerMatchRow, render_speaker_match_table, speaker_match_rows
+from app.postprocess import speaker_id_to_label
+from app.speaker_match_status import MATCH_STATUS_MATCHED
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +57,9 @@ def render_project_show(view: ProjectShowView) -> None:
     summary_panel = _summary_panel(view)
     if summary_panel is not None:
         console.print(summary_panel)
+    match_table = _speaker_match_table(view)
+    if match_table is not None:
+        console.print(match_table)
     console.print(_outputs_table(view))
     console.print(_commands_table(view))
 
@@ -125,6 +132,25 @@ def _summary_panel(view: ProjectShowView) -> Panel | None:
     return Panel(Markdown(content), title="[bold]Meeting Summary[/]", border_style="cyan", expand=False)
 
 
+def _speaker_match_table(view: ProjectShowView) -> Table | None:
+    """Build the voiceprint match table when match artifacts exist."""
+    return render_speaker_match_table(_speaker_match_rows(view))
+
+
+def _speaker_match_rows(view: ProjectShowView) -> tuple[SpeakerMatchRow, ...]:
+    """Load voiceprint match rows when match artifacts exist."""
+    path = view.project_dir / "speakers" / "speaker_matches.json"
+    if not path.exists():
+        return ()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    if not isinstance(payload, dict):
+        return ()
+    return speaker_match_rows(payload.get("matches", []), default_threshold=_safe_float(payload.get("threshold")))
+
+
 def _output_rows(view: ProjectShowView) -> list[_OutputRow]:
     """Return project output rows in user-facing order."""
     root = view.project_dir
@@ -162,14 +188,20 @@ def _commands_table(view: ProjectShowView) -> Table:
 def _command_rows(view: ProjectShowView) -> list[tuple[str, str]]:
     """Return common project follow-up commands."""
     quoted_ref = shlex.quote(view.project_ref)
+    next_command = f"meeting-asr project review {quoted_ref}" if _has_unresolved_matches(view) else view.workflow.next_command
     rows = [
-        ("Next", view.workflow.next_command),
+        ("Next", next_command),
         ("Show transcript", f"meeting-asr project transcript show {quoted_ref}"),
         ("List outputs", f"meeting-asr project transcript list {quoted_ref}"),
         ("Review speakers", f"meeting-asr project review {quoted_ref}"),
         ("Preview subtitles", f"meeting-asr project speakers preview {quoted_ref}"),
     ]
     return _unique_command_rows(rows)
+
+
+def _has_unresolved_matches(view: ProjectShowView) -> bool:
+    """Return whether voiceprint results still need human review."""
+    return any(row.status != MATCH_STATUS_MATCHED for row in _speaker_match_rows(view))
 
 
 def _manifest_output(root: Path, manifest: ProjectManifest, label: str, kind: str, keys: tuple[str, ...]) -> _OutputRow:
@@ -282,8 +314,19 @@ def _mapped_speaker_names(mapped: object, active_ids: set[int] | None) -> list[s
             continue
         if active_ids is not None and numeric_id not in active_ids:
             continue
-        names.append(str(name))
+        name_text = str(name).strip()
+        if not name_text or name_text == speaker_id_to_label(numeric_id):
+            continue
+        names.append(name_text)
     return names
+
+
+def _safe_float(value: object) -> float | None:
+    """Return a float value when possible."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _ignored_speaker_count(detected: object, active_ids: set[int] | None) -> int:

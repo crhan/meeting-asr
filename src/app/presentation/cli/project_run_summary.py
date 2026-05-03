@@ -14,6 +14,11 @@ from rich.table import Table
 from app.asr_pricing import format_asr_cost
 from app.core.project_models import ProjectManifest, ProjectMeetingSummary, ProjectTranscribeSummary
 from app.presentation.cli.output import cli_console
+from app.presentation.cli.speaker_match_table import (
+    SpeakerMatchRow,
+    render_speaker_match_table,
+    voiceprint_threshold_text,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +36,7 @@ class ProjectRunSummaryView:
     source_label: str
     meeting_summary: ProjectMeetingSummary | None
     transcription: ProjectTranscribeSummary
+    speaker_matches: tuple[SpeakerMatchRow, ...]
 
 
 def render_project_run_summary(view: ProjectRunSummaryView) -> None:
@@ -46,6 +52,9 @@ def render_project_run_summary(view: ProjectRunSummaryView) -> None:
     console = _summary_console()
     console.print(_status_panel(view))
     console.print(_metrics_table(view))
+    match_table = render_speaker_match_table(view.speaker_matches)
+    if match_table is not None:
+        console.print(match_table)
     console.print(_outputs_table(view))
     console.print(_next_steps_table(view))
     if view.unresolved_matches:
@@ -118,6 +127,7 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         ("Sentences", str(view.transcription.sentence_count)),
         ("ASR cost", format_asr_cost(view.transcription.cost)),
         ("Voiceprint matches", _voiceprint_label(view)),
+        ("Voiceprint threshold", voiceprint_threshold_text(view.speaker_matches)),
         ("ASR task", view.transcription.task_id),
     ]
     if view.meeting_summary is not None:

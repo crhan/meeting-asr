@@ -934,7 +934,11 @@ def _review_speaker(
     label = speaker_id_to_label(speaker_id)
     match = matches.get(speaker_id)
     current_name = mapping.get(speaker_id) or _accepted_match_name(match) or label
-    ignored = speaker_id in mapping and current_name == label
+    ignored = (
+        speaker_id in mapping
+        and current_name == label
+        and (match is None or voiceprint_match_status(match) != MATCH_STATUS_BELOW_THRESHOLD)
+    )
     return ReviewSpeaker(speaker_id, label, segments, current_name, match, ignored=ignored)
 
 

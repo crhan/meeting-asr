@@ -30,6 +30,7 @@ from app.presentation.cli.project_payloads import project_list_payload, project_
 from app.presentation.cli.project_list import render_project_list
 from app.presentation.cli.project_show import ProjectShowView, render_project_show
 from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
+from app.presentation.cli.speaker_match_table import speaker_match_rows
 from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.core.project_workflow import (
     project_outputs_text,
@@ -965,6 +966,7 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
         source_label="new project" if summary.project.created else "reused project",
         meeting_summary=summary.meeting_summary,
         transcription=summary.transcription,
+        speaker_matches=speaker_match_rows(summary.matches.matches, default_threshold=summary.matches.threshold),
     )
 
 

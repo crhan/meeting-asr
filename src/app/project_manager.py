@@ -1053,10 +1053,14 @@ def _render_merged_speaker_text(parsed_result: TranscriptResult) -> str:
     return render_speaker_text(merged_result)
 
 def _merge_speaker_mapping(result: TranscriptResult, mappings: dict[int, str]) -> dict[int, str]:
-    """Merge user mappings with anonymous fallback names."""
-    resolved = {speaker_id: speaker_id_to_label(speaker_id) for speaker_id in result.detected_speakers}
+    """Return explicit mappings for active speakers only."""
     active_speakers = set(result.detected_speakers)
-    resolved.update({speaker_id: name for speaker_id, name in mappings.items() if speaker_id in active_speakers})
+    resolved: dict[int, str] = {}
+    for speaker_id, name in mappings.items():
+        name_text = name.strip()
+        if speaker_id not in active_speakers or name_text == speaker_id_to_label(speaker_id):
+            continue
+        resolved[speaker_id] = name_text
     return resolved
 
 def _parse_mapping_item(item: str) -> tuple[int, str]:
