@@ -22,11 +22,6 @@ _PRICE_USD_PER_SECOND = {
         "fun-asr-2025-08-25": 0.000032,
         "fun-asr-mtl": 0.000032,
         "fun-asr-mtl-2025-08-25": 0.000032,
-        "qwen3-asr-flash-filetrans": 0.000032,
-        "qwen3-asr-flash-filetrans-2025-11-17": 0.000032,
-        "qwen3-asr-flash": 0.000032,
-        "qwen3-asr-flash-2026-02-10": 0.000032,
-        "qwen3-asr-flash-2025-09-08": 0.000032,
         "paraformer-v2": 0.000012,
         "paraformer-8k-v2": 0.000012,
     },
@@ -36,16 +31,8 @@ _PRICE_USD_PER_SECOND = {
         "fun-asr-2025-08-25": 0.000035,
         "fun-asr-mtl": 0.000035,
         "fun-asr-mtl-2025-08-25": 0.000035,
-        "qwen3-asr-flash-filetrans": 0.000035,
-        "qwen3-asr-flash-filetrans-2025-11-17": 0.000035,
-        "qwen3-asr-flash": 0.000035,
-        "qwen3-asr-flash-2026-02-10": 0.000035,
-        "qwen3-asr-flash-2025-09-08": 0.000035,
     },
-    US_REGION: {
-        "qwen3-asr-flash-us": 0.000035,
-        "qwen3-asr-flash-2025-09-08-us": 0.000035,
-    },
+    US_REGION: {},
 }
 
 
