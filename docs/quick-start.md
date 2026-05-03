@@ -87,3 +87,4 @@ meeting-asr voiceprint embed
 - 如果需要 review，跑 `project review PROJECT_ID`。
 - 以后同一个视频再次运行，会复用已有项目，不会因为日期变化生成新 ID。
 - 如果命令失败，先看 `Next step` 提示；配置/环境问题会给出对应的 `meeting-asr doctor ...` 命令。
+- 想一次性做完整集成检查，运行 `meeting-asr doctor --full`；给 agent 用 `meeting-asr doctor --full --json`。

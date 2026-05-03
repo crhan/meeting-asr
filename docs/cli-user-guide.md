@@ -3,14 +3,15 @@
 ## 1. 检查环境
 
 ```bash
-meeting-asr doctor --require-oss
-meeting-asr doctor --require-oss --require-voiceprint-embedding
-meeting-asr doctor --require-voiceprint-embedding
-meeting-asr doctor --oss-upload-probe
+meeting-asr doctor
+meeting-asr doctor --full
+meeting-asr doctor --full --json
 ```
 
-`--require-oss` 只检查配置是否存在；`--oss-upload-probe` 会上传一个极小文本对象，签 URL 读回，再删除。
-`--require-voiceprint-embedding` 会按当前 `voiceprint.embedding_provider` 检查声纹 embedding。
+`doctor` 默认是基础检查：本地环境、基础配置、编辑器、预览播放器和声纹依赖提示。
+它不做网络写入，适合随手跑。`--full` 是完整集成检查：要求 OSS 配置完整，上传一个极小
+文本对象，签 URL 读回，再删除，并且严格检查声纹 embedding。给 agent 或脚本用
+`meeting-asr doctor --full --json`，JSON 字段和值保持英文稳定，不做本地化。
 默认 provider 是 `local-speechbrain`，只检查本地依赖；切到 `bailian` 后才检查阿里云 endpoint 和 OSS。
 `doctor` 遇到 fail/warn 会输出 `Repair prompts`，可以直接交给大模型继续修复。
 
@@ -443,7 +444,7 @@ wheel 重建。
 
 ```bash
 meeting-asr config set voiceprint.embedding_provider "local-speechbrain"
-meeting-asr doctor --require-voiceprint-embedding
+meeting-asr doctor --full
 ```
 
 如果要使用百炼/AnalyticDB 声纹检索 provider，切换 provider 并配置 endpoint：
@@ -451,7 +452,7 @@ meeting-asr doctor --require-voiceprint-embedding
 ```bash
 meeting-asr config set voiceprint.embedding_provider "bailian"
 meeting-asr config set voiceprint.embedding_endpoint "http://<adb-ai-app-host>:8100/audio/embedding"
-meeting-asr doctor --require-oss --require-voiceprint-embedding
+meeting-asr doctor --full
 ```
 
 这里的 endpoint 不是本机要安装的东西，也不是 `tongyi-embedding-vision-*`

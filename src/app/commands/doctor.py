@@ -49,14 +49,30 @@ class CheckResult:
 
 
 def command(
-    require_oss: bool = typer.Option(False, "--require-oss"),
-    check_oss_access: bool = typer.Option(False, "--check-oss-access"),
-    oss_upload_probe: bool = typer.Option(False, "--oss-upload-probe"),
-    require_voiceprint_embedding: bool = typer.Option(False, "--require-voiceprint-embedding"),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Run all doctor checks: OSS upload probe and strict voiceprint embedding.",
+    ),
+    require_oss: bool = typer.Option(False, "--require-oss", help="Require OSS config."),
+    check_oss_access: bool = typer.Option(False, "--check-oss-access", help="Check OSS bucket metadata access."),
+    oss_upload_probe: bool = typer.Option(
+        False,
+        "--oss-upload-probe",
+        help="Upload, signed-GET, and delete a tiny OSS probe object.",
+    ),
+    require_voiceprint_embedding: bool = typer.Option(
+        False,
+        "--require-voiceprint-embedding",
+        help="Fail if the voiceprint embedding provider cannot run.",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Check runtime dependencies and global config."""
-    effective_require_oss = require_oss or check_oss_access or oss_upload_probe
+    effective_oss_upload_probe = oss_upload_probe or full
+    effective_check_oss_access = check_oss_access or effective_oss_upload_probe
+    effective_require_oss = require_oss or effective_check_oss_access
+    effective_require_voiceprint_embedding = require_voiceprint_embedding or full
     checks = [
         _check_python(),
         _check_python_packages(require_oss=effective_require_oss),
@@ -64,14 +80,17 @@ def command(
         _check_preview_player(),
         _check_editor(),
         _check_settings(require_oss=effective_require_oss),
-        _check_voiceprint_embedding_settings(required=require_voiceprint_embedding),
+        _check_voiceprint_embedding_settings(required=effective_require_voiceprint_embedding),
     ]
-    if check_oss_access or oss_upload_probe:
-        checks.append(_check_oss_access(upload_probe=oss_upload_probe))
+    if effective_check_oss_access:
+        checks.append(_check_oss_access(upload_probe=effective_oss_upload_probe))
     if as_json:
         _echo_checks_json(checks)
     else:
-        render_doctor_report(checks)
+        render_doctor_report(
+            checks,
+            full=effective_oss_upload_probe and effective_require_voiceprint_embedding,
+        )
     if any(check.failed for check in checks):
         raise typer.Exit(code=1)
 

@@ -37,6 +37,9 @@ def test_doctor_warns_when_local_voiceprint_dependencies_are_missing(
     assert "missing optional packages: speechbrain" in result.output
     assert "Repair Prompts" in result.output
     assert "uv sync --extra local-voiceprint" in result.output
+    assert "Mode" in result.output
+    assert "Basic" in result.output
+    assert "meeting-asr doctor --full" in result.output
 
 
 def test_doctor_json_is_machine_readable(
@@ -58,6 +61,84 @@ def test_doctor_json_is_machine_readable(
     assert "missing optional packages: speechbrain" in payload["checks"][-1]["detail"]
 
 
+def test_doctor_full_runs_all_strict_checks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Full doctor should enable OSS probe and strict voiceprint checks."""
+    _prepare_doctor(monkeypatch, tmp_path)
+    save_config_values(
+        {
+            "dashscope.api_key": "secret",
+            "oss.access_key_id": "ak",
+            "oss.access_key_secret": "sk",
+            "oss.bucket_name": "bucket",
+            "oss.region": "cn-test",
+            "oss.endpoint": "oss-cn-test.aliyuncs.com",
+        }
+    )
+    monkeypatch.setattr(
+        doctor,
+        "_check_python_packages",
+        lambda *, require_oss: doctor.CheckResult("python-packages", "ok", f"require_oss={require_oss}"),
+    )
+    monkeypatch.setattr(
+        doctor,
+        "_check_voiceprint_embedding_settings",
+        lambda *, required: doctor.CheckResult("voiceprint-embedding", "ok", f"required={required}"),
+    )
+    monkeypatch.setattr(
+        doctor,
+        "_check_oss_access",
+        lambda *, upload_probe: doctor.CheckResult("oss-upload-probe", "ok", f"upload_probe={upload_probe}"),
+    )
+
+    result = runner.invoke(app, ["doctor", "--full", "--json"])
+    payload = json.loads(result.output)
+    details = {check["name"]: check["detail"] for check in payload["checks"]}
+
+    assert result.exit_code == 0
+    assert payload["summary"] == {"ok": 8, "warn": 0, "fail": 0}
+    assert details["python-packages"] == "require_oss=True"
+    assert details["voiceprint-embedding"] == "required=True"
+    assert details["oss-upload-probe"] == "upload_probe=True"
+
+
+def test_doctor_full_human_output_hides_full_hint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Full human doctor output should not suggest rerunning the same full check."""
+    _prepare_doctor(monkeypatch, tmp_path)
+    save_config_values(
+        {
+            "dashscope.api_key": "secret",
+            "oss.access_key_id": "ak",
+            "oss.access_key_secret": "sk",
+            "oss.bucket_name": "bucket",
+            "oss.region": "cn-test",
+            "oss.endpoint": "oss-cn-test.aliyuncs.com",
+        }
+    )
+    monkeypatch.setattr(
+        doctor,
+        "_check_voiceprint_embedding_settings",
+        lambda *, required: doctor.CheckResult("voiceprint-embedding", "ok", f"required={required}"),
+    )
+    monkeypatch.setattr(
+        doctor,
+        "_check_oss_access",
+        lambda *, upload_probe: doctor.CheckResult("oss-upload-probe", "ok", f"upload_probe={upload_probe}"),
+    )
+
+    result = runner.invoke(app, ["doctor", "--full"])
+
+    assert result.exit_code == 0
+    assert "Mode" in result.output
+    assert "Full" in result.output
+    assert "meeting-asr doctor --full" not in result.output
+
+
 def test_doctor_help_does_not_expose_python_docstring_sections() -> None:
     """Typer help should be user-facing, not Python API documentation."""
     result = runner.invoke(app, ["doctor", "--help"])
@@ -65,6 +146,17 @@ def test_doctor_help_does_not_expose_python_docstring_sections() -> None:
     assert result.exit_code == 0
     assert "Args:" not in result.output
     assert "Returns:" not in result.output
+
+
+def test_doctor_localized_help_describes_full_check() -> None:
+    """Localized help should make the one-shot full check discoverable."""
+    result = runner.invoke(app, ["--lang", "zh", "help", "doctor"])
+
+    assert result.exit_code == 0
+    assert "--full" in result.output
+    assert "运行完整检查" in result.output
+    assert "--oss-upload-probe" in result.output
+    assert "上传、签名 GET" in result.output
 
 
 def test_doctor_can_require_local_voiceprint_dependencies(

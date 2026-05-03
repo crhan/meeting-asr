@@ -89,7 +89,7 @@ meeting-asr config set oss.region "<your-region>"
 meeting-asr config set oss.endpoint "<your-oss-endpoint>"
 meeting-asr config set voiceprint.embedding_provider "local-speechbrain"
 meeting-asr config set ui.editor "code --wait"
-meeting-asr doctor --require-voiceprint-embedding
+meeting-asr doctor --full
 ```
 
 声纹 embedding 支持多个 provider：
@@ -105,7 +105,7 @@ meeting-asr config set voiceprint.embedding_provider "bailian"
 ```bash
 meeting-asr config set voiceprint.embedding_provider "bailian"
 meeting-asr config set voiceprint.embedding_endpoint "http://<adb-ai-app-host>:8100/audio/embedding"
-meeting-asr doctor --require-oss --require-voiceprint-embedding
+meeting-asr doctor --full
 ```
 
 `voiceprint.embedding_endpoint` 不是本机要安装的东西，也不是
@@ -308,7 +308,7 @@ meeting-asr voiceprint path
 声纹 embedding 默认走 `local-speechbrain`。生成 embedding 后，可以匹配新项目：
 
 ```bash
-meeting-asr doctor --require-voiceprint-embedding
+meeting-asr doctor --full
 meeting-asr voiceprint embed
 meeting-asr project speakers match
 meeting-asr project speakers inspect

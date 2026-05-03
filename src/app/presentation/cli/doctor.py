@@ -39,6 +39,10 @@ LABELS = {
         "detail": "Detail",
         "repair": "Repair Prompts",
         "prompt": "Prompt",
+        "mode": "Mode",
+        "basic": "Basic",
+        "full": "Full",
+        "full_hint": "For complete integration checks, run `meeting-asr doctor --full`.",
     },
     "zh": {
         "title": "Meeting-ASR 诊断",
@@ -49,6 +53,10 @@ LABELS = {
         "detail": "详情",
         "repair": "修复提示",
         "prompt": "提示词",
+        "mode": "模式",
+        "basic": "基础",
+        "full": "完整",
+        "full_hint": "需要完整集成检查时，运行 `meeting-asr doctor --full`。",
     },
 }
 STATUS_LABELS = {
@@ -75,30 +83,36 @@ PROMPT_REPLACEMENTS_ZH = (
 )
 
 
-def render_doctor_report(checks: list[DoctorCheck]) -> None:
+def render_doctor_report(checks: list[DoctorCheck], *, full: bool = False) -> None:
     """
     Render doctor checks for humans.
 
     Args:
         checks: Diagnostic checks from the doctor command.
+        full: Whether this report includes all integration checks.
 
     Returns:
         None.
     """
     lang = current_cli_language()
     console = cli_console()
-    console.print(_summary_panel(checks, lang))
+    console.print(_summary_panel(checks, lang, full=full))
     console.print(_checks_table(checks, lang))
+    _print_full_hint(full=full, lang=lang, console=console)
     _print_repair_prompts(checks, lang, console)
 
 
-def _summary_panel(checks: list[DoctorCheck], lang: str) -> Panel:
+def _summary_panel(checks: list[DoctorCheck], lang: str, *, full: bool) -> Panel:
     """Build the top-level doctor summary panel."""
     counts = _counts(checks)
     grid = Table.grid(expand=True)
     for status in ("ok", "warn", "fail"):
         grid.add_column(justify="center")
-    grid.add_row(*(_summary_cell(status, counts[status], lang) for status in ("ok", "warn", "fail")))
+    grid.add_column(justify="center")
+    grid.add_row(
+        *(_summary_cell(status, counts[status], lang) for status in ("ok", "warn", "fail")),
+        _mode_cell(full, lang),
+    )
     return Panel(grid, title=LABELS[lang]["title"], subtitle=LABELS[lang]["summary"], border_style="dim")
 
 
@@ -126,6 +140,13 @@ def _print_repair_prompts(checks: list[DoctorCheck], lang: str, console: Console
     console.print(Panel(table, title=LABELS[lang]["repair"], border_style="yellow"))
 
 
+def _print_full_hint(*, full: bool, lang: str, console: Console) -> None:
+    """Print a discoverability hint for the side-effecting full check."""
+    if full:
+        return
+    console.print(Panel(Text(LABELS[lang]["full_hint"]), border_style="blue"))
+
+
 def _counts(checks: list[DoctorCheck]) -> dict[str, int]:
     """Count checks by status."""
     return {
@@ -140,6 +161,13 @@ def _summary_cell(status: str, count: int, lang: str) -> Text:
     text = Text(str(count), style=f"bold {STATUS_STYLES[status]}")
     text.append(f" {STATUS_LABELS[lang][status]}", style=STATUS_STYLES[status])
     return text
+
+
+def _mode_cell(full: bool, lang: str) -> Text:
+    """Build the doctor mode cell."""
+    mode = LABELS[lang]["full"] if full else LABELS[lang]["basic"]
+    separator = "：" if lang == "zh" else ": "
+    return Text(f"{LABELS[lang]['mode']}{separator}{mode}", style="bold blue")
 
 
 def _status_text(status: str, lang: str) -> Text:
