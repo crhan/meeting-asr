@@ -8,6 +8,15 @@ from typing import Protocol
 
 from rich.markup import escape
 
+from app.speaker_match_status import (
+    MATCH_STATUS_BELOW_THRESHOLD,
+    MATCH_STATUS_MATCHED,
+    MATCH_STATUS_NO_CANDIDATE,
+    accepted_match_name,
+    best_candidate_name,
+    best_candidate_score,
+    voiceprint_match_status,
+)
 from app.utils import format_ms_timestamp
 
 
@@ -17,6 +26,10 @@ class SpeakerMatchLike(Protocol):
     name: str
     score: float | None
     accepted: bool
+    best_name: str | None
+    best_score: float | None
+    threshold: float | None
+    status: str
 
 
 class ReviewSpeakerLike(Protocol):
@@ -99,7 +112,7 @@ def speaker_status(speaker: ReviewSpeakerLike) -> str:
         return "ignored"
     if speaker.current_name == speaker.label:
         return "review"
-    if speaker.match and speaker.current_name == speaker.match.name:
+    if speaker.match and speaker.current_name == accepted_match_name(speaker.match):
         return "matched"
     return "confirmed"
 
@@ -129,9 +142,10 @@ def has_conflict(speaker: ReviewSpeakerLike) -> bool:
     """
     if speaker.match is None or not speaker.match.accepted:
         return False
-    if speaker.match.name == "unknown" or speaker.current_name == speaker.label:
+    match_name = accepted_match_name(speaker.match)
+    if not match_name or speaker.current_name == speaker.label:
         return False
-    return speaker.current_name != speaker.match.name
+    return speaker.current_name != match_name
 
 
 def has_mismatch(speaker: ReviewSpeakerLike) -> bool:
@@ -146,9 +160,10 @@ def has_mismatch(speaker: ReviewSpeakerLike) -> bool:
     """
     if speaker.match is None or speaker.match.accepted:
         return False
-    if speaker.match.name == "unknown" or speaker.current_name == speaker.label:
+    match_name = best_candidate_name(speaker.match)
+    if not match_name or speaker.current_name == speaker.label:
         return False
-    return speaker.current_name != speaker.match.name
+    return speaker.current_name != match_name
 
 
 def status_style(status: str) -> str:
@@ -197,15 +212,18 @@ def match_badge(speaker: ReviewSpeakerLike) -> str:
     """
     if speaker.match is None:
         return "match=- ignored" if is_ignored(speaker) else "match=-"
-    score = "-" if speaker.match.score is None else f"{speaker.match.score:.3f}"
-    state = "accepted" if speaker.match.accepted else "review"
+    state = voiceprint_match_status(speaker.match)
+    display_name = accepted_match_name(speaker.match) if state == MATCH_STATUS_MATCHED else best_candidate_name(speaker.match)
+    display = "match=-" if state == MATCH_STATUS_NO_CANDIDATE else f"match={escape(display_name or 'unrecorded')}"
+    score = best_candidate_score(speaker.match)
+    score_text = "-" if score is None else f"{score:.3f}"
     if is_ignored(speaker):
         state = "ignored"
     elif has_conflict(speaker):
         state = "CONFLICT"
     elif has_mismatch(speaker):
         state = "mismatch"
-    return f"match={escape(speaker.match.name)} score={score} {state}"
+    return f"{display} score={score_text} {state}"
 
 
 def render_match_lines(match: SpeakerMatchLike | None) -> list[str]:
@@ -220,9 +238,14 @@ def render_match_lines(match: SpeakerMatchLike | None) -> list[str]:
     """
     if match is None:
         return ["Match: -"]
-    score = "-" if match.score is None else f"{match.score:.3f}"
-    state = "accepted" if match.accepted else "review"
-    return [f"Match: {escape(match.name)}", f"Score: {score} {state}"]
+    state = voiceprint_match_status(match)
+    if state == MATCH_STATUS_NO_CANDIDATE:
+        return ["Match: -", "Status: no-candidate"]
+    name = accepted_match_name(match) if state == MATCH_STATUS_MATCHED else best_candidate_name(match)
+    score = best_candidate_score(match)
+    score_text = "-" if score is None else f"{score:.3f}"
+    prefix = "Match" if state == MATCH_STATUS_MATCHED else "Best candidate"
+    return [f"{prefix}: {escape(name or 'unrecorded')}", f"Score: {score_text} status={state}"]
 
 
 def render_selected_speaker_line(speaker: ReviewSpeakerLike) -> str:
@@ -267,13 +290,14 @@ def _workflow_overview_line(speakers: Sequence[ReviewSpeakerLike], overview: Spe
 def _match_overview_line(speakers: Sequence[ReviewSpeakerLike]) -> str:
     """Render aggregate voiceprint match scores."""
     matches = [speaker.match for speaker in speakers if speaker.match is not None]
-    accepted = sum(1 for match in matches if match.accepted and match.name != "unknown")
-    review = sum(1 for match in matches if not match.accepted and match.name != "unknown")
-    unknown = sum(1 for match in matches if match.name == "unknown")
-    score_summary = _score_summary([match.score for match in matches if match.score is not None])
+    matched = sum(1 for match in matches if voiceprint_match_status(match) == MATCH_STATUS_MATCHED)
+    below = sum(1 for match in matches if voiceprint_match_status(match) == MATCH_STATUS_BELOW_THRESHOLD)
+    no_candidate = sum(1 for match in matches if voiceprint_match_status(match) == MATCH_STATUS_NO_CANDIDATE)
+    scores = [score for match in matches if (score := best_candidate_score(match)) is not None]
+    score_summary = _score_summary(scores)
     return (
-        f"[b]Auto[/b]     accepted {accepted}/{len(speakers)} | review {review} | "
-        f"unknown {unknown} | {score_summary}"
+        f"[b]Auto[/b]     matched {matched}/{len(speakers)} | below-threshold {below} | "
+        f"no-candidate {no_candidate} | {score_summary}"
     )
 
 

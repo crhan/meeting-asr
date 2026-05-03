@@ -42,7 +42,7 @@ def test_speaker_status_distinguishes_conflict_mismatch_and_match() -> None:
     assert speaker_status(mismatch) == "mismatch"
     assert "mismatch" in match_badge(mismatch)
     assert speaker_status(matched) == "matched"
-    assert "accepted" in match_badge(matched)
+    assert "matched" in match_badge(matched)
 
 
 def test_speaker_status_distinguishes_explicit_ignore() -> None:

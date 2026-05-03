@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 from collections import defaultdict
 from dataclasses import dataclass
@@ -19,6 +20,16 @@ from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
 from app.project_manager import ProjectManifest, load_manifest, project_paths, resolve_project_source_path
 from app.speaker_labeling import load_transcript_result
+from app.speaker_match_status import (
+    MATCH_STATUS_BELOW_THRESHOLD,
+    MATCH_STATUS_MATCHED,
+    MATCH_STATUS_NO_CANDIDATE,
+    accepted_match_name,
+    best_candidate_name,
+    best_candidate_score,
+    match_threshold,
+    voiceprint_match_status,
+)
 from app.speaker_review import build_audio_preview_command
 from app.presentation.tui.speaker_status import (
     SpeakerReviewOverview,
@@ -96,6 +107,10 @@ class SpeakerMatchCandidate:
     name: str
     score: float | None
     accepted: bool
+    best_name: str | None = None
+    best_score: float | None = None
+    threshold: float | None = None
+    status: str = ""
 
 
 @dataclass(slots=True)
@@ -341,11 +356,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def action_accept_match(self) -> None:
         """Accept the current voiceprint match candidate."""
         speaker = self._speaker()
-        if speaker.match is None or speaker.match.name == "unknown":
+        candidate = None if speaker.match is None else best_candidate_name(speaker.match)
+        if candidate is None:
             self._set_status("No usable match for this speaker.")
             return
-        self._set_speaker_name(speaker, speaker.match.name)
-        self._set_status(f"Accepted match for {speaker.label}: {speaker.match.name}.")
+        self._set_speaker_name(speaker, candidate)
+        self._set_status(f"Accepted match for {speaker.label}: {candidate}.")
         self._refresh()
 
     def action_accept_suggestion(self) -> None:
@@ -686,6 +702,21 @@ def render_speaker_review_summary(session: SpeakerReviewSession) -> str:
     ]
     for speaker in session.speakers:
         lines.append(_summary_line(speaker))
+    if any(
+        speaker.match is not None and voiceprint_match_status(speaker.match) == MATCH_STATUS_BELOW_THRESHOLD
+        for speaker in session.speakers
+    ):
+        project_ref = shlex.quote(session.overview.project_id)
+        lines.extend(
+            [
+                "",
+                "Below-threshold speakers need manual confirmation:",
+                f"  meeting-asr project speakers inspect {project_ref} --sample-count 5",
+                f"  meeting-asr project speakers apply {project_ref} --map 0=张三",
+                f"  meeting-asr voiceprint capture {project_ref}",
+                "  meeting-asr voiceprint embed",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -814,11 +845,17 @@ def _load_match_candidates(path: Path) -> dict[int, SpeakerMatchCandidate]:
 
 def _match_candidate(item: dict[str, object]) -> SpeakerMatchCandidate:
     """Convert one raw match row into a TUI candidate."""
-    score = item.get("score")
+    status = voiceprint_match_status(item)
+    name = accepted_match_name(item) if status == MATCH_STATUS_MATCHED else best_candidate_name(item)
+    score = best_candidate_score(item)
     return SpeakerMatchCandidate(
-        name=str(item.get("name") or "unknown"),
-        score=float(score) if score is not None else None,
+        name=name or "unknown",
+        score=score,
         accepted=bool(item.get("accepted")),
+        best_name=best_candidate_name(item),
+        best_score=best_candidate_score(item),
+        threshold=match_threshold(item),
+        status=status,
     )
 
 
@@ -856,16 +893,18 @@ def _review_speaker(
 
 def _accepted_match_name(match: SpeakerMatchCandidate | None) -> str | None:
     """Return a usable accepted match name."""
-    if match is None or not match.accepted or match.name == "unknown":
+    if match is None or voiceprint_match_status(match) != MATCH_STATUS_MATCHED:
         return None
-    return match.name
+    return accepted_match_name(match)
 
 
 def _identity_candidates(speaker: ReviewSpeaker, people_names: list[str]) -> list[str]:
     """Build deduplicated identity suggestions for one speaker."""
     candidates = [speaker.current_name]
-    if speaker.match and speaker.match.name != "unknown":
-        candidates.append(speaker.match.name)
+    if speaker.match and voiceprint_match_status(speaker.match) != MATCH_STATUS_NO_CANDIDATE:
+        candidate = best_candidate_name(speaker.match)
+        if candidate:
+            candidates.append(candidate)
     candidates.extend(people_names)
     return _dedupe_names(candidates)
 
@@ -905,7 +944,21 @@ def _clamp(value: int, minimum: int, maximum: int) -> int:
 def _summary_line(speaker: ReviewSpeaker) -> str:
     """Render one plain summary row."""
     status = speaker_status(speaker)
-    match = "-" if speaker.match is None else speaker.match.name
+    if speaker.match is None:
+        match = "-"
+    elif voiceprint_match_status(speaker.match) == MATCH_STATUS_NO_CANDIDATE:
+        match = "no-candidate"
+    elif speaker.match.accepted:
+        match = f"matched:{accepted_match_name(speaker.match) or speaker.match.name}"
+    else:
+        score = best_candidate_score(speaker.match)
+        score_text = "" if score is None else f" score={score:.3f}"
+        threshold = match_threshold(speaker.match)
+        threshold_text = "" if threshold is None else f" threshold={threshold:.3f}"
+        candidate = best_candidate_name(speaker.match)
+        if candidate is None and speaker.match.name != "unknown":
+            candidate = speaker.match.name
+        match = f"below-threshold:{candidate or 'unrecorded'}{score_text}{threshold_text}"
     return (
         f"{speaker.label} speaker_id={speaker.speaker_id} "
         f"status={status} name={speaker.current_name} match={match}"

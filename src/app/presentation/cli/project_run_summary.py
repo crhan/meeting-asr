@@ -25,6 +25,8 @@ class ProjectRunSummaryView:
     manifest: ProjectManifest
     total_matches: int
     accepted_matches: int
+    below_threshold_matches: int
+    no_candidate_matches: int
     unresolved_matches: int
     source_label: str
     meeting_summary: ProjectMeetingSummary | None
@@ -98,7 +100,8 @@ def _next_steps_table(view: ProjectRunSummaryView) -> Table:
 def _agent_prompt_panel(view: ProjectRunSummaryView) -> Panel:
     """Build an agent-friendly remediation prompt."""
     prompt = (
-        f"Open project review for {view.project_ref}, resolve {view.unresolved_matches} unaccepted speaker(s), "
+        f"Open project review for {view.project_ref}, resolve "
+        f"{view.below_threshold_matches} below-threshold and {view.no_candidate_matches} no-candidate speaker(s), "
         "save named outputs, run vocabulary correction, then verify the corrected transcript and subtitle preview."
     )
     return Panel(prompt, title="[bold yellow]Agent prompt:[/]", border_style="yellow", expand=False)
@@ -148,17 +151,28 @@ def _next_step_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
             ("View corrected transcript", f"meeting-asr project transcript show {quoted_ref} --kind corrected"),
             ("Preview subtitles", f"meeting-asr project speakers preview {quoted_ref}"),
         ]
-    return [
-        ("Resolve speakers", f"meeting-asr project review {quoted_ref}"),
-        ("Then correct vocabulary", f"meeting-asr project correct edit {quoted_ref}"),
-        ("Then view corrected transcript", f"meeting-asr project transcript show {quoted_ref} --kind corrected"),
-        ("Then preview subtitles", f"meeting-asr project speakers preview {quoted_ref}"),
+    rows = [
+        ("Review speakers", f"meeting-asr project review {quoted_ref}"),
+        ("Inspect samples", f"meeting-asr project speakers inspect {quoted_ref} --sample-count 5"),
     ]
+    if view.below_threshold_matches:
+        rows.append(("Confirm a candidate", f"meeting-asr project speakers apply {quoted_ref} --map 0=张三"))
+    rows.extend(
+        [
+            ("Capture confirmed voices", f"meeting-asr voiceprint capture {quoted_ref}"),
+            ("Embed voiceprints", "meeting-asr voiceprint embed"),
+            ("Then correct vocabulary", f"meeting-asr project correct edit {quoted_ref}"),
+        ]
+    )
+    return rows
 
 
 def _voiceprint_label(view: ProjectRunSummaryView) -> str:
     """Return a compact voiceprint match label."""
-    return f"{view.accepted_matches}/{view.total_matches} accepted"
+    return (
+        f"{view.accepted_matches}/{view.total_matches} matched | "
+        f"below-threshold {view.below_threshold_matches} | no-candidate {view.no_candidate_matches}"
+    )
 
 
 def _final_output_status(view: ProjectRunSummaryView) -> str:

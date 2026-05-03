@@ -38,12 +38,54 @@ def test_project_speakers_match_writes_suggestions(
     assert result.exit_code == 0
     assert "Provider: local-speechbrain" in result.output
     assert f"Model: {LOCAL_SPEECHBRAIN_MODEL}" in result.output
-    assert "Speaker A -> 欧丁" in result.output
-    assert "Speaker B -> 敬悦" in result.output
+    assert "Speaker A status=matched name=欧丁" in result.output
+    assert "Speaker B status=matched name=敬悦" in result.output
     assert payload["matches"][0]["name"] == "欧丁"
     assert payload["matches"][0]["accepted"] is True
+    assert payload["matches"][0]["accepted_name"] == "欧丁"
+    assert payload["matches"][0]["best_name"] == "欧丁"
+    assert payload["matches"][0]["best_score"] == payload["matches"][0]["score"]
+    assert payload["matches"][0]["threshold"] == 0.7
+    assert payload["matches"][0]["status"] == "matched"
+    assert payload["matches"][0]["candidates"][0]["name"] == "欧丁"
     assert payload["provider"] == "local-speechbrain"
     assert payload["model"] == LOCAL_SPEECHBRAIN_MODEL
+
+
+def test_project_speakers_match_keeps_below_threshold_best_candidate(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Low-score candidates should stay explainable without being auto-applied."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    _patch_audio_embedding(monkeypatch)
+    monkeypatch.setattr(
+        "app.speaker_matching._known_speaker_vectors",
+        lambda store_dir, model: {"墨泪": [0.8, 0.6]},
+    )
+
+    result = runner.invoke(
+        app,
+        ["project", "speakers", "match", str(project_dir), "--store-dir", str(store_dir), "--threshold", "0.9"],
+    )
+
+    payload = json.loads((project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8"))
+    first = payload["matches"][0]
+    assert result.exit_code == 0
+    assert "Speaker A status=below-threshold best=墨泪 score=0.800 threshold=0.900" in result.output
+    assert "Speaker A -> unknown" not in result.output
+    assert "Below-threshold speakers need manual confirmation:" in result.output
+    assert first["name"] is None
+    assert first["accepted_name"] is None
+    assert first["accepted"] is False
+    assert first["best_name"] == "墨泪"
+    assert first["best_score"] == 0.8
+    assert first["score"] == 0.8
+    assert first["threshold"] == 0.9
+    assert first["status"] == "below-threshold"
+    assert first["candidates"] == [{"name": "墨泪", "score": 0.8}]
 
 
 def test_project_speakers_match_can_apply_matches(
@@ -90,11 +132,17 @@ def test_project_speakers_match_allows_empty_voiceprint_library(
 
     payload = json.loads((project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8"))
     assert result.exit_code == 0
-    assert "Speaker A -> unknown  score=0.000  review" in result.output
-    assert "Speaker B -> unknown  score=0.000  review" in result.output
+    assert "Speaker A status=no-candidate threshold=0.750" in result.output
+    assert "Speaker B status=no-candidate threshold=0.750" in result.output
+    assert "below-threshold" not in result.output
     assert payload["matches"][0]["name"] is None
     assert payload["matches"][0]["accepted"] is False
     assert payload["matches"][0]["score"] == 0.0
+    assert payload["matches"][0]["best_name"] is None
+    assert payload["matches"][0]["best_score"] is None
+    assert payload["matches"][0]["accepted_name"] is None
+    assert payload["matches"][0]["threshold"] == 0.75
+    assert payload["matches"][0]["status"] == "no-candidate"
     assert not (project_dir / "tmp" / "voiceprint_match").exists()
 
 

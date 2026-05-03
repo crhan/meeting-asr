@@ -208,7 +208,7 @@ def test_project_run_applies_accepted_voiceprint_matches(
     assert "exports/meeting_summary.md" in result.output
     assert str((project_dir / "exports" / "meeting_summary.md").resolve()) in result.output
     assert "Voiceprint matches" in result.output
-    assert "2/2 accepted" in result.output
+    assert "2/2 matched | below-threshold 0 | no-candidate 0" in result.output
     assert f"meeting-asr project correct edit {manifest.project_id}" in result.output
     assert f"meeting-asr project transcript show {manifest.project_id} --kind corrected" in result.output
     assert "meeting-asr project review" not in result.output
@@ -237,7 +237,17 @@ def test_project_run_reports_review_when_matches_are_incomplete(
             0.75,
             [
                 SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2),
-                SpeakerMatch(1, "Speaker B", None, 0.12, False, 1),
+                SpeakerMatch(
+                    1,
+                    "Speaker B",
+                    None,
+                    0.12,
+                    False,
+                    1,
+                    best_name="敬悦",
+                    best_score=0.12,
+                    threshold=0.75,
+                ),
             ],
         )
 
@@ -260,9 +270,13 @@ def test_project_run_reports_review_when_matches_are_incomplete(
     assert result.exit_code == 0
     assert "Project automation needs review." in result.output
     assert "Voiceprint matches" in result.output
-    assert "1/2 accepted" in result.output
+    assert "1/2 matched | below-threshold 1 | no-candidate 0" in result.output
     assert "partial" in result.output
     assert f"meeting-asr project review {manifest.project_id}" in result.output
+    assert f"meeting-asr project speakers inspect {manifest.project_id} --sample-count 5" in result.output
+    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=张三" in result.output
+    assert f"meeting-asr voiceprint capture {manifest.project_id}" in result.output
+    assert "meeting-asr voiceprint embed" in result.output
     assert f"meeting-asr project correct edit {manifest.project_id}" in result.output
     assert "Agent prompt:" in result.output
 
@@ -993,7 +1007,49 @@ def test_project_speakers_inspect_shows_voiceprint_matches(tmp_path: Path) -> No
 
     assert result.exit_code == 0
     assert "Speaker B (speaker_id=1)" in result.output
-    assert "Voiceprint match: 敬悦 score=0.775 accepted" in result.output
+    assert "Voiceprint match: name=敬悦 score=0.775 threshold=0.750 status=matched" in result.output
+
+
+def test_project_speakers_inspect_shows_below_threshold_candidates(tmp_path: Path) -> None:
+    """Speaker inspect should explain low-score voiceprint candidates."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    manifest = load_manifest(project_dir)
+    (project_dir / "speakers" / "speaker_matches.json").write_text(
+        json.dumps(
+            {
+                "provider": "local-speechbrain",
+                "model": "speechbrain-spkrec-ecapa-voxceleb",
+                "threshold": 0.75,
+                "matches": [
+                    {
+                        "speaker_id": 0,
+                        "label": "Speaker A",
+                        "name": None,
+                        "score": 0.6704,
+                        "accepted": False,
+                        "best_name": "墨泪",
+                        "best_score": 0.6704,
+                        "accepted_name": None,
+                        "threshold": 0.75,
+                        "status": "below-threshold",
+                        "sample_count": 23,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"])
+
+    assert result.exit_code == 0
+    assert "Voiceprint match: best=墨泪 score=0.670 threshold=0.750 status=below-threshold" in result.output
+    assert "unknown" not in result.output
+    assert f"meeting-asr project speakers inspect {manifest.project_id} --sample-count 5" in result.output
+    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=张三" in result.output
+    assert f"meeting-asr voiceprint capture {manifest.project_id}" in result.output
 
 
 def test_project_speakers_inspect_marks_voiceprint_conflicts(tmp_path: Path) -> None:
@@ -1027,13 +1083,21 @@ def test_project_speakers_inspect_marks_voiceprint_conflicts(tmp_path: Path) -> 
 
     assert result.exit_code == 0
     assert "Name: 敬悦" in result.output
-    assert "Voiceprint match: 墨泪 score=0.801 accepted CONFLICT" in result.output
+    assert "Voiceprint match: name=墨泪 score=0.801 threshold=0.750 status=matched CONFLICT" in result.output
 
 
 def test_speaker_match_summary_colors_review_states() -> None:
     """Voiceprint match summaries should use color to separate review states."""
     accepted = project_commands._speaker_match_summary({"name": "敬悦", "score": 0.775052, "accepted": True})
-    review = project_commands._speaker_match_summary({"name": "unknown", "accepted": False})
+    review = project_commands._speaker_match_summary(
+        {
+            "name": None,
+            "best_name": "墨泪",
+            "best_score": 0.6704,
+            "accepted": False,
+            "threshold": 0.75,
+        }
+    )
     conflict = project_commands._speaker_match_summary(
         {"label": "Speaker B", "name": "墨泪", "score": 0.80123, "accepted": True},
         mapped_name="敬悦",
@@ -1041,6 +1105,7 @@ def test_speaker_match_summary_colors_review_states() -> None:
 
     assert "\x1b[32m" in accepted
     assert "\x1b[33m" in review
+    assert "best=墨泪" in review
     assert "\x1b[31m" in conflict
     assert "\x1b[1m" in conflict
     assert "CONFLICT" in conflict
@@ -1084,7 +1149,57 @@ def test_project_speakers_review_summary_shows_tui_queue(tmp_path: Path) -> None
     assert result.exit_code == 0
     assert "Speaker review queue:" in result.output
     assert "Known people: 0" in result.output
-    assert "Speaker B speaker_id=1 status=conflict name=敬悦 match=墨泪" in result.output
+    assert "Speaker B speaker_id=1 status=conflict name=敬悦 match=matched:墨泪" in result.output
+
+
+def test_project_review_summary_shows_below_threshold_best_candidate(tmp_path: Path) -> None:
+    """Project review summary should not collapse low-score candidates to unknown."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    manifest = load_manifest(project_dir)
+    (project_dir / "speakers" / "speaker_matches.json").write_text(
+        json.dumps(
+            {
+                "threshold": 0.75,
+                "matches": [
+                    {
+                        "speaker_id": 0,
+                        "label": "Speaker A",
+                        "name": None,
+                        "score": 0.6704,
+                        "accepted": False,
+                        "best_name": "墨泪",
+                        "best_score": 0.6704,
+                        "accepted_name": None,
+                        "threshold": 0.75,
+                        "status": "below-threshold",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "review",
+            str(project_dir),
+            "--summary",
+            "--store-dir",
+            str(tmp_path / "voiceprints"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Speaker A speaker_id=0 status=review name=Speaker A" in result.output
+    assert "match=below-threshold:墨泪 score=0.670 threshold=0.750" in result.output
+    assert "unknown" not in result.output
+    assert f"meeting-asr project speakers inspect {manifest.project_id} --sample-count 5" in result.output
+    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=张三" in result.output
+    assert f"meeting-asr voiceprint capture {manifest.project_id}" in result.output
 
 
 def test_project_review_summary_accepts_project_id(tmp_path: Path) -> None:

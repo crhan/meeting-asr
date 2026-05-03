@@ -18,10 +18,19 @@ from app.project_manager import (
     resolve_project_source_path,
     save_manifest,
 )
+from app.speaker_match_status import voiceprint_match_status
 from app.speaker_labeling import load_transcript_result
 from app.utils import safe_write_json
 from app.voiceprint_embedding import embed_audio_file, resolve_voiceprint_embedding_options
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceprintCandidate:
+    """One ranked voiceprint candidate."""
+
+    name: str
+    score: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +43,11 @@ class SpeakerMatch:
     score: float
     accepted: bool
     sample_count: int
+    best_name: str | None = None
+    best_score: float | None = None
+    accepted_name: str | None = None
+    threshold: float | None = None
+    candidates: tuple[VoiceprintCandidate, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,7 +194,7 @@ def _match_speaker_groups(
     emit_progress(progress, "Matching project speakers", total=len(speaker_groups), completed=0)
     if not known:
         emit_progress(progress, "No voiceprint embeddings found; writing review-only matches")
-        return _unknown_speaker_matches(speaker_groups)
+        return _unknown_speaker_matches(speaker_groups, threshold)
     for speaker_id, speaker_segments in speaker_groups:
         emit_progress(progress, f"Matching {speaker_id_to_label(speaker_id)}")
         vector = _probe_speaker_vector(
@@ -194,28 +208,39 @@ def _match_speaker_groups(
             max_seconds,
             padding_seconds,
         )
-        name, score = _best_match(vector, known)
-        accepted = name is not None and score >= threshold
+        candidates = _ranked_matches(vector, known, limit=3)
+        best = candidates[0] if candidates else None
+        accepted = best is not None and best.score >= threshold
+        accepted_name = best.name if accepted and best is not None else None
         matches.append(
             SpeakerMatch(
                 speaker_id,
                 speaker_id_to_label(speaker_id),
-                name if accepted else None,
-                score,
+                accepted_name,
+                best.score if best is not None else 0.0,
                 accepted,
                 len(speaker_segments),
+                best.name if best is not None else None,
+                best.score if best is not None else None,
+                accepted_name,
+                threshold,
+                tuple(candidates),
             )
         )
         emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)}", advance=1)
     return matches
 
 
-def _unknown_speaker_matches(speaker_groups: list[tuple[int, list[SentenceSegment]]]) -> list[SpeakerMatch]:
+def _unknown_speaker_matches(
+    speaker_groups: list[tuple[int, list[SentenceSegment]]],
+    threshold: float,
+) -> list[SpeakerMatch]:
     """
     Build review-only match rows when the voiceprint library is empty.
 
     Args:
         speaker_groups: Speaker id and transcript segments.
+        threshold: Configured auto-accept threshold.
 
     Returns:
         Unknown, non-accepted match rows.
@@ -228,6 +253,11 @@ def _unknown_speaker_matches(speaker_groups: list[tuple[int, list[SentenceSegmen
             0.0,
             False,
             len(speaker_segments),
+            None,
+            None,
+            None,
+            threshold,
+            (),
         )
         for speaker_id, speaker_segments in speaker_groups
     ]
@@ -290,16 +320,20 @@ def _write_probe_clip(
     extract_audio_clip(source, output, start_seconds=start_ms / 1000, duration_seconds=(end_ms - start_ms) / 1000)
 
 
-def _best_match(vector: list[float], known: dict[str, list[float]]) -> tuple[str | None, float]:
-    """Return the best matching known speaker."""
-    best_name: str | None = None
-    best_score = -1.0
-    for name, known_vector in known.items():
-        score = _cosine(vector, known_vector)
-        if score > best_score:
-            best_name = name
-            best_score = score
-    return best_name, best_score
+def _ranked_matches(vector: list[float], known: dict[str, list[float]], *, limit: int) -> list[VoiceprintCandidate]:
+    """
+    Return ranked matching known speakers.
+
+    Args:
+        vector: Probe speaker embedding.
+        known: Known speaker name to embedding mapping.
+        limit: Maximum candidate count.
+
+    Returns:
+        Candidates sorted by descending cosine score.
+    """
+    candidates = [VoiceprintCandidate(name, _cosine(vector, known_vector)) for name, known_vector in known.items()]
+    return sorted(candidates, key=lambda item: item.score, reverse=True)[:limit]
 
 
 def _mean_vector(vectors: list[list[float]]) -> list[float]:
@@ -340,6 +374,12 @@ def _matches_payload(provider: str, model: str, threshold: float, matches: list[
                 "name": item.name,
                 "score": item.score,
                 "accepted": item.accepted,
+                "best_name": item.best_name,
+                "best_score": item.best_score,
+                "accepted_name": item.accepted_name,
+                "threshold": item.threshold,
+                "status": voiceprint_match_status(item),
+                "candidates": [{"name": candidate.name, "score": candidate.score} for candidate in item.candidates],
                 "sample_count": item.sample_count,
             }
             for item in matches

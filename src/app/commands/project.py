@@ -77,6 +77,16 @@ from app.presentation.tui.project import (
     run_project_picker_tui,
 )
 from app.speaker_labeling import build_speaker_summaries, load_transcript_result
+from app.speaker_match_status import (
+    MATCH_STATUS_BELOW_THRESHOLD,
+    MATCH_STATUS_MATCHED,
+    MATCH_STATUS_NO_CANDIDATE,
+    accepted_match_name,
+    best_candidate_name,
+    best_candidate_score,
+    match_threshold,
+    voiceprint_match_status,
+)
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
 from app.speaker_review import (
     build_audio_preview_command,
@@ -653,6 +663,9 @@ def speakers_inspect(
                 match_summary=speaker_matches.get(summary.speaker_id),
             )
         )
+    if _project_has_match_status(resolved_project_dir, MATCH_STATUS_BELOW_THRESHOLD):
+        manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
+        _echo_below_threshold_next_steps(manifest.project_id)
 
 
 @speakers_app.command("preview")
@@ -936,13 +949,18 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
     manifest = load_manifest(project_dir)
     total_matches = len(summary.matches.matches)
     accepted_matches = len(summary.applied_mapping)
+    statuses = [voiceprint_match_status(match) for match in summary.matches.matches]
+    below_threshold_matches = statuses.count(MATCH_STATUS_BELOW_THRESHOLD)
+    no_candidate_matches = statuses.count(MATCH_STATUS_NO_CANDIDATE)
     return ProjectRunSummaryView(
         project_dir=project_dir,
         project_ref=manifest.project_id,
         manifest=manifest,
         total_matches=total_matches,
         accepted_matches=accepted_matches,
-        unresolved_matches=total_matches - accepted_matches,
+        below_threshold_matches=below_threshold_matches,
+        no_candidate_matches=no_candidate_matches,
+        unresolved_matches=below_threshold_matches + no_candidate_matches,
         source_label="new project" if summary.project.created else "reused project",
         meeting_summary=summary.meeting_summary,
         transcription=summary.transcription,
@@ -1059,9 +1077,70 @@ def _echo_match_summary(summary: SpeakerMatchSummary) -> None:
     typer.echo(f"Model: {summary.model}")
     typer.echo(f"Threshold: {summary.threshold:.3f}")
     for match in summary.matches:
-        name = match.name or "unknown"
-        status = "accepted" if match.accepted else "review"
-        typer.echo(f"{match.label} -> {name}  score={match.score:.3f}  {status}")
+        typer.echo(_voiceprint_match_cli_line(match, default_threshold=summary.threshold))
+    if any(voiceprint_match_status(match) == MATCH_STATUS_BELOW_THRESHOLD for match in summary.matches):
+        _echo_below_threshold_next_steps(_project_ref_from_match_path(summary.match_path))
+
+
+def _voiceprint_match_cli_line(match: object, *, default_threshold: float | None = None) -> str:
+    """
+    Format one voiceprint match line for CLI output.
+
+    Args:
+        match: Match dataclass or JSON-like mapping.
+        default_threshold: Fallback threshold.
+
+    Returns:
+        Status-explicit CLI line.
+    """
+    status = voiceprint_match_status(match)
+    label = str(getattr(match, "label", None) or "Speaker")
+    threshold = match_threshold(match, default_threshold)
+    threshold_text = "" if threshold is None else f" threshold={threshold:.3f}"
+    if status == MATCH_STATUS_MATCHED:
+        name = accepted_match_name(match) or "unknown"
+        score = best_candidate_score(match)
+        score_text = "" if score is None else f" score={score:.3f}"
+        return f"{label} status=matched name={name}{score_text}{threshold_text}"
+    if status == MATCH_STATUS_BELOW_THRESHOLD:
+        name = best_candidate_name(match) or "unrecorded"
+        score = best_candidate_score(match)
+        score_text = "" if score is None else f" score={score:.3f}"
+        return f"{label} status=below-threshold best={name}{score_text}{threshold_text}"
+    return f"{label} status=no-candidate{threshold_text}"
+
+
+def _project_ref_from_match_path(match_path: Path) -> str:
+    """
+    Resolve a project reference for match remediation commands.
+
+    Args:
+        match_path: Path to speakers/speaker_matches.json.
+
+    Returns:
+        Project id when available, otherwise the project path.
+    """
+    project_dir = match_path.parent.parent
+    try:
+        return load_manifest(project_dir).project_id
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        return str(project_dir)
+
+
+def _echo_below_threshold_next_steps(project_ref: str) -> None:
+    """
+    Print concrete commands for below-threshold speaker remediation.
+
+    Args:
+        project_ref: Project id or path accepted by project commands.
+    """
+    quoted_ref = shlex.quote(project_ref)
+    typer.echo("")
+    typer.echo("Below-threshold speakers need manual confirmation:")
+    typer.echo(f"  meeting-asr project speakers inspect {quoted_ref} --sample-count 5")
+    typer.echo(f"  meeting-asr project speakers apply {quoted_ref} --map 0=张三")
+    typer.echo(f"  meeting-asr voiceprint capture {quoted_ref}")
+    typer.echo("  meeting-asr voiceprint embed")
 
 
 def _shell_quote_path(path: Path) -> str:
@@ -1703,13 +1782,37 @@ def _load_speaker_match_summaries(project_dir: Path, speaker_mapping: dict[int, 
         return {}
     payload = json.loads(match_path.read_text(encoding="utf-8"))
     matches = payload.get("matches", [])
+    default_threshold = _safe_float(payload.get("threshold"))
     summaries: dict[int, str] = {}
     for item in matches:
         if not isinstance(item, dict) or "speaker_id" not in item:
             continue
+        if default_threshold is not None and item.get("threshold") is None:
+            item = {**item, "threshold": default_threshold}
         speaker_id = int(item["speaker_id"])
         summaries[speaker_id] = _speaker_match_summary(item, mapped_name=speaker_mapping.get(speaker_id))
     return summaries
+
+
+def _project_has_match_status(project_dir: Path, status: str) -> bool:
+    """
+    Return whether a project has any speaker match with the requested status.
+
+    Args:
+        project_dir: Project root.
+        status: Voiceprint match status.
+
+    Returns:
+        True when at least one match row has the requested status.
+    """
+    match_path = project_paths(project_dir).speakers_dir / "speaker_matches.json"
+    if not match_path.exists():
+        return False
+    payload = json.loads(match_path.read_text(encoding="utf-8"))
+    return any(
+        isinstance(item, dict) and voiceprint_match_status(item) == status
+        for item in payload.get("matches", [])
+    )
 
 
 def _speaker_match_summary(item: dict[str, object], *, mapped_name: str | None = None) -> str:
@@ -1723,20 +1826,31 @@ def _speaker_match_summary(item: dict[str, object], *, mapped_name: str | None =
     Returns:
         Short match summary.
     """
-    name = str(item.get("name") or "unknown")
-    status = "accepted" if item.get("accepted") else "review"
-    accepted = bool(item.get("accepted"))
-    score = _safe_float(item.get("score"))
+    status = voiceprint_match_status(item)
+    accepted = status == MATCH_STATUS_MATCHED
+    score = best_candidate_score(item)
+    threshold = match_threshold(item)
+    name = accepted_match_name(item) if accepted else best_candidate_name(item)
     conflict = _speaker_match_conflicts(item, name, mapped_name)
     suffix = " CONFLICT" if conflict else ""
-    if score is None:
+    if status == MATCH_STATUS_NO_CANDIDATE:
+        threshold_text = "" if threshold is None else f" threshold={threshold:.3f}"
         return _style_speaker_match_summary(
-            f"{name} {status}{suffix}",
+            f"status=no-candidate{threshold_text}{suffix}",
             accepted=accepted,
             conflict=conflict,
         )
+    threshold_text = "" if threshold is None else f" threshold={threshold:.3f}"
+    if score is None:
+        label = f"name={name}" if accepted else f"best={name or 'unrecorded'}"
+        return _style_speaker_match_summary(
+            f"{label} status={status}{threshold_text}{suffix}",
+            accepted=accepted,
+            conflict=conflict,
+        )
+    label = f"name={name}" if accepted else f"best={name or 'unrecorded'}"
     return _style_speaker_match_summary(
-        f"{name} score={score:.3f} {status}{suffix}",
+        f"{label} score={score:.3f}{threshold_text} status={status}{suffix}",
         accepted=accepted,
         conflict=conflict,
     )
@@ -1761,7 +1875,7 @@ def _style_speaker_match_summary(text: str, *, accepted: bool, conflict: bool) -
     return typer.style(text, fg=typer.colors.YELLOW)
 
 
-def _speaker_match_conflicts(item: dict[str, object], match_name: str, mapped_name: str | None) -> bool:
+def _speaker_match_conflicts(item: dict[str, object], match_name: str | None, mapped_name: str | None) -> bool:
     """
     Return whether a voiceprint match conflicts with a confirmed mapping.
 
@@ -1773,7 +1887,7 @@ def _speaker_match_conflicts(item: dict[str, object], match_name: str, mapped_na
     Returns:
         ``True`` when both sides name different real speakers.
     """
-    if not mapped_name or match_name == "unknown":
+    if not mapped_name or not match_name or match_name == "unknown":
         return False
     if not item.get("accepted"):
         return False
