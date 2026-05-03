@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from app.asr_pricing import format_asr_cost
 from app.core.project_models import ProjectManifest, ProjectMeetingSummary, ProjectTranscribeSummary
 from app.presentation.cli.output import cli_console
 
@@ -112,6 +113,7 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         ("Source", view.source_label),
         ("Speakers", f"{view.transcription.detected_speaker_count} detected"),
         ("Sentences", str(view.transcription.sentence_count)),
+        ("ASR cost", format_asr_cost(view.transcription.cost)),
         ("Voiceprint matches", _voiceprint_label(view)),
         ("ASR task", view.transcription.task_id),
     ]

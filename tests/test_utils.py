@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
+from pathlib import Path
 
 import pytest
 import requests
 
-from app.utils import configure_logging, is_retryable_exception, retry, suppress_noisy_dependency_info_logs
+from app.utils import configure_logging, is_retryable_exception, retry, safe_write_text, suppress_noisy_dependency_info_logs
 
 
 def test_retry_retries_timeout_then_returns_value() -> None:
@@ -80,6 +82,20 @@ def test_is_retryable_exception_rejects_bad_request() -> None:
     response.status_code = 400
 
     assert not is_retryable_exception(requests.HTTPError("Bad request", response=response))
+
+
+def test_safe_write_text_replaces_instead_of_overwriting_hardlink(tmp_path: Path) -> None:
+    """Safe writes should not mutate another path that shares the old inode."""
+    original = tmp_path / "original.txt"
+    linked = tmp_path / "linked.txt"
+    original.write_text("old", encoding="utf-8")
+    os.link(original, linked)
+
+    safe_write_text(linked, "new")
+
+    assert linked.read_text(encoding="utf-8") == "new"
+    assert original.read_text(encoding="utf-8") == "old"
+    assert original.stat().st_ino != linked.stat().st_ino
 
 
 def test_configure_logging_suppresses_noisy_dependency_info() -> None:

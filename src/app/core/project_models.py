@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.asr_pricing import AsrCostEstimate
+
 SCHEMA_VERSION = 1
 
 
@@ -150,6 +152,7 @@ class ProjectTranscribeSummary:
     file_url_source: str
     detected_speaker_count: int
     sentence_count: int
+    cost: AsrCostEstimate | None = None
 
 
 @dataclass(frozen=True, slots=True)

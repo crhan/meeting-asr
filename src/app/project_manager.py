@@ -24,6 +24,7 @@ from app.core.asr_wait import (
 )
 from app.config import load_settings
 from app.asr_hotwords import AsrHotwordResolution, resolve_asr_hotwords
+from app.asr_pricing import AsrCostEstimate, estimate_asr_cost
 from app.core.progress import CliProgressReporter, emit_progress
 from app.core.project_models import (
     SCHEMA_VERSION,
@@ -407,6 +408,11 @@ def transcribe_project(
     task_id = _extract_task_id(task_response)
     emit_progress(progress, f"DashScope task submitted: {task_id}", completed=1, total=1)
     audio_duration_seconds = _audio_duration_seconds(paths.root, manifest, audio_path)
+    cost = estimate_asr_cost(
+        model=options.model,
+        base_url=settings.dashscope_base_url,
+        audio_duration_seconds=audio_duration_seconds,
+    )
     wait_estimate = estimate_dashscope_wait(settings, model=options.model, audio_duration_seconds=audio_duration_seconds)
     emit_progress(
         progress,
@@ -461,7 +467,7 @@ def transcribe_project(
     _invalidate_downstream_artifacts(paths, manifest)
     _write_project_asr_outputs(paths, raw_result, parsed_result, options.generate_srt)
     emit_progress(progress, "Transcription complete", completed=1, total=1)
-    _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result, hotwords)
+    _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result, hotwords, cost)
     manifest.status = "transcribed"
     save_manifest(paths.root, manifest)
     return ProjectTranscribeSummary(
@@ -470,6 +476,7 @@ def transcribe_project(
         file_url_source,
         len(parsed_result.detected_speakers),
         len(parsed_result.sentences),
+        cost,
     )
 
 def apply_project_speakers(project_dir: Path, mappings: dict[int, str]) -> tuple[Path, Path, Path]:
@@ -947,7 +954,15 @@ def _project_local_file(project_root: Path, stored_path: str) -> Path | None:
         return None
     return candidate
 
-def _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result, hotwords) -> None:
+def _record_asr_metadata(
+    manifest,
+    task_id,
+    file_url_source,
+    options,
+    parsed_result,
+    hotwords,
+    cost: AsrCostEstimate | None,
+) -> None:
     """Record non-secret ASR metadata into the manifest."""
     manifest.asr = {
         "provider": "dashscope",
@@ -965,6 +980,8 @@ def _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_res
         "hotword_hash": hotwords.vocabulary_hash,
         "hotword_error": hotwords.error,
     }
+    if cost is not None:
+        manifest.asr["cost"] = cost.to_dict()
     manifest.outputs.update(_default_output_paths())
     manifest.speakers["detected_ids"] = parsed_result.detected_speakers
 
