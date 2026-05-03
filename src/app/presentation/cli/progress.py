@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 import re
+import shutil
 import time
 from typing import TypeVar
 
@@ -25,7 +26,15 @@ from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.output import cli_console
 
 T = TypeVar("T")
-WORKFLOW_BAR_WIDTH = 12
+PROGRESS_MAX_WIDTH = 96
+PROGRESS_DESCRIPTION_MIN_WIDTH = 24
+PROGRESS_DESCRIPTION_BASE_WIDTH = 36
+PROGRESS_DESCRIPTION_MAX_WIDTH = 58
+PROGRESS_BAR_MIN_WIDTH = 6
+PROGRESS_BAR_BASE_WIDTH = 10
+PROGRESS_BAR_MAX_WIDTH = 28
+PROGRESS_ELAPSED_WIDTH = 8
+PROGRESS_COLUMN_GAP_WIDTH = 2
 
 
 def run_with_progress(
@@ -72,11 +81,11 @@ def _run_with_rich_progress(
         Operation result.
     """
     display_description, detail_label = _split_progress_description(description)
+    layout = _progress_layout(console)
     with Progress(
-        _DescriptionColumn(),
-        _WorkflowBarColumn(WORKFLOW_BAR_WIDTH),
-        _StepElapsedColumn(),
-        _TotalElapsedColumn(),
+        _DescriptionColumn(layout.description_width),
+        _WorkflowBarColumn(layout.bar_width),
+        _ElapsedColumn(layout.elapsed_width),
         console=console,
     ) as progress:
         now = time.monotonic()
@@ -98,6 +107,16 @@ def _run_with_rich_progress(
         result = operation(report)
         renderer.finish()
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class _ProgressLayout:
+    """Column widths used by the workflow progress renderer."""
+
+    console_width: int
+    description_width: int
+    bar_width: int
+    elapsed_width: int = PROGRESS_ELAPSED_WIDTH
 
 
 @dataclass(slots=True)
@@ -292,6 +311,16 @@ def _reset_progress_task(progress: Progress, task_id, event: CliProgressEvent, f
 class _DescriptionColumn(ProgressColumn):
     """Render the step label, main action, and optional detail line."""
 
+    def __init__(self, width: int = PROGRESS_DESCRIPTION_BASE_WIDTH) -> None:
+        """
+        Create a description column.
+
+        Args:
+            width: Column width in terminal cells.
+        """
+        super().__init__()
+        self._width = width
+
     def get_table_column(self) -> Column:
         """
         Return a non-wrapping table column for progress descriptions.
@@ -299,7 +328,7 @@ class _DescriptionColumn(ProgressColumn):
         Returns:
             Rich table column configuration.
         """
-        return Column(width=42, no_wrap=True, overflow="ellipsis")
+        return Column(width=self._width, no_wrap=True, overflow="ellipsis")
 
     def render(self, task: Task) -> Text:
         """
@@ -324,7 +353,8 @@ class _DescriptionColumn(ProgressColumn):
         text.append(task.description, style="progress.description")
         detail_label = str(task.fields.get("detail_label") or "")
         if detail_label:
-            text.append("\n  ")
+            text.append("\n")
+            text.append(" " * _detail_indent_width(task))
             text.append(detail_label, style="dim")
         return text
 
@@ -332,7 +362,7 @@ class _DescriptionColumn(ProgressColumn):
 class _WorkflowBarColumn(ProgressColumn):
     """Render progress bars only for active or completed step rows."""
 
-    def __init__(self, width: int) -> None:
+    def __init__(self, width: int = PROGRESS_BAR_BASE_WIDTH) -> None:
         """
         Create a workflow bar column.
 
@@ -367,8 +397,18 @@ class _WorkflowBarColumn(ProgressColumn):
         return self._bar.render(task)
 
 
-class _StepElapsedColumn(ProgressColumn):
-    """Render elapsed time for the current workflow step."""
+class _ElapsedColumn(ProgressColumn):
+    """Render elapsed time for step rows and the total row in one column."""
+
+    def __init__(self, width: int = PROGRESS_ELAPSED_WIDTH) -> None:
+        """
+        Create an elapsed-time column.
+
+        Args:
+            width: Column width in terminal cells.
+        """
+        super().__init__()
+        self._width = width
 
     def get_table_column(self) -> Column:
         """
@@ -377,56 +417,147 @@ class _StepElapsedColumn(ProgressColumn):
         Returns:
             Rich table column configuration.
         """
-        return Column(width=8, no_wrap=True)
+        return Column(width=self._width, no_wrap=True)
 
     def render(self, task: Task) -> Text:
         """
-        Render the current step duration.
+        Render the current step or workflow duration.
 
         Args:
             task: Rich progress task.
 
         Returns:
             Duration text.
+        """
+        if task.fields.get("row_kind") == "total":
+            return _render_total_elapsed(task)
+        if task.fields.get("step_state") == "pending":
+            return Text("")
+        return _render_step_elapsed(task)
+
+
+class _StepElapsedColumn(_ElapsedColumn):
+    """Backward-compatible private alias for step elapsed rendering."""
+
+    def render(self, task: Task) -> Text:
+        """
+        Render only per-step elapsed time.
+
+        Args:
+            task: Rich progress task.
+
+        Returns:
+            Duration text or blank text for non-step rows.
         """
         if task.fields.get("row_kind") == "total" or task.fields.get("step_state") == "pending":
             return Text("")
-        started_at = task.fields.get("step_started_at")
-        if not isinstance(started_at, int | float):
-            started_at = task.start_time or time.monotonic()
-        finished_at = task.fields.get("step_finished_at")
-        end_at = float(finished_at) if isinstance(finished_at, int | float) else time.monotonic()
-        return Text(_format_elapsed_seconds(end_at - float(started_at)), style="progress.elapsed")
+        return _render_step_elapsed(task)
 
 
-class _TotalElapsedColumn(ProgressColumn):
-    """Render elapsed time for the whole workflow."""
-
-    def get_table_column(self) -> Column:
-        """
-        Return a fixed-width elapsed-time column.
-
-        Returns:
-            Rich table column configuration.
-        """
-        return Column(width=8, no_wrap=True)
+class _TotalElapsedColumn(_ElapsedColumn):
+    """Backward-compatible private alias for total elapsed rendering."""
 
     def render(self, task: Task) -> Text:
         """
-        Render the total workflow duration.
+        Render only total elapsed time.
 
         Args:
             task: Rich progress task.
 
         Returns:
-            Duration text.
+            Duration text or blank text for non-total rows.
         """
         if task.fields.get("row_kind") != "total":
             return Text("")
-        started_at = task.fields.get("workflow_started_at")
-        if not isinstance(started_at, int | float):
-            started_at = task.start_time or time.monotonic()
-        return Text(_format_elapsed_seconds(time.monotonic() - float(started_at)), style="progress.elapsed")
+        return _render_total_elapsed(task)
+
+
+def _render_step_elapsed(task: Task) -> Text:
+    """
+    Render elapsed time for one workflow step.
+
+    Args:
+        task: Rich progress task.
+
+    Returns:
+        Duration text.
+    """
+    started_at = task.fields.get("step_started_at")
+    if not isinstance(started_at, int | float):
+        started_at = task.start_time or time.monotonic()
+    finished_at = task.fields.get("step_finished_at")
+    end_at = float(finished_at) if isinstance(finished_at, int | float) else time.monotonic()
+    return Text(_format_elapsed_seconds(end_at - float(started_at)), style="progress.elapsed")
+
+
+def _render_total_elapsed(task: Task) -> Text:
+    """
+    Render elapsed time for the whole workflow.
+
+    Args:
+        task: Rich progress task.
+
+    Returns:
+        Duration text.
+    """
+    started_at = task.fields.get("workflow_started_at")
+    if not isinstance(started_at, int | float):
+        started_at = task.start_time or time.monotonic()
+    return Text(_format_elapsed_seconds(time.monotonic() - float(started_at)), style="progress.elapsed")
+
+
+def _progress_layout(console: Console) -> _ProgressLayout:
+    """
+    Compute progress column widths from the current console width.
+
+    Args:
+        console: Rich console used for rendering.
+
+    Returns:
+        Width allocation for progress columns.
+    """
+    target_width = max(1, min(console.size.width, PROGRESS_MAX_WIDTH))
+    fixed_width = PROGRESS_DESCRIPTION_BASE_WIDTH + PROGRESS_BAR_BASE_WIDTH
+    fixed_width += PROGRESS_ELAPSED_WIDTH + PROGRESS_COLUMN_GAP_WIDTH
+    if target_width <= fixed_width:
+        bar_width = max(PROGRESS_BAR_MIN_WIDTH, min(PROGRESS_BAR_BASE_WIDTH, target_width // 6))
+        description_width = max(
+            PROGRESS_DESCRIPTION_MIN_WIDTH,
+            target_width - bar_width - PROGRESS_ELAPSED_WIDTH - PROGRESS_COLUMN_GAP_WIDTH,
+        )
+        return _ProgressLayout(target_width, description_width, bar_width)
+
+    extra_width = target_width - fixed_width
+    description_extra = min(
+        PROGRESS_DESCRIPTION_MAX_WIDTH - PROGRESS_DESCRIPTION_BASE_WIDTH,
+        int(extra_width * 0.65),
+    )
+    bar_extra = min(PROGRESS_BAR_MAX_WIDTH - PROGRESS_BAR_BASE_WIDTH, extra_width - description_extra)
+    return _ProgressLayout(
+        console_width=target_width,
+        description_width=PROGRESS_DESCRIPTION_BASE_WIDTH + description_extra,
+        bar_width=PROGRESS_BAR_BASE_WIDTH + bar_extra,
+    )
+
+
+def _detail_indent_width(task: Task) -> int:
+    """
+    Return the indentation that aligns detail text under the action label.
+
+    Args:
+        task: Rich progress task.
+
+    Returns:
+        Number of leading spaces for the detail line.
+    """
+    indent_width = 0
+    state_label = _task_state_label(task)
+    if state_label:
+        indent_width += len(state_label[0]) + 1
+    step_label = str(task.fields.get("step_label") or "")
+    if step_label:
+        indent_width += len(step_label) + 1
+    return indent_width
 
 
 def _format_step_label(step_index: int, step_total: int | None) -> str:
@@ -585,7 +716,18 @@ def _console() -> Console:
     Returns:
         Rich console instance.
     """
-    return cli_console(stderr=True)
+    return cli_console(stderr=True, width=_progress_console_width())
+
+
+def _progress_console_width() -> int:
+    """
+    Return the capped console width used by live progress rendering.
+
+    Returns:
+        Terminal width capped to keep progress readable on wide screens.
+    """
+    terminal_width = shutil.get_terminal_size((PROGRESS_MAX_WIDTH, 24)).columns
+    return max(1, min(terminal_width, PROGRESS_MAX_WIDTH))
 
 
 def _should_render_progress(console: Console, enabled: bool) -> bool:

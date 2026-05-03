@@ -69,7 +69,7 @@ def test_long_progress_description_moves_metadata_to_detail_line() -> None:
     assert task.fields["detail_label"] == "RUNNING | ETA collecting | task 0204d7fb"
     assert rendered.plain.splitlines() == [
         "[5/10] Waiting for DashScope ASR",
-        "  RUNNING | ETA collecting | task 0204d7fb",
+        "       RUNNING | ETA collecting | task 0204d7fb",
     ]
 
 
@@ -120,6 +120,7 @@ def test_workflow_renderer_keeps_step_rows_and_total_row(monkeypatch) -> None:
     assert step_three.description == "Plan three"
     assert cli_ui._StepElapsedColumn().render(step_one).plain == "0:00:08"
     assert cli_ui._StepElapsedColumn().render(step_two).plain == "0:00:03"
+    assert cli_ui._ElapsedColumn().render(total).plain == "0:00:11"
     assert cli_ui._TotalElapsedColumn().render(total).plain == "0:00:11"
 
 
@@ -134,3 +135,25 @@ def test_total_elapsed_column_uses_workflow_clock(monkeypatch) -> None:
 
     assert task.finished
     assert cli_ui._TotalElapsedColumn().render(task).plain == "0:01:00"
+
+
+def test_progress_layout_caps_wide_terminal() -> None:
+    """Wide terminals should not stretch the workflow progress indefinitely."""
+    console = Console(file=io.StringIO(), width=160)
+
+    layout = cli_ui._progress_layout(console)
+
+    assert layout.console_width == cli_ui.PROGRESS_MAX_WIDTH
+    assert layout.description_width == cli_ui.PROGRESS_DESCRIPTION_MAX_WIDTH
+    assert layout.bar_width <= cli_ui.PROGRESS_BAR_MAX_WIDTH
+
+
+def test_progress_layout_uses_available_regular_terminal_width() -> None:
+    """Normal terminals should allocate width to both description and bar."""
+    console = Console(file=io.StringIO(), width=80)
+
+    layout = cli_ui._progress_layout(console)
+
+    assert layout.console_width == 80
+    assert layout.description_width > cli_ui.PROGRESS_DESCRIPTION_BASE_WIDTH
+    assert layout.bar_width > cli_ui.PROGRESS_BAR_BASE_WIDTH
