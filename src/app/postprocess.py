@@ -28,6 +28,26 @@ FILLER_WORDS = {
     "行",
     "可以",
 }
+DISCOURSE_TOKENS = {
+    *FILLER_WORDS,
+    "okay",
+    "ok",
+    "对呀",
+    "对吧",
+    "对不对",
+    "可以的",
+    "但是",
+    "这样吧",
+    "一下",
+    "这个这个",
+    "了",
+    "的",
+    "吗",
+}
+LOW_INFORMATION_MIN_SEGMENTS = 5
+LOW_INFORMATION_MAX_TOTAL_CHARS = 160
+LOW_INFORMATION_MAX_SEGMENT_CHARS = 12
+MEANINGFUL_REMAINDER_CHARS = 3
 
 
 def parse_transcription_result(raw_json: dict[str, Any]) -> TranscriptResult:
@@ -178,18 +198,50 @@ def _filler_speaker_ids(sentences: list[SentenceSegment]) -> set[int]:
     return {
         speaker_id
         for speaker_id, speaker_sentences in grouped.items()
-        if speaker_sentences and all(_is_filler_text(sentence.text) for sentence in speaker_sentences)
+        if speaker_sentences and _is_filler_speaker_track(speaker_sentences)
     }
+
+
+def _is_filler_speaker_track(sentences: list[SentenceSegment]) -> bool:
+    """Return whether a speaker track contains no useful language content."""
+    normalized_texts = [_normalize_filler_text(sentence.text) for sentence in sentences]
+    if all(not text or _is_filler_text(text) for text in normalized_texts):
+        return True
+    if len(sentences) < LOW_INFORMATION_MIN_SEGMENTS:
+        return False
+    if any(len(text) > LOW_INFORMATION_MAX_SEGMENT_CHARS for text in normalized_texts):
+        return False
+    if sum(len(text) for text in normalized_texts) > LOW_INFORMATION_MAX_TOTAL_CHARS:
+        return False
+    meaningful_segments = [
+        text for text in normalized_texts if len(_semantic_remainder(text)) >= MEANINGFUL_REMAINDER_CHARS
+    ]
+    return len(meaningful_segments) <= max(1, len(sentences) // 4)
 
 
 def _is_filler_text(text: str) -> bool:
     """Return whether text is only a meaningless filler utterance."""
-    normalized = "".join(char for char in text.strip() if char.isalnum())
+    normalized = _normalize_filler_text(text)
     if not normalized:
         return True
     if normalized in FILLER_WORDS:
         return True
+    if not _semantic_remainder(normalized):
+        return True
     return len(normalized) <= 8 and all(char in FILLER_CHARS for char in normalized)
+
+
+def _normalize_filler_text(text: str) -> str:
+    """Return compact alphanumeric text for filler checks."""
+    return "".join(char.lower() for char in text.strip() if char.isalnum())
+
+
+def _semantic_remainder(text: str) -> str:
+    """Return text left after removing common backchannel/discourse tokens."""
+    remainder = _normalize_filler_text(text)
+    for token in sorted(DISCOURSE_TOKENS, key=len, reverse=True):
+        remainder = remainder.replace(token, "")
+    return remainder
 
 
 def _find_sentence_payloads(raw_json: dict[str, Any]) -> list[dict[str, Any]]:

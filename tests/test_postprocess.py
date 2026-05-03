@@ -45,6 +45,45 @@ def test_parse_transcription_result_filters_filler_only_speaker() -> None:
     assert "嗯" not in result.full_text
 
 
+def test_parse_transcription_result_filters_low_information_speaker_track() -> None:
+    """Backchannel-only speaker tracks should not become review speakers."""
+    raw = {
+        "sentences": [
+            {"begin_time": 1, "end_time": 2, "text": "嗯。", "speaker_id": 0, "id": 1},
+            {"begin_time": 3, "end_time": 4, "text": "对对对。", "speaker_id": 0, "id": 2},
+            {"begin_time": 5, "end_time": 6, "text": "啊，对。", "speaker_id": 0, "id": 3},
+            {"begin_time": 7, "end_time": 8, "text": "这样吧。", "speaker_id": 0, "id": 4},
+            {"begin_time": 9, "end_time": 10, "text": "就是听听听听他。", "speaker_id": 0, "id": 5},
+            {"begin_time": 11, "end_time": 12, "text": "嗯嗯，OK。", "speaker_id": 0, "id": 6},
+            {"begin_time": 13, "end_time": 14, "text": "就是可以再理一下了。", "speaker_id": 0, "id": 7},
+            {"begin_time": 15, "end_time": 16, "text": "我们开始看供应商维修闭环。", "speaker_id": 1, "id": 8},
+        ]
+    }
+
+    result = parse_transcription_result(raw)
+
+    assert result.detected_speakers == [1]
+    assert [sentence.text for sentence in result.sentences] == ["我们开始看供应商维修闭环。"]
+
+
+def test_parse_transcription_result_keeps_short_meaningful_speaker_track() -> None:
+    """Short answers with actual content should remain review speakers."""
+    raw = {
+        "sentences": [
+            {"begin_time": 1, "end_time": 2, "text": "接口已经下线了。", "speaker_id": 0, "id": 1},
+            {"begin_time": 3, "end_time": 4, "text": "明天回滚配置。", "speaker_id": 0, "id": 2},
+            {"begin_time": 5, "end_time": 6, "text": "我负责跟进。", "speaker_id": 0, "id": 3},
+            {"begin_time": 7, "end_time": 8, "text": "风险还在。", "speaker_id": 0, "id": 4},
+            {"begin_time": 9, "end_time": 10, "text": "先暂停发布。", "speaker_id": 0, "id": 5},
+            {"begin_time": 11, "end_time": 12, "text": "我们继续看下一个问题。", "speaker_id": 1, "id": 6},
+        ]
+    }
+
+    result = parse_transcription_result(raw)
+
+    assert result.detected_speakers == [0, 1]
+
+
 def test_parse_transcription_result_keeps_empty_text_after_filtering_all_speakers() -> None:
     """Filtering all parsed sentences must not fall back to raw filler text."""
     raw = {
