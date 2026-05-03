@@ -11,6 +11,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
 from app.models import SentenceSegment
+from app.presentation.tui.inputs import ReadlineInput
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +26,7 @@ class SentenceCorrectionEdit:
     corrected_text: str
 
 
-class CorrectionInput(Input):
+class CorrectionInput(ReadlineInput):
     """Correction input with local cancel handling."""
 
     BINDINGS = [Binding("escape", "cancel_correction", "Cancel", show=False)]

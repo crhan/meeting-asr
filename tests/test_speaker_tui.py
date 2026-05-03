@@ -224,6 +224,54 @@ def test_project_review_tui_edits_transcript_text_inline() -> None:
     assert app.return_value.correction_edit.corrected_text == "第一句修正"
 
 
+def test_transcript_correction_input_uses_readline_cursor_keys() -> None:
+    """Ctrl-F and Ctrl-B should move the cursor, not delete transcript text."""
+    app = SpeakerReviewApp(_session(allow_correction=True))
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("e")
+            await pilot.pause()
+
+            field = app.screen.query_one("#correction-input", Input)
+            field.value = "abcdef"
+            field.cursor_position = 0
+
+            await pilot.press("ctrl+f")
+            await pilot.pause()
+
+            assert field.value == "abcdef"
+            assert field.cursor_position == 1
+
+            await pilot.press("ctrl+b")
+            await pilot.pause()
+
+            assert field.value == "abcdef"
+            assert field.cursor_position == 0
+
+    asyncio.run(scenario())
+
+
+def test_name_input_uses_readline_cursor_keys() -> None:
+    """Name edit should share the same non-destructive cursor keys."""
+    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"),)))
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("/")
+            field = app.query_one("#name-input", Input)
+            field.value = "欧丁"
+            field.cursor_position = 0
+
+            await pilot.press("ctrl+f")
+            await pilot.press("ctrl+b")
+
+            assert field.value == "欧丁"
+            assert field.cursor_position == 0
+
+    asyncio.run(scenario())
+
+
 def test_speaker_review_tui_binds_existing_person_by_name() -> None:
     """Typing an existing person name should bind the stable person id."""
     app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"),)))

@@ -31,6 +31,7 @@ from app.presentation.tui.speaker_correction import (
     SentenceCorrectionScreen,
 )
 from app.presentation.tui.speaker_help import BROWSE_STATUS, EDIT_STATUS, ShortcutHelpScreen
+from app.presentation.tui.inputs import ReadlineInput
 from app.presentation.tui.speaker_matches import (
     SpeakerMatchCandidate,
     accepted_review_name,
@@ -116,7 +117,7 @@ class SpeakerReviewDecision:
     correction_edit: SentenceCorrectionEdit | None = None
 
 
-class NameInput(Input):
+class NameInput(ReadlineInput):
     """Name entry widget with an explicit cancel key."""
 
     BINDINGS = [
