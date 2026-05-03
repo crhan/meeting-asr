@@ -13,6 +13,12 @@
 - Its mpv log showed only `Loading external files in .../source/` and no open of `exports/subtitle.srt`.
 - For IINA preview, stage a same-stem `.srt` next to the source video so IINA/mpv auto-loads it as a sidecar subtitle.
 
+## ASR Postprocess Notes
+
+- Filler-only speaker removal happens in `src/app/postprocess.py` during `parse_transcription_result()`.
+- It only affects newly normalized ASR output. Existing project artifacts keep old `asr/sentences.json` and `project.json` speaker IDs until reprocessed from `asr/raw_result.json` or retranscribed.
+- Backchannel-heavy tracks can contain short fragments like `对对对` or `就是可以再理一下了`; treat them as low-information tracks instead of requiring every sentence to match the exact filler word list.
+
 ## Project TUI Notes
 
 - `src/app/commands/project.py` is already oversized; do not put Textual UI implementations there.
