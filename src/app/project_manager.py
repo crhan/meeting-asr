@@ -500,6 +500,7 @@ def apply_project_speakers(project_dir: Path, mappings: dict[int, str]) -> tuple
         render_named_speaker_text(result, resolved_mapping),
     )
     srt_path = safe_write_text(paths.exports_dir / "subtitle_named.srt", render_named_srt(result, resolved_mapping))
+    manifest.speakers["detected_ids"] = result.detected_speakers
     manifest.speakers["mapped"] = {str(key): value for key, value in sorted(resolved_mapping.items())}
     manifest.outputs["named_transcript"] = _relative_path(paths.root, transcript_path)
     manifest.outputs["named_subtitle"] = _relative_path(paths.root, srt_path)
@@ -1054,7 +1055,8 @@ def _render_merged_speaker_text(parsed_result: TranscriptResult) -> str:
 def _merge_speaker_mapping(result: TranscriptResult, mappings: dict[int, str]) -> dict[int, str]:
     """Merge user mappings with anonymous fallback names."""
     resolved = {speaker_id: speaker_id_to_label(speaker_id) for speaker_id in result.detected_speakers}
-    resolved.update(mappings)
+    active_speakers = set(result.detected_speakers)
+    resolved.update({speaker_id: name for speaker_id, name in mappings.items() if speaker_id in active_speakers})
     return resolved
 
 def _parse_mapping_item(item: str) -> tuple[int, str]:

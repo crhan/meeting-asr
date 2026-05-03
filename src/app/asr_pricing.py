@@ -15,15 +15,26 @@ _REGION_LABELS = {
     US_REGION: "US",
 }
 
-_PRICE_USD_PER_SECOND = {
+_CURRENCY_SYMBOLS = {
+    "CNY": "¥",
+    "USD": "$",
+}
+
+_REGION_CURRENCY = {
+    MAINLAND_REGION: "CNY",
+    INTERNATIONAL_REGION: "USD",
+    US_REGION: "USD",
+}
+
+_PRICE_PER_SECOND = {
     MAINLAND_REGION: {
-        "fun-asr": 0.000032,
-        "fun-asr-2025-11-07": 0.000032,
-        "fun-asr-2025-08-25": 0.000032,
-        "fun-asr-mtl": 0.000032,
-        "fun-asr-mtl-2025-08-25": 0.000032,
-        "paraformer-v2": 0.000012,
-        "paraformer-8k-v2": 0.000012,
+        "fun-asr": 0.00022,
+        "fun-asr-2025-11-07": 0.00022,
+        "fun-asr-2025-08-25": 0.00022,
+        "fun-asr-mtl": 0.00022,
+        "fun-asr-mtl-2025-08-25": 0.00022,
+        "paraformer-v2": 0.00008,
+        "paraformer-8k-v2": 0.00008,
     },
     INTERNATIONAL_REGION: {
         "fun-asr": 0.000035,
@@ -44,8 +55,29 @@ class AsrCostEstimate:
     pricing_region: str
     billing_seconds: int
     audio_duration_seconds: float
-    unit_price_usd_per_second: float
-    estimated_cost_usd: float
+    unit_price_per_second: float
+    estimated_cost: float
+    currency: str
+
+    @property
+    def unit_price_usd_per_second(self) -> float:
+        """
+        Return the unit price for legacy callers.
+
+        Returns:
+            Unit price in the estimate currency.
+        """
+        return self.unit_price_per_second
+
+    @property
+    def estimated_cost_usd(self) -> float:
+        """
+        Return the estimated cost for legacy callers.
+
+        Returns:
+            Estimated cost in the estimate currency.
+        """
+        return self.estimated_cost
 
     def to_dict(self) -> dict[str, str | int | float]:
         """
@@ -58,7 +90,6 @@ class AsrCostEstimate:
             Dictionary suitable for ``project.json``.
         """
         payload = asdict(self)
-        payload["currency"] = "USD"
         return payload
 
 
@@ -83,17 +114,69 @@ def estimate_asr_cost(
         return None
     normalized_model = model.strip()
     pricing_region = pricing_region_from_base_url(base_url)
-    unit_price = _PRICE_USD_PER_SECOND.get(pricing_region, {}).get(normalized_model)
+    unit_price = _PRICE_PER_SECOND.get(pricing_region, {}).get(normalized_model)
     if unit_price is None:
         return None
     billing_seconds = max(1, math.ceil(audio_duration_seconds))
+    currency = _REGION_CURRENCY.get(pricing_region, "USD")
     return AsrCostEstimate(
         model=normalized_model,
         pricing_region=pricing_region,
         billing_seconds=billing_seconds,
         audio_duration_seconds=float(audio_duration_seconds),
-        unit_price_usd_per_second=unit_price,
-        estimated_cost_usd=round(billing_seconds * unit_price, 6),
+        unit_price_per_second=unit_price,
+        estimated_cost=round(billing_seconds * unit_price, 6),
+        currency=currency,
+    )
+
+
+def asr_cost_from_dict(payload: dict[str, object]) -> AsrCostEstimate:
+    """
+    Build an ASR cost estimate from manifest metadata.
+
+    Args:
+        payload: Serialized cost metadata.
+
+    Returns:
+        Parsed ASR cost estimate.
+    """
+    if estimate := _legacy_mainland_estimate(payload):
+        return estimate
+    if "unit_price_per_second" in payload and "estimated_cost" in payload:
+        unit_price = float(payload["unit_price_per_second"])
+        estimated_cost = float(payload["estimated_cost"])
+    else:
+        unit_price = float(payload["unit_price_usd_per_second"])
+        estimated_cost = float(payload["estimated_cost_usd"])
+    return AsrCostEstimate(
+        model=str(payload["model"]),
+        pricing_region=str(payload["pricing_region"]),
+        billing_seconds=int(payload["billing_seconds"]),
+        audio_duration_seconds=float(payload["audio_duration_seconds"]),
+        unit_price_per_second=unit_price,
+        estimated_cost=estimated_cost,
+        currency=str(payload.get("currency") or "USD"),
+    )
+
+
+def _legacy_mainland_estimate(payload: dict[str, object]) -> AsrCostEstimate | None:
+    """Re-price legacy mainland manifests that were written with USD field names."""
+    region = str(payload.get("pricing_region") or "")
+    model = str(payload.get("model") or "")
+    if "unit_price_per_second" in payload or region != MAINLAND_REGION:
+        return None
+    unit_price = _PRICE_PER_SECOND.get(region, {}).get(model)
+    if unit_price is None:
+        return None
+    billing_seconds = int(payload["billing_seconds"])
+    return AsrCostEstimate(
+        model=model,
+        pricing_region=region,
+        billing_seconds=billing_seconds,
+        audio_duration_seconds=float(payload["audio_duration_seconds"]),
+        unit_price_per_second=unit_price,
+        estimated_cost=round(billing_seconds * unit_price, 6),
+        currency=_REGION_CURRENCY[region],
     )
 
 
@@ -128,7 +211,8 @@ def format_asr_cost(estimate: AsrCostEstimate | None) -> str:
     if estimate is None:
         return "unavailable"
     region_label = _REGION_LABELS.get(estimate.pricing_region, estimate.pricing_region)
+    symbol = _CURRENCY_SYMBOLS.get(estimate.currency, f"{estimate.currency} ")
     return (
-        f"${estimate.estimated_cost_usd:.6f} estimated "
-        f"({estimate.billing_seconds}s x ${estimate.unit_price_usd_per_second:.6f}/s, {region_label})"
+        f"{symbol}{estimate.estimated_cost:.6f} estimated "
+        f"({estimate.billing_seconds}s x {symbol}{estimate.unit_price_per_second:.6f}/s, {region_label})"
     )

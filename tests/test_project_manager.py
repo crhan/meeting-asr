@@ -515,6 +515,7 @@ def test_project_list_command_reads_default_projects_dir(
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
     assert "Use Project ID or Directory" in result.output
+    assert "meeting-asr project show PROJECT_ID" in result.output
     assert "Project ID" in result.output
     assert project_id in result.output
     assert "No." not in result.output
@@ -789,6 +790,54 @@ def test_project_status_accepts_project_id(tmp_path: Path) -> None:
     assert "Title: Demo" in result.output
 
 
+def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
+    """Project show should be the human landing page after project list."""
+    project_dir = _sample_project(tmp_path)
+    manifest = load_manifest(project_dir)
+    exports_dir = project_dir / "exports"
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    (exports_dir / "transcript_named.txt").write_text("欧丁: 大家好\n", encoding="utf-8")
+    (exports_dir / "meeting_summary.md").write_text("# Demo\n\n## 摘要\n关键结论。\n", encoding="utf-8")
+    manifest.status = "named"
+    manifest.outputs.update(
+        {
+            "meeting_summary": "exports/meeting_summary.md",
+            "named_transcript": "exports/transcript_named.txt",
+        }
+    )
+    manifest.asr.update({"provider": "dashscope", "model": "fun-asr", "task_id": "task-1"})
+    manifest.audio["duration_seconds"] = 125
+    manifest.speakers.update({"detected_ids": [0], "mapped": {"0": "欧丁"}})
+    save_manifest(project_dir, manifest)
+
+    result = runner.invoke(app, ["project", "show", str(project_dir)])
+
+    assert result.exit_code == 0
+    assert manifest.project_id in result.output
+    assert "Details" in result.output
+    assert "Outputs" in result.output
+    assert "Commands" in result.output
+    assert "Meeting Summary" in result.output
+    assert "关键结论" in result.output
+    assert "Final transcript" in result.output
+    assert "exports/transcript_named.txt" in result.output
+    assert f"meeting-asr project transcript show {manifest.project_id}" in result.output
+    assert f"meeting-asr project transcript list {manifest.project_id}" in result.output
+
+
+def test_project_show_accepts_project_id(tmp_path: Path) -> None:
+    """Project show should resolve stable content-based project ids."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir)
+    manifest = load_manifest(project_dir)
+
+    result = runner.invoke(app, ["project", "show", manifest.project_id, "--projects-dir", str(projects_dir)])
+
+    assert result.exit_code == 0
+    assert "Demo" in result.output
+    assert manifest.project_id in result.output
+
+
 def test_project_status_defaults_to_current_directory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -843,6 +892,35 @@ def test_apply_project_speakers_writes_project_outputs(tmp_path: Path) -> None:
     assert transcript_path == project_dir / "exports" / "transcript_named.txt"
     assert srt_path == project_dir / "exports" / "subtitle_named.srt"
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
+
+
+def test_apply_project_speakers_ignores_low_information_speaker(tmp_path: Path) -> None:
+    """Existing normalized transcripts should still drop backchannel-only speakers."""
+    project_dir = _sample_project(tmp_path)
+    payload = {
+        "full_text": "大家看供应商闭环。嗯对啊。",
+        "detected_speakers": [0, 2],
+        "sentences": [
+            {"begin_time_ms": 0, "end_time_ms": 1000, "text": "大家看供应商闭环。", "speaker_id": 0},
+            {"begin_time_ms": 1100, "end_time_ms": 1200, "text": "嗯。", "speaker_id": 2},
+            {"begin_time_ms": 1300, "end_time_ms": 1400, "text": "对。", "speaker_id": 2},
+            {"begin_time_ms": 1500, "end_time_ms": 1600, "text": "啊。", "speaker_id": 2},
+            {"begin_time_ms": 1700, "end_time_ms": 1800, "text": "这样吧。", "speaker_id": 2},
+            {"begin_time_ms": 1900, "end_time_ms": 2000, "text": "就是听听听听他。", "speaker_id": 2},
+        ],
+    }
+    sentences_path = project_dir / "asr" / "sentences.json"
+    sentences_path.parent.mkdir(parents=True, exist_ok=True)
+    sentences_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    _, transcript_path, _ = apply_project_speakers(project_dir, {0: "欧丁", 2: "Speaker C"})
+    manifest = load_manifest(project_dir)
+    transcript = transcript_path.read_text(encoding="utf-8")
+
+    assert manifest.speakers["detected_ids"] == [0]
+    assert manifest.speakers["mapped"] == {"0": "欧丁"}
+    assert "Speaker C" not in transcript
+    assert "大家看供应商闭环" in transcript
 
 
 def test_project_speakers_inspect_shows_mapped_names(tmp_path: Path) -> None:

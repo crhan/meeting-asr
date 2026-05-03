@@ -30,6 +30,7 @@ from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import cli_console, should_enable_verbose_logs
 from app.presentation.cli.progress import run_with_progress
 from app.presentation.cli.project_payloads import project_list_payload, project_status_payload
+from app.presentation.cli.project_show import ProjectShowView, render_project_show
 from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
 from app.core.project_workflow import (
     ProjectWorkflowSummary,
@@ -345,6 +346,23 @@ def list_command(
         emit_json(project_list_payload(result.projects_dir, result.projects))
         return
     _echo_project_list(result.projects_dir, result.projects)
+
+
+@app.command("show")
+def show(
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Show a human-friendly project overview and where outputs live."""
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
+    paths = project_paths(resolved_project_dir)
+    if as_json:
+        emit_json(project_status_payload(paths, manifest))
+        return
+    workflow = project_workflow_summary(paths.root, manifest, project_ref=manifest.project_id)
+    render_project_show(ProjectShowView(paths.root, manifest.project_id, manifest, workflow))
 
 
 @app.command("update")
@@ -921,6 +939,7 @@ def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> N
         typer.echo("No projects found.")
         return
     typer.echo("Use Project ID or Directory with PROJECT commands.")
+    typer.echo("Start with: meeting-asr project show PROJECT_ID")
     _project_table_console().print(_project_list_table(projects))
 
 

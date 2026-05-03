@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.models import SentenceSegment, TranscriptResult
-from app.postprocess import speaker_id_to_label
+from app.postprocess import detect_speaker_ids, filter_filler_speakers, speaker_id_to_label
 from app.srt_utils import ms_to_srt_timestamp
 from app.utils import safe_write_json
 
@@ -36,8 +36,11 @@ def load_transcript_result(path: Path) -> TranscriptResult:
     """
     payload = json.loads(path.read_text(encoding="utf-8"))
     sentences = [SentenceSegment(**item) for item in payload.get("sentences", [])]
-    speakers = [int(item) for item in payload.get("detected_speakers", [])]
-    return TranscriptResult(str(payload.get("full_text", "")), sentences, speakers)
+    sentences = filter_filler_speakers(sentences)
+    full_text = "".join(sentence.text for sentence in sentences)
+    result = TranscriptResult(full_text, sentences, [])
+    result.detected_speakers = detect_speaker_ids(result)
+    return result
 
 
 def build_default_mapping(result: TranscriptResult) -> dict[int, str]:
