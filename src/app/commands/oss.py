@@ -7,7 +7,7 @@ from pathlib import Path
 import typer
 
 from app.presentation.cli.errors import run_with_cli_errors
-from app.presentation.cli.typer_context import HELP_CONTEXT
+from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.config import load_settings
 from app.oss_lifecycle import set_lifecycle_rule
 from app.uploader import (
@@ -16,13 +16,13 @@ from app.uploader import (
     upload_file_to_oss,
 )
 
-app = typer.Typer(
+app = MeetingAsrTyper(
     add_completion=False,
     context_settings=HELP_CONTEXT,
     no_args_is_help=True,
     pretty_exceptions_enable=False,
 )
-lifecycle_app = typer.Typer(
+lifecycle_app = MeetingAsrTyper(
     add_completion=False,
     context_settings=HELP_CONTEXT,
     no_args_is_help=True,

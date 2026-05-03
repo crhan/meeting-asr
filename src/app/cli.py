@@ -15,7 +15,7 @@ from app.completion_helpers import complete_cli_language
 from app.presentation.cli.help import render_help
 from app.presentation.cli.i18n import configure_cli_language
 from app.presentation.cli.output import configure_cli_output
-from app.presentation.cli.typer_context import HELP_CONTEXT
+from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.utils import configure_logging
 
 completion_init()
@@ -33,7 +33,7 @@ Inspect state:
   meeting-asr doctor
 """
 
-app = typer.Typer(
+app = MeetingAsrTyper(
     add_completion=False,
     add_help_option=False,
     context_settings=HELP_CONTEXT,

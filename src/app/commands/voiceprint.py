@@ -18,7 +18,7 @@ from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import cli_console
 from app.presentation.cli.plain import echo_plain_table
 from app.presentation.cli.progress import run_with_progress
-from app.presentation.cli.typer_context import HELP_CONTEXT
+from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.completion_helpers import complete_voiceprint_model, complete_voiceprint_provider
 from app.utils import format_ms_timestamp
 from app.voiceprint_playback import build_voiceprint_play_command
@@ -40,7 +40,7 @@ from app.presentation.tui.voiceprint import (
 from app.voiceprint_embedding import embed_voiceprint_samples
 from app.voiceprints import VoiceprintCaptureSummary, capture_voiceprints
 
-app = typer.Typer(
+app = MeetingAsrTyper(
     add_completion=False,
     context_settings=HELP_CONTEXT,
     no_args_is_help=True,

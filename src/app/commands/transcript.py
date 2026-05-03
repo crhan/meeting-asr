@@ -18,10 +18,10 @@ from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import cli_console
 from app.presentation.cli.plain import echo_plain_table
-from app.presentation.cli.typer_context import HELP_CONTEXT
+from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.project_manager import project_paths
 
-app = typer.Typer(
+app = MeetingAsrTyper(
     add_completion=False,
     context_settings=HELP_CONTEXT,
     no_args_is_help=True,

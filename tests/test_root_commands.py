@@ -98,6 +98,25 @@ def test_root_help_command_can_render_chinese(monkeypatch) -> None:
     assert "命令" in env_result.output
 
 
+def test_native_subcommand_help_uses_localized_renderer() -> None:
+    """Native no-args and --help paths should not fall back to Typer English."""
+    group_result = runner.invoke(app, ["--lang", "zh", "project"])
+    leaf_result = runner.invoke(app, ["--lang", "zh", "project", "list", "--help"])
+
+    assert group_result.exit_code == 0
+    assert "用法:" in group_result.output
+    assert "管理项目化转写流程。" in group_result.output
+    assert "创建项目目录和 project.json 元数据。" in group_result.output
+    assert "Create a project directory" not in group_result.output
+    assert "--help, -h" in group_result.output
+    assert leaf_result.exit_code == 0
+    assert "用法:" in leaf_result.output
+    assert "列出默认或指定项目库里的项目。" in leaf_result.output
+    assert "--projects-dir" in leaf_result.output
+    assert "指定项目库目录。" in leaf_result.output
+    assert "--help, -h" in leaf_result.output
+
+
 def test_root_lang_rejects_invalid_value_without_traceback() -> None:
     """Invalid language should fail as a CLI parameter error."""
     result = runner.invoke(app, ["--lang", "bad", "help"])

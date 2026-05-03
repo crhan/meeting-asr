@@ -12,7 +12,7 @@ import typer
 from app.core.project_models import ProjectManifest
 from app.core.project_refs import resolve_project_ref
 from app.presentation.cli.errors import run_with_cli_errors
-from app.presentation.cli.typer_context import HELP_CONTEXT
+from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.project_manager import load_manifest, project_paths, save_manifest
 from app.speaker_labeling import build_default_mapping, load_transcript_result
 from app.transcript_corrections import (
@@ -22,7 +22,7 @@ from app.transcript_corrections import (
     prepare_editor_correction,
 )
 
-app = typer.Typer(
+app = MeetingAsrTyper(
     add_completion=False,
     context_settings=HELP_CONTEXT,
     no_args_is_help=True,

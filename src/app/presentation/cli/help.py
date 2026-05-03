@@ -38,16 +38,83 @@ COMMAND_ZH = {
     ("paths",): "显示 Meeting-ASR 配置、数据、缓存和存储路径。",
     ("config",): "管理全局 XDG 配置。",
     ("project",): "管理项目化转写流程。",
+    ("project", "create"): "创建项目目录和 project.json 元数据。",
+    ("project", "prepare"): "提取项目音频，不启动云端转写。",
+    ("project", "transcribe"): "转写项目并写入结构化产物。",
+    ("project", "summarize"): "基于已转写项目生成会议标题和摘要。",
+    ("project", "run"): "创建项目、转写、总结并自动匹配 speaker。",
     ("project", "list"): "列出默认或指定项目库里的项目。",
+    ("project", "show"): "显示项目概览和产物查看方式。",
+    ("project", "update"): "更新可编辑的项目元数据。",
+    ("project", "delete"): "删除项目，默认移动到 Meeting-ASR 回收站。",
+    ("project", "review"): "打开项目级 review；省略 PROJECT 时从历史项目中选择。",
+    ("project", "status"): "打印项目状态摘要。",
+    ("project", "git-init"): "为人工编辑的项目文件初始化可选 Git 跟踪。",
+    ("project", "speakers"): "检查、匹配和标注项目 speaker。",
+    ("project", "speakers", "inspect"): "打印项目内每个 speaker 的样例。",
+    ("project", "speakers", "preview"): "用字幕打开源视频以辅助 speaker review。",
+    ("project", "speakers", "apply"): "交互式应用 speaker 姓名。",
+    ("project", "speakers", "review"): "打开 speaker 身份 review TUI。",
+    ("project", "speakers", "match"): "用全局声纹库匹配项目 speaker。",
+    ("project", "speakers", "compare-srt"): "对比钉钉 SRT 和项目字幕。",
     ("project", "transcript"): "查看项目转写产物。",
     ("project", "transcript", "list"): "列出一个项目的转写产物。",
     ("project", "transcript", "show"): "显示一个项目转写产物的内容。",
+    ("project", "trash"): "恢复或永久删除已删除项目。",
+    ("project", "trash", "list"): "列出回收站里的项目。",
+    ("project", "trash", "restore"): "从回收站恢复项目。",
+    ("project", "trash", "purge"): "永久删除回收站里的项目。",
+    ("project", "trash", "cleanup"): "清理超过指定天数的回收站项目。",
+    ("project", "correct"): "检查并应用词汇纠错。",
+    ("project", "correct", "edit"): "打开编辑器检查并生成词汇纠错建议。",
+    ("project", "correct", "accept"): "接受并应用已生成的词汇纠错建议。",
+    ("config", "path"): "打印全局配置文件路径。",
+    ("config", "show"): "显示配置值，默认隐藏密钥。",
+    ("config", "keys"): "列出支持的配置 key。",
+    ("config", "set"): "设置一个全局配置值。",
+    ("config", "unset"): "删除一个全局配置值。",
+    ("config", "import-env"): "从 .env 文件导入配置。",
     ("voiceprint",): "管理跨项目声纹库。",
+    ("voiceprint", "capture"): "从已标注项目采集声纹样本。",
     ("voiceprint", "list"): "列出全局声纹库里的说话人。",
+    ("voiceprint", "browse"): "打开声纹库浏览 TUI。",
+    ("voiceprint", "embed"): "为声纹样本生成 embedding。",
+    ("voiceprint", "show"): "显示某个说话人的声纹样本。",
+    ("voiceprint", "play"): "播放某个声纹样本。",
+    ("voiceprint", "delete-sample"): "删除指定声纹样本。",
+    ("voiceprint", "delete-speaker"): "删除一个说话人及其声纹样本。",
+    ("voiceprint", "path"): "显示声纹库路径。",
     ("lexicon",): "管理跨项目纠错词库。",
     ("lexicon", "list"): "列出本地词库词条。",
+    ("lexicon", "show"): "显示一个词条的详情。",
+    ("lexicon", "add"): "添加一个词库词条。",
+    ("lexicon", "delete"): "删除一个词库词条。",
+    ("lexicon", "stats"): "显示词库统计信息。",
+    ("lexicon", "export"): "导出词库 JSON。",
+    ("lexicon", "import"): "导入词库 JSON。",
+    ("lexicon", "hotwords"): "从已接受纠错导出并同步 ASR 热词。",
+    ("lexicon", "hotwords", "list"): "列出本地 ASR 热词候选。",
+    ("lexicon", "hotwords", "export"): "导出本地 ASR 热词文件。",
+    ("lexicon", "hotwords", "status"): "显示远端 ASR 热词同步状态。",
+    ("lexicon", "hotwords", "sync"): "同步本地热词到远端 ASR 词表。",
+    ("lexicon", "hotwords", "clear-cache"): "清除本地热词同步缓存。",
+    ("lexicon", "hotwords", "remote-list"): "列出远端 ASR 词表。",
+    ("lexicon", "hotwords", "remote-show"): "显示远端 ASR 词表详情。",
+    ("lexicon", "hotwords", "remote-delete"): "删除远端 ASR 词表。",
     ("oss",): "上传、签名和配置 OSS 对象。",
+    ("oss", "upload"): "上传本地文件到 OSS 并打印签名 URL。",
+    ("oss", "presign"): "为已有 OSS 对象生成签名 URL。",
+    ("oss", "lifecycle"): "配置 OSS 生命周期规则。",
+    ("oss", "lifecycle", "set"): "设置或更新 OSS 生命周期规则。",
     ("completion",): "生成或安装 shell completion 脚本。",
+    ("completion", "bash"): "输出 bash completion 脚本。",
+    ("completion", "zsh"): "输出 zsh completion 脚本。",
+    ("completion", "fish"): "输出 fish completion 脚本。",
+    ("completion", "powershell"): "输出 PowerShell completion 脚本。",
+    ("completion", "pwsh"): "输出 pwsh completion 脚本。",
+    ("completion", "csh"): "输出 csh completion 脚本。",
+    ("completion", "tcsh"): "输出 tcsh completion 脚本。",
+    ("completion", "install"): "安装 shell completion 脚本。",
 }
 OPTION_ZH = {
     "--version": "显示版本并退出。",
@@ -170,12 +237,15 @@ def _table() -> Table:
 
 def _implicit_help_option(lang: str) -> click.Option:
     """Build the implicit help option for groups that rely on Click defaults."""
-    return click.Option(["--help"], is_flag=True, help=OPTION_ZH["--help"] if lang == "zh" else "Show this message and exit.")
+    return click.Option(["--help", "-h"], is_flag=True, help=OPTION_ZH["--help"] if lang == "zh" else "Show this message and exit.")
 
 
 def _option_names(option: click.Option) -> str:
     """Return display names for one option."""
-    return ", ".join((*option.opts, *option.secondary_opts))
+    names = [*option.opts, *option.secondary_opts]
+    if "--help" in names and "-h" not in names:
+        names.append("-h")
+    return ", ".join(names)
 
 
 def _option_metavar(option: click.Option) -> str:
