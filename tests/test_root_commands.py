@@ -39,8 +39,33 @@ def test_root_help_command_prints_root_and_nested_help() -> None:
     assert "Quick start:" in root_result.output
     assert "meeting-asr project run <video>" in root_result.output
     assert nested_result.exit_code == 0
-    assert "Usage: meeting-asr project list" in nested_result.output
+    assert "Usage:" in nested_result.output
+    assert "meeting-asr project list [OPTIONS]" in nested_result.output
     assert "--plain" in nested_result.output
+
+
+def test_root_help_command_can_render_chinese(monkeypatch) -> None:
+    """Help command should render Meeting-ASR-owned text in Chinese."""
+    option_result = runner.invoke(app, ["--lang", "zh", "help", "project", "list"])
+    monkeypatch.setenv("MEETING_ASR_LANG", "zh")
+    env_result = runner.invoke(app, ["help"])
+
+    assert option_result.exit_code == 0
+    assert "用法:" in option_result.output
+    assert "列出默认或指定项目库里的项目。" in option_result.output
+    assert "--plain                      输出稳定的制表符分隔文本。" in option_result.output
+    assert env_result.exit_code == 0
+    assert "快速开始:" in env_result.output
+    assert "命令:" in env_result.output
+
+
+def test_root_lang_rejects_invalid_value_without_traceback() -> None:
+    """Invalid language should fail as a CLI parameter error."""
+    result = runner.invoke(app, ["--lang", "bad", "help"])
+
+    assert result.exit_code != 0
+    assert "Invalid value for --lang" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_top_level_audio_command_is_not_registered() -> None:

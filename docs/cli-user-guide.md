@@ -54,6 +54,16 @@ meeting-asr help project list
 meeting-asr help project transcript show
 ```
 
+Help 语言支持 `en` 和 `zh`。默认英文；中文可以临时传全局选项，也可以用环境变量：
+
+```bash
+meeting-asr --lang zh help project list
+MEETING_ASR_LANG=zh meeting-asr help project list
+```
+
+当前 i18n 只覆盖 `meeting-asr help` 这条命令里 Meeting-ASR 自己维护的说明、选项和命令描述；
+Typer/Click 原生的 `--help` 结构性输出仍保持英文。
+
 人类默认看 Rich 表格；脚本优先用 `--json`。如果只需要稳定、可 grep/awk/cut 的行文本，
 列表类命令提供 `--plain`：
 

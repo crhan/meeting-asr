@@ -14,6 +14,7 @@ ASR_MODELS = ("fun-asr",)
 ASR_HOTWORD_MODES = ("auto", "off")
 OSS_UPLOAD_MODES = ("auto", "true", "false")
 VOICEPRINT_MODELS = (LOCAL_SPEECHBRAIN_MODEL, BAILIAN_VOICEPRINT_MODEL)
+CLI_LANGUAGES = ("auto", "en", "zh")
 
 
 def complete_audio_format(incomplete: str) -> list[str]:
@@ -108,6 +109,19 @@ def complete_voiceprint_provider(incomplete: str) -> list[str]:
         Matching provider names.
     """
     return _matching(SUPPORTED_VOICEPRINT_PROVIDERS, incomplete)
+
+
+def complete_cli_language(incomplete: str) -> list[str]:
+    """
+    Complete supported CLI help languages.
+
+    Args:
+        incomplete: Current shell token.
+
+    Returns:
+        Matching language values.
+    """
+    return _matching(CLI_LANGUAGES, incomplete)
 
 
 def _matching(values: list[str] | tuple[str, ...], incomplete: str) -> list[str]:

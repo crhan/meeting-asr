@@ -11,6 +11,9 @@ from typer.completion import completion_init
 from typer.main import get_command
 
 from app.commands import completion, config, doctor, lexicon, oss, paths, project, voiceprint
+from app.completion_helpers import complete_cli_language
+from app.presentation.cli.help import render_help
+from app.presentation.cli.i18n import configure_cli_language
 from app.presentation.cli.output import configure_cli_output
 from app.utils import configure_logging
 
@@ -77,8 +80,18 @@ def root(
     ),
     no_color: bool = typer.Option(False, "--no-color", help="Disable colored Rich output."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose diagnostic logs."),
+    lang: str | None = typer.Option(
+        None,
+        "--lang",
+        help="Help language: auto, en, or zh.",
+        autocompletion=complete_cli_language,
+    ),
 ) -> None:
     """Configure root command options."""
+    try:
+        configure_cli_language(lang)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--lang") from exc
     configure_cli_output(no_color=no_color, verbose=verbose)
     configure_logging(verbose=verbose)
 
@@ -87,9 +100,7 @@ def help_command(ctx: typer.Context) -> None:
     """Show help for the root command or a nested command."""
     command_path = tuple(ctx.args)
     command = _resolve_help_command(get_command(app), command_path)
-    info_name = " ".join(("meeting-asr", *command_path))
-    with click.Context(command, info_name=info_name) as help_context:
-        typer.echo(command.get_help(help_context))
+    render_help(command, command_path)
 
 
 def _resolve_help_command(root_command: click.Command, command_path: tuple[str, ...]) -> click.Command:
