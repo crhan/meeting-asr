@@ -174,7 +174,7 @@ class ProjectPickerApp(App[Path | None]):
     def _overview_pane(self) -> str:
         """Render project list summary."""
         selected = self._project()
-        selected_text = "-" if selected is None else f"{selected.number} | {selected.title}"
+        selected_text = "-" if selected is None else f"{selected.project_id} | {selected.title}"
         return "\n".join(
             [
                 f"[b]Projects[/b] {escape(str(self.session.projects_dir))}",
@@ -193,7 +193,7 @@ class ProjectPickerApp(App[Path | None]):
             marker = ">" if index == self.selected_project_index else " "
             workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
             row = (
-                f"{marker} {project.number:>2} | {project.updated_at[:19]} | "
+                f"{marker} {project.project_id} | {project.updated_at[:19]} | "
                 f"{workflow.state} | {project.title}"
             )
             lines.append(f"[reverse]{escape(row)}[/]" if marker == ">" else escape(row))
@@ -208,7 +208,6 @@ class ProjectPickerApp(App[Path | None]):
         return "\n".join(
             [
                 "[b]Detail[/b]",
-                f"List No.: {project.number}",
                 f"Project ID: {escape(project.project_id)}",
                 f"Title: {escape(project.title)}",
                 f"State: {escape(workflow.state)}",
@@ -270,7 +269,7 @@ def render_project_picker_summary(session: ProjectPickerSession) -> str:
     for project in session.projects:
         workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
         lines.append(
-            f"{project.number} | {workflow.state} | {workflow.next_command_short} | "
-            f"{project_outputs_text(workflow.outputs)} | {project.title} | {project.project_id} | {project.project_dir}"
+            f"{project.project_id} | {workflow.state} | {workflow.next_command_short} | "
+            f"{project_outputs_text(workflow.outputs)} | {project.title} | {project.project_dir}"
         )
     return "\n".join(lines)

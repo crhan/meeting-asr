@@ -42,12 +42,12 @@ def list_projects(projects_dir: Path | None) -> ProjectListResult:
             )
         )
     projects.sort(key=lambda project: (project.created_at, project.project_id), reverse=True)
-    return ProjectListResult(parent, _number_project_list_items(projects))
+    return ProjectListResult(parent, projects)
 
 
 def resolve_project_ref(project_ref: Path | str, projects_dir: Path | None = None) -> Path:
     """
-    Resolve a project path, numeric project number, id, or title.
+    Resolve a project path, id, or title.
 
     Args:
         project_ref: Project reference.
@@ -63,8 +63,6 @@ def resolve_project_ref(project_ref: Path | str, projects_dir: Path | None = Non
     if _looks_like_path(ref_text, ref_path):
         return _resolve_project_path(ref_path)
     projects = list_projects(projects_dir).projects
-    if _is_project_number_ref(ref_text):
-        return _single_project_number_match(ref_text, projects)
     exact = [project for project in projects if _matches_project_ref(project, ref_text, partial=False)]
     if exact:
         return _single_project_match(ref_text, exact)
@@ -123,22 +121,6 @@ def _load_manifest_or_none(project_dir: Path) -> ProjectManifest | None:
         return None
 
 
-def _number_project_list_items(projects: list[ProjectListItem]) -> list[ProjectListItem]:
-    """Assign stable short numbers for display and CLI references."""
-    return [
-        ProjectListItem(
-            item.project_dir,
-            item.project_id,
-            item.title,
-            item.status,
-            item.created_at,
-            item.updated_at,
-            index,
-        )
-        for index, item in enumerate(projects, start=1)
-    ]
-
-
 def _looks_like_path(ref_text: str, path: Path) -> bool:
     """Return whether a reference should be treated as a filesystem path."""
     return path.exists() or path.is_absolute() or ref_text in {".", ".."} or "/" in ref_text
@@ -178,20 +160,6 @@ def _project_reuse_rank(project: ProjectListItem) -> tuple[int, str, str]:
         "voiceprinted": 5,
     }
     return status_rank.get(project.status, 0), project.updated_at, project.created_at
-
-
-def _is_project_number_ref(ref_text: str) -> bool:
-    """Return whether a reference is a short project number."""
-    return ref_text.isdecimal() and int(ref_text) > 0
-
-
-def _single_project_number_match(ref_text: str, projects: list[ProjectListItem]) -> Path:
-    """Resolve a numeric project reference."""
-    number = int(ref_text)
-    for project in projects:
-        if project.number == number:
-            return project.project_dir
-    raise FileNotFoundError(f"Project number not found: {ref_text}. Run `meeting-asr project list`.")
 
 
 def _matches_project_ref(project: ProjectListItem, ref_text: str, *, partial: bool) -> bool:

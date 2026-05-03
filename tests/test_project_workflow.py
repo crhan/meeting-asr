@@ -14,10 +14,10 @@ def test_created_project_points_to_transcription(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path)
     manifest = load_manifest(project_dir)
 
-    summary = project_workflow_summary(project_dir, manifest, project_ref="1")
+    summary = project_workflow_summary(project_dir, manifest, project_ref=manifest.project_id)
 
     assert summary.state == "Created"
-    assert summary.next_command_short == "transcribe 1"
+    assert summary.next_command_short == f"transcribe {manifest.project_id}"
     assert summary.outputs == ()
 
 

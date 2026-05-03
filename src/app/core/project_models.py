@@ -107,7 +107,6 @@ class ProjectListItem:
     status: str
     created_at: str
     updated_at: str
-    number: int = 0
 
 
 @dataclass(frozen=True, slots=True)

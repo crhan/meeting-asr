@@ -920,7 +920,7 @@ def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> N
     if not projects:
         typer.echo("No projects found.")
         return
-    typer.echo("Use Project ID or Directory with PROJECT commands. No. is only a list shortcut.")
+    typer.echo("Use Project ID or Directory with PROJECT commands.")
     _project_table_console().print(_project_list_table(projects))
 
 
@@ -929,20 +929,20 @@ def _project_list_table(projects: list[ProjectListItem]) -> Table:
     Build the project list table.
 
     Args:
-        projects: Numbered project rows to display.
+        projects: Project rows to display.
 
     Returns:
         Rich table ready to print.
     """
     table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
-    table.add_column("No.", justify="right", no_wrap=True, style="bold cyan")
+    table.add_column("Project ID", no_wrap=True, style="bold cyan")
     table.add_column("State", no_wrap=True)
     table.add_column("Updated", no_wrap=True)
     table.add_column("Title")
     for project in projects:
         workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
         table.add_row(
-            str(project.number),
+            project.project_id,
             _project_workflow_state_text(workflow),
             _project_list_timestamp(project.updated_at),
             project.title,

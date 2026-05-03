@@ -58,7 +58,6 @@ def _project_item_payload(project: ProjectListItem) -> dict[str, Any]:
     """Return a JSON-ready payload for one project list item."""
     workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
     return {
-        "number": project.number,
         "project_id": project.project_id,
         "title": project.title,
         "status": project.status,

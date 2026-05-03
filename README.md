@@ -147,12 +147,12 @@ meeting-asr voiceprint browse
 同一个源视频再次创建或 run 会复用已有项目；新项目 ID 基于源文件内容 hash，形如 `p-...`，
 不依赖创建日期。
 AutoRun 和 create 输出的后续命令使用稳定的 project id；也可以传 project path 或 project title，
-不需要先 `cd`。在项目目录内执行时，项目路径参数仍默认是当前目录。`project list` 会打印短数字
-`No.` 方便临时选择，但不要把它写进脚本或长期记录；精确引用项目时用 project id 或项目目录。
+不需要先 `cd`。在项目目录内执行时，项目路径参数仍默认是当前目录。`project list` 第一列会打印
+稳定 Project ID；后续命令应复制这个 ID，或直接传 project 目录。
 也可以直接跑 `meeting-asr project review` 打开 project list TUI，选中历史 project 后进入 review。
 `project list` 默认列出 XDG 项目目录，也可以用 `--projects-dir` 指定项目父目录。表格里的
-`State` 从实际产物文件推导，只表达当前项目阶段。下一步命令、`Artifacts`、Project ID、
-目录和原始内部 status 放在 `project status PROJECT_ID` 或 `--json` 里看。
+`State` 从实际产物文件推导，只表达当前项目阶段。下一步命令、`Artifacts`、目录和原始内部
+status 放在 `project status PROJECT_ID` 或 `--json` 里看。
 交互式终端会在 stderr 显示 Rich 进度；脚本、管道和测试输出保持纯文本。需要关闭时加
 `--no-progress`。
 

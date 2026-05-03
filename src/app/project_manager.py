@@ -668,7 +668,7 @@ def _resolve_project_root(
     if project_dir is not None:
         return project_dir.expanduser().resolve()
     base_dir = _projects_parent_dir(projects_dir)
-    return (base_dir / _build_project_id(source_sha256).replace("-", "_", 1)).resolve()
+    return (base_dir / _build_project_id(source_sha256)).resolve()
 
 def _create_project_dirs(root: Path) -> None:
     """Create the project root and standard child directories."""

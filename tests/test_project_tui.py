@@ -41,6 +41,8 @@ def test_project_picker_tui_returns_selected_project(tmp_path: Path) -> None:
     async def scenario() -> None:
         async with app.run_test() as pilot:
             assert "Selector Demo" in app._project_list_pane()
+            assert session.projects[0].project_id in app._project_list_pane()
+            assert "List No." not in app._detail_pane()
             assert "meeting-asr project review" in app._detail_pane()
             await pilot.press("enter")
 

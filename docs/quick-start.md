@@ -20,7 +20,7 @@ meeting-asr project run "/path/to/meeting.mp4"
 5. 用声纹库匹配 speaker。
 6. 自动应用 accepted 的 speaker 匹配。
 
-看项目编号：
+看项目 ID：
 
 ```bash
 meeting-asr project list
@@ -52,7 +52,7 @@ meeting-asr project speakers preview PROJECT_ID
 meeting-asr project review PROJECT_ID
 ```
 
-如果不记得编号：
+如果不想复制 Project ID：
 
 ```bash
 meeting-asr project review

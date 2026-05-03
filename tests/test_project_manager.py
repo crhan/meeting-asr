@@ -367,10 +367,11 @@ def test_project_summarize_command_prints_absolute_summary_paths(
         return ProjectMeetingSummary(project_dir, "Demo", summary_path, json_path, "qwen-test", False)
 
     monkeypatch.setattr(project_commands, "summarize_project", fake_summarize_project)
+    manifest = load_manifest(project_dir)
 
     result = runner.invoke(
         app,
-        ["project", "summarize", "1", "--projects-dir", str(projects_dir), "--no-progress"],
+        ["project", "summarize", manifest.project_id, "--projects-dir", str(projects_dir), "--no-progress"],
     )
 
     assert result.exit_code == 0
@@ -439,20 +440,19 @@ def test_retranscribe_invalidates_downstream_artifacts(tmp_path: Path) -> None:
 
 
 def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(tmp_path: Path) -> None:
-    """Project references should work without changing into the project directory."""
+    """Project references should use stable ids, paths, titles, or unique title fragments."""
     projects_dir = tmp_path / "projects"
     project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Project Ref Demo")
     manifest = load_manifest(project_dir)
 
     assert resolve_project_ref(project_dir, projects_dir) == project_dir.resolve()
     assert resolve_project_ref(manifest.project_id, projects_dir) == project_dir.resolve()
-    assert resolve_project_ref("1", projects_dir) == project_dir.resolve()
     assert resolve_project_ref("Project Ref Demo", projects_dir) == project_dir.resolve()
     assert resolve_project_ref("Ref Demo", projects_dir) == project_dir.resolve()
 
 
-def test_project_numbers_do_not_follow_updated_at(tmp_path: Path) -> None:
-    """Project list numbers should not change when one project is updated."""
+def test_project_list_order_does_not_follow_updated_at(tmp_path: Path) -> None:
+    """Project list order should reflect project identity chronology, not later edits."""
     projects_dir = tmp_path / "projects"
     older_source = tmp_path / "older.mp4"
     newer_source = tmp_path / "newer.mp4"
@@ -487,7 +487,7 @@ def test_project_numbers_do_not_follow_updated_at(tmp_path: Path) -> None:
 
     projects = list_projects(projects_dir).projects
 
-    assert [(project.number, project.title) for project in projects] == [(1, "Newer Project"), (2, "Older Project")]
+    assert [project.title for project in projects] == ["Newer Project", "Older Project"]
 
 
 def test_project_list_command_reads_default_projects_dir(
@@ -510,11 +510,14 @@ def test_project_list_command_reads_default_projects_dir(
     projects_dir = data_home / "meeting-asr" / "projects"
 
     result = runner.invoke(app, ["project", "list"])
+    project_id = list_projects(projects_dir).projects[0].project_id
 
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
     assert "Use Project ID or Directory" in result.output
-    assert "No." in result.output
+    assert "Project ID" in result.output
+    assert project_id in result.output
+    assert "No." not in result.output
     assert "State" in result.output
     assert "Demo" in result.output
     assert "Created" in result.output
@@ -542,7 +545,6 @@ def test_project_list_command_prints_json(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert payload["projects_dir"] == str(projects_dir.resolve())
     assert payload["count"] == 1
-    assert payload["projects"][0]["number"] == 1
     assert payload["projects"][0]["title"] == "Demo"
     assert payload["projects"][0]["project_dir"] == str(project_dir.resolve())
     assert payload["projects"][0]["status"] == "created"
@@ -575,6 +577,7 @@ def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
     assert "Demo" in result.output
+    assert load_manifest(project_dir).project_id in result.output
     assert "Created" in result.output
     assert "not-a-project" not in result.output
 
@@ -594,13 +597,14 @@ def test_project_update_command_changes_title_and_meeting_time(tmp_path: Path) -
     """Project update should change editable manifest metadata."""
     projects_dir = tmp_path / "projects"
     project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Old Title")
+    manifest = load_manifest(project_dir)
 
     result = runner.invoke(
         app,
         [
             "project",
             "update",
-            "1",
+            manifest.project_id,
             "--projects-dir",
             str(projects_dir),
             "--title",
@@ -621,9 +625,10 @@ def test_project_update_command_changes_title_and_meeting_time(tmp_path: Path) -
 def test_project_update_requires_a_field(tmp_path: Path) -> None:
     """Project update without updates should fail with a clear message."""
     projects_dir = tmp_path / "projects"
-    _sample_project(tmp_path, projects_dir=projects_dir, title="Demo")
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Demo")
+    manifest = load_manifest(project_dir)
 
-    result = runner.invoke(app, ["project", "update", "1", "--projects-dir", str(projects_dir)])
+    result = runner.invoke(app, ["project", "update", manifest.project_id, "--projects-dir", str(projects_dir)])
 
     assert result.exit_code == 1
     assert "Nothing to update" in result.output
@@ -637,8 +642,9 @@ def test_project_delete_moves_project_to_trash(
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     projects_dir = tmp_path / "projects"
     project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Delete Me")
+    manifest = load_manifest(project_dir)
 
-    result = runner.invoke(app, ["project", "delete", "1", "--projects-dir", str(projects_dir), "--yes"])
+    result = runner.invoke(app, ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--yes"])
     list_result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
     trash_root = tmp_path / "data" / "meeting-asr" / "trash" / "projects"
     trashed = [path for path in trash_root.iterdir() if path.is_dir()]
@@ -655,10 +661,11 @@ def test_project_delete_permanent_removes_project(tmp_path: Path) -> None:
     """Permanent delete should physically remove the project only when requested."""
     projects_dir = tmp_path / "projects"
     project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Delete Me")
+    manifest = load_manifest(project_dir)
 
     result = runner.invoke(
         app,
-        ["project", "delete", "1", "--projects-dir", str(projects_dir), "--permanent", "--yes"],
+        ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--permanent", "--yes"],
     )
 
     assert result.exit_code == 0
@@ -687,6 +694,26 @@ def test_project_create_command_reuses_existing_source(
     assert "Project created." in first.output
     assert "Project already exists; reusing it." in second.output
     assert f"meeting-asr project review {load_manifest(project_dirs[0]).project_id}" in second.output
+
+
+def test_default_project_directory_uses_project_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Default project roots should use the stable project id directly."""
+    data_home = tmp_path / "data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"same video")
+
+    result = runner.invoke(app, ["project", "create", str(source), "--title", "Demo"])
+
+    projects_dir = data_home / "meeting-asr" / "projects"
+    project_dirs = [path for path in projects_dir.iterdir() if path.is_dir()]
+    manifest = load_manifest(project_dirs[0])
+    assert result.exit_code == 0
+    assert project_dirs == [projects_dir / manifest.project_id]
+    assert manifest.project_id.startswith("p-")
 
 
 def test_find_project_by_source_prefers_more_complete_duplicate(tmp_path: Path) -> None:

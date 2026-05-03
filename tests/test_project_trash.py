@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from app.cli import app
-from app.project_manager import create_project
+from app.project_manager import create_project, load_manifest
 
 runner = CliRunner()
 
@@ -19,8 +19,9 @@ def test_project_trash_restore_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     projects_dir = tmp_path / "projects"
     project_dir = _sample_project(tmp_path, projects_dir, "Review Me")
+    manifest = load_manifest(project_dir)
 
-    delete_result = runner.invoke(app, ["project", "delete", "1", "--projects-dir", str(projects_dir), "--yes"])
+    delete_result = runner.invoke(app, ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--yes"])
     trash_list_result = runner.invoke(app, ["project", "trash", "list"])
     trash_json_result = runner.invoke(app, ["project", "trash", "list", "--json"])
     trash_payload = json.loads(trash_json_result.output)
@@ -51,9 +52,10 @@ def test_project_trash_purge_removes_trashed_project(
     """Purge should physically remove a project that is already in trash."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     projects_dir = tmp_path / "projects"
-    _sample_project(tmp_path, projects_dir, "Purge Me")
+    project_dir = _sample_project(tmp_path, projects_dir, "Purge Me")
+    manifest = load_manifest(project_dir)
 
-    delete_result = runner.invoke(app, ["project", "delete", "1", "--projects-dir", str(projects_dir), "--yes"])
+    delete_result = runner.invoke(app, ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--yes"])
     purge_result = runner.invoke(app, ["project", "trash", "purge", "1", "--yes"])
     trash_list_result = runner.invoke(app, ["project", "trash", "list"])
 
@@ -71,9 +73,10 @@ def test_project_trash_cleanup_can_remove_all(
     """Cleanup with age zero should empty the trash explicitly."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     projects_dir = tmp_path / "projects"
-    _sample_project(tmp_path, projects_dir, "Cleanup Me")
+    project_dir = _sample_project(tmp_path, projects_dir, "Cleanup Me")
+    manifest = load_manifest(project_dir)
 
-    delete_result = runner.invoke(app, ["project", "delete", "1", "--projects-dir", str(projects_dir), "--yes"])
+    delete_result = runner.invoke(app, ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--yes"])
     cleanup_result = runner.invoke(app, ["project", "trash", "cleanup", "--older-than-days", "0", "--yes"])
     trash_list_result = runner.invoke(app, ["project", "trash", "list"])
 
