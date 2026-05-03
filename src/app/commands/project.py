@@ -16,9 +16,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from rich import box
-from rich.console import Console
-from rich.table import Table
 import typer
 
 from app.commands import project_correct as project_correct_commands
@@ -27,14 +24,13 @@ from app.commands import transcript as transcript_commands
 from app.core.progress import CliProgressReporter, emit_progress
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
-from app.presentation.cli.output import cli_console, should_enable_verbose_logs
+from app.presentation.cli.output import should_enable_verbose_logs
 from app.presentation.cli.progress import run_with_progress
 from app.presentation.cli.project_payloads import project_list_payload, project_status_payload
+from app.presentation.cli.project_list import render_project_list
 from app.presentation.cli.project_show import ProjectShowView, render_project_show
 from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
 from app.core.project_workflow import (
-    ProjectWorkflowSummary,
-    load_project_workflow_summary,
     project_outputs_text,
     project_workflow_summary,
 )
@@ -51,7 +47,6 @@ from app.asr_pricing import AsrCostEstimate, format_asr_cost
 from app.core.project_models import (
     ProjectCreateSummary,
     ProjectDeleteSummary,
-    ProjectListItem,
     ProjectManifest,
     ProjectMeetingSummary,
     ProjectTranscribeOptions,
@@ -339,13 +334,14 @@ def run(
 def list_command(
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
 ) -> None:
     """List projects under the default or specified projects directory."""
     result = run_with_cli_errors(lambda: list_projects(projects_dir))
     if as_json:
         emit_json(project_list_payload(result.projects_dir, result.projects))
         return
-    _echo_project_list(result.projects_dir, result.projects)
+    render_project_list(result.projects_dir, result.projects, plain=plain)
 
 
 @app.command("show")
@@ -924,85 +920,6 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
         meeting_summary=summary.meeting_summary,
         transcription=summary.transcription,
     )
-
-
-def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> None:
-    """
-    Print project list rows.
-
-    Args:
-        projects_dir: Resolved projects parent directory.
-        projects: Project rows to print.
-    """
-    typer.echo(f"Projects: {projects_dir}")
-    if not projects:
-        typer.echo("No projects found.")
-        return
-    typer.echo("Use Project ID or Directory with PROJECT commands.")
-    typer.echo("Start with: meeting-asr project show PROJECT_ID")
-    _project_table_console().print(_project_list_table(projects))
-
-
-def _project_list_table(projects: list[ProjectListItem]) -> Table:
-    """
-    Build the project list table.
-
-    Args:
-        projects: Project rows to display.
-
-    Returns:
-        Rich table ready to print.
-    """
-    table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
-    table.add_column("Project ID", no_wrap=True, style="bold cyan")
-    table.add_column("State", no_wrap=True)
-    table.add_column("Updated", no_wrap=True)
-    table.add_column("Title")
-    for project in projects:
-        workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
-        table.add_row(
-            project.project_id,
-            _project_workflow_state_text(workflow),
-            _project_list_timestamp(project.updated_at),
-            project.title,
-        )
-    return table
-
-
-def _project_workflow_state_text(workflow: ProjectWorkflowSummary) -> str:
-    """
-    Return a styled workflow state for table display.
-
-    Args:
-        workflow: Project workflow summary.
-
-    Returns:
-        Rich markup string.
-    """
-    styles = {
-        "created": "yellow",
-        "prepared": "yellow",
-        "transcribed": "cyan",
-        "completed": "green",
-        "corrected": "green",
-        "broken": "red",
-    }
-    return f"[{styles.get(workflow.state_key, 'white')}]{workflow.state}[/]"
-
-
-def _project_table_console() -> Console:
-    """
-    Build the stdout console used for project tables.
-
-    Returns:
-        Rich console instance.
-    """
-    return cli_console(width=140)
-
-
-def _project_list_timestamp(value: str) -> str:
-    """Return a compact timestamp for project list rows."""
-    return value[:16].replace("T", " ")
 
 
 def _echo_project_created(

@@ -69,6 +69,7 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
     transcribe_options = _bash_complete("meeting-asr project transcribe --", 3)
 
     assert "audio" not in root_commands
+    assert "help" in root_commands
     assert "voiceprint" in root_commands
     assert "lexicon" in root_commands
     assert "list" in project_commands

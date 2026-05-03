@@ -45,6 +45,7 @@ def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
         ],
     )
     list_result = runner.invoke(app, ["lexicon", "list", "--lexicon-db", str(db_path)])
+    plain_result = runner.invoke(app, ["lexicon", "list", "--lexicon-db", str(db_path), "--plain"])
     show_result = runner.invoke(app, ["lexicon", "show", "艾赛", "--lexicon-db", str(db_path)])
     stats_result = runner.invoke(app, ["lexicon", "stats", "--lexicon-db", str(db_path)])
 
@@ -53,6 +54,10 @@ def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
     assert list_result.exit_code == 0
     assert "iSee" in list_result.output
     assert "system" in list_result.output
+    assert plain_result.exit_code == 0
+    assert plain_result.output.splitlines()[0] == "term\tcategory\tstatus\taliases\tcontexts\tupdated"
+    assert "iSee\tsystem\tactive\t1\t0\t" in plain_result.output
+    assert "╭" not in plain_result.output
     assert show_result.exit_code == 0
     assert "Term: iSee" in show_result.output
     assert "艾赛 (asr_error)" in show_result.output

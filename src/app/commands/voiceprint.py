@@ -16,6 +16,7 @@ import typer
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import cli_console
+from app.presentation.cli.plain import echo_plain_table
 from app.presentation.cli.progress import run_with_progress
 from app.completion_helpers import complete_voiceprint_model, complete_voiceprint_provider
 from app.utils import format_ms_timestamp
@@ -72,12 +73,16 @@ def capture_command(
 def list_command(
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
 ) -> None:
     """List speakers recorded in the global voiceprint registry."""
     db_path = get_voiceprint_db_path(store_dir)
     rows = run_with_cli_errors(lambda: list_voiceprint_speakers(db_path))
     if as_json:
         emit_json(_voiceprint_speakers_payload(db_path, rows))
+        return
+    if plain:
+        _echo_voiceprint_speaker_table_plain(rows)
         return
     typer.echo(f"Database: {db_path}")
     if not rows:
@@ -245,6 +250,28 @@ def _echo_voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> None:
     embedded_total = sum(row.embedded_sample_count for row in rows)
     typer.echo(f"Speakers: {len(rows)} | Samples: {sample_total} | Embedded samples: {embedded_total}/{sample_total}")
     _voiceprint_table_console().print(_voiceprint_speaker_table(rows))
+
+
+def _echo_voiceprint_speaker_table_plain(rows: list[VoiceprintSpeakerRow]) -> None:
+    """
+    Print voiceprint speakers as stable tab-separated values.
+
+    Args:
+        rows: Speaker summary rows.
+    """
+    plain_rows = [
+        (
+            row.speaker_id,
+            row.name,
+            row.sample_count,
+            row.project_count,
+            f"{row.embedded_sample_count}/{row.sample_count}",
+            row.embedding_model_count,
+            _format_updated_at(row.updated_at),
+        )
+        for row in rows
+    ]
+    echo_plain_table(("id", "speaker", "samples", "projects", "embedded", "models", "updated"), plain_rows)
 
 
 def _voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> Table:

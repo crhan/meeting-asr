@@ -31,6 +31,8 @@ src/app/
 - `core/progress.py`: presentation-neutral progress event dataclasses.
 - `infra/dashscope_asr.py`: DashScope ASR submit/fetch/download adapter.
 - `infra/ffmpeg.py`: ffmpeg/ffprobe media adapter.
+- `presentation/cli/plain.py`: stable tab-separated output helpers for script-friendly list commands.
+- `presentation/cli/project_list.py`: Rich and plain project list rendering.
 - `presentation/cli/progress.py`: Rich progress renderer.
 - `presentation/cli/errors.py`: CLI error rendering and doctor guidance.
 - `presentation/tui/*`: Textual project, speaker, and voiceprint screens.

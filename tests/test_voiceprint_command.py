@@ -46,6 +46,7 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert {sample.project_id for sample in project_samples} == {manifest.project_id}
 
     list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
+    list_plain_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir), "--plain"])
     speaker_id = _speaker_id_from_list(list_result.output, "欧丁")
     show_result = runner.invoke(app, ["voiceprint", "show", speaker_id, "--store-dir", str(store_dir)])
     show_by_name_result = runner.invoke(app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)])
@@ -61,6 +62,10 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert "Speaker" in list_result.output
     assert "Embedded" in list_result.output
     assert "欧丁" in list_result.output
+    assert list_plain_result.exit_code == 0
+    assert list_plain_result.output.splitlines()[0] == "id\tspeaker\tsamples\tprojects\tembedded\tmodels\tupdated"
+    assert "\t欧丁\t" in list_plain_result.output
+    assert "╭" not in list_plain_result.output
     assert show_result.exit_code == 0
     assert show_by_name_result.exit_code == 0
     assert "[1] 欧丁" in show_result.output

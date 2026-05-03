@@ -41,6 +41,7 @@ from app.lexicon_store import (
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import cli_console
+from app.presentation.cli.plain import echo_plain_table
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
 hotwords_app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
@@ -55,6 +56,7 @@ def terms_list_command(
     query: Optional[str] = typer.Option(None, "--query", "-q", help="Search canonical terms and aliases."),
     limit: int = typer.Option(100, "--limit", min=1, help="Maximum terms to list."),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
 ) -> None:
     """List local vocabulary terms."""
     db_path = lexicon_db or default_lexicon_db_path()
@@ -63,6 +65,9 @@ def terms_list_command(
     )
     if as_json:
         emit_json({"lexicon_db": db_path, "count": len(terms), "terms": [_term_payload(term) for term in terms]})
+        return
+    if plain:
+        _echo_terms_plain(terms)
         return
     typer.echo(f"Lexicon DB: {db_path}")
     if not terms:
@@ -371,6 +376,20 @@ def _terms_table(terms: list[LexiconTerm]) -> Table:
             term.updated_at,
         )
     return table
+
+
+def _echo_terms_plain(terms: list[LexiconTerm]) -> None:
+    """
+    Print local lexicon terms as stable tab-separated values.
+
+    Args:
+        terms: Term rows to print.
+    """
+    rows = [
+        (term.canonical, term.category, term.status, term.alias_count, term.context_count, term.updated_at)
+        for term in terms
+    ]
+    echo_plain_table(("term", "category", "status", "aliases", "contexts", "updated"), rows)
 
 
 def _echo_term_detail(db_path: Path, detail: LexiconTermDetail) -> None:

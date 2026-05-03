@@ -23,6 +23,7 @@ def test_project_trash_restore_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     delete_result = runner.invoke(app, ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--yes"])
     trash_list_result = runner.invoke(app, ["project", "trash", "list"])
+    trash_plain_result = runner.invoke(app, ["project", "trash", "list", "--plain"])
     trash_json_result = runner.invoke(app, ["project", "trash", "list", "--json"])
     trash_payload = json.loads(trash_json_result.output)
     project_missing_after_delete = not project_dir.exists()
@@ -40,6 +41,11 @@ def test_project_trash_restore_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "Project ID" in trash_list_result.output
     assert "No." not in trash_list_result.output
     assert "Review Me" in trash_list_result.output
+    assert trash_plain_result.exit_code == 0
+    assert trash_plain_result.output.splitlines()[0] == "project_id\tstatus\ttrashed\ttitle\ttrash_dir"
+    assert f"{manifest.project_id}\tcreated\t" in trash_plain_result.output
+    assert "Review Me" in trash_plain_result.output
+    assert "╭" not in trash_plain_result.output
     assert trash_json_result.exit_code == 0
     assert trash_payload["count"] == 1
     assert "number" not in trash_payload["projects"][0]

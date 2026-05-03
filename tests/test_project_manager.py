@@ -830,6 +830,21 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     assert f"meeting-asr project transcript list {manifest.project_id}" in result.output
 
 
+def test_project_list_plain_prints_stable_rows(tmp_path: Path) -> None:
+    """Project list should offer stable plain output for scripts."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Plain Demo")
+    manifest = load_manifest(project_dir)
+
+    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir), "--plain"])
+
+    assert result.exit_code == 0
+    assert result.output.splitlines()[0] == "project_id\tstate\tupdated\ttitle"
+    assert f"{manifest.project_id}\tCreated\t" in result.output
+    assert "Plain Demo" in result.output
+    assert "╭" not in result.output
+
+
 def test_project_show_accepts_project_id(tmp_path: Path) -> None:
     """Project show should resolve stable content-based project ids."""
     projects_dir = tmp_path / "projects"

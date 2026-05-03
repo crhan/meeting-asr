@@ -44,6 +44,27 @@ meeting-asr completion bash
 补全由 CLI 命令树动态生成，会覆盖子命令、选项，以及配置 key、OSS 上传模式、
 音频格式等有限值。
 
+## 2.1 Help 和稳定输出
+
+`meeting-asr` 是 git-like 多级命令。除了 `--help`，也可以用 `help` 子命令查看任意层级：
+
+```bash
+meeting-asr help
+meeting-asr help project list
+meeting-asr help project transcript show
+```
+
+人类默认看 Rich 表格；脚本优先用 `--json`。如果只需要稳定、可 grep/awk/cut 的行文本，
+列表类命令提供 `--plain`：
+
+```bash
+meeting-asr project list --plain
+meeting-asr project transcript list PROJECT_ID --plain
+meeting-asr voiceprint list --plain
+meeting-asr lexicon list --plain
+meeting-asr project trash list --plain
+```
+
 ## 3. 创建项目
 
 ```bash

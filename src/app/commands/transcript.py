@@ -17,6 +17,7 @@ from app.core.project_refs import resolve_project_ref
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import cli_console
+from app.presentation.cli.plain import echo_plain_table
 from app.project_manager import project_paths
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
@@ -51,6 +52,7 @@ def list_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
 ) -> None:
     """List transcript artifacts for a project."""
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
@@ -58,6 +60,9 @@ def list_command(
     rows = _transcript_artifact_rows(paths.root)
     if as_json:
         emit_json(_transcript_artifacts_payload(paths.root, rows))
+        return
+    if plain:
+        _echo_transcript_artifact_rows_plain(paths.root, rows)
         return
     _echo_transcript_artifact_rows(paths.root, rows)
 
@@ -221,6 +226,21 @@ def _echo_transcript_artifact_rows(project_dir: Path, rows: list[TranscriptArtif
     _transcript_table_console().print(_transcript_artifact_table(project_dir, rows))
 
 
+def _echo_transcript_artifact_rows_plain(project_dir: Path, rows: list[TranscriptArtifactRow]) -> None:
+    """
+    Print transcript artifacts as stable tab-separated values.
+
+    Args:
+        project_dir: Project root.
+        rows: Artifact rows to display.
+    """
+    plain_rows = [
+        (row.kind.value, "available" if row.path else "missing", _plain_artifact_path(project_dir, row))
+        for row in rows
+    ]
+    echo_plain_table(("kind", "status", "path"), plain_rows)
+
+
 def _transcript_artifacts_payload(project_dir: Path, rows: list[TranscriptArtifactRow]) -> dict[str, object]:
     """
     Build a machine-readable transcript artifact payload.
@@ -299,6 +319,13 @@ def _artifact_location(project_dir: Path, row: TranscriptArtifactRow) -> str:
         return _relative_display_path(project_dir, row.path)
     expected = " or ".join(_relative_display_path(project_dir, path) for path in row.candidates)
     return f"expected: {expected}"
+
+
+def _plain_artifact_path(project_dir: Path, row: TranscriptArtifactRow) -> str:
+    """Return a plain path or expected candidate list for one artifact."""
+    if row.path:
+        return _relative_display_path(project_dir, row.path)
+    return " or ".join(_relative_display_path(project_dir, path) for path in row.candidates)
 
 
 def _relative_display_path(project_dir: Path, path: Path) -> str:

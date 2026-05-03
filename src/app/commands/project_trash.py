@@ -20,6 +20,7 @@ from app.core.project_models import (
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import cli_console
+from app.presentation.cli.plain import echo_plain_table
 from app.project_trash import (
     cleanup_project_trash,
     list_trashed_projects,
@@ -31,11 +32,17 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_
 
 
 @app.command("list")
-def list_command(as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON.")) -> None:
+def list_command(
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
+) -> None:
     """List projects currently stored in Meeting-ASR trash."""
     result = run_with_cli_errors(list_trashed_projects)
     if as_json:
         emit_json(_project_trash_payload(result.trash_dir, result.projects))
+        return
+    if plain:
+        _echo_project_trash_list_plain(result.projects)
         return
     _echo_project_trash_list(result.trash_dir, result.projects)
 
@@ -96,6 +103,26 @@ def _echo_project_trash_list(trash_dir: Path, projects: list[TrashedProjectListI
         return
     typer.echo("Use Project ID or Trash Dir with restore/purge.")
     _project_table_console().print(_project_trash_table(projects))
+
+
+def _echo_project_trash_list_plain(projects: list[TrashedProjectListItem]) -> None:
+    """
+    Print trashed project rows as stable tab-separated values.
+
+    Args:
+        projects: Trashed project rows.
+    """
+    rows = [
+        (
+            project.project_id,
+            project.status,
+            _project_list_timestamp(project.trashed_at),
+            project.title,
+            project.trash_dir.name,
+        )
+        for project in projects
+    ]
+    echo_plain_table(("project_id", "status", "trashed", "title", "trash_dir"), rows)
 
 
 def _project_trash_table(projects: list[TrashedProjectListItem]) -> Table:

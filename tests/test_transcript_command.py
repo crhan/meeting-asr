@@ -84,6 +84,20 @@ def test_transcript_list_prints_json(tmp_path: Path) -> None:
     assert str(project_dir / "exports" / "transcript_named.txt") in named["candidates"]
 
 
+def test_transcript_list_prints_plain_rows(tmp_path: Path) -> None:
+    """List mode should offer stable plain output for scripts."""
+    project_dir = _sample_project(tmp_path)
+    _write_transcript_outputs(project_dir)
+
+    result = runner.invoke(app, ["project", "transcript", "list", str(project_dir), "--plain"])
+
+    assert result.exit_code == 0
+    assert result.output.splitlines()[0] == "kind\tstatus\tpath"
+    assert "named\tavailable\texports/transcript_named.txt" in result.output
+    assert "srt\tavailable\texports/subtitle_named.srt" in result.output
+    assert "╭" not in result.output
+
+
 def test_transcript_list_shows_missing_artifacts(tmp_path: Path) -> None:
     """List mode should show expected locations for absent artifacts."""
     project_dir = _sample_project(tmp_path)

@@ -30,6 +30,19 @@ def test_root_paths_command_prints_json(monkeypatch, tmp_path) -> None:
     assert str(tmp_path / "data" / "meeting-asr" / "projects") in result.output
 
 
+def test_root_help_command_prints_root_and_nested_help() -> None:
+    """Git-like help command should expose root and subcommand help."""
+    root_result = runner.invoke(app, ["help"])
+    nested_result = runner.invoke(app, ["help", "project", "list"])
+
+    assert root_result.exit_code == 0
+    assert "Quick start:" in root_result.output
+    assert "meeting-asr project run <video>" in root_result.output
+    assert nested_result.exit_code == 0
+    assert "Usage: meeting-asr project list" in nested_result.output
+    assert "--plain" in nested_result.output
+
+
 def test_top_level_audio_command_is_not_registered() -> None:
     """Audio preparation should stay under project workflows."""
     result = runner.invoke(app, ["audio", "extract"])
