@@ -72,6 +72,39 @@ def prepare_editor_correction(
     return _proposal_summary(proposal, lexicon_db)
 
 
+def prepare_inline_correction(
+    *,
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    speaker_mapping: dict[int, str],
+    correction_edit: object,
+    options: CorrectionEditOptions,
+) -> CorrectionEditSummary:
+    """
+    Prepare a correction proposal from one TUI-edited sentence.
+
+    Args:
+        paths: Project paths.
+        manifest: Project manifest.
+        speaker_mapping: Speaker id to display name mapping.
+        correction_edit: Object with sentence identity and corrected text fields.
+        options: Correction options.
+
+    Returns:
+        Correction edit summary.
+    """
+    source = _load_correction_source(paths, from_original=options.from_original)
+    sample_change = _inline_sample_change(source.result, correction_edit, speaker_mapping)
+    lexicon_db = options.lexicon_db or default_lexicon_db_path()
+    if sample_change.corrected_text == sample_change.original_text:
+        return _empty_summary(_write_inline_review_file(paths, manifest, sample_change), lexicon_db)
+    review_path = _write_inline_review_file(paths, manifest, sample_change)
+    proposal = _build_proposal(paths, manifest, source, review_path, [sample_change], speaker_mapping, options)
+    if options.open_proposal:
+        open_editor(proposal.proposal_path, options.editor)
+    return _proposal_summary(proposal, lexicon_db)
+
+
 def accept_correction_proposal(
     *,
     paths: ProjectPaths,
@@ -246,6 +279,60 @@ def _build_proposal(
         model=model,
         model_error=model_error,
     )
+
+
+def _inline_sample_change(
+    result: TranscriptResult,
+    correction_edit: object,
+    speaker_mapping: dict[int, str],
+) -> CorrectionChange:
+    """Build one correction change from TUI edit metadata."""
+    sentence = _find_inline_sentence(result, correction_edit)
+    corrected_text = str(getattr(correction_edit, "corrected_text")).strip()
+    if not corrected_text:
+        raise ValueError("Corrected text must not be empty.")
+    return _change_from_sentence(sentence, corrected_text, speaker_mapping)
+
+
+def _find_inline_sentence(result: TranscriptResult, correction_edit: object) -> SentenceSegment:
+    """Find the source sentence edited by the TUI."""
+    sentence_id = _optional_int_from_any(getattr(correction_edit, "sentence_id"))
+    speaker_id = _optional_int_from_any(getattr(correction_edit, "speaker_id"))
+    begin = int(getattr(correction_edit, "begin_time_ms"))
+    end = int(getattr(correction_edit, "end_time_ms"))
+    for sentence in result.sentences:
+        if (
+            sentence.sentence_id == sentence_id
+            and sentence.speaker_id == speaker_id
+            and sentence.begin_time_ms == begin
+            and sentence.end_time_ms == end
+        ):
+            return sentence
+    raise RuntimeError(f"Inline correction sentence was not found: sentence_id={sentence_id} begin={begin} end={end}")
+
+
+def _write_inline_review_file(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    sample_change: CorrectionChange,
+) -> Path:
+    """Write a compact review file for one TUI correction sample."""
+    review_dir = paths.root / "tmp" / REVIEW_DIR
+    review_dir.mkdir(parents=True, exist_ok=True)
+    review_path = review_dir / f"review_tui_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    lines = [
+        "# Meeting-ASR TUI Vocabulary Correction",
+        "",
+        f"Project ID: {manifest.project_id}",
+        f"Title: {manifest.title}",
+        "",
+        "## Edited Sample",
+        f"- Speaker: {sample_change.speaker_name}",
+        f"- Before: {sample_change.original_text}",
+        f"- After: {sample_change.corrected_text}",
+        "",
+    ]
+    return safe_write_text(review_path, "\n".join(lines))
 
 
 def _propose_full_document_changes(

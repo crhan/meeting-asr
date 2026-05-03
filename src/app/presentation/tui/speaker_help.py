@@ -7,7 +7,7 @@ from textual.widgets import Static
 
 BROWSE_STATUS = (
     "Browse: h/l or left/right choose column | j/k or up/down move | "
-    "PgUp/PgDn page samples | Space play/stop | / edit | c correct | ? help | s save"
+    "PgUp/PgDn page samples | Space play/stop | / name | e edit text | ? help | s save"
 )
 EDIT_STATUS = (
     "Edit: type a name or search people | Tab first suggestion | "
@@ -37,7 +37,8 @@ space                Play or stop selected sample
 a                    Accept current voiceprint match
 i                    Ignore this speaker: keep anonymous and skip capture
 /                    Edit or search speaker name
-c                    Save names and run transcript correction (project review)
+e                    Edit selected transcript text inside this TUI
+c                    Same as e
 s                    Save speaker mapping and outputs
 q                    Quit without saving
 

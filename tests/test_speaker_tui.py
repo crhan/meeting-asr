@@ -16,6 +16,7 @@ from app.speaker_tui import (
     KnownPerson,
     ReviewSpeaker,
     SpeakerMatchCandidate,
+    SentenceCorrectionScreen,
     SpeakerReviewApp,
     SpeakerReviewDecision,
     SpeakerReviewOverview,
@@ -184,21 +185,37 @@ def test_speaker_review_tui_can_ignore_anonymous_speaker() -> None:
     )
 
 
-def test_project_review_tui_can_request_transcript_correction() -> None:
-    """Project review should hand off to the shared transcript correction flow."""
+def test_project_review_tui_edits_transcript_text_inline() -> None:
+    """Project review should edit selected transcript text without leaving the TUI."""
     app = SpeakerReviewApp(_session(allow_correction=True))
 
     async def scenario() -> None:
         async with app.run_test() as pilot:
-            await pilot.press("c")
+            await pilot.press("e")
+            await pilot.pause()
+
+            assert isinstance(app.screen, SentenceCorrectionScreen)
+
+            field = app.screen.query_one("#correction-input", Input)
+            field.value = "第一句修正"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.return_value is None
+            assert app._speaker().segments[0].text == "第一句修正"
+            assert "Press s" in str(app.query_one("#status", Static).render())
+
+            await pilot.press("s")
 
     asyncio.run(scenario())
 
-    assert app.return_value == SpeakerReviewDecision(
-        saved=True,
-        mapping={0: "Speaker A"},
-        action="correct",
-    )
+    assert app.return_value is not None
+    assert app.return_value.saved is True
+    assert app.return_value.action == "correct-inline"
+    assert app.return_value.mapping == {0: "Speaker A"}
+    assert app.return_value.correction_edit is not None
+    assert app.return_value.correction_edit.original_text == "第一句"
+    assert app.return_value.correction_edit.corrected_text == "第一句修正"
 
 
 def test_speaker_review_tui_binds_existing_person_by_name() -> None:

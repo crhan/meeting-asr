@@ -13,7 +13,7 @@ from app.commands import project as project_commands
 from app.cli import app
 from app.correction_types import CorrectionEditOptions
 from app.project_manager import create_project
-from app.speaker_tui import SpeakerReviewDecision
+from app.speaker_tui import SentenceCorrectionEdit, SpeakerReviewDecision
 
 runner = CliRunner()
 
@@ -213,6 +213,47 @@ def test_project_review_correction_action_uses_editor_correction_flow(tmp_path: 
         project_dir / "exports" / "transcript_named_corrected.txt"
     ).read_text(encoding="utf-8")
     assert _fetch_one(lexicon_db, "SELECT category FROM terms") == "system"
+
+
+def test_project_review_inline_correction_does_not_open_editor(tmp_path: Path) -> None:
+    """TUI sentence edits should reuse correction processing without launching Code/editor."""
+    project_dir = _sample_project(tmp_path)
+    lexicon_db = tmp_path / "lexicon.sqlite"
+    options = project_commands.ProjectReviewCorrectionOptions(
+        edit_options=CorrectionEditOptions(
+            editor="definitely-missing-editor",
+            open_editor=True,
+            open_proposal=True,
+            category="system",
+            lexicon_db=lexicon_db,
+            use_ai=False,
+        ),
+        yes=True,
+    )
+
+    project_commands._handle_speaker_review_decision(
+        project_dir,
+        SpeakerReviewDecision(
+            saved=True,
+            mapping={0: "敬悦"},
+            action="correct-inline",
+            correction_edit=SentenceCorrectionEdit(
+                sentence_id=1,
+                speaker_id=0,
+                begin_time_ms=1000,
+                end_time_ms=3000,
+                original_text="我们看一下艾赛系统。",
+                corrected_text="我们看一下iSee系统。",
+            ),
+        ),
+        options,
+    )
+
+    assert "iSee" in (project_dir / "asr" / "sentences_corrected.json").read_text(encoding="utf-8")
+    assert "敬悦: 我们看一下iSee系统。" in (
+        project_dir / "exports" / "transcript_named_corrected.txt"
+    ).read_text(encoding="utf-8")
+    assert _fetch_one(lexicon_db, "SELECT canonical FROM terms") == "iSee"
 
 
 def _sample_project(tmp_path: Path) -> Path:

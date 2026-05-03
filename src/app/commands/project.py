@@ -99,9 +99,9 @@ from app.speaker_review import (
 from app.presentation.tui.speaker import (
     SpeakerReviewDecision,
     load_speaker_review_session,
-    render_speaker_review_summary,
     run_speaker_review_tui,
 )
+from app.presentation.tui.speaker_summary import render_speaker_review_summary
 from app.srt_compare import build_report, parse_srt
 from app.utils import configure_logging, format_ms_timestamp, safe_write_text
 
@@ -855,6 +855,9 @@ def _handle_speaker_review_decision(
     typer.echo(f"Mapping written to: {mapping_path}")
     typer.echo(f"Named transcript written to: {transcript_path}")
     typer.echo(f"Named subtitle written to: {srt_path}")
+    if decision.action == "correct-inline":
+        _run_review_inline_correction(project_dir, decision, correction_options)
+        return
     if decision.action == "correct":
         _run_review_transcript_correction(project_dir, correction_options)
         return
@@ -864,6 +867,32 @@ def _handle_speaker_review_decision(
     typer.echo("  meeting-asr project transcript show")
     typer.echo("  meeting-asr voiceprint capture")
     typer.echo("  meeting-asr voiceprint embed")
+
+
+def _run_review_inline_correction(
+    project_dir: Path,
+    decision: SpeakerReviewDecision,
+    correction_options: ProjectReviewCorrectionOptions | None,
+) -> None:
+    """Run transcript correction from one TUI-edited sentence."""
+    if correction_options is None or decision.correction_edit is None:
+        typer.echo("Transcript correction is only available from meeting-asr project review.")
+        return
+    paths = project_paths(project_dir)
+    manifest = run_with_cli_errors(lambda: load_manifest(paths.root))
+    speaker_mapping = run_with_cli_errors(lambda: project_correct_commands.load_speaker_mapping_for_correction(paths.root))
+    typer.echo("")
+    typer.echo("Transcript correction:")
+    run_with_cli_errors(
+        lambda: project_correct_commands.finish_inline_correction(
+            paths=paths,
+            manifest=manifest,
+            speaker_mapping=speaker_mapping,
+            correction_edit=decision.correction_edit,
+            options=correction_options.edit_options,
+            yes=correction_options.yes,
+        )
+    )
 
 
 def _run_review_transcript_correction(

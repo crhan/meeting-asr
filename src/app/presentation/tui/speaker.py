@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shlex
 import subprocess
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -21,15 +20,12 @@ from app.project_manager import ProjectManifest, load_manifest, project_paths, r
 from app.speaker_labeling import load_transcript_result
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
-    MATCH_STATUS_MATCHED,
     MATCH_STATUS_NO_CANDIDATE,
-    accepted_match_name,
     best_candidate_name,
-    best_candidate_score,
-    match_threshold,
     voiceprint_match_status,
 )
 from app.speaker_review import build_audio_preview_command
+from app.presentation.tui.speaker_correction import SentenceCorrectionEdit, SentenceCorrectionScreen
 from app.presentation.tui.speaker_help import BROWSE_STATUS, EDIT_STATUS, ShortcutHelpScreen
 from app.presentation.tui.speaker_matches import (
     SpeakerMatchCandidate,
@@ -112,6 +108,7 @@ class SpeakerReviewDecision:
     mapping: dict[int, str]
     action: str = "save"
     person_mapping: dict[int, int] = field(default_factory=dict)
+    correction_edit: SentenceCorrectionEdit | None = None
 
 
 class NameInput(Input):
@@ -190,7 +187,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("escape", "cancel_edit", "Cancel edit", show=False),
         Binding("a", "accept_match", "Accept match"),
         Binding("i", "ignore_speaker", "Ignore"),
-        Binding("c", "correct_transcript", "Correct"),
+        Binding("e", "edit_sample_text", "Edit text"),
+        Binding("c", "edit_sample_text", "Correct text", show=False),
         Binding("?", "show_shortcuts", "Help"),
         Binding("s", "save", "Save"),
         Binding("q", "quit_review", "Quit"),
@@ -210,6 +208,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.playback_process: subprocess.Popen | None = None
         self.search_query = ""
         self.known_people = list(session.people)
+        self.correction_edit: SentenceCorrectionEdit | None = None
 
     def compose(self) -> ComposeResult:
         """Build the TUI layout."""
@@ -328,31 +327,45 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def action_save(self) -> None:
         """Return the reviewed mapping to the CLI command."""
+        action = "correct-inline" if self.correction_edit is not None else "save"
         self.exit(
             SpeakerReviewDecision(
                 saved=True,
                 mapping=self._mapping(),
+                action=action,
                 person_mapping=self._person_mapping(),
+                correction_edit=self.correction_edit,
             )
         )
 
-    def action_correct_transcript(self) -> None:
-        """Save names and hand control to the transcript correction workflow."""
+    def action_edit_sample_text(self) -> None:
+        """Edit the selected transcript sentence inside the TUI."""
         if not self.session.allow_correction:
             self._set_status("Transcript correction is available from project review, not speaker-only review.")
             return
-        self.exit(
-            SpeakerReviewDecision(
-                saved=True,
-                mapping=self._mapping(),
-                action="correct",
-                person_mapping=self._person_mapping(),
-            )
+        speaker = self._speaker()
+        self.push_screen(
+            SentenceCorrectionScreen(
+                speaker_label=speaker.label,
+                speaker_name=speaker.current_name,
+                segment=self._selected_sample(),
+            ),
+            self._handle_sentence_correction,
         )
 
     def action_quit_review(self) -> None:
         """Exit without saving."""
         self.exit(SpeakerReviewDecision(saved=False, mapping={}, action="quit"))
+
+    def _handle_sentence_correction(self, edit: SentenceCorrectionEdit | None) -> None:
+        """Record an inline sentence correction returned by the modal."""
+        if edit is None:
+            self._set_status("Transcript correction canceled.")
+            return
+        self.correction_edit = edit
+        self._replace_segment_text(edit)
+        self._set_status("Sentence corrected in TUI. Press s to save names and apply correction.")
+        self._refresh()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Refresh suggestions while the user types a name."""
@@ -583,6 +596,14 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         speaker = self._speaker()
         return speaker.segments[speaker.selected_sample_index]
 
+    def _replace_segment_text(self, edit: SentenceCorrectionEdit) -> None:
+        """Update the in-memory sample text after a TUI correction."""
+        for speaker in self.session.speakers:
+            for segment in speaker.segments:
+                if _same_sentence(segment, edit):
+                    segment.text = edit.corrected_text
+                    return
+
     def _visible_segments(self, speaker: ReviewSpeaker) -> tuple[int, list[SentenceSegment]]:
         """Return the current sample page start and segments."""
         page_size = self._sample_page_size()
@@ -699,87 +720,6 @@ def run_speaker_review_tui(session: SpeakerReviewSession) -> SpeakerReviewDecisi
     """
     decision = SpeakerReviewApp(session).run()
     return decision or SpeakerReviewDecision(saved=False, mapping={}, action="quit")
-
-
-def render_speaker_review_summary(session: SpeakerReviewSession, *, speaker_only: bool = False) -> str:
-    """
-    Render a non-interactive summary of the review queue.
-
-    Args:
-        session: Speaker review inputs.
-        speaker_only: Prefer the speaker-only review entrypoint.
-
-    Returns:
-        Plain terminal text.
-    """
-    lines = [
-        f"Speaker review queue: {session.project_dir}",
-        f"Known people: {len(session.people_names)}",
-    ]
-    unresolved_speakers = [
-        speaker
-        for speaker in session.speakers
-        if speaker.match is not None and voiceprint_match_status(speaker.match) != MATCH_STATUS_MATCHED
-    ]
-    if unresolved_speakers:
-        project_ref = shlex.quote(session.overview.project_id)
-        review_command = (
-            f"meeting-asr project speakers review {project_ref}"
-            if speaker_only
-            else f"meeting-asr project review {project_ref}"
-        )
-        lines.extend(
-            [
-                "",
-                f"Recommended next step: {review_command}",
-                "This opens the human review workflow for unresolved speakers.",
-                "",
-                "Voiceprint status:",
-            ]
-        )
-        lines.extend(_voiceprint_status_line(speaker) for speaker in unresolved_speakers)
-        lines.extend(
-            [
-                "",
-                "Advanced/scripted alternative (not the recommended human path):",
-                f"  meeting-asr project speakers apply {project_ref} --map 0=Name",
-                "",
-                "After saving names:",
-                f"  meeting-asr voiceprint capture {project_ref}",
-                "  meeting-asr voiceprint embed",
-                "",
-                "Review queue:",
-            ]
-        )
-    for speaker in session.speakers:
-        lines.append(_summary_line(speaker))
-    return "\n".join(lines)
-
-
-def _voiceprint_status_line(speaker: ReviewSpeaker) -> str:
-    """
-    Render a concise voiceprint status line for summary output.
-
-    Args:
-        speaker: Speaker review row.
-
-    Returns:
-        Human-readable voiceprint status.
-    """
-    if speaker.match is None:
-        return f"{speaker.label}: no-match"
-    status = voiceprint_match_status(speaker.match)
-    if status == MATCH_STATUS_BELOW_THRESHOLD:
-        name = best_candidate_name(speaker.match) or "unrecorded"
-        score = best_candidate_score(speaker.match)
-        score_text = "" if score is None else f" score={score:.3f}"
-        threshold = match_threshold(speaker.match)
-        threshold_text = "" if threshold is None else f" threshold={threshold:.3f}"
-        return f"{speaker.label}: below-threshold best={name}{score_text}{threshold_text}"
-    if status == MATCH_STATUS_MATCHED:
-        name = accepted_match_name(speaker.match) or speaker.match.name
-        return f"{speaker.label}: matched name={name}"
-    return f"{speaker.label}: no-candidate"
 
 
 def _build_review_overview(
@@ -961,35 +901,21 @@ def _clamp(value: int, minimum: int, maximum: int) -> int:
     return min(max(value, minimum), maximum)
 
 
-def _summary_line(speaker: ReviewSpeaker) -> str:
-    """Render one plain summary row."""
-    status = speaker_status(speaker)
-    if speaker.match is None:
-        match = "-"
-    elif voiceprint_match_status(speaker.match) == MATCH_STATUS_NO_CANDIDATE:
-        match = "no-candidate"
-    elif speaker.match.accepted:
-        match = f"matched:{accepted_match_name(speaker.match) or speaker.match.name}"
-    else:
-        score = best_candidate_score(speaker.match)
-        score_text = "" if score is None else f" score={score:.3f}"
-        threshold = match_threshold(speaker.match)
-        threshold_text = "" if threshold is None else f" threshold={threshold:.3f}"
-        candidate = best_candidate_name(speaker.match)
-        if candidate is None and speaker.match.name != "unknown":
-            candidate = speaker.match.name
-        match = f"below-threshold:{candidate or 'unrecorded'}{score_text}{threshold_text}"
-    return (
-        f"{speaker.label} speaker_id={speaker.speaker_id} "
-        f"status={status} name={speaker.current_name} match={match}"
-    )
-
-
 def _segment_time_range(segment: SentenceSegment) -> str:
     """Format a transcript segment time range."""
     start = format_ms_timestamp(segment.begin_time_ms)
     end = format_ms_timestamp(segment.end_time_ms)
     return f"{start}-{end}"
+
+
+def _same_sentence(segment: SentenceSegment, edit: SentenceCorrectionEdit) -> bool:
+    """Return whether a segment matches an inline correction edit."""
+    return (
+        segment.sentence_id == edit.sentence_id
+        and segment.speaker_id == edit.speaker_id
+        and segment.begin_time_ms == edit.begin_time_ms
+        and segment.end_time_ms == edit.end_time_ms
+    )
 
 
 def _trim_sample_text(text: str, *, limit: int = 90) -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shlex
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +21,7 @@ from app.transcript_corrections import (
     CorrectionEditSummary,
     accept_correction_proposal,
     prepare_editor_correction,
+    prepare_inline_correction,
 )
 
 app = MeetingAsrTyper(
@@ -94,6 +96,48 @@ def finish_editor_correction(
         options.lexicon_db,
         yes,
         auto_accept=options.open_editor,
+    )
+
+
+def finish_inline_correction(
+    *,
+    paths,
+    manifest: ProjectManifest,
+    speaker_mapping: dict[int, str],
+    correction_edit: object,
+    options: CorrectionEditOptions,
+    yes: bool,
+) -> CorrectionEditSummary:
+    """
+    Run the TUI inline correction flow without launching an external editor.
+
+    Args:
+        paths: Project paths.
+        manifest: Loaded project manifest.
+        speaker_mapping: Speaker id to display name mapping.
+        correction_edit: TUI sentence edit.
+        options: Correction options.
+        yes: Whether to accept the generated proposal without prompting.
+
+    Returns:
+        Final correction summary.
+    """
+    inline_options = replace(options, open_editor=False, open_proposal=False)
+    summary = prepare_inline_correction(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        correction_edit=correction_edit,
+        options=inline_options,
+    )
+    return _finish_correction_edit(
+        paths,
+        manifest,
+        speaker_mapping,
+        summary,
+        inline_options.lexicon_db,
+        yes,
+        auto_accept=True,
     )
 
 
