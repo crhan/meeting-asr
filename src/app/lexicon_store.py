@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from app.config import get_data_dir
 from app.correction_hotwords import AsrHotword, hotwords_from_terms
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS terms (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_terms_category ON terms(category);
+CREATE INDEX IF NOT EXISTS idx_terms_status ON terms(status);
 
 CREATE TABLE IF NOT EXISTS aliases (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,6 +88,67 @@ class LexiconContext:
 
 
 @dataclass(frozen=True, slots=True)
+class LexiconAlias:
+    """One alias attached to a canonical lexicon term."""
+
+    alias: str
+    alias_type: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class LexiconContextRow:
+    """One stored correction context for a canonical term."""
+
+    wrong_text: str
+    corrected_text: str
+    left_context: str
+    right_context: str
+    speaker_name: str | None
+    project_id: str
+    sentence_id: int | None
+    source: str
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class LexiconTerm:
+    """One local lexicon term row."""
+
+    term_id: int
+    canonical: str
+    category: str
+    description: str
+    status: str
+    alias_count: int
+    context_count: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class LexiconTermDetail:
+    """Full local lexicon term detail."""
+
+    term: LexiconTerm
+    aliases: tuple[LexiconAlias, ...]
+    contexts: tuple[LexiconContextRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LexiconStats:
+    """Aggregate local lexicon statistics."""
+
+    active_terms: int
+    inactive_terms: int
+    aliases: int
+    contexts: int
+    hotwords: int
+    cached_vocabularies: int
+
+
+@dataclass(frozen=True, slots=True)
 class AsrVocabularyState:
     """Cached DashScope vocabulary state for one ASR model."""
 
@@ -129,6 +192,223 @@ def record_lexicon_contexts(contexts: list[LexiconContext], *, db_path: Path | N
             _upsert_alias(connection, term_id, context.wrong_text)
             _insert_context(connection, term_id, context)
     return len(contexts)
+
+
+def upsert_lexicon_term(
+    *,
+    canonical: str,
+    category: str,
+    description: str = "",
+    aliases: tuple[str, ...] = (),
+    status: str = "active",
+    db_path: Path | None = None,
+) -> LexiconTermDetail:
+    """
+    Insert or update one canonical lexicon term.
+
+    Args:
+        canonical: Canonical term text.
+        category: Term category, for example ``person`` or ``system``.
+        description: Optional human note.
+        aliases: Optional aliases or common ASR mistakes.
+        status: Term status.
+        db_path: Optional database path override.
+
+    Returns:
+        Saved term detail.
+    """
+    canonical = _require_text(canonical, "canonical")
+    category = _require_text(category, "category")
+    status = _validate_status(status)
+    database_path = _database_path(db_path, create_parent=True)
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        term_id = _upsert_term(connection, canonical, category, description, status)
+        for alias in aliases:
+            cleaned_alias = alias.strip()
+            if cleaned_alias:
+                _upsert_alias(connection, term_id, cleaned_alias)
+    return get_lexicon_term(canonical, db_path=database_path)
+
+
+def list_lexicon_terms(
+    *,
+    db_path: Path | None = None,
+    status: str = "active",
+    category: str | None = None,
+    query: str | None = None,
+    limit: int = 100,
+) -> list[LexiconTerm]:
+    """
+    List local lexicon terms.
+
+    Args:
+        db_path: Optional database path override.
+        status: ``active``, ``inactive``, or ``all``.
+        category: Optional category filter.
+        query: Optional canonical or alias substring.
+        limit: Maximum rows.
+
+    Returns:
+        Matching terms.
+    """
+    database_path = _database_path(db_path)
+    if not database_path.exists():
+        return []
+    where, params = _term_filters(status=status, category=category, query=query)
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        rows = connection.execute(
+            f"""
+            SELECT t.id, t.canonical, t.category, t.description, t.status,
+                   COUNT(DISTINCT a.id) AS alias_count,
+                   COUNT(DISTINCT c.id) AS context_count,
+                   t.created_at, t.updated_at
+            FROM terms AS t
+            LEFT JOIN aliases AS a ON a.term_id = t.id
+            LEFT JOIN contexts AS c ON c.term_id = t.id
+            {where}
+            GROUP BY t.id
+            ORDER BY t.updated_at DESC, t.canonical ASC
+            LIMIT ?
+            """,
+            (*params, limit),
+        ).fetchall()
+    return [_term_from_row(row) for row in rows]
+
+
+def get_lexicon_term(
+    term_ref: str | int,
+    *,
+    db_path: Path | None = None,
+    context_limit: int = 20,
+) -> LexiconTermDetail:
+    """
+    Return one term by id, canonical text, or alias.
+
+    Args:
+        term_ref: Term id, canonical text, or alias.
+        db_path: Optional database path override.
+        context_limit: Maximum context rows to include.
+
+    Returns:
+        Full term detail.
+    """
+    database_path = _database_path(db_path)
+    if not database_path.exists():
+        raise LookupError(f"Lexicon database does not exist: {database_path}")
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        term_id = _resolve_term_id(connection, term_ref)
+        term = _load_term(connection, term_id)
+        aliases = _load_aliases(connection, term_id)
+        contexts = _load_contexts(connection, term_id, context_limit)
+    return LexiconTermDetail(term, aliases, contexts)
+
+
+def delete_lexicon_term(
+    term_ref: str | int,
+    *,
+    db_path: Path | None = None,
+    permanent: bool = False,
+) -> LexiconTermDetail:
+    """
+    Deactivate or permanently delete a local lexicon term.
+
+    Args:
+        term_ref: Term id, canonical text, or alias.
+        db_path: Optional database path override.
+        permanent: Physically delete the row when true.
+
+    Returns:
+        Deleted or deactivated term detail.
+    """
+    database_path = _database_path(db_path)
+    if not database_path.exists():
+        raise LookupError(f"Lexicon database does not exist: {database_path}")
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        term_id = _resolve_term_id(connection, term_ref)
+        detail = LexiconTermDetail(_load_term(connection, term_id), _load_aliases(connection, term_id), ())
+        if permanent:
+            connection.execute("DELETE FROM terms WHERE id = ?", (term_id,))
+        else:
+            connection.execute(
+                "UPDATE terms SET status = 'inactive', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (term_id,),
+            )
+    return detail
+
+
+def lexicon_stats(*, db_path: Path | None = None) -> LexiconStats:
+    """
+    Return aggregate local lexicon statistics.
+
+    Args:
+        db_path: Optional database path override.
+
+    Returns:
+        Local lexicon statistics.
+    """
+    database_path = _database_path(db_path)
+    if not database_path.exists():
+        return LexiconStats(0, 0, 0, 0, 0, 0)
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        active = _count(connection, "SELECT COUNT(*) FROM terms WHERE status = 'active'")
+        inactive = _count(connection, "SELECT COUNT(*) FROM terms WHERE status != 'active'")
+        aliases = _count(connection, "SELECT COUNT(*) FROM aliases")
+        contexts = _count(connection, "SELECT COUNT(*) FROM contexts")
+        vocabularies = _count(connection, "SELECT COUNT(*) FROM asr_hotword_vocabularies")
+    hotwords = len(list_asr_hotwords(db_path=database_path))
+    return LexiconStats(active, inactive, aliases, contexts, hotwords, vocabularies)
+
+
+def export_lexicon_payload(*, db_path: Path | None = None, include_inactive: bool = True) -> dict[str, Any]:
+    """
+    Build a portable local lexicon JSON payload.
+
+    Args:
+        db_path: Optional database path override.
+        include_inactive: Include inactive terms when true.
+
+    Returns:
+        JSON-ready lexicon payload.
+    """
+    status = "all" if include_inactive else "active"
+    terms = []
+    for term in list_lexicon_terms(db_path=db_path, status=status, limit=10_000):
+        detail = get_lexicon_term(term.canonical, db_path=db_path, context_limit=10_000)
+        terms.append(_term_export_payload(detail))
+    return {"schema_version": LEXICON_SCHEMA_VERSION, "terms": terms}
+
+
+def import_lexicon_payload(payload: dict[str, Any], *, db_path: Path | None = None) -> int:
+    """
+    Import a portable local lexicon JSON payload.
+
+    Args:
+        payload: Payload previously produced by ``export_lexicon_payload``.
+        db_path: Optional database path override.
+
+    Returns:
+        Number of imported terms.
+    """
+    terms = payload.get("terms")
+    if not isinstance(terms, list):
+        raise ValueError("Lexicon import payload must contain a terms list.")
+    database_path = _database_path(db_path, create_parent=True)
+    imported = 0
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        for item in terms:
+            if not isinstance(item, dict):
+                continue
+            term_id = _import_term(connection, item)
+            _import_aliases(connection, term_id, item.get("aliases"))
+            _import_contexts(connection, term_id, item.get("contexts"))
+            imported += 1
+    return imported
 
 
 def list_asr_hotwords(*, db_path: Path | None = None, limit: int = 500) -> list[AsrHotword]:
@@ -325,17 +605,284 @@ def _asr_state_from_row(row) -> AsrVocabularyState | None:
     )
 
 
-def _upsert_term(connection: sqlite3.Connection, canonical: str, category: str) -> int:
-    """Insert or refresh a canonical term."""
+def _database_path(db_path: Path | None, *, create_parent: bool = False) -> Path:
+    """Resolve the lexicon database path."""
+    database_path = db_path or default_lexicon_db_path()
+    if create_parent:
+        database_path.parent.mkdir(parents=True, exist_ok=True)
+    return database_path
+
+
+def _require_text(value: str, field: str) -> str:
+    """Return a stripped required text field."""
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError(f"Lexicon {field} is required.")
+    return stripped
+
+
+def _validate_status(status: str) -> str:
+    """Return a normalized lexicon term status."""
+    normalized = status.strip().lower()
+    if normalized not in {"active", "inactive"}:
+        raise ValueError("Lexicon term status must be active or inactive.")
+    return normalized
+
+
+def _term_filters(
+    *,
+    status: str,
+    category: str | None,
+    query: str | None,
+) -> tuple[str, tuple[object, ...]]:
+    """Build the WHERE clause for term listing."""
+    clauses = []
+    params: list[object] = []
+    normalized_status = status.strip().lower()
+    if normalized_status != "all":
+        clauses.append("t.status = ?")
+        params.append(_validate_status(normalized_status))
+    if category and category.strip():
+        clauses.append("t.category = ?")
+        params.append(category.strip())
+    if query and query.strip():
+        clauses.append(
+            """
+            (
+              t.canonical LIKE ?
+              OR EXISTS (
+                SELECT 1 FROM aliases AS qa
+                WHERE qa.term_id = t.id AND qa.alias LIKE ?
+              )
+            )
+            """
+        )
+        pattern = f"%{query.strip()}%"
+        params.extend([pattern, pattern])
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    return where, tuple(params)
+
+
+def _resolve_term_id(connection: sqlite3.Connection, term_ref: str | int) -> int:
+    """Resolve a term id from an id, canonical text, or alias."""
+    ref_text = str(term_ref).strip()
+    if not ref_text:
+        raise LookupError("Lexicon term reference is empty.")
+    if ref_text.isdecimal():
+        row = connection.execute("SELECT id FROM terms WHERE id = ?", (int(ref_text),)).fetchone()
+        if row is not None:
+            return int(row[0])
+    rows = connection.execute(
+        """
+        SELECT id FROM terms WHERE canonical = ?
+        UNION
+        SELECT term_id FROM aliases WHERE alias = ?
+        """,
+        (ref_text, ref_text),
+    ).fetchall()
+    if not rows:
+        raise LookupError(f"Lexicon term not found: {ref_text}")
+    if len(rows) > 1:
+        raise LookupError(f"Lexicon term reference is ambiguous: {ref_text}")
+    return int(rows[0][0])
+
+
+def _load_term(connection: sqlite3.Connection, term_id: int) -> LexiconTerm:
+    """Load one summarized term row."""
+    row = connection.execute(
+        """
+        SELECT t.id, t.canonical, t.category, t.description, t.status,
+               COUNT(DISTINCT a.id), COUNT(DISTINCT c.id),
+               t.created_at, t.updated_at
+        FROM terms AS t
+        LEFT JOIN aliases AS a ON a.term_id = t.id
+        LEFT JOIN contexts AS c ON c.term_id = t.id
+        WHERE t.id = ?
+        GROUP BY t.id
+        """,
+        (term_id,),
+    ).fetchone()
+    if row is None:
+        raise LookupError(f"Lexicon term not found: {term_id}")
+    return _term_from_row(row)
+
+
+def _load_aliases(connection: sqlite3.Connection, term_id: int) -> tuple[LexiconAlias, ...]:
+    """Load aliases for one term."""
+    rows = connection.execute(
+        """
+        SELECT alias, alias_type, created_at, updated_at
+        FROM aliases
+        WHERE term_id = ?
+        ORDER BY alias_type ASC, alias ASC
+        """,
+        (term_id,),
+    ).fetchall()
+    return tuple(LexiconAlias(str(row[0]), str(row[1]), str(row[2]), str(row[3])) for row in rows)
+
+
+def _load_contexts(connection: sqlite3.Connection, term_id: int, limit: int) -> tuple[LexiconContextRow, ...]:
+    """Load recent contexts for one term."""
+    rows = connection.execute(
+        """
+        SELECT wrong_text, corrected_text, left_context, right_context,
+               speaker_name, project_id, sentence_id, source, created_at
+        FROM contexts
+        WHERE term_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        """,
+        (term_id, limit),
+    ).fetchall()
+    return tuple(_context_from_row(row) for row in rows)
+
+
+def _count(connection: sqlite3.Connection, query: str) -> int:
+    """Return the integer result of one count query."""
+    row = connection.execute(query).fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def _term_from_row(row) -> LexiconTerm:
+    """Build one term summary from a SQLite row."""
+    return LexiconTerm(
+        term_id=int(row[0]),
+        canonical=str(row[1]),
+        category=str(row[2]),
+        description=str(row[3]),
+        status=str(row[4]),
+        alias_count=int(row[5]),
+        context_count=int(row[6]),
+        created_at=str(row[7]),
+        updated_at=str(row[8]),
+    )
+
+
+def _context_from_row(row) -> LexiconContextRow:
+    """Build one context row from SQLite data."""
+    return LexiconContextRow(
+        wrong_text=str(row[0]),
+        corrected_text=str(row[1]),
+        left_context=str(row[2]),
+        right_context=str(row[3]),
+        speaker_name=str(row[4]) if row[4] is not None else None,
+        project_id=str(row[5]),
+        sentence_id=int(row[6]) if row[6] is not None else None,
+        source=str(row[7]),
+        created_at=str(row[8]),
+    )
+
+
+def _term_export_payload(detail: LexiconTermDetail) -> dict[str, Any]:
+    """Return a portable JSON payload for one term."""
+    return {
+        "canonical": detail.term.canonical,
+        "category": detail.term.category,
+        "description": detail.term.description,
+        "status": detail.term.status,
+        "aliases": [_alias_payload(alias) for alias in detail.aliases],
+        "contexts": [_context_payload(context) for context in detail.contexts],
+    }
+
+
+def _alias_payload(alias: LexiconAlias) -> dict[str, str]:
+    """Return JSON-ready alias data."""
+    return {
+        "alias": alias.alias,
+        "alias_type": alias.alias_type,
+        "created_at": alias.created_at,
+        "updated_at": alias.updated_at,
+    }
+
+
+def _context_payload(context: LexiconContextRow) -> dict[str, object]:
+    """Return JSON-ready correction context data."""
+    return {
+        "wrong_text": context.wrong_text,
+        "corrected_text": context.corrected_text,
+        "left_context": context.left_context,
+        "right_context": context.right_context,
+        "speaker_name": context.speaker_name,
+        "project_id": context.project_id,
+        "sentence_id": context.sentence_id,
+        "source": context.source,
+        "created_at": context.created_at,
+    }
+
+
+def _import_term(connection: sqlite3.Connection, item: dict[str, Any]) -> int:
+    """Import one term object."""
+    return _upsert_term(
+        connection,
+        _require_text(str(item.get("canonical") or ""), "canonical"),
+        _require_text(str(item.get("category") or "unknown"), "category"),
+        str(item.get("description") or ""),
+        _validate_status(str(item.get("status") or "active")),
+    )
+
+
+def _import_aliases(connection: sqlite3.Connection, term_id: int, aliases: object) -> None:
+    """Import aliases for one term."""
+    if not isinstance(aliases, list):
+        return
+    for item in aliases:
+        alias = item.get("alias") if isinstance(item, dict) else item
+        alias_type = item.get("alias_type") if isinstance(item, dict) else "asr_error"
+        if isinstance(alias, str) and alias.strip():
+            _upsert_alias(connection, term_id, alias.strip(), str(alias_type or "asr_error"))
+
+
+def _import_contexts(connection: sqlite3.Connection, term_id: int, contexts: object) -> None:
+    """Import contexts for one term."""
+    if not isinstance(contexts, list):
+        return
+    for item in contexts:
+        if isinstance(item, dict):
+            _insert_imported_context(connection, term_id, item)
+
+
+def _insert_imported_context(connection: sqlite3.Connection, term_id: int, item: dict[str, Any]) -> None:
+    """Insert one imported context row."""
     connection.execute(
         """
-        INSERT INTO terms(canonical, category)
-        VALUES (?, ?)
-        ON CONFLICT(canonical) DO UPDATE SET
-          category = excluded.category,
-          updated_at = CURRENT_TIMESTAMP
+        INSERT INTO contexts(
+          term_id, wrong_text, corrected_text, left_context, right_context,
+          speaker_name, project_id, sentence_id, source
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (canonical, category),
+        (
+            term_id,
+            str(item.get("wrong_text") or ""),
+            str(item.get("corrected_text") or ""),
+            str(item.get("left_context") or ""),
+            str(item.get("right_context") or ""),
+            item.get("speaker_name"),
+            str(item.get("project_id") or "import"),
+            item.get("sentence_id"),
+            str(item.get("source") or "import"),
+        ),
+    )
+
+
+def _upsert_term(
+    connection: sqlite3.Connection,
+    canonical: str,
+    category: str,
+    description: str | None = None,
+    status: str | None = None,
+) -> int:
+    """Insert or refresh a canonical term."""
+    row = connection.execute("SELECT id FROM terms WHERE canonical = ?", (canonical,)).fetchone()
+    if row is not None:
+        _update_term(connection, int(row[0]), category, description, status)
+        return int(row[0])
+    connection.execute(
+        """
+        INSERT INTO terms(canonical, category, description, status)
+        VALUES (?, ?, ?, ?)
+        """,
+        (canonical, category, description or "", status or "active"),
     )
     row = connection.execute("SELECT id FROM terms WHERE canonical = ?", (canonical,)).fetchone()
     if row is None:
@@ -343,16 +890,41 @@ def _upsert_term(connection: sqlite3.Connection, canonical: str, category: str) 
     return int(row[0])
 
 
-def _upsert_alias(connection: sqlite3.Connection, term_id: int, alias: str) -> None:
-    """Insert an ASR-error alias for a term."""
+def _update_term(
+    connection: sqlite3.Connection,
+    term_id: int,
+    category: str,
+    description: str | None,
+    status: str | None,
+) -> None:
+    """Update one term without clobbering fields not provided by callers."""
+    fields = ["category = ?", "updated_at = CURRENT_TIMESTAMP"]
+    params: list[object] = [category]
+    if description is not None:
+        fields.insert(-1, "description = ?")
+        params.append(description)
+    if status is not None:
+        fields.insert(-1, "status = ?")
+        params.append(status)
+    params.append(term_id)
+    connection.execute(f"UPDATE terms SET {', '.join(fields)} WHERE id = ?", tuple(params))
+
+
+def _upsert_alias(
+    connection: sqlite3.Connection,
+    term_id: int,
+    alias: str,
+    alias_type: str = "asr_error",
+) -> None:
+    """Insert or refresh an alias for a term."""
     connection.execute(
         """
         INSERT INTO aliases(term_id, alias, alias_type)
-        VALUES (?, ?, 'asr_error')
+        VALUES (?, ?, ?)
         ON CONFLICT(term_id, alias, alias_type) DO UPDATE SET
           updated_at = CURRENT_TIMESTAMP
         """,
-        (term_id, alias),
+        (term_id, alias, alias_type),
     )
 
 

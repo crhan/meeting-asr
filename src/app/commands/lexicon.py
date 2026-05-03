@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
 import typer
+from rich import box
+from rich.table import Table
 
 from app.asr_hotwords import (
     DEFAULT_HOTWORD_PREFIX,
@@ -21,16 +24,162 @@ from app.config import load_settings
 from app.correction_hotwords import write_hotword_artifact
 from app.lexicon_store import (
     AsrVocabularyState,
+    LexiconStats,
+    LexiconTerm,
+    LexiconTermDetail,
     default_lexicon_db_path,
     delete_asr_vocabulary_state,
+    delete_lexicon_term,
+    export_lexicon_payload,
+    get_lexicon_term,
+    import_lexicon_payload,
+    lexicon_stats,
     list_asr_hotwords,
+    list_lexicon_terms,
+    upsert_lexicon_term,
 )
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
+from app.presentation.cli.output import cli_console
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
 hotwords_app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
 app.add_typer(hotwords_app, name="hotwords", help="Export and sync ASR hotwords from accepted corrections.")
+
+
+@app.command("list")
+def terms_list_command(
+    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    status: str = typer.Option("active", "--status", help="active, inactive, or all."),
+    category: Optional[str] = typer.Option(None, "--category", help="Filter by lexicon category."),
+    query: Optional[str] = typer.Option(None, "--query", "-q", help="Search canonical terms and aliases."),
+    limit: int = typer.Option(100, "--limit", min=1, help="Maximum terms to list."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """List local vocabulary terms."""
+    db_path = lexicon_db or default_lexicon_db_path()
+    terms = run_with_cli_errors(
+        lambda: list_lexicon_terms(db_path=db_path, status=status, category=category, query=query, limit=limit)
+    )
+    if as_json:
+        emit_json({"lexicon_db": db_path, "count": len(terms), "terms": [_term_payload(term) for term in terms]})
+        return
+    typer.echo(f"Lexicon DB: {db_path}")
+    if not terms:
+        typer.echo("No lexicon terms.")
+        return
+    cli_console().print(_terms_table(terms))
+
+
+@app.command("show")
+def term_show_command(
+    term: str = typer.Argument(..., help="Term id, canonical term, or alias."),
+    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    context_limit: int = typer.Option(20, "--context-limit", min=0, help="Maximum contexts to display."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Show one local vocabulary term."""
+    db_path = lexicon_db or default_lexicon_db_path()
+    detail = run_with_cli_errors(lambda: get_lexicon_term(term, db_path=db_path, context_limit=context_limit))
+    if as_json:
+        emit_json({"lexicon_db": db_path, **_detail_payload(detail)})
+        return
+    _echo_term_detail(db_path, detail)
+
+
+@app.command("add")
+def term_add_command(
+    term: str = typer.Argument(..., help="Canonical vocabulary term."),
+    category: str = typer.Option("unknown", "--category", "-c", help="Term category."),
+    description: str = typer.Option("", "--description", "-d", help="Human note for this term."),
+    alias: Optional[list[str]] = typer.Option(None, "--alias", "-a", help="Alias or common ASR mistake."),
+    status: str = typer.Option("active", "--status", help="active or inactive."),
+    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Add or update one local vocabulary term."""
+    db_path = lexicon_db or default_lexicon_db_path()
+    aliases = tuple(alias or ())
+    detail = run_with_cli_errors(
+        lambda: upsert_lexicon_term(
+            canonical=term,
+            category=category,
+            description=description,
+            aliases=aliases,
+            status=status,
+            db_path=db_path,
+        )
+    )
+    if as_json:
+        emit_json({"lexicon_db": db_path, **_detail_payload(detail)})
+        return
+    typer.echo("Lexicon term saved.")
+    _echo_term_detail(db_path, detail)
+
+
+@app.command("delete")
+def term_delete_command(
+    term: str = typer.Argument(..., help="Term id, canonical term, or alias."),
+    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    permanent: bool = typer.Option(False, "--permanent", help="Physically delete the term and its contexts."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm deletion without prompting."),
+) -> None:
+    """Deactivate or permanently delete one local vocabulary term."""
+    db_path = lexicon_db or default_lexicon_db_path()
+    if not yes:
+        action = "permanently delete" if permanent else "deactivate"
+        confirmed = typer.confirm(f"{action} lexicon term '{term}'?")
+        if not confirmed:
+            raise typer.Exit(code=1)
+    detail = run_with_cli_errors(lambda: delete_lexicon_term(term, db_path=db_path, permanent=permanent))
+    header = "Lexicon term deleted permanently." if permanent else "Lexicon term deactivated."
+    typer.echo(header)
+    typer.echo(f"Term: {detail.term.canonical}")
+    typer.echo(f"Lexicon DB: {db_path}")
+
+
+@app.command("stats")
+def stats_command(
+    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Show local vocabulary store statistics."""
+    db_path = lexicon_db or default_lexicon_db_path()
+    stats = run_with_cli_errors(lambda: lexicon_stats(db_path=db_path))
+    if as_json:
+        emit_json({"lexicon_db": db_path, "stats": _stats_payload(stats)})
+        return
+    typer.echo(f"Lexicon DB: {db_path}")
+    _echo_stats(stats)
+
+
+@app.command("export")
+def lexicon_export_command(
+    output: Path = typer.Option(..., "--output", "-o", file_okay=True, dir_okay=False, help="Output JSON path."),
+    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    active_only: bool = typer.Option(False, "--active-only", help="Skip inactive terms."),
+) -> None:
+    """Export the local vocabulary knowledge base as JSON."""
+    payload = run_with_cli_errors(
+        lambda: export_lexicon_payload(db_path=lexicon_db, include_inactive=not active_only)
+    )
+    written = run_with_cli_errors(lambda: _write_json(output, payload))
+    typer.echo("Lexicon exported.")
+    typer.echo(f"Terms: {len(payload['terms'])}")
+    typer.echo(f"Output: {written}")
+
+
+@app.command("import")
+def lexicon_import_command(
+    input_path: Path = typer.Argument(..., exists=True, file_okay=True, dir_okay=False, help="Input JSON path."),
+    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+) -> None:
+    """Import a previously exported local vocabulary JSON file."""
+    payload = run_with_cli_errors(lambda: json.loads(input_path.read_text(encoding="utf-8")))
+    imported = run_with_cli_errors(lambda: import_lexicon_payload(payload, db_path=lexicon_db))
+    typer.echo("Lexicon imported.")
+    typer.echo(f"Terms: {imported}")
+    typer.echo(f"Lexicon DB: {lexicon_db or default_lexicon_db_path()}")
 
 
 @hotwords_app.command("list")
@@ -201,6 +350,106 @@ def remote_delete_command(
     typer.echo(f"Deleted remote ASR vocabulary: {vocabulary_id}")
     if clear_cache:
         _clear_deleted_remote_cache(settings, target_model, endpoint, vocabulary_id, lexicon_db)
+
+
+def _terms_table(terms: list[LexiconTerm]) -> Table:
+    """Build a scan-friendly local lexicon term table."""
+    table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
+    table.add_column("Term", style="bold cyan")
+    table.add_column("Category", no_wrap=True)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Aliases", justify="right", no_wrap=True)
+    table.add_column("Contexts", justify="right", no_wrap=True)
+    table.add_column("Updated", no_wrap=True)
+    for term in terms:
+        table.add_row(
+            term.canonical,
+            term.category,
+            _status_text(term.status),
+            str(term.alias_count),
+            str(term.context_count),
+            term.updated_at,
+        )
+    return table
+
+
+def _echo_term_detail(db_path: Path, detail: LexiconTermDetail) -> None:
+    """Print one local lexicon term with aliases and contexts."""
+    term = detail.term
+    typer.echo(f"Lexicon DB: {db_path}")
+    typer.echo(f"Term: {term.canonical}")
+    typer.echo(f"Category: {term.category}")
+    typer.echo(f"Status: {term.status}")
+    if term.description:
+        typer.echo(f"Description: {term.description}")
+    _echo_aliases(detail)
+    _echo_contexts(detail)
+
+
+def _echo_aliases(detail: LexiconTermDetail) -> None:
+    """Print aliases for one term."""
+    typer.echo(f"Aliases: {len(detail.aliases)}")
+    for alias in detail.aliases:
+        typer.echo(f"  - {alias.alias} ({alias.alias_type})")
+
+
+def _echo_contexts(detail: LexiconTermDetail) -> None:
+    """Print recent correction contexts for one term."""
+    typer.echo(f"Contexts: {len(detail.contexts)}")
+    for context in detail.contexts:
+        typer.echo(f"  - {_context_line(context)}")
+
+
+def _context_line(context) -> str:
+    """Render one correction context line."""
+    location = f"{context.project_id}"
+    if context.sentence_id is not None:
+        location = f"{location}#{context.sentence_id}"
+    speaker = f" {context.speaker_name}:" if context.speaker_name else ""
+    return f"{location}:{speaker} {context.wrong_text} -> {context.corrected_text}"
+
+
+def _echo_stats(stats: LexiconStats) -> None:
+    """Print local lexicon statistics."""
+    total_terms = stats.active_terms + stats.inactive_terms
+    typer.echo(f"Terms: {stats.active_terms} active / {stats.inactive_terms} inactive / {total_terms} total")
+    typer.echo(f"Aliases: {stats.aliases}")
+    typer.echo(f"Contexts: {stats.contexts}")
+    typer.echo(f"ASR hotwords: {stats.hotwords}")
+    typer.echo(f"Cached ASR vocabularies: {stats.cached_vocabularies}")
+
+
+def _write_json(output: Path, payload: dict) -> Path:
+    """Write JSON payload to disk."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return output
+
+
+def _term_payload(term: LexiconTerm) -> dict:
+    """Build machine-readable term summary output."""
+    return asdict(term)
+
+
+def _detail_payload(detail: LexiconTermDetail) -> dict:
+    """Build machine-readable term detail output."""
+    return {
+        "term": asdict(detail.term),
+        "aliases": [asdict(alias) for alias in detail.aliases],
+        "contexts": [asdict(context) for context in detail.contexts],
+    }
+
+
+def _stats_payload(stats: LexiconStats) -> dict:
+    """Build machine-readable lexicon statistics output."""
+    return asdict(stats)
+
+
+def _status_text(status: str) -> str:
+    """Return Rich-styled status text."""
+    if status == "active":
+        return "[green]active[/]"
+    return "[yellow]inactive[/]"
 
 
 def _echo_sync_summary(summary) -> None:

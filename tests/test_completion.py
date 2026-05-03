@@ -65,6 +65,7 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
     project_commands = _bash_complete("meeting-asr project ", 2)
     speaker_commands = _bash_complete("meeting-asr project speakers ", 3)
     voiceprint_commands = _bash_complete("meeting-asr voiceprint ", 2)
+    lexicon_commands = _bash_complete("meeting-asr lexicon ", 2)
     transcribe_options = _bash_complete("meeting-asr project transcribe --", 3)
 
     assert "audio" not in root_commands
@@ -77,6 +78,9 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
     assert "speakers" in project_commands
     assert "review" in speaker_commands
     assert "browse" in voiceprint_commands
+    assert "list" in lexicon_commands
+    assert "hotwords" in lexicon_commands
+    assert "stats" in lexicon_commands
     assert "--oss-upload" in transcribe_options
     assert "--asr-hotwords" in transcribe_options
     assert "--audio-format" in transcribe_options

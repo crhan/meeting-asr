@@ -194,6 +194,11 @@ meeting-asr project correct edit PROJECT_ID
 meeting-asr project correct edit PROJECT_ID --editor "code --wait"
 meeting-asr project correct edit PROJECT_ID --model qwen-plus
 meeting-asr project correct accept PROJECT_ID
+meeting-asr lexicon list
+meeting-asr lexicon show iSee
+meeting-asr lexicon add iSee --category system --alias 艾赛
+meeting-asr lexicon stats
+meeting-asr lexicon export --output lexicon.json
 meeting-asr lexicon hotwords list
 meeting-asr lexicon hotwords status
 meeting-asr lexicon hotwords export
@@ -214,8 +219,9 @@ meeting-asr project transcript show PROJECT_ID --kind corrected
 `corrections/applied.json`。原始
 `asr/sentences.json` 和 `exports/transcript_named.txt` 不会被覆盖。可学习的替换会写入
 `~/.local/share/meeting-asr/lexicon/lexicon.sqlite`，作为跨项目词汇库。
-`asr_hotwords.json` 是这次 correction 理解直接产出的 ASR 热词表；跨项目累计热词可以用
-`meeting-asr lexicon hotwords list/status/export` 查看，用
+`meeting-asr lexicon list/show/add/delete/stats/import/export` 管理的是本地词库本体：
+标准词、别名和纠错上下文。`asr_hotwords.json` 是这次 correction 理解直接产出的 ASR
+热词表；跨项目累计热词投影可以用 `meeting-asr lexicon hotwords list/status/export` 查看，用
 `meeting-asr lexicon hotwords sync --target-model fun-asr` 同步到 DashScope。远端表可用
 `remote-list`、`remote-show`、`remote-delete --yes` 管理；本地缓存错了用 `clear-cache` 清掉。
 `project transcribe/run` 默认 `--asr-hotwords auto`，会复用已配置的

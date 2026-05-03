@@ -158,6 +158,11 @@ meeting-asr project correct edit PROJECT_ID
 meeting-asr project correct edit PROJECT_ID --editor "code --wait"
 meeting-asr project correct edit PROJECT_ID --model qwen-plus
 meeting-asr project correct accept PROJECT_ID
+meeting-asr lexicon list
+meeting-asr lexicon show iSee
+meeting-asr lexicon add iSee --category system --alias 艾赛
+meeting-asr lexicon stats
+meeting-asr lexicon export --output lexicon.json
 meeting-asr lexicon hotwords list
 meeting-asr lexicon hotwords status
 meeting-asr lexicon hotwords export
@@ -198,13 +203,16 @@ corrections/applied.json
 ~/.local/share/meeting-asr/lexicon/lexicon.sqlite
 ```
 
+`meeting-asr lexicon list/show/add/delete/stats/import/export` 管理的是本地词库本体：
+标准词、别名和纠错上下文。它不直接调用远端服务，也不等同于 ASR 热词表。
+
 如果没有传 `--editor`，编辑器优先级是 `ui.editor`、`VISUAL`、`EDITOR`、`code --wait`、`vim`。
 纠错模型优先使用 `--model`，否则使用 `dashscope.correction_model`。如果 DashScope 不可用，
 会退回本地替换规则，并在 proposal 里显示 fallback 原因。已经编辑过的 review 文件可以用
 `--review-file tmp/corrections/review_*.md` 复用。
 
 `corrections/asr_hotwords.json` 是这次 correction 理解直接产出的热词表。跨项目累计热词可以用
-`meeting-asr lexicon hotwords list/status/export` 查看，用
+`meeting-asr lexicon hotwords list/status/export` 投影和查看，用
 `meeting-asr lexicon hotwords sync --target-model fun-asr` 同步成 DashScope `vocabulary_id`。
 远端表可用 `remote-list`、`remote-show`、`remote-delete --yes` 管理；本地缓存错了用
 `clear-cache` 清掉。`project transcribe/run` 默认 `--asr-hotwords auto`：如果配置了

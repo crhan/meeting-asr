@@ -24,6 +24,106 @@ from app.lexicon_store import (
 runner = CliRunner()
 
 
+def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
+    """Local lexicon commands should manage the vocabulary knowledge base."""
+    db_path = tmp_path / "lexicon.sqlite"
+
+    add_result = runner.invoke(
+        app,
+        [
+            "lexicon",
+            "add",
+            "iSee",
+            "--category",
+            "system",
+            "--description",
+            "platform name",
+            "--alias",
+            "艾赛",
+            "--lexicon-db",
+            str(db_path),
+        ],
+    )
+    list_result = runner.invoke(app, ["lexicon", "list", "--lexicon-db", str(db_path)])
+    show_result = runner.invoke(app, ["lexicon", "show", "艾赛", "--lexicon-db", str(db_path)])
+    stats_result = runner.invoke(app, ["lexicon", "stats", "--lexicon-db", str(db_path)])
+
+    assert add_result.exit_code == 0
+    assert "Lexicon term saved." in add_result.output
+    assert list_result.exit_code == 0
+    assert "iSee" in list_result.output
+    assert "system" in list_result.output
+    assert show_result.exit_code == 0
+    assert "Term: iSee" in show_result.output
+    assert "艾赛 (asr_error)" in show_result.output
+    assert stats_result.exit_code == 0
+    assert "Terms: 1 active / 0 inactive / 1 total" in stats_result.output
+    assert "ASR hotwords: 1" in stats_result.output
+
+
+def test_lexicon_show_json_prints_term_detail(tmp_path: Path) -> None:
+    """Show should offer a stable JSON view for agents and scripts."""
+    db_path = tmp_path / "lexicon.sqlite"
+    runner.invoke(
+        app,
+        ["lexicon", "add", "iSee", "--category", "system", "--alias", "艾赛", "--lexicon-db", str(db_path)],
+    )
+
+    result = runner.invoke(app, ["lexicon", "show", "iSee", "--lexicon-db", str(db_path), "--json"])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert payload["term"]["canonical"] == "iSee"
+    assert payload["aliases"][0]["alias"] == "艾赛"
+
+
+def test_lexicon_delete_deactivates_term_and_hotword(tmp_path: Path) -> None:
+    """Deactivate should keep history while removing active hotwords."""
+    db_path = tmp_path / "lexicon.sqlite"
+    runner.invoke(
+        app,
+        ["lexicon", "add", "iSee", "--category", "system", "--alias", "艾赛", "--lexicon-db", str(db_path)],
+    )
+
+    delete_result = runner.invoke(app, ["lexicon", "delete", "iSee", "--lexicon-db", str(db_path), "--yes"])
+    active_result = runner.invoke(app, ["lexicon", "list", "--lexicon-db", str(db_path)])
+    all_result = runner.invoke(app, ["lexicon", "list", "--lexicon-db", str(db_path), "--status", "all"])
+    hotwords_result = runner.invoke(app, ["lexicon", "hotwords", "list", "--lexicon-db", str(db_path)])
+
+    assert delete_result.exit_code == 0
+    assert "Lexicon term deactivated." in delete_result.output
+    assert "No lexicon terms." in active_result.output
+    assert "inactive" in all_result.output
+    assert "Hotwords: 0" in hotwords_result.output
+
+
+def test_lexicon_export_import_round_trip(tmp_path: Path) -> None:
+    """Exported local lexicon JSON should import into another database."""
+    db_path = tmp_path / "lexicon.sqlite"
+    imported_db = tmp_path / "imported.sqlite"
+    output = tmp_path / "lexicon.json"
+    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+
+    export_result = runner.invoke(
+        app,
+        ["lexicon", "export", "--lexicon-db", str(db_path), "--output", str(output)],
+    )
+    import_result = runner.invoke(
+        app,
+        ["lexicon", "import", str(output), "--lexicon-db", str(imported_db)],
+    )
+    show_result = runner.invoke(app, ["lexicon", "show", "iSee", "--lexicon-db", str(imported_db)])
+
+    assert export_result.exit_code == 0
+    assert "Lexicon exported." in export_result.output
+    assert import_result.exit_code == 0
+    assert "Terms: 1" in import_result.output
+    assert show_result.exit_code == 0
+    assert "Term: iSee" in show_result.output
+    assert "艾赛 (asr_error)" in show_result.output
+    assert "p-demo#1" in show_result.output
+
+
 def test_lexicon_hotwords_export_writes_dashscope_table(tmp_path: Path) -> None:
     """Hotword export should use accepted correction terms."""
     db_path = tmp_path / "lexicon.sqlite"
