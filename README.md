@@ -197,6 +197,7 @@ Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speak
 词汇纠错可以直接用编辑器完成：
 
 ```bash
+meeting-asr project review PROJECT_ID
 meeting-asr project correct edit PROJECT_ID
 meeting-asr project correct edit PROJECT_ID --editor "code --wait"
 meeting-asr project correct edit PROJECT_ID --model qwen-plus
@@ -216,6 +217,11 @@ meeting-asr config set ui.editor "code --wait"
 meeting-asr config set dashscope.correction_model qwen-plus
 meeting-asr project transcript show PROJECT_ID --kind corrected
 ```
+
+在 `project review` TUI 里按 `c` 会先保存当前 speaker 映射，然后进入和
+`project correct edit` 完全相同的编辑器纠错流程。它仍然会生成带稳定锚点的
+`tmp/corrections/review_*.md`，退出编辑器后通过前后 diff 推断样例改动，并生成全篇
+proposal。
 
 `correct edit` 会生成带稳定锚点的 `tmp/corrections/review_*.md`，打开编辑器等待你修改。
 退出编辑器后，Meeting-ASR 会解析你改过的样例句子，用 DashScope 文本模型生成全篇

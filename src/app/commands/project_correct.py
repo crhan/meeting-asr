@@ -61,10 +61,40 @@ def edit_command(
     summary = run_with_cli_errors(
         lambda: prepare_editor_correction(paths=paths, manifest=manifest, speaker_mapping=speaker_mapping, options=options)
     )
-    _echo_correction_summary(summary)
-    if summary.proposal_json_path is None or no_open:
-        return
-    _accept_or_leave_pending(paths, manifest, speaker_mapping, summary, lexicon_db, yes)
+    _finish_correction_edit(paths, manifest, speaker_mapping, summary, lexicon_db, yes, auto_accept=not no_open)
+
+
+def finish_editor_correction(
+    *,
+    paths,
+    manifest: ProjectManifest,
+    speaker_mapping: dict[int, str],
+    options: CorrectionEditOptions,
+    yes: bool,
+) -> CorrectionEditSummary:
+    """
+    Run the same editor-driven correction flow used by ``project correct edit``.
+
+    Args:
+        paths: Project paths.
+        manifest: Loaded project manifest.
+        speaker_mapping: Speaker id to display name mapping.
+        options: Correction options.
+        yes: Whether to accept the generated proposal without prompting.
+
+    Returns:
+        Final correction summary.
+    """
+    summary = prepare_editor_correction(paths=paths, manifest=manifest, speaker_mapping=speaker_mapping, options=options)
+    return _finish_correction_edit(
+        paths,
+        manifest,
+        speaker_mapping,
+        summary,
+        options.lexicon_db,
+        yes,
+        auto_accept=options.open_editor,
+    )
 
 
 @app.command("accept")
@@ -118,7 +148,7 @@ def _accept_or_leave_pending(
     summary: CorrectionEditSummary,
     lexicon_db: Path | None,
     yes: bool,
-) -> None:
+) -> CorrectionEditSummary:
     """
     Accept a proposal immediately, or leave it pending.
 
@@ -131,12 +161,29 @@ def _accept_or_leave_pending(
         yes: Whether to skip confirmation.
 
     Returns:
-        None.
+        Accepted summary when confirmed, otherwise the pending proposal summary.
     """
     if yes or _confirm_accept():
-        _accept_summary(paths, manifest, speaker_mapping, summary, lexicon_db)
-        return
+        return _accept_summary(paths, manifest, speaker_mapping, summary, lexicon_db)
     _echo_pending_accept_command(paths.root, summary.proposal_json_path)
+    return summary
+
+
+def _finish_correction_edit(
+    paths,
+    manifest: ProjectManifest,
+    speaker_mapping: dict[int, str],
+    summary: CorrectionEditSummary,
+    lexicon_db: Path | None,
+    yes: bool,
+    *,
+    auto_accept: bool,
+) -> CorrectionEditSummary:
+    """Print a correction summary and optionally accept a generated proposal."""
+    _echo_correction_summary(summary)
+    if summary.proposal_json_path is None or not auto_accept:
+        return summary
+    return _accept_or_leave_pending(paths, manifest, speaker_mapping, summary, lexicon_db, yes)
 
 
 def _accept_summary(
@@ -145,7 +192,7 @@ def _accept_summary(
     speaker_mapping: dict[int, str],
     summary: CorrectionEditSummary,
     lexicon_db: Path | None,
-) -> None:
+) -> CorrectionEditSummary:
     """Apply and print one accepted pending proposal."""
     accepted = run_with_cli_errors(
         lambda: accept_correction_proposal(
@@ -159,6 +206,7 @@ def _accept_summary(
     _record_correction_outputs(paths.root, manifest, accepted)
     run_with_cli_errors(lambda: save_manifest(paths.root, manifest))
     _echo_correction_summary(accepted)
+    return accepted
 
 
 def _echo_pending_accept_command(project_dir: Path, proposal_path: Path | None) -> None:
@@ -195,6 +243,19 @@ def _load_speaker_mapping(project_dir: Path) -> dict[int, str]:
             continue
         mapping[speaker_id] = str(value)
     return mapping
+
+
+def load_speaker_mapping_for_correction(project_dir: Path) -> dict[int, str]:
+    """
+    Load the speaker mapping used by correction review.
+
+    Args:
+        project_dir: Project root.
+
+    Returns:
+        Speaker id to display name mapping.
+    """
+    return _load_speaker_mapping(project_dir)
 
 
 def _confirm_accept() -> bool:

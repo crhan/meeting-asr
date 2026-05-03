@@ -36,6 +36,7 @@ from app.core.project_workflow import (
     project_outputs_text,
     project_workflow_summary,
 )
+from app.correction_types import CorrectionEditOptions
 from app.completion_helpers import (
     complete_asr_hotwords,
     complete_audio_format,
@@ -96,6 +97,7 @@ from app.speaker_review import (
     render_speaker_summary,
 )
 from app.presentation.tui.speaker import (
+    SpeakerReviewDecision,
     load_speaker_review_session,
     render_speaker_review_summary,
     run_speaker_review_tui,
@@ -171,6 +173,14 @@ class ProjectRunSummary:
     meeting_summary: ProjectMeetingSummary | None
     matches: SpeakerMatchSummary
     applied_mapping: dict[int, str]
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectReviewCorrectionOptions:
+    """Options used when project review launches transcript correction."""
+
+    edit_options: CorrectionEditOptions
+    yes: bool
 
 
 @app.command("create")
@@ -447,12 +457,41 @@ def review(
     ),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     summary: bool = typer.Option(False, "--summary", help="Print without opening a TUI."),
+    editor: Optional[str] = typer.Option(None, "--editor", help="Editor command used by transcript correction."),
+    no_ai: bool = typer.Option(False, "--no-ai", help="Disable DashScope correction proposals when pressing c."),
+    no_proposal_open: bool = typer.Option(False, "--no-proposal-open", help="Do not open the generated correction proposal."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Accept generated correction proposals without prompting."),
+    model: Optional[str] = typer.Option(None, "--model", help="DashScope correction model id."),
+    category: str = typer.Option("unknown", "--category", help="Category for learned correction terms."),
+    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    from_original: bool = typer.Option(False, "--from-original", help="Correct from the original ASR transcript."),
 ) -> None:
     """Open the recommended human review workflow for project outputs, including unresolved speaker names."""
     project_dir = _resolve_review_project(project, projects_dir, summary=summary)
     if project_dir is None:
         return
-    _run_speaker_review(project_dir, page_size=page_size, store_dir=store_dir, summary=summary, speaker_only=False)
+    correction_options = ProjectReviewCorrectionOptions(
+        edit_options=CorrectionEditOptions(
+            editor=editor,
+            review_file=None,
+            open_editor=True,
+            open_proposal=not no_proposal_open,
+            category=category,
+            lexicon_db=lexicon_db,
+            from_original=from_original,
+            use_ai=not no_ai,
+            model=model,
+        ),
+        yes=yes,
+    )
+    _run_speaker_review(
+        project_dir,
+        page_size=page_size,
+        store_dir=store_dir,
+        summary=summary,
+        speaker_only=False,
+        correction_options=correction_options,
+    )
 
 
 def _run_project_workflow(
@@ -754,7 +793,14 @@ def speakers_review(
 ) -> None:
     """Open the recommended interactive speaker identity review."""
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
-    _run_speaker_review(resolved_project_dir, page_size=page_size, store_dir=store_dir, summary=summary, speaker_only=True)
+    _run_speaker_review(
+        resolved_project_dir,
+        page_size=page_size,
+        store_dir=store_dir,
+        summary=summary,
+        speaker_only=True,
+        correction_options=None,
+    )
 
 
 def _run_speaker_review(
@@ -764,6 +810,7 @@ def _run_speaker_review(
     store_dir: Path | None,
     summary: bool,
     speaker_only: bool,
+    correction_options: ProjectReviewCorrectionOptions | None,
 ) -> None:
     """Run speaker review for one resolved project directory."""
     session = run_with_cli_errors(
@@ -771,6 +818,7 @@ def _run_speaker_review(
             project_dir,
             page_size=page_size,
             store_dir=store_dir,
+            allow_correction=correction_options is not None,
         )
     )
     if summary:
@@ -781,6 +829,15 @@ def _run_speaker_review(
             "Speaker review TUI requires an interactive terminal. Use --summary to inspect."
         )
     decision = run_speaker_review_tui(session)
+    _handle_speaker_review_decision(project_dir, decision, correction_options)
+
+
+def _handle_speaker_review_decision(
+    project_dir: Path,
+    decision: SpeakerReviewDecision,
+    correction_options: ProjectReviewCorrectionOptions | None,
+) -> None:
+    """Persist one TUI decision and run the requested follow-up action."""
     if not decision.saved:
         typer.echo("Speaker review exited without saving.")
         return
@@ -790,12 +847,39 @@ def _run_speaker_review(
     typer.echo(f"Mapping written to: {mapping_path}")
     typer.echo(f"Named transcript written to: {transcript_path}")
     typer.echo(f"Named subtitle written to: {srt_path}")
+    if decision.action == "correct":
+        _run_review_transcript_correction(project_dir, correction_options)
+        return
     typer.echo("")
     typer.echo("Next steps:")
     typer.echo("  meeting-asr project speakers preview")
     typer.echo("  meeting-asr project transcript show")
     typer.echo("  meeting-asr voiceprint capture")
     typer.echo("  meeting-asr voiceprint embed")
+
+
+def _run_review_transcript_correction(
+    project_dir: Path,
+    correction_options: ProjectReviewCorrectionOptions | None,
+) -> None:
+    """Run transcript correction after project review saves speaker names."""
+    if correction_options is None:
+        typer.echo("Transcript correction is only available from meeting-asr project review.")
+        return
+    paths = project_paths(project_dir)
+    manifest = run_with_cli_errors(lambda: load_manifest(paths.root))
+    speaker_mapping = run_with_cli_errors(lambda: project_correct_commands.load_speaker_mapping_for_correction(paths.root))
+    typer.echo("")
+    typer.echo("Transcript correction:")
+    run_with_cli_errors(
+        lambda: project_correct_commands.finish_editor_correction(
+            paths=paths,
+            manifest=manifest,
+            speaker_mapping=speaker_mapping,
+            options=correction_options.edit_options,
+            yes=correction_options.yes,
+        )
+    )
 
 
 def _resolve_review_project(project: str | None, projects_dir: Path | None, *, summary: bool) -> Path | None:

@@ -198,6 +198,7 @@ meeting-asr project transcribe \
 专有名词、人名昵称和系统名可以通过编辑器纠错：
 
 ```bash
+meeting-asr project review PROJECT_ID
 meeting-asr project correct edit PROJECT_ID
 meeting-asr project correct edit PROJECT_ID --editor "code --wait"
 meeting-asr project correct edit PROJECT_ID --model qwen-plus
@@ -218,6 +219,10 @@ meeting-asr config set dashscope.correction_model qwen-plus
 meeting-asr project correct edit PROJECT_ID --no-open
 meeting-asr project transcript show PROJECT_ID --kind corrected
 ```
+
+在 `project review` TUI 里按 `c` 会先保存当前 speaker 映射，然后进入和
+`project correct edit` 完全相同的编辑器纠错流程。也就是说，它仍然会生成
+`tmp/corrections/review_*.md`，用前后 diff 推断样例改动，再生成全篇 proposal。
 
 `correct edit` 会生成 `tmp/corrections/review_*.md`，每句前面有
 `meeting-asr` HTML 锚点。只修改转写正文，保留锚点；退出编辑器后，CLI 会通过前后

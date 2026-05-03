@@ -183,6 +183,36 @@ def test_speaker_review_tui_can_ignore_anonymous_speaker() -> None:
     )
 
 
+def test_project_review_tui_can_request_transcript_correction() -> None:
+    """Project review should hand off to the shared transcript correction flow."""
+    app = SpeakerReviewApp(_session(allow_correction=True))
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("c")
+
+    asyncio.run(scenario())
+
+    assert app.return_value == SpeakerReviewDecision(
+        saved=True,
+        mapping={0: "Speaker A"},
+        action="correct",
+    )
+
+
+def test_speaker_only_tui_does_not_launch_transcript_correction() -> None:
+    """Speaker-only review should keep correction at the project review layer."""
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session()).run_test() as pilot:
+            await pilot.press("c")
+
+            assert pilot.app.return_value is None
+            assert "project review" in str(pilot.app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
+
+
 def test_speaker_review_tui_recomputes_page_size_after_resize() -> None:
     """The Pilot should verify responsive pagination instead of fixed row counts."""
     app = SpeakerReviewApp(_session(many_samples=True))
@@ -383,6 +413,7 @@ def _session(
     two_speakers: bool = False,
     with_status: bool = False,
     many_samples: bool = False,
+    allow_correction: bool = False,
 ) -> SpeakerReviewSession:
     """Build a minimal review session."""
     segments = [
@@ -434,6 +465,7 @@ def _session(
         speakers=speakers,
         people_names=["欧丁"],
         page_size=page_size,
+        allow_correction=allow_correction,
     )
 
 

@@ -9,8 +9,11 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from app.commands import project as project_commands
 from app.cli import app
+from app.correction_types import CorrectionEditOptions
 from app.project_manager import create_project
+from app.speaker_tui import SpeakerReviewDecision
 
 runner = CliRunner()
 
@@ -180,6 +183,36 @@ def test_project_transcript_show_can_select_corrected_output(tmp_path: Path) -> 
 
     assert result.exit_code == 0
     assert "iSee" in result.output
+
+
+def test_project_review_correction_action_uses_editor_correction_flow(tmp_path: Path) -> None:
+    """Project review's correction action should reuse the CLI editor-diff workflow."""
+    project_dir = _sample_project(tmp_path)
+    editor_script = _editor_script(tmp_path, "艾赛", "iSee")
+    lexicon_db = tmp_path / "lexicon.sqlite"
+    options = project_commands.ProjectReviewCorrectionOptions(
+        edit_options=CorrectionEditOptions(
+            editor=f"{sys.executable} {editor_script}",
+            open_editor=True,
+            open_proposal=False,
+            category="system",
+            lexicon_db=lexicon_db,
+            use_ai=False,
+        ),
+        yes=True,
+    )
+
+    project_commands._handle_speaker_review_decision(
+        project_dir,
+        SpeakerReviewDecision(saved=True, mapping={0: "敬悦"}, action="correct"),
+        options,
+    )
+
+    assert "iSee" in (project_dir / "asr" / "sentences_corrected.json").read_text(encoding="utf-8")
+    assert "敬悦: 我们看一下iSee系统。" in (
+        project_dir / "exports" / "transcript_named_corrected.txt"
+    ).read_text(encoding="utf-8")
+    assert _fetch_one(lexicon_db, "SELECT category FROM terms") == "system"
 
 
 def _sample_project(tmp_path: Path) -> Path:

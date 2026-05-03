@@ -13,7 +13,6 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
-from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Input, Static
 
 from app.models import SentenceSegment
@@ -31,6 +30,7 @@ from app.speaker_match_status import (
     voiceprint_match_status,
 )
 from app.speaker_review import build_audio_preview_command
+from app.presentation.tui.speaker_help import BROWSE_STATUS, EDIT_STATUS, ShortcutHelpScreen
 from app.presentation.tui.speaker_status import (
     SpeakerReviewOverview,
     VoiceprintReviewProgress,
@@ -53,51 +53,9 @@ from app.voiceprint_store import (
 
 DEFAULT_SAMPLE_PAGE_SIZE = 6
 SAMPLE_PANE_RESERVED_ROWS = 5
-BROWSE_STATUS = (
-    "Browse: h/l or left/right choose column | j/k or up/down move | "
-    "PgUp/PgDn page samples | Space play/stop | / edit | ? help | s save"
-)
-EDIT_STATUS = (
-    "Edit: type a name or search people | Tab first suggestion | "
-    "Enter apply | Esc cancel"
-)
 COLUMNS = ("speakers", "samples")
 FOCUSED_PANE_CLASS = "focused-pane"
 UNFOCUSED_PANE_CLASS = "unfocused-pane"
-SHORTCUT_HELP = """\
-[b]Speaker Review Shortcuts[/b]
-
-[b]Top status[/b]
-Output               Final project files written by Save
-Next/Done            Next command, or final preview/read commands
-Steps 1 Match        Whether voiceprint matching has been run
-Steps 2 Names        Saved speaker_map progress, named speakers, ignored speakers
-Steps 3 Capture      Named speakers still missing voiceprint clips
-Steps 4 Embed        Captured clips still missing embeddings
-Auto                 Automatic match counts and score quality
-Check                Conflicts, mismatches, and selected speaker state
-
-[b]Navigation[/b]
-h/l or left/right    Switch focused column
-j/k or up/down       Move within focused column
-PageUp/PageDown      Previous/next sample page
-[ / ]                Previous/next sample page
-
-[b]Actions[/b]
-space                Play or stop selected sample
-a                    Accept current voiceprint match
-i                    Ignore this speaker: keep anonymous and skip capture
-/                    Edit or search speaker name
-s                    Save speaker mapping and outputs
-q                    Quit without saving
-
-[b]Name edit[/b]
-Enter                Apply typed name
-Tab                  Use first suggestion
-Esc                  Cancel edit
-
-[dim]Press Esc, q, or ? to close this help.[/]
-"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +99,7 @@ class SpeakerReviewSession:
     speakers: list[ReviewSpeaker]
     people_names: list[str]
     page_size: int | None = None
+    allow_correction: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +108,7 @@ class SpeakerReviewDecision:
 
     saved: bool
     mapping: dict[int, str]
+    action: str = "save"
 
 
 class NameInput(Input):
@@ -159,37 +119,6 @@ class NameInput(Input):
     def action_cancel_edit(self) -> None:
         """Return the parent review app to browse mode."""
         self.app.action_cancel_edit()
-
-
-class ShortcutHelpScreen(ModalScreen[None]):
-    """Modal shortcut help for the speaker review TUI."""
-
-    CSS = """
-    ShortcutHelpScreen {
-        align: center middle;
-    }
-    #shortcut-help {
-        width: 76;
-        height: auto;
-        border: thick $accent;
-        padding: 1 2;
-        background: $surface;
-    }
-    """
-
-    BINDINGS = [
-        Binding("escape", "close_help", "Close", show=False),
-        Binding("q", "close_help", "Close"),
-        Binding("?", "close_help", "Close", show=False),
-    ]
-
-    def compose(self) -> ComposeResult:
-        """Build the help popup."""
-        yield Static(SHORTCUT_HELP, id="shortcut-help")
-
-    def action_close_help(self) -> None:
-        """Close the shortcut help popup."""
-        self.dismiss(None)
 
 
 class SpeakerReviewApp(App[SpeakerReviewDecision]):
@@ -258,6 +187,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("escape", "cancel_edit", "Cancel edit", show=False),
         Binding("a", "accept_match", "Accept match"),
         Binding("i", "ignore_speaker", "Ignore"),
+        Binding("c", "correct_transcript", "Correct"),
         Binding("?", "show_shortcuts", "Help"),
         Binding("s", "save", "Save"),
         Binding("q", "quit_review", "Quit"),
@@ -391,9 +321,16 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Return the reviewed mapping to the CLI command."""
         self.exit(SpeakerReviewDecision(saved=True, mapping=self._mapping()))
 
+    def action_correct_transcript(self) -> None:
+        """Save names and hand control to the transcript correction workflow."""
+        if not self.session.allow_correction:
+            self._set_status("Transcript correction is available from project review, not speaker-only review.")
+            return
+        self.exit(SpeakerReviewDecision(saved=True, mapping=self._mapping(), action="correct"))
+
     def action_quit_review(self) -> None:
         """Exit without saving."""
-        self.exit(SpeakerReviewDecision(saved=False, mapping={}))
+        self.exit(SpeakerReviewDecision(saved=False, mapping={}, action="quit"))
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Refresh suggestions while the user types a name."""
@@ -631,6 +568,7 @@ def load_speaker_review_session(
     *,
     page_size: int | None = None,
     store_dir: Path | None = None,
+    allow_correction: bool = False,
 ) -> SpeakerReviewSession:
     """
     Load all data needed by the speaker review TUI.
@@ -639,6 +577,7 @@ def load_speaker_review_session(
         project_dir: Project root.
         page_size: Optional samples-per-page override.
         store_dir: Optional voiceprint store directory.
+        allow_correction: Whether the TUI may launch transcript correction.
 
     Returns:
         Speaker review session.
@@ -669,6 +608,7 @@ def load_speaker_review_session(
         speakers=speakers,
         people_names=_load_people_names(store_dir),
         page_size=page_size,
+        allow_correction=allow_correction,
     )
 
 
@@ -683,7 +623,7 @@ def run_speaker_review_tui(session: SpeakerReviewSession) -> SpeakerReviewDecisi
         Save decision and mapping.
     """
     decision = SpeakerReviewApp(session).run()
-    return decision or SpeakerReviewDecision(saved=False, mapping={})
+    return decision or SpeakerReviewDecision(saved=False, mapping={}, action="quit")
 
 
 def render_speaker_review_summary(session: SpeakerReviewSession, *, speaker_only: bool = False) -> str:
