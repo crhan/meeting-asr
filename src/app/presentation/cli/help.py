@@ -131,6 +131,16 @@ EXAMPLES = {
         "en": ("meeting-asr paths", "meeting-asr paths --json"),
         "zh": ("meeting-asr paths", "meeting-asr paths --json"),
     },
+    ("project", "create"): {
+        "en": (
+            "meeting-asr project create ~/Downloads/meeting.mp4",
+            'meeting-asr project create ~/Downloads/meeting.mp4 --meeting-time "2026-05-02T10:00:00+08:00"',
+        ),
+        "zh": (
+            "meeting-asr project create ~/Downloads/meeting.mp4",
+            'meeting-asr project create ~/Downloads/meeting.mp4 --meeting-time "2026-05-02T10:00:00+08:00"',
+        ),
+    },
     ("project", "run"): {
         "en": (
             "meeting-asr project run ~/Downloads/meeting.mp4",
@@ -148,6 +158,16 @@ EXAMPLES = {
     ("project", "show"): {
         "en": ("meeting-asr project show p-292d10c1232b79a0", "meeting-asr project show --json"),
         "zh": ("meeting-asr project show p-292d10c1232b79a0", "meeting-asr project show --json"),
+    },
+    ("project", "update"): {
+        "en": (
+            'meeting-asr project update p-292d10c1232b79a0 --meeting-time "2026-05-02T10:00:00+08:00"',
+            'meeting-asr project update p-292d10c1232b79a0 --title "新的会议标题"',
+        ),
+        "zh": (
+            'meeting-asr project update p-292d10c1232b79a0 --meeting-time "2026-05-02T10:00:00+08:00"',
+            'meeting-asr project update p-292d10c1232b79a0 --title "新的会议标题"',
+        ),
     },
     ("project", "review"): {
         "en": ("meeting-asr project review", "meeting-asr project review p-292d10c1232b79a0"),

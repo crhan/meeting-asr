@@ -43,6 +43,7 @@ def project_status_payload(paths: ProjectPaths, manifest: ProjectManifest) -> di
         "project": paths.root,
         "project_id": manifest.project_id,
         "title": manifest.title,
+        "meeting_time": manifest.source.meeting_time,
         "status": manifest.status,
         "workflow": workflow_payload(workflow),
         "source": manifest.source.path,
@@ -60,6 +61,7 @@ def _project_item_payload(project: ProjectListItem) -> dict[str, Any]:
     return {
         "project_id": project.project_id,
         "title": project.title,
+        "meeting_time": project.meeting_time,
         "status": project.status,
         "workflow": workflow_payload(workflow),
         "created_at": project.created_at,

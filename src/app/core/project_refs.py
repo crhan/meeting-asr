@@ -36,6 +36,7 @@ def list_projects(projects_dir: Path | None) -> ProjectListResult:
                 child.resolve(),
                 manifest.project_id,
                 manifest.title,
+                manifest.source.meeting_time,
                 manifest.status,
                 manifest.created_at,
                 manifest.updated_at,

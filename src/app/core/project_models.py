@@ -104,6 +104,7 @@ class ProjectListItem:
     project_dir: Path
     project_id: str
     title: str
+    meeting_time: str | None
     status: str
     created_at: str
     updated_at: str

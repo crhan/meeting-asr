@@ -85,6 +85,7 @@ def _detail_rows(view: ProjectShowView) -> list[tuple[str, str]]:
         ("Project ID", manifest.project_id),
         ("State", view.workflow.state),
         ("Updated", _compact_timestamp(manifest.updated_at)),
+        ("Meeting time", manifest.source.meeting_time or "-"),
         ("Source file", manifest.source.original_path or manifest.source.path),
     ]
     rows.extend(

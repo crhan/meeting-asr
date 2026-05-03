@@ -120,6 +120,8 @@ def test_native_subcommand_help_uses_localized_renderer() -> None:
 def test_localized_help_leads_with_examples_and_translated_options() -> None:
     """High-frequency Chinese help should include examples and translated option text."""
     run_result = runner.invoke(app, ["--lang", "zh", "project", "run", "--help"])
+    create_result = runner.invoke(app, ["--lang", "zh", "project", "create", "--help"])
+    update_result = runner.invoke(app, ["--lang", "zh", "project", "update", "--help"])
     delete_result = runner.invoke(app, ["--lang", "zh", "project", "delete", "--help"])
     hotwords_result = runner.invoke(app, ["--lang", "zh", "lexicon", "hotwords", "sync", "--help"])
 
@@ -128,6 +130,12 @@ def test_localized_help_leads_with_examples_and_translated_options() -> None:
     assert "meeting-asr project run ~/Downloads/meeting.mp4" in run_result.output
     assert "指定会议总结使用的" in run_result.output
     assert "Generate title and summary after ASR." not in run_result.output
+    assert create_result.exit_code == 0
+    assert "meeting-asr project create ~/Downloads/meeting.mp4 --meeting-time" in create_result.output
+    assert "2026-05-02T10:00:00+08:00" in create_result.output
+    assert update_result.exit_code == 0
+    assert "meeting-asr project update p-292d10c1232b79a0 --meeting-time" in update_result.output
+    assert "2026-05-02T10:00:00+08:00" in update_result.output
     assert delete_result.exit_code == 0
     assert "meeting-asr project delete p-292d10c1232b79a0" in delete_result.output
     assert "跳过确认提示。" in delete_result.output

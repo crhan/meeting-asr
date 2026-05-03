@@ -56,6 +56,7 @@ def test_create_project_writes_manifest_and_copies_source(tmp_path: Path) -> Non
     assert copied_source.read_bytes() == b"fake video"
     assert loaded.source.path == "source/meeting.mp4"
     assert loaded.source.original_path == str(source.resolve())
+    assert loaded.source.meeting_time == "2026-04-29T15:07:42+08:00"
     assert resolve_project_source_path(project_dir, loaded) == copied_source.resolve()
     assert loaded.source.sha256 is not None
 
@@ -536,7 +537,7 @@ def test_project_list_command_prints_json(tmp_path: Path) -> None:
         title="Demo",
         projects_dir=projects_dir,
         project_dir=project_dir,
-        meeting_time=None,
+        meeting_time="2026-05-02T10:00:00+08:00",
         hash_source=False,
     )
 
@@ -547,6 +548,7 @@ def test_project_list_command_prints_json(tmp_path: Path) -> None:
     assert payload["projects_dir"] == str(projects_dir.resolve())
     assert payload["count"] == 1
     assert payload["projects"][0]["title"] == "Demo"
+    assert payload["projects"][0]["meeting_time"] == "2026-05-02T10:00:00+08:00"
     assert payload["projects"][0]["project_dir"] == str(project_dir.resolve())
     assert payload["projects"][0]["status"] == "created"
     assert payload["projects"][0]["workflow"]["state"] == "Created"
@@ -749,12 +751,13 @@ def test_find_project_by_source_prefers_more_complete_duplicate(tmp_path: Path) 
 
 def test_project_status_command_reads_manifest(tmp_path: Path) -> None:
     """The project status command should expose key manifest fields."""
-    project_dir = _sample_project(tmp_path)
+    project_dir = _sample_project(tmp_path, meeting_time="2026-05-02T10:00:00+08:00")
 
     result = runner.invoke(app, ["project", "status", str(project_dir)])
 
     assert result.exit_code == 0
     assert "Title: Demo" in result.output
+    assert "Meeting time: 2026-05-02T10:00:00+08:00" in result.output
     assert "State: Created" in result.output
     assert "Next: transcribe" in result.output
     assert "Artifacts: -" in result.output
@@ -763,7 +766,7 @@ def test_project_status_command_reads_manifest(tmp_path: Path) -> None:
 
 def test_project_status_command_prints_json(tmp_path: Path) -> None:
     """Project status should be script-friendly."""
-    project_dir = _sample_project(tmp_path)
+    project_dir = _sample_project(tmp_path, meeting_time="2026-05-02T10:00:00+08:00")
     manifest = load_manifest(project_dir)
 
     result = runner.invoke(app, ["project", "status", str(project_dir), "--json"])
@@ -773,6 +776,7 @@ def test_project_status_command_prints_json(tmp_path: Path) -> None:
     assert payload["project"] == str(project_dir.resolve())
     assert payload["project_id"] == manifest.project_id
     assert payload["title"] == "Demo"
+    assert payload["meeting_time"] == "2026-05-02T10:00:00+08:00"
     assert payload["workflow"]["state"] == "Created"
     assert payload["source"] == "source/meeting.mp4"
 
@@ -792,7 +796,7 @@ def test_project_status_accepts_project_id(tmp_path: Path) -> None:
 
 def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     """Project show should be the human landing page after project list."""
-    project_dir = _sample_project(tmp_path)
+    project_dir = _sample_project(tmp_path, meeting_time="2026-05-02T10:00:00+08:00")
     manifest = load_manifest(project_dir)
     exports_dir = project_dir / "exports"
     exports_dir.mkdir(parents=True, exist_ok=True)
@@ -817,6 +821,7 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert manifest.project_id in result.output
     assert "Details" in result.output
+    assert "2026-05-02T10:00:00+08:00" in result.output
     assert "Outputs" in result.output
     assert "Commands" in result.output
     assert "Meeting Summary" in result.output
@@ -1372,7 +1377,13 @@ def test_project_git_init_writes_safe_ignore_file(tmp_path: Path) -> None:
     assert "audio/" in content
 
 
-def _sample_project(tmp_path: Path, *, projects_dir: Path | None = None, title: str = "Demo") -> Path:
+def _sample_project(
+    tmp_path: Path,
+    *,
+    projects_dir: Path | None = None,
+    title: str = "Demo",
+    meeting_time: str | None = None,
+) -> Path:
     """Create a minimal project for tests."""
     source = tmp_path / "meeting.mp4"
     source.write_bytes(b"fake video")
@@ -1382,7 +1393,7 @@ def _sample_project(tmp_path: Path, *, projects_dir: Path | None = None, title: 
         title=title,
         projects_dir=projects_dir or tmp_path,
         project_dir=project_dir,
-        meeting_time=None,
+        meeting_time=meeting_time,
         hash_source=False,
     )
     return project_dir
