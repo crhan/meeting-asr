@@ -94,6 +94,7 @@ class AsrVocabularyState:
     vocabulary_hash: str
     vocabulary_id: str
     hotword_count: int
+    updated_at: str | None = None
 
 
 def default_lexicon_db_path() -> Path:
@@ -183,13 +184,38 @@ def get_asr_vocabulary_state(
         _ensure_schema(connection)
         row = connection.execute(
             """
-            SELECT target_model, endpoint, vocabulary_hash, vocabulary_id, hotword_count
+            SELECT target_model, endpoint, vocabulary_hash, vocabulary_id, hotword_count, updated_at
             FROM asr_hotword_vocabularies
             WHERE target_model = ? AND endpoint = ?
             """,
             (target_model, endpoint),
         ).fetchone()
     return _asr_state_from_row(row)
+
+
+def list_asr_vocabulary_states(*, db_path: Path | None = None) -> list[AsrVocabularyState]:
+    """
+    Return all cached DashScope vocabulary states.
+
+    Args:
+        db_path: Optional database path override.
+
+    Returns:
+        Cached states ordered by model and endpoint.
+    """
+    database_path = db_path or default_lexicon_db_path()
+    if not database_path.exists():
+        return []
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        rows = connection.execute(
+            """
+            SELECT target_model, endpoint, vocabulary_hash, vocabulary_id, hotword_count, updated_at
+            FROM asr_hotword_vocabularies
+            ORDER BY target_model ASC, endpoint ASC
+            """
+        ).fetchall()
+    return [state for row in rows if (state := _asr_state_from_row(row)) is not None]
 
 
 def save_asr_vocabulary_state(
@@ -233,6 +259,53 @@ def save_asr_vocabulary_state(
         )
 
 
+def delete_asr_vocabulary_state(
+    *,
+    target_model: str,
+    endpoint: str,
+    vocabulary_id: str | None = None,
+    db_path: Path | None = None,
+) -> AsrVocabularyState | None:
+    """
+    Delete one cached DashScope vocabulary state.
+
+    Args:
+        target_model: DashScope ASR model.
+        endpoint: DashScope base endpoint.
+        vocabulary_id: Optional guard; when set, only delete matching ids.
+        db_path: Optional database path override.
+
+    Returns:
+        The deleted state, or ``None`` when no matching state exists.
+    """
+    database_path = db_path or default_lexicon_db_path()
+    if not database_path.exists():
+        return None
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        row = connection.execute(
+            """
+            SELECT target_model, endpoint, vocabulary_hash, vocabulary_id, hotword_count, updated_at
+            FROM asr_hotword_vocabularies
+            WHERE target_model = ? AND endpoint = ?
+            """,
+            (target_model, endpoint),
+        ).fetchone()
+        state = _asr_state_from_row(row)
+        if state is None:
+            return None
+        if vocabulary_id is not None and state.vocabulary_id != vocabulary_id:
+            return None
+        connection.execute(
+            """
+            DELETE FROM asr_hotword_vocabularies
+            WHERE target_model = ? AND endpoint = ?
+            """,
+            (target_model, endpoint),
+        )
+    return state
+
+
 def _ensure_schema(connection: sqlite3.Connection) -> None:
     """Create the lexicon schema if needed."""
     connection.executescript(LEXICON_SCHEMA_SQL)
@@ -248,6 +321,7 @@ def _asr_state_from_row(row) -> AsrVocabularyState | None:
         vocabulary_hash=str(row[2]),
         vocabulary_id=str(row[3]),
         hotword_count=int(row[4]),
+        updated_at=str(row[5]) if len(row) > 5 and row[5] is not None else None,
     )
 
 

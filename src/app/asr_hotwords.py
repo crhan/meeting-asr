@@ -33,6 +33,15 @@ class VocabularyClient(Protocol):
     def update_vocabulary(self, vocabulary_id: str, vocabulary: list[dict]) -> None:
         """Update an existing vocabulary."""
 
+    def list_vocabularies(self, prefix=None, page_index: int = 0, page_size: int = 10) -> list[dict]:
+        """List remote vocabularies."""
+
+    def query_vocabulary(self, vocabulary_id: str):
+        """Query one remote vocabulary."""
+
+    def delete_vocabulary(self, vocabulary_id: str) -> None:
+        """Delete one remote vocabulary."""
+
 
 @dataclass(frozen=True, slots=True)
 class AsrHotwordSyncSummary:
@@ -60,6 +69,19 @@ class AsrHotwordResolution:
     error: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class AsrHotwordStatus:
+    """Local hotword table and cached DashScope vocabulary state."""
+
+    db_path: Path
+    target_model: str
+    endpoint: str
+    hotword_count: int
+    vocabulary_hash: str | None
+    cache_status: str
+    cached_state: AsrVocabularyState | None
+
+
 def resolve_asr_hotwords(
     *,
     mode: str | None,
@@ -85,6 +107,34 @@ def resolve_asr_hotwords(
     if value.lower() == "auto":
         return _auto_hotword_resolution(settings=settings, target_model=target_model, db_path=db_path)
     return AsrHotwordResolution(value, "explicit")
+
+
+def get_asr_hotword_status(
+    *,
+    settings: Settings,
+    target_model: str,
+    db_path: Path | None = None,
+    limit: int = 500,
+) -> AsrHotwordStatus:
+    """
+    Return local hotword hash and cached DashScope vocabulary state.
+
+    Args:
+        settings: Runtime settings.
+        target_model: DashScope ASR model.
+        db_path: Optional lexicon database path.
+        limit: Maximum lexicon terms to inspect.
+
+    Returns:
+        Hotword status for one model and endpoint.
+    """
+    database_path = db_path or default_lexicon_db_path()
+    hotwords = list_asr_hotwords(db_path=database_path, limit=limit)
+    table_hash = hotword_hash(hotwords) if hotwords else None
+    endpoint = settings.dashscope_base_url
+    state = get_asr_vocabulary_state(target_model=target_model, endpoint=endpoint, db_path=database_path)
+    cache_status = _cache_status(hotword_count=len(hotwords), table_hash=table_hash, state=state)
+    return AsrHotwordStatus(database_path, target_model, endpoint, len(hotwords), table_hash, cache_status, state)
 
 
 def sync_asr_hotwords(
@@ -135,6 +185,83 @@ def sync_asr_hotwords(
     return _changed_summary(database_path, new_state, artifact_path)
 
 
+def list_remote_asr_vocabularies(
+    *,
+    settings: Settings,
+    prefix: str | None = DEFAULT_HOTWORD_PREFIX,
+    page_index: int = 0,
+    page_size: int = 10,
+    client: VocabularyClient | None = None,
+) -> list[dict]:
+    """
+    List remote DashScope hotword vocabularies.
+
+    Args:
+        settings: Runtime settings.
+        prefix: Optional vocabulary prefix filter.
+        page_index: Remote page index.
+        page_size: Remote page size.
+        client: Optional test double for DashScope VocabularyService.
+
+    Returns:
+        Remote vocabulary metadata rows.
+    """
+    _configure_dashscope(settings)
+    service = client or VocabularyService()
+    rows = service.list_vocabularies(prefix=prefix, page_index=page_index, page_size=page_size)
+    if not isinstance(rows, list):
+        raise RuntimeError("DashScope list_vocabularies did not return a list.")
+    return [_plain_payload(row) for row in rows]
+
+
+def query_remote_asr_vocabulary(
+    *,
+    settings: Settings,
+    vocabulary_id: str,
+    client: VocabularyClient | None = None,
+) -> dict:
+    """
+    Query one remote DashScope hotword vocabulary.
+
+    Args:
+        settings: Runtime settings.
+        vocabulary_id: Remote DashScope vocabulary id.
+        client: Optional test double for DashScope VocabularyService.
+
+    Returns:
+        Remote vocabulary payload.
+    """
+    _configure_dashscope(settings)
+    service = client or VocabularyService()
+    payload = service.query_vocabulary(vocabulary_id)
+    normalized = _plain_payload(payload)
+    if not isinstance(normalized, dict):
+        raise RuntimeError("DashScope query_vocabulary did not return an object.")
+    return normalized
+
+
+def delete_remote_asr_vocabulary(
+    *,
+    settings: Settings,
+    vocabulary_id: str,
+    client: VocabularyClient | None = None,
+) -> None:
+    """
+    Delete one remote DashScope hotword vocabulary.
+
+    Args:
+        settings: Runtime settings.
+        vocabulary_id: Remote DashScope vocabulary id.
+        client: Optional test double for DashScope VocabularyService.
+
+    Returns:
+        None.
+    """
+    _configure_dashscope(settings)
+    service = client or VocabularyService()
+    service.delete_vocabulary(vocabulary_id)
+
+
 def _auto_hotword_resolution(
     *,
     settings: Settings,
@@ -172,6 +299,20 @@ def _sync_remote_vocabulary(
     return service.create_vocabulary(target_model=target_model, prefix=prefix, vocabulary=vocabulary)
 
 
+def _cache_status(
+    *,
+    hotword_count: int,
+    table_hash: str | None,
+    state: AsrVocabularyState | None,
+) -> str:
+    """Return whether the cached vocabulary id matches local hotwords."""
+    if state is None:
+        return "empty" if hotword_count == 0 else "missing"
+    if table_hash is not None and state.vocabulary_hash == table_hash:
+        return "current"
+    return "stale"
+
+
 def _validate_prefix(prefix: str) -> None:
     """Validate DashScope hotword vocabulary prefix."""
     if not PREFIX_RE.fullmatch(prefix):
@@ -185,6 +326,25 @@ def _configure_dashscope(settings: Settings) -> None:
         for attr in ("base_http_api_url", "base_url"):
             if hasattr(dashscope, attr):
                 setattr(dashscope, attr, settings.dashscope_base_url)
+
+
+def _plain_payload(value):
+    """Convert DashScope SDK return values into JSON-friendly containers."""
+    if isinstance(value, dict):
+        return {str(key): _plain_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_plain_payload(item) for item in value]
+    if isinstance(value, str | int | float | bool) or value is None:
+        return value
+    if hasattr(value, "__dict__"):
+        return {
+            str(key): _plain_payload(item)
+            for key, item in vars(value).items()
+            if not str(key).startswith("_")
+        }
+    return str(value)
 
 
 def _write_optional_artifact(output: Path | None, hotwords: list[AsrHotword]) -> Path | None:

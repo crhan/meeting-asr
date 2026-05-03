@@ -158,8 +158,11 @@ meeting-asr project correct edit PROJECT_ID
 meeting-asr project correct edit PROJECT_ID --editor "code --wait"
 meeting-asr project correct edit PROJECT_ID --model qwen-plus
 meeting-asr project correct accept PROJECT_ID
+meeting-asr lexicon hotwords list
+meeting-asr lexicon hotwords status
 meeting-asr lexicon hotwords export
 meeting-asr lexicon hotwords sync --target-model fun-asr
+meeting-asr lexicon hotwords remote-list
 meeting-asr project transcribe PROJECT_ID --asr-hotwords auto
 meeting-asr config set ui.editor "code --wait"
 meeting-asr config set dashscope.correction_model qwen-plus
@@ -201,8 +204,10 @@ corrections/applied.json
 `--review-file tmp/corrections/review_*.md` 复用。
 
 `corrections/asr_hotwords.json` 是这次 correction 理解直接产出的热词表。跨项目累计热词可以用
-`meeting-asr lexicon hotwords export` 输出，用 `meeting-asr lexicon hotwords sync --target-model fun-asr`
-同步成 DashScope `vocabulary_id`。`project transcribe/run` 默认 `--asr-hotwords auto`：如果配置了
+`meeting-asr lexicon hotwords list/status/export` 查看，用
+`meeting-asr lexicon hotwords sync --target-model fun-asr` 同步成 DashScope `vocabulary_id`。
+远端表可用 `remote-list`、`remote-show`、`remote-delete --yes` 管理；本地缓存错了用
+`clear-cache` 清掉。`project transcribe/run` 默认 `--asr-hotwords auto`：如果配置了
 `dashscope.asr_vocabulary_id` 就直接使用；否则根据跨项目词库同步热词后再提交 ASR。传
 `--asr-hotwords off` 可关闭，传 `--asr-hotwords vocab-...` 可指定已有热词表。
 
