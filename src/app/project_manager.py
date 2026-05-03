@@ -24,7 +24,6 @@ from app.core.asr_wait import (
 )
 from app.config import load_settings
 from app.asr_hotwords import AsrHotwordResolution, resolve_asr_hotwords
-from app.asr_models import supports_asr_hotwords
 from app.asr_pricing import AsrCostEstimate, estimate_asr_cost
 from app.core.progress import CliProgressReporter, emit_progress
 from app.core.project_models import (
@@ -54,12 +53,7 @@ from app.core.oss_upload import (
     estimate_oss_upload,
     record_oss_upload,
 )
-from app.infra.dashscope_asr import (
-    SubmittedTranscriptionTask,
-    download_transcription_json,
-    submit_transcription,
-    wait_transcription,
-)
+from app.infra.dashscope_asr import download_transcription_json, submit_transcription, wait_transcription
 from app.infra.ffmpeg import SUPPORTED_AUDIO_FORMATS, extract_audio_for_asr, probe_media_duration_seconds
 from app.meeting_summary import MeetingSummary, generate_meeting_summary, render_meeting_summary_markdown
 from app.models import TranscriptResult
@@ -852,17 +846,10 @@ def _submit_project_task(
 
 def _resolve_project_asr_hotwords(settings, options: ProjectTranscribeOptions) -> AsrHotwordResolution:
     """Resolve ASR hotwords for one project transcription."""
-    if not supports_asr_hotwords(options.model):
-        requested_mode = (options.asr_hotwords or "auto").strip().lower()
-        if requested_mode not in {"auto", "off", "false", "none", "0"}:
-            raise ValueError(f"ASR hotwords are not supported by model: {options.model}")
-        return AsrHotwordResolution(None, "unsupported")
     return resolve_asr_hotwords(mode=options.asr_hotwords, settings=settings, target_model=options.model)
 
 def _extract_task_id(task_response) -> str:
     """Extract task ID from a DashScope submission response."""
-    if isinstance(task_response, SubmittedTranscriptionTask):
-        return task_response.task_id
     output = getattr(task_response, "output", None)
     task_id = getattr(output, "task_id", None)
     if task_id is None and isinstance(output, dict):
