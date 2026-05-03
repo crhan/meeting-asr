@@ -173,6 +173,27 @@ def test_root_lang_rejects_invalid_value_without_traceback() -> None:
     assert "Traceback" not in result.output
 
 
+def test_chinese_parse_errors_are_actionable() -> None:
+    """Parse errors should be localized and point to the relevant help command."""
+    command_result = runner.invoke(app, ["--lang", "zh", "project", "nope"])
+    option_result = runner.invoke(app, ["--lang", "zh", "project", "list", "--bad"])
+    argument_result = runner.invoke(app, ["--lang", "zh", "project", "delete"])
+
+    assert command_result.exit_code == 2
+    assert "用法: meeting-asr project [OPTIONS] COMMAND [ARGS]..." in command_result.output
+    assert "没有这个命令：nope" in command_result.output
+    assert "meeting-asr project -h" in command_result.output
+    assert "No such command" not in command_result.output
+    assert option_result.exit_code == 2
+    assert "没有这个选项：--bad" in option_result.output
+    assert "meeting-asr project list -h" in option_result.output
+    assert "No such option" not in option_result.output
+    assert argument_result.exit_code == 2
+    assert "缺少必填参数：PROJECT" in argument_result.output
+    assert "meeting-asr project delete -h" in argument_result.output
+    assert "Missing argument" not in argument_result.output
+
+
 def test_top_level_audio_command_is_not_registered() -> None:
     """Audio preparation should stay under project workflows."""
     result = runner.invoke(app, ["audio", "extract"])

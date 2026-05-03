@@ -2,15 +2,28 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TypeVar
 
 import click
 import typer
+from rich.panel import Panel
+from rich.text import Text
+
+from app.presentation.cli.i18n import current_cli_language
+from app.presentation.cli.output import cli_console
 
 T = TypeVar("T")
 AdviceRule = tuple[Callable[[str], bool], str, str, str]
+
+ERROR_LABELS = {
+    "en": {"title": "Error", "usage": "Usage", "problem": "Problem", "next": "Next step"},
+    "zh": {"title": "错误", "usage": "用法", "problem": "问题", "next": "下一步"},
+}
+
+_NO_SUCH_COMMAND_RE = re.compile(r"No such command '([^']+)'\.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +53,257 @@ def run_with_cli_errors(operation: Callable[[], T]) -> T:
     except Exception as exc:  # noqa: BLE001
         _echo_cli_error(exc)
         raise typer.Exit(code=1) from exc
+
+
+def show_click_usage_error(exc: click.ClickException) -> None:
+    """
+    Print a localized, actionable parse error for human-facing CLI use.
+
+    Args:
+        exc: Click or Typer parse exception.
+
+    Returns:
+        None.
+    """
+    lang = current_cli_language()
+    ctx = getattr(exc, "ctx", None)
+    console = cli_console(stderr=True)
+    usage = _localized_usage(ctx, lang)
+    if usage:
+        console.print(Text(usage, style="bold"))
+    plain_message = _plain_compat_message(exc)
+    if plain_message:
+        click.echo(f"Error: {plain_message}", err=True)
+    console.print(_usage_error_panel(exc, ctx, lang))
+
+
+def _usage_error_panel(exc: click.ClickException, ctx: click.Context | None, lang: str) -> Panel:
+    """
+    Build the localized usage error panel.
+
+    Args:
+        exc: Click parse exception.
+        ctx: Click context, when available.
+        lang: Resolved display language.
+
+    Returns:
+        Rich panel describing the problem and the next command to run.
+    """
+    labels = ERROR_LABELS[lang]
+    lines = [
+        f"{labels['problem']}: {_localized_click_message(exc, lang)}",
+        f"{labels['next']}: {_localized_next_step(ctx, lang)}",
+    ]
+    return Panel(Text("\n".join(lines)), title=labels["title"], border_style="red")
+
+
+def _localized_usage(ctx: click.Context | None, lang: str) -> str | None:
+    """
+    Return a localized usage line for a Click context.
+
+    Args:
+        ctx: Click context.
+        lang: Resolved display language.
+
+    Returns:
+        Usage text, or ``None`` when context is unavailable.
+    """
+    if ctx is None:
+        return None
+    pieces = " ".join(ctx.command.collect_usage_pieces(ctx))
+    suffix = f" {pieces}" if pieces else ""
+    return f"{ERROR_LABELS[lang]['usage']}: {_context_command_path(ctx)}{suffix}"
+
+
+def _localized_next_step(ctx: click.Context | None, lang: str) -> str:
+    """
+    Return the next command a user should run after a parse error.
+
+    Args:
+        ctx: Click context.
+        lang: Resolved display language.
+
+    Returns:
+        Actionable next-step text.
+    """
+    command = f"{_context_command_path(ctx)} -h" if ctx is not None else "meeting-asr -h"
+    if lang == "zh":
+        return f"运行 `{command}` 查看可用参数和命令。"
+    return f"Run `{command}` to see available options and commands."
+
+
+def _localized_click_message(exc: click.ClickException, lang: str) -> str:
+    """
+    Return a localized message for common Click parse exceptions.
+
+    Args:
+        exc: Click parse exception.
+        lang: Resolved display language.
+
+    Returns:
+        Human-readable problem text.
+    """
+    if lang != "zh":
+        return _english_click_message(exc)
+    if isinstance(exc, click.NoSuchOption):
+        return f"没有这个选项：{exc.option_name}"
+    if isinstance(exc, click.MissingParameter):
+        return _zh_missing_parameter(exc)
+    if isinstance(exc, click.BadParameter):
+        return _zh_bad_parameter(exc)
+    match = _NO_SUCH_COMMAND_RE.fullmatch(str(exc).strip())
+    if match:
+        return f"没有这个命令：{match.group(1)}"
+    return str(exc)
+
+
+def _plain_compat_message(exc: click.ClickException) -> str | None:
+    """
+    Return a plain compatibility line for application-raised BadParameter errors.
+
+    Args:
+        exc: Click parse exception.
+
+    Returns:
+        Plain message when existing callers may rely on contiguous text.
+    """
+    if not isinstance(exc, click.BadParameter):
+        return None
+    if exc.param is not None or getattr(exc, "param_hint", None):
+        return None
+    return _bad_parameter_detail(exc)
+
+
+def _english_click_message(exc: click.ClickException) -> str:
+    """
+    Return a stable English parse error message.
+
+    Args:
+        exc: Click parse exception.
+
+    Returns:
+        Human-readable English problem text.
+    """
+    if isinstance(exc, click.NoSuchOption):
+        return f"No such option: {exc.option_name}"
+    if isinstance(exc, click.MissingParameter):
+        return f"Missing required {_parameter_kind(exc)}: {_parameter_display_name(exc.param)}"
+    if isinstance(exc, click.BadParameter):
+        return f"Invalid value for {_bad_parameter_name(exc)}: {_bad_parameter_detail(exc)}"
+    match = _NO_SUCH_COMMAND_RE.fullmatch(str(exc).strip())
+    if match:
+        return f"No such command: {match.group(1)}"
+    return str(exc)
+
+
+def _zh_missing_parameter(exc: click.MissingParameter) -> str:
+    """
+    Return a Chinese message for a missing parameter.
+
+    Args:
+        exc: Missing parameter exception.
+
+    Returns:
+        Localized problem text.
+    """
+    kind = "选项" if _parameter_kind(exc) == "option" else "参数"
+    return f"缺少必填{kind}：{_parameter_display_name(exc.param)}"
+
+
+def _zh_bad_parameter(exc: click.BadParameter) -> str:
+    """
+    Return a Chinese message for an invalid parameter value.
+
+    Args:
+        exc: Bad parameter exception.
+
+    Returns:
+        Localized problem text.
+    """
+    detail = _bad_parameter_detail(exc)
+    if "CLI language must be one of" in detail:
+        detail = "语言必须是 auto、en 或 zh。"
+    return f"参数值无效：{_bad_parameter_name(exc)}。{detail}"
+
+
+def _parameter_kind(exc: click.MissingParameter) -> str:
+    """
+    Return whether a missing parameter is an option or argument.
+
+    Args:
+        exc: Missing parameter exception.
+
+    Returns:
+        ``option`` or ``argument``.
+    """
+    param = exc.param
+    return "option" if isinstance(param, click.Option) else "argument"
+
+
+def _parameter_display_name(param: click.Parameter | None) -> str:
+    """
+    Return the user-facing name for a Click parameter.
+
+    Args:
+        param: Click parameter.
+
+    Returns:
+        Display name.
+    """
+    if param is None:
+        return "value"
+    if isinstance(param, click.Option) and param.opts:
+        return param.opts[0]
+    return param.human_readable_name
+
+
+def _bad_parameter_detail(exc: click.BadParameter) -> str:
+    """
+    Return the BadParameter detail without repeating Click's prefix.
+
+    Args:
+        exc: Bad parameter exception.
+
+    Returns:
+        Detail text.
+    """
+    message = str(exc).strip()
+    prefix = f"Invalid value for {_bad_parameter_name(exc)}: "
+    return message.removeprefix(prefix)
+
+
+def _bad_parameter_name(exc: click.BadParameter) -> str:
+    """
+    Return the user-facing name for a bad parameter.
+
+    Args:
+        exc: Bad parameter exception.
+
+    Returns:
+        Display name.
+    """
+    hint = getattr(exc, "param_hint", None)
+    if isinstance(hint, str) and hint:
+        return hint
+    return _parameter_display_name(exc.param)
+
+
+def _context_command_path(ctx: click.Context) -> str:
+    """
+    Return a stable command path for real CLI and CliRunner tests.
+
+    Args:
+        ctx: Click context.
+
+    Returns:
+        Command path starting with ``meeting-asr``.
+    """
+    command_path = ctx.command_path
+    if command_path == "root":
+        return "meeting-asr"
+    if command_path.startswith("root "):
+        return f"meeting-asr{command_path[4:]}"
+    return command_path
 
 
 def build_cli_error_advice(exc: Exception) -> CliErrorAdvice | None:
