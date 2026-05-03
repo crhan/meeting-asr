@@ -26,7 +26,10 @@ def test_project_trash_restore_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_p
     trash_json_result = runner.invoke(app, ["project", "trash", "list", "--json"])
     trash_payload = json.loads(trash_json_result.output)
     project_missing_after_delete = not project_dir.exists()
-    restore_result = runner.invoke(app, ["project", "trash", "restore", "1", "--projects-dir", str(projects_dir)])
+    restore_result = runner.invoke(
+        app,
+        ["project", "trash", "restore", manifest.project_id, "--projects-dir", str(projects_dir)],
+    )
     project_list_result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
 
     assert delete_result.exit_code == 0
@@ -34,9 +37,13 @@ def test_project_trash_restore_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "meeting-asr project trash restore" in delete_result.output
     assert project_missing_after_delete
     assert trash_list_result.exit_code == 0
+    assert "Project ID" in trash_list_result.output
+    assert "No." not in trash_list_result.output
     assert "Review Me" in trash_list_result.output
     assert trash_json_result.exit_code == 0
     assert trash_payload["count"] == 1
+    assert "number" not in trash_payload["projects"][0]
+    assert trash_payload["projects"][0]["project_id"] == manifest.project_id
     assert trash_payload["projects"][0]["title"] == "Review Me"
     assert trash_payload["projects"][0]["restore_project_dir"] == str(project_dir.resolve())
     assert restore_result.exit_code == 0
@@ -56,7 +63,7 @@ def test_project_trash_purge_removes_trashed_project(
     manifest = load_manifest(project_dir)
 
     delete_result = runner.invoke(app, ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--yes"])
-    purge_result = runner.invoke(app, ["project", "trash", "purge", "1", "--yes"])
+    purge_result = runner.invoke(app, ["project", "trash", "purge", manifest.project_id, "--yes"])
     trash_list_result = runner.invoke(app, ["project", "trash", "list"])
 
     assert delete_result.exit_code == 0

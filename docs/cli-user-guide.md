@@ -87,16 +87,17 @@ meeting-asr project update PROJECT_ID --meeting-time "2026-05-02T10:00:00+08:00"
 ```bash
 meeting-asr project delete PROJECT_ID
 meeting-asr project trash list
-meeting-asr project trash restore TRASH_NO
-meeting-asr project trash purge TRASH_NO --yes
+meeting-asr project trash restore TRASH_REF
+meeting-asr project trash purge TRASH_REF --yes
 meeting-asr project trash cleanup --older-than-days 30 --yes
 meeting-asr project delete PROJECT_ID --permanent --yes
 ```
 
 默认删除是安全删除：项目会移动到
 `~/.local/share/meeting-asr/trash/projects/`，不再出现在 `project list`。
-误删后用 `project trash list` 查看 trash，再用 `project trash restore TRASH_NO`
-恢复到原目录。确认不需要时，用 `project trash purge TRASH_NO --yes` 删除单个项目，
+误删后用 `project trash list` 查看 trash，再用 `project trash restore TRASH_REF`
+恢复到原目录。`TRASH_REF` 可以是 Project ID 或 Trash Dir。确认不需要时，
+用 `project trash purge TRASH_REF --yes` 删除单个项目，
 或用 `project trash cleanup --older-than-days 30 --yes` 清理超过 30 天的 trash。
 Meeting-ASR 不会自动清理 trash；只有 `purge`、`cleanup` 或 `delete --permanent --yes`
 会物理删除项目目录。

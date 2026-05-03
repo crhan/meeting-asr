@@ -195,7 +195,6 @@ class TrashedProjectListItem:
     created_at: str
     updated_at: str
     trashed_at: str
-    number: int = 0
 
 
 @dataclass(frozen=True, slots=True)

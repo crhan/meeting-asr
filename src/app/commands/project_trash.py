@@ -46,7 +46,7 @@ def restore_command(
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     project_dir: Optional[Path] = typer.Option(None, "--project-dir", file_okay=False, dir_okay=True),
 ) -> None:
-    """Restore a trashed project by trash number, path, id, or title."""
+    """Restore a trashed project by trash path, id, directory, or title."""
     summary = run_with_cli_errors(
         lambda: restore_trashed_project(trash_ref, projects_dir=projects_dir, project_dir=project_dir)
     )
@@ -94,7 +94,7 @@ def _echo_project_trash_list(trash_dir: Path, projects: list[TrashedProjectListI
     if not projects:
         typer.echo("No trashed projects found.")
         return
-    typer.echo("Use Project ID or trash directory with restore/purge. No. is only a list shortcut.")
+    typer.echo("Use Project ID or Trash Dir with restore/purge.")
     _project_table_console().print(_project_trash_table(projects))
 
 
@@ -103,27 +103,23 @@ def _project_trash_table(projects: list[TrashedProjectListItem]) -> Table:
     Build the project trash table.
 
     Args:
-        projects: Numbered trash rows to display.
+        projects: Trash rows to display.
 
     Returns:
         Rich table ready to print.
     """
     table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
-    table.add_column("No.", justify="right", no_wrap=True, style="bold cyan")
-    table.add_column("Trashed", no_wrap=True)
+    table.add_column("Project ID", no_wrap=True, overflow="ellipsis", max_width=28, style="bold cyan")
     table.add_column("Status", no_wrap=True)
+    table.add_column("Trashed", no_wrap=True)
     table.add_column("Title")
-    table.add_column("Project ID", no_wrap=True)
-    table.add_column("Restore To", no_wrap=True)
-    table.add_column("Trash Dir", no_wrap=True)
+    table.add_column("Trash Dir", no_wrap=True, overflow="ellipsis", max_width=38)
     for project in projects:
         table.add_row(
-            str(project.number),
-            _project_list_timestamp(project.trashed_at),
-            _project_status_text(project.status),
-            project.title,
             project.project_id,
-            project.restore_project_dir.name,
+            _project_status_text(project.status),
+            _project_list_timestamp(project.trashed_at),
+            project.title,
             project.trash_dir.name,
         )
     return table
@@ -158,7 +154,6 @@ def _trashed_project_payload(project: TrashedProjectListItem) -> dict[str, objec
         JSON-ready project row.
     """
     return {
-        "number": project.number,
         "project_id": project.project_id,
         "title": project.title,
         "status": project.status,

@@ -48,7 +48,7 @@ def list_trashed_projects() -> ProjectTrashListResult:
     List projects currently stored in Meeting-ASR trash.
 
     Returns:
-        Numbered trash project list.
+        Trash project list.
     """
     trash_dir = get_project_trash_dir()
     if not trash_dir.exists():
@@ -58,7 +58,7 @@ def list_trashed_projects() -> ProjectTrashListResult:
     projects = [_trashed_project_item(child) for child in trash_dir.iterdir() if _is_project_dir(child)]
     projects = [project for project in projects if project is not None]
     projects.sort(key=lambda project: (project.trashed_at, project.updated_at, project.project_id), reverse=True)
-    return ProjectTrashListResult(trash_dir, _number_trash_items(projects))
+    return ProjectTrashListResult(trash_dir, projects)
 
 
 def restore_trashed_project(
@@ -71,7 +71,7 @@ def restore_trashed_project(
     Restore one trashed project.
 
     Args:
-        trash_ref: Trash number, path, project id, title, or trash directory name.
+        trash_ref: Trash path, project id, title, or trash directory name.
         projects_dir: Optional destination projects parent.
         project_dir: Optional exact destination directory.
 
@@ -96,7 +96,7 @@ def purge_trashed_project(trash_ref: str | Path) -> ProjectPurgeSummary:
     Permanently delete one trashed project.
 
     Args:
-        trash_ref: Trash number, path, project id, title, or trash directory name.
+        trash_ref: Trash path, project id, title, or trash directory name.
 
     Returns:
         Purge summary.
@@ -135,7 +135,7 @@ def resolve_trashed_project_ref(trash_ref: str | Path) -> TrashedProjectListItem
     Resolve a trash reference into one trashed project.
 
     Args:
-        trash_ref: Trash number, path, project id, title, or trash directory name.
+        trash_ref: Trash path, project id, title, or trash directory name.
 
     Returns:
         Matching trashed project.
@@ -147,8 +147,6 @@ def resolve_trashed_project_ref(trash_ref: str | Path) -> TrashedProjectListItem
     if _looks_like_path(ref_text, ref_path):
         return _trashed_project_path_match(ref_path)
     projects = list_trashed_projects().projects
-    if ref_text.isdecimal() and int(ref_text) > 0:
-        return _single_trash_number_match(ref_text, projects)
     exact = [project for project in projects if _matches_trash_ref(project, ref_text, partial=False)]
     if exact:
         return _single_trash_match(ref_text, exact)
@@ -264,24 +262,6 @@ def _restore_destination(
     return item.restore_project_dir
 
 
-def _number_trash_items(projects: list[TrashedProjectListItem]) -> list[TrashedProjectListItem]:
-    """Assign numeric references to trash items."""
-    return [
-        TrashedProjectListItem(
-            item.trash_dir,
-            item.restore_project_dir,
-            item.project_id,
-            item.title,
-            item.status,
-            item.created_at,
-            item.updated_at,
-            item.trashed_at,
-            index,
-        )
-        for index, item in enumerate(projects, start=1)
-    ]
-
-
 def _is_project_dir(path: Path) -> bool:
     """Return whether a path looks like a project directory."""
     return path.is_dir() and (path / "project.json").is_file()
@@ -302,15 +282,6 @@ def _trashed_project_path_match(path: Path) -> TrashedProjectListItem:
     raise FileNotFoundError(f"Trashed project manifest does not exist: {resolved / 'project.json'}")
 
 
-def _single_trash_number_match(ref_text: str, projects: list[TrashedProjectListItem]) -> TrashedProjectListItem:
-    """Resolve a numeric trash reference."""
-    number = int(ref_text)
-    for project in projects:
-        if project.number == number:
-            return project
-    raise FileNotFoundError(f"Trash project number not found: {ref_text}. Run `meeting-asr project trash list`.")
-
-
 def _matches_trash_ref(project: TrashedProjectListItem, ref_text: str, *, partial: bool) -> bool:
     """Return whether a trashed project matches a text reference."""
     targets = (project.project_id, project.title, project.trash_dir.name, project.restore_project_dir.name)
@@ -324,7 +295,7 @@ def _single_trash_match(ref_text: str, projects: list[TrashedProjectListItem]) -
     """Resolve one non-path trash reference."""
     if len(projects) == 1:
         return projects[0]
-    choices = ", ".join(f"{project.number}:{project.title}" for project in projects[:5])
+    choices = ", ".join(f"{project.project_id} ({project.title})" for project in projects[:5])
     raise ValueError(f"Trash project reference is ambiguous: {ref_text}. Matches: {choices}")
 
 
