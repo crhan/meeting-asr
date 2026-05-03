@@ -152,11 +152,12 @@ def _next_step_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
             ("Preview subtitles", f"meeting-asr project speakers preview {quoted_ref}"),
         ]
     rows = [
-        ("Review speakers", f"meeting-asr project review {quoted_ref}"),
-        ("Inspect samples", f"meeting-asr project speakers inspect {quoted_ref} --sample-count 5"),
+        ("Recommended", f"meeting-asr project review {quoted_ref}"),
+        ("Why", "This opens the human review workflow for unresolved speakers."),
+        ("Diagnostic/read-only", f"meeting-asr project speakers inspect {quoted_ref} --sample-count 5"),
     ]
     if view.below_threshold_matches:
-        rows.append(("Confirm a candidate", f"meeting-asr project speakers apply {quoted_ref} --map 0=张三"))
+        rows.append(("Advanced/scripted", f"meeting-asr project speakers apply {quoted_ref} --map 0=Name"))
     rows.extend(
         [
             ("Capture confirmed voices", f"meeting-asr voiceprint capture {quoted_ref}"),

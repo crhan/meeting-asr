@@ -76,7 +76,10 @@ def test_project_speakers_match_keeps_below_threshold_best_candidate(
     assert result.exit_code == 0
     assert "Speaker A status=below-threshold best=墨泪 score=0.800 threshold=0.900" in result.output
     assert "Speaker A -> unknown" not in result.output
-    assert "Below-threshold speakers need manual confirmation:" in result.output
+    assert "Recommended next step:" in result.output
+    assert "meeting-asr project speakers review" in result.output
+    assert "Advanced/scripted alternative" in result.output
+    assert "--map 0=Name" in result.output
     assert first["name"] is None
     assert first["accepted_name"] is None
     assert first["accepted"] is False

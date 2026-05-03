@@ -447,11 +447,11 @@ def review(
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     summary: bool = typer.Option(False, "--summary", help="Print without opening a TUI."),
 ) -> None:
-    """Open project-level review, selecting from project history when PROJECT is omitted."""
+    """Open the recommended human review workflow for project outputs, including unresolved speaker names."""
     project_dir = _resolve_review_project(project, projects_dir, summary=summary)
     if project_dir is None:
         return
-    _run_speaker_review(project_dir, page_size=page_size, store_dir=store_dir, summary=summary)
+    _run_speaker_review(project_dir, page_size=page_size, store_dir=store_dir, summary=summary, speaker_only=False)
 
 
 def _run_project_workflow(
@@ -642,7 +642,7 @@ def speakers_inspect(
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
     sample_count: int = typer.Option(5, "--sample-count", min=1, max=20),
 ) -> None:
-    """Print per-speaker samples for a project."""
+    """Print diagnostic speaker samples; read-only, does not apply names."""
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     result = run_with_cli_errors(
         lambda: load_transcript_result(project_paths(resolved_project_dir).asr_dir / "sentences.json")
@@ -663,9 +663,9 @@ def speakers_inspect(
                 match_summary=speaker_matches.get(summary.speaker_id),
             )
         )
-    if _project_has_match_status(resolved_project_dir, MATCH_STATUS_BELOW_THRESHOLD):
+    if _project_has_unresolved_match(resolved_project_dir):
         manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
-        _echo_below_threshold_next_steps(manifest.project_id)
+        _echo_unresolved_speaker_next_steps(manifest.project_id, speaker_only=True)
 
 
 @speakers_app.command("preview")
@@ -703,7 +703,7 @@ def speakers_apply(
     mappings: list[str] = typer.Option([], "--map", help="Non-interactive speaker_id=name mapping."),
     sample_count: int = typer.Option(3, "--sample-count", min=1, max=20, help="Samples shown per speaker."),
 ) -> None:
-    """Interactively apply speaker names to a project."""
+    """Apply known speaker mappings non-interactively; intended for scripts or already confirmed mappings."""
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     sentences_path = project_paths(resolved_project_dir).asr_dir / "sentences.json"
     result = run_with_cli_errors(lambda: load_transcript_result(sentences_path))
@@ -751,9 +751,9 @@ def speakers_review(
         help="Print the review queue without opening the TUI.",
     ),
 ) -> None:
-    """Open a TUI for speaker identity review."""
+    """Open the recommended interactive speaker identity review."""
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
-    _run_speaker_review(resolved_project_dir, page_size=page_size, store_dir=store_dir, summary=summary)
+    _run_speaker_review(resolved_project_dir, page_size=page_size, store_dir=store_dir, summary=summary, speaker_only=True)
 
 
 def _run_speaker_review(
@@ -762,6 +762,7 @@ def _run_speaker_review(
     page_size: int | None,
     store_dir: Path | None,
     summary: bool,
+    speaker_only: bool,
 ) -> None:
     """Run speaker review for one resolved project directory."""
     session = run_with_cli_errors(
@@ -772,7 +773,7 @@ def _run_speaker_review(
         )
     )
     if summary:
-        typer.echo(render_speaker_review_summary(session))
+        typer.echo(render_speaker_review_summary(session, speaker_only=speaker_only))
         return
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise typer.BadParameter(
@@ -1078,8 +1079,8 @@ def _echo_match_summary(summary: SpeakerMatchSummary) -> None:
     typer.echo(f"Threshold: {summary.threshold:.3f}")
     for match in summary.matches:
         typer.echo(_voiceprint_match_cli_line(match, default_threshold=summary.threshold))
-    if any(voiceprint_match_status(match) == MATCH_STATUS_BELOW_THRESHOLD for match in summary.matches):
-        _echo_below_threshold_next_steps(_project_ref_from_match_path(summary.match_path))
+    if any(voiceprint_match_status(match) != MATCH_STATUS_MATCHED for match in summary.matches):
+        _echo_unresolved_speaker_next_steps(_project_ref_from_match_path(summary.match_path), speaker_only=True)
 
 
 def _voiceprint_match_cli_line(match: object, *, default_threshold: float | None = None) -> str:
@@ -1127,18 +1128,31 @@ def _project_ref_from_match_path(match_path: Path) -> str:
         return str(project_dir)
 
 
-def _echo_below_threshold_next_steps(project_ref: str) -> None:
+def _echo_unresolved_speaker_next_steps(project_ref: str, *, speaker_only: bool) -> None:
     """
-    Print concrete commands for below-threshold speaker remediation.
+    Print concrete commands for unresolved speaker remediation.
 
     Args:
         project_ref: Project id or path accepted by project commands.
+        speaker_only: Whether the current command is scoped to speaker review.
     """
     quoted_ref = shlex.quote(project_ref)
+    review_command = (
+        f"meeting-asr project speakers review {quoted_ref}"
+        if speaker_only
+        else f"meeting-asr project review {quoted_ref}"
+    )
     typer.echo("")
-    typer.echo("Below-threshold speakers need manual confirmation:")
+    typer.echo(f"Recommended next step: {review_command}")
+    typer.echo("This opens the human review workflow for unresolved speakers.")
+    typer.echo("")
+    typer.echo("Diagnostic/read-only:")
     typer.echo(f"  meeting-asr project speakers inspect {quoted_ref} --sample-count 5")
-    typer.echo(f"  meeting-asr project speakers apply {quoted_ref} --map 0=张三")
+    typer.echo("")
+    typer.echo("Advanced/scripted alternative (not the recommended human path):")
+    typer.echo(f"  meeting-asr project speakers apply {quoted_ref} --map 0=Name")
+    typer.echo("")
+    typer.echo("After saving names:")
     typer.echo(f"  meeting-asr voiceprint capture {quoted_ref}")
     typer.echo("  meeting-asr voiceprint embed")
 
@@ -1794,23 +1808,22 @@ def _load_speaker_match_summaries(project_dir: Path, speaker_mapping: dict[int, 
     return summaries
 
 
-def _project_has_match_status(project_dir: Path, status: str) -> bool:
+def _project_has_unresolved_match(project_dir: Path) -> bool:
     """
-    Return whether a project has any speaker match with the requested status.
+    Return whether a project has any unresolved speaker match.
 
     Args:
         project_dir: Project root.
-        status: Voiceprint match status.
 
     Returns:
-        True when at least one match row has the requested status.
+        True when at least one match row is not automatically matched.
     """
     match_path = project_paths(project_dir).speakers_dir / "speaker_matches.json"
     if not match_path.exists():
         return False
     payload = json.loads(match_path.read_text(encoding="utf-8"))
     return any(
-        isinstance(item, dict) and voiceprint_match_status(item) == status
+        isinstance(item, dict) and voiceprint_match_status(item) != MATCH_STATUS_MATCHED
         for item in payload.get("matches", [])
     )
 

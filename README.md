@@ -189,9 +189,9 @@ Meeting-ASR 不会自动清理 trash；只有显式执行 cleanup/purge 或 dele
 `--permanent --yes` 才会物理删除项目目录。
 
 Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speaker_matches.json`，
-不改转写结果；`speakers apply` 才会把自动候选和人工输入合并，写入
+不改转写结果；推荐用 `project review` 完成人工确认并写入
 `speakers/speaker_map.json`、`exports/transcript_named.txt` 和
-`exports/subtitle_named.srt`。
+`exports/subtitle_named.srt`。`speakers apply --map` 只作为脚本化替代入口。
 
 词汇纠错可以直接用编辑器完成：
 
@@ -242,28 +242,28 @@ meeting-asr project transcript show PROJECT_ID --kind corrected
 `meeting-asr project transcript show` 或 `meeting-asr project transcript open --kind named`
 读取最终结果。
 
-没有声纹库也可以跑 `speakers match`；这时所有 speaker 都会是
-`unknown score=0.000 review`。这不是错误，只表示当前声纹库没有可匹配的人。
+没有声纹库也可以跑 `speakers match`；这时 speaker 会显示为
+`status=no-candidate`。这不是错误，只表示当前声纹库没有可匹配的人。
 
 推荐流程：
 
-1. 先跑 `meeting-asr project speakers match`。有声纹库时会生成候选；没有声纹库时会生成全 unknown 的 review 结果。
-2. 用 `meeting-asr project speakers inspect` 查看每个 speaker 的样例和声纹建议。
-3. 优先跑 `meeting-asr project review PROJECT_ID` 进入 project 层 TUI；如果不传
+1. 先跑 `meeting-asr project speakers match`。有声纹库时会生成候选；没有声纹库时会生成 `no-candidate` 结果。
+2. 优先跑 `meeting-asr project review PROJECT_ID` 进入 project 层 TUI；如果不传
    `PROJECT_ID`，会先打开 project list。进入 review 后，它顶部会显示 project 概况、
    match/manual/capture/embed 进度、match 分数和 conflict/mismatch；下方两栏用于切
    speaker/sample、样例翻页、播放/停止当前样例、接受 match、输入新名字并保存；按 `?`
    可查看快捷键。
    顶部 `Output` 会直接列出最终项目产物；如果顶部信息太多，先看 `Next/Done` 行。
    `Next` 表示还没完成，按它给的命令继续；`Done` 表示产物已就绪，并给出 preview 和查看文本的命令。
-4. 如果只想用纯终端 prompt，仍可跑 `meeting-asr project speakers apply`。已 accepted 的 match 会作为默认值，直接回车确认；未匹配的人手动输入姓名；不确定就输入 `/more` 继续看样例，或用 `/audio` 播放当前可见样例的短预览。
+3. 用 `meeting-asr project speakers inspect` 做只读诊断，查看每个 speaker 的样例和声纹建议。
+4. `meeting-asr project speakers apply --map 0=Name` 是 advanced/scripted 路径，只适合脚本或已经确认好的映射，不是人类默认修正入口。
 5. 用 `meeting-asr project speakers preview` 复核带名字的字幕。
 6. 确认无误后，最终项目产物就是 `exports/transcript_named.txt` 和 `exports/subtitle_named.srt`。
 7. 如果有新确认的人，再跑 `meeting-asr voiceprint capture && meeting-asr voiceprint embed`，把他们补进跨项目声纹库。
 
 `meeting-asr project speakers match --apply` 只是快捷路径：它只会应用已 accepted
 的匹配，适合你确定自动结果已经足够时使用；如果还有未匹配的人，应使用交互式
-`speakers apply` 补足。
+`project review` 补足。
 
 转写结果属于 project，用 project 子命令查看：
 
@@ -311,8 +311,8 @@ meeting-asr voiceprint path
 meeting-asr doctor --full
 meeting-asr voiceprint embed
 meeting-asr project speakers match
-meeting-asr project speakers inspect
-meeting-asr project speakers apply
+meeting-asr project review PROJECT_ID
+meeting-asr project speakers inspect   # diagnostic/read-only
 ```
 
 如果要临时对比阿里云 provider，不改全局配置也可以传参数：

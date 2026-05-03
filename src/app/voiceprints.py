@@ -110,7 +110,7 @@ def capture_voiceprints(
     if not speakers:
         raise RuntimeError(
             "No named speaker segments are available for voiceprint capture. "
-            "Run meeting-asr project speakers apply and enter real names."
+            "Run meeting-asr project review and confirm speaker names first."
         )
     if dry_run:
         emit_progress(progress, "Voiceprint clips planned", total=_clip_count(speakers), completed=_clip_count(speakers))
@@ -193,7 +193,7 @@ def _load_required_speaker_mapping(path: Path) -> dict[int, str]:
         Speaker id to human name mapping.
     """
     if not path.exists():
-        raise FileNotFoundError("Speaker mapping does not exist. Run meeting-asr project speakers apply first.")
+        raise FileNotFoundError("Speaker mapping does not exist. Run meeting-asr project review first.")
     payload = json.loads(path.read_text(encoding="utf-8"))
     return {int(key): str(value) for key, value in payload.items()}
 

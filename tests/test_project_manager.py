@@ -273,8 +273,12 @@ def test_project_run_reports_review_when_matches_are_incomplete(
     assert "1/2 matched | below-threshold 1 | no-candidate 0" in result.output
     assert "partial" in result.output
     assert f"meeting-asr project review {manifest.project_id}" in result.output
+    assert "This opens the human review workflow for unresolved speakers." in result.output
     assert f"meeting-asr project speakers inspect {manifest.project_id} --sample-count 5" in result.output
-    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=张三" in result.output
+    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name" in result.output
+    assert result.output.index(f"meeting-asr project review {manifest.project_id}") < result.output.index(
+        f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name"
+    )
     assert f"meeting-asr voiceprint capture {manifest.project_id}" in result.output
     assert "meeting-asr voiceprint embed" in result.output
     assert f"meeting-asr project correct edit {manifest.project_id}" in result.output
@@ -1047,8 +1051,9 @@ def test_project_speakers_inspect_shows_below_threshold_candidates(tmp_path: Pat
     assert result.exit_code == 0
     assert "Voiceprint match: best=墨泪 score=0.670 threshold=0.750 status=below-threshold" in result.output
     assert "unknown" not in result.output
+    assert f"Recommended next step: meeting-asr project speakers review {manifest.project_id}" in result.output
     assert f"meeting-asr project speakers inspect {manifest.project_id} --sample-count 5" in result.output
-    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=张三" in result.output
+    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name" in result.output
     assert f"meeting-asr voiceprint capture {manifest.project_id}" in result.output
 
 
@@ -1194,11 +1199,16 @@ def test_project_review_summary_shows_below_threshold_best_candidate(tmp_path: P
     )
 
     assert result.exit_code == 0
+    assert f"Recommended next step: meeting-asr project review {manifest.project_id}" in result.output
+    assert "This opens the human review workflow for unresolved speakers." in result.output
+    assert "Speaker A: below-threshold best=墨泪 score=0.670 threshold=0.750" in result.output
     assert "Speaker A speaker_id=0 status=review name=Speaker A" in result.output
     assert "match=below-threshold:墨泪 score=0.670 threshold=0.750" in result.output
     assert "unknown" not in result.output
-    assert f"meeting-asr project speakers inspect {manifest.project_id} --sample-count 5" in result.output
-    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=张三" in result.output
+    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name" in result.output
+    assert result.output.index(f"meeting-asr project review {manifest.project_id}") < result.output.index(
+        f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name"
+    )
     assert f"meeting-asr voiceprint capture {manifest.project_id}" in result.output
 
 
@@ -1241,6 +1251,27 @@ def test_project_review_summary_without_project_lists_history(tmp_path: Path) ->
     assert manifest.project_id in result.output
 
 
+def test_speaker_review_help_separates_human_and_scripted_paths() -> None:
+    """Speaker command help should point humans to review and scripts to apply --map."""
+    project_review = runner.invoke(app, ["--lang", "en", "project", "review", "--help"])
+    speaker_review = runner.invoke(app, ["--lang", "en", "project", "speakers", "review", "--help"])
+    apply_help = runner.invoke(app, ["--lang", "en", "project", "speakers", "apply", "--help"])
+    inspect_help = runner.invoke(app, ["--lang", "en", "project", "speakers", "inspect", "--help"])
+
+    assert project_review.exit_code == 0
+    assert "recommended human review workflow" in project_review.output
+    assert "unresolved speaker names" in project_review.output
+    assert speaker_review.exit_code == 0
+    assert "recommended interactive speaker identity review" in speaker_review.output
+    assert apply_help.exit_code == 0
+    assert "non-interactively" in apply_help.output
+    assert "scripts or" in apply_help.output
+    assert "already confirmed mappings" in apply_help.output
+    assert inspect_help.exit_code == 0
+    assert "diagnostic speaker samples" in inspect_help.output
+    assert "read-only, does not apply names" in inspect_help.output
+
+
 def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     """Speaker apply should support the human review flow."""
     project_dir = _sample_project(tmp_path)
@@ -1262,6 +1293,24 @@ def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     assert "meeting-asr project speakers preview" in result.output
     assert "meeting-asr voiceprint capture" in result.output
     assert f"open {transcript_path.resolve()}" in result.output
+
+
+def test_project_speakers_apply_map_writes_named_transcript(tmp_path: Path) -> None:
+    """Scripted speaker mappings should still write named project outputs."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+
+    result = runner.invoke(
+        app,
+        ["project", "speakers", "apply", str(project_dir), "--map", "0=欧丁", "--map", "1=敬悦"],
+    )
+
+    transcript_path = project_dir / "exports" / "transcript_named.txt"
+    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert mapping == {"0": "欧丁", "1": "敬悦"}
+    assert "欧丁" in transcript_path.read_text(encoding="utf-8")
+    assert "敬悦" in transcript_path.read_text(encoding="utf-8")
 
 
 def test_project_speakers_apply_can_show_more_samples(
