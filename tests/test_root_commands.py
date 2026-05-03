@@ -117,6 +117,27 @@ def test_native_subcommand_help_uses_localized_renderer() -> None:
     assert "--help, -h" in leaf_result.output
 
 
+def test_localized_help_leads_with_examples_and_translated_options() -> None:
+    """High-frequency Chinese help should include examples and translated option text."""
+    run_result = runner.invoke(app, ["--lang", "zh", "project", "run", "--help"])
+    delete_result = runner.invoke(app, ["--lang", "zh", "project", "delete", "--help"])
+    hotwords_result = runner.invoke(app, ["--lang", "zh", "lexicon", "hotwords", "sync", "--help"])
+
+    assert run_result.exit_code == 0
+    assert "示例" in run_result.output
+    assert "meeting-asr project run ~/Downloads/meeting.mp4" in run_result.output
+    assert "指定会议总结使用的" in run_result.output
+    assert "Generate title and summary after ASR." not in run_result.output
+    assert delete_result.exit_code == 0
+    assert "meeting-asr project delete p-292d10c1232b79a0" in delete_result.output
+    assert "跳过确认提示。" in delete_result.output
+    assert "Physically remove instead of moving to trash." not in delete_result.output
+    assert hotwords_result.exit_code == 0
+    assert "meeting-asr lexicon hotwords sync --dry-run" in hotwords_result.output
+    assert "指定 DashScope ASR 目标模型。" in hotwords_result.output
+    assert "Only render local hotword table." not in hotwords_result.output
+
+
 def test_help_flag_overrides_parse_errors() -> None:
     """clig.dev expects adding -h to invalid input to show help."""
     root_result = runner.invoke(app, ["--bad", "-h"])

@@ -28,8 +28,14 @@ ROOT_SECTIONS = {
     ),
 }
 LABELS = {
-    "en": {"usage": "Usage", "arguments": "Arguments", "options": "Options", "commands": "Commands"},
-    "zh": {"usage": "用法", "arguments": "参数", "options": "选项", "commands": "命令"},
+    "en": {
+        "usage": "Usage",
+        "examples": "Examples",
+        "arguments": "Arguments",
+        "options": "Options",
+        "commands": "Commands",
+    },
+    "zh": {"usage": "用法", "examples": "示例", "arguments": "参数", "options": "选项", "commands": "命令"},
 }
 COMMAND_ZH = {
     (): "用于 DashScope 会议转写的项目化 CLI。",
@@ -116,6 +122,124 @@ COMMAND_ZH = {
     ("completion", "tcsh"): "输出 tcsh completion 脚本。",
     ("completion", "install"): "安装 shell completion 脚本。",
 }
+EXAMPLES = {
+    ("doctor",): {
+        "en": ("meeting-asr doctor", "meeting-asr doctor --full", "meeting-asr doctor --full --json"),
+        "zh": ("meeting-asr doctor", "meeting-asr doctor --full", "meeting-asr doctor --full --json"),
+    },
+    ("paths",): {
+        "en": ("meeting-asr paths", "meeting-asr paths --json"),
+        "zh": ("meeting-asr paths", "meeting-asr paths --json"),
+    },
+    ("project", "run"): {
+        "en": (
+            "meeting-asr project run ~/Downloads/meeting.mp4",
+            "meeting-asr project run ~/Downloads/meeting.mp4 --no-summarize",
+        ),
+        "zh": (
+            "meeting-asr project run ~/Downloads/meeting.mp4",
+            "meeting-asr project run ~/Downloads/meeting.mp4 --no-summarize",
+        ),
+    },
+    ("project", "list"): {
+        "en": ("meeting-asr project list", "meeting-asr project list --plain", "meeting-asr project list --json"),
+        "zh": ("meeting-asr project list", "meeting-asr project list --plain", "meeting-asr project list --json"),
+    },
+    ("project", "show"): {
+        "en": ("meeting-asr project show p-292d10c1232b79a0", "meeting-asr project show --json"),
+        "zh": ("meeting-asr project show p-292d10c1232b79a0", "meeting-asr project show --json"),
+    },
+    ("project", "review"): {
+        "en": ("meeting-asr project review", "meeting-asr project review p-292d10c1232b79a0"),
+        "zh": ("meeting-asr project review", "meeting-asr project review p-292d10c1232b79a0"),
+    },
+    ("project", "delete"): {
+        "en": ("meeting-asr project delete p-292d10c1232b79a0", "meeting-asr project delete p-292d10c1232b79a0 --permanent"),
+        "zh": ("meeting-asr project delete p-292d10c1232b79a0", "meeting-asr project delete p-292d10c1232b79a0 --permanent"),
+    },
+    ("project", "trash", "list"): {
+        "en": ("meeting-asr project trash list", "meeting-asr project trash list --plain"),
+        "zh": ("meeting-asr project trash list", "meeting-asr project trash list --plain"),
+    },
+    ("project", "trash", "restore"): {
+        "en": ("meeting-asr project trash restore <project-id>",),
+        "zh": ("meeting-asr project trash restore <project-id>",),
+    },
+    ("project", "transcript", "list"): {
+        "en": ("meeting-asr project transcript list <project-id>",),
+        "zh": ("meeting-asr project transcript list <project-id>",),
+    },
+    ("project", "transcript", "show"): {
+        "en": (
+            "meeting-asr project transcript show <project-id> --kind corrected",
+            "meeting-asr project transcript show <project-id> --kind srt",
+        ),
+        "zh": (
+            "meeting-asr project transcript show <project-id> --kind corrected",
+            "meeting-asr project transcript show <project-id> --kind srt",
+        ),
+    },
+    ("project", "correct", "edit"): {
+        "en": ("meeting-asr project correct edit <project-id>", "meeting-asr project correct edit <project-id> --no-ai"),
+        "zh": ("meeting-asr project correct edit <project-id>", "meeting-asr project correct edit <project-id> --no-ai"),
+    },
+    ("project", "correct", "accept"): {
+        "en": ("meeting-asr project correct accept <project-id>",),
+        "zh": ("meeting-asr project correct accept <project-id>",),
+    },
+    ("project", "speakers", "review"): {
+        "en": ("meeting-asr project speakers review <project-id>",),
+        "zh": ("meeting-asr project speakers review <project-id>",),
+    },
+    ("project", "speakers", "match"): {
+        "en": ("meeting-asr project speakers match <project-id>",),
+        "zh": ("meeting-asr project speakers match <project-id>",),
+    },
+    ("voiceprint", "list"): {
+        "en": ("meeting-asr voiceprint list", "meeting-asr voiceprint list --plain"),
+        "zh": ("meeting-asr voiceprint list", "meeting-asr voiceprint list --plain"),
+    },
+    ("voiceprint", "capture"): {
+        "en": ("meeting-asr voiceprint capture <project-id>",),
+        "zh": ("meeting-asr voiceprint capture <project-id>",),
+    },
+    ("voiceprint", "embed"): {
+        "en": ("meeting-asr voiceprint embed", "meeting-asr voiceprint embed --provider local-speechbrain"),
+        "zh": ("meeting-asr voiceprint embed", "meeting-asr voiceprint embed --provider local-speechbrain"),
+    },
+    ("voiceprint", "browse"): {
+        "en": ("meeting-asr voiceprint browse",),
+        "zh": ("meeting-asr voiceprint browse",),
+    },
+    ("lexicon", "list"): {
+        "en": ("meeting-asr lexicon list", "meeting-asr lexicon list --query 术语"),
+        "zh": ("meeting-asr lexicon list", "meeting-asr lexicon list --query 术语"),
+    },
+    ("lexicon", "add"): {
+        "en": ('meeting-asr lexicon add "正确术语" --alias "常见错词" --category system',),
+        "zh": ('meeting-asr lexicon add "正确术语" --alias "常见错词" --category system',),
+    },
+    ("lexicon", "hotwords", "export"): {
+        "en": ("meeting-asr lexicon hotwords export --output hotwords.json",),
+        "zh": ("meeting-asr lexicon hotwords export --output hotwords.json",),
+    },
+    ("lexicon", "hotwords", "sync"): {
+        "en": ("meeting-asr lexicon hotwords sync --dry-run", "meeting-asr lexicon hotwords sync --force"),
+        "zh": ("meeting-asr lexicon hotwords sync --dry-run", "meeting-asr lexicon hotwords sync --force"),
+    },
+    ("oss", "upload"): {
+        "en": ("meeting-asr oss upload ./audio.wav",),
+        "zh": ("meeting-asr oss upload ./audio.wav",),
+    },
+    ("oss", "lifecycle", "set"): {
+        "en": ("meeting-asr oss lifecycle set --prefix meeting-asr/ --days 7",),
+        "zh": ("meeting-asr oss lifecycle set --prefix meeting-asr/ --days 7",),
+    },
+    ("completion", "install"): {
+        "en": ("meeting-asr completion install zsh",),
+        "zh": ("meeting-asr completion install zsh",),
+    },
+}
 OPTION_ZH = {
     "--version": "显示版本并退出。",
     "--no-color": "关闭 Rich 彩色输出。",
@@ -127,10 +251,83 @@ OPTION_ZH = {
     "--oss-upload-probe": "上传、签名 GET 并删除一个很小的 OSS 探测对象。",
     "--require-voiceprint-embedding": "声纹 embedding 后端不可运行时返回失败。",
     "--projects-dir": "指定项目库目录。",
+    "--project-dir": "指定项目目录。",
+    "--hash-source": "兼容旧参数；项目身份始终基于内容 hash。",
+    "--title": "设置会议标题；省略时可由总结步骤自动生成。",
+    "--meeting-time": "设置会议时间。",
+    "--speaker-count": "指定预期 speaker 数量。",
+    "--language": "指定 ASR 语言。",
+    "--model": "指定模型 ID。",
+    "--oss-upload": "控制是否上传到 OSS。",
+    "--file-url": "直接使用已有 HTTP/HTTPS 音频 URL。",
+    "--audio-format": "指定提取后的音频格式。",
+    "--asr-hotwords": "指定 ASR 热词表 ID 或热词文件。",
+    "--store-dir": "指定全局数据目录。",
+    "--voiceprint-provider": "指定声纹 embedding provider。",
+    "--voiceprint-endpoint": "指定声纹 embedding 服务地址。",
+    "--voiceprint-model": "指定声纹 embedding 模型。",
+    "--match-threshold": "设置声纹自动接受阈值。",
+    "--summarize": "ASR 后生成会议标题和摘要；可用 --no-summarize 关闭。",
+    "--summary-model": "指定会议总结使用的 DashScope 模型。",
+    "--progress": "在终端显示交互式进度；可用 --no-progress 关闭。",
+    "--identity-mode": "兼容旧参数；项目身份始终基于内容 hash。",
+    "--yes": "跳过确认提示。",
+    "--permanent": "物理删除，而不是移入回收站。",
+    "--samples-per-page": "覆盖每页 sample 数；默认按 TUI 面板高度计算。",
+    "--page-size": "覆盖每页 sample 数；默认按 TUI 面板高度计算。",
+    "--summary": "只打印摘要，不打开 TUI。",
+    "--map": "非交互式 speaker_id=name 映射。",
+    "--sample-count": "每个 speaker 显示的样例数量。",
+    "--editor": "指定编辑器命令；可用 {file} 作为文件占位符。",
+    "--no-open": "只写 review 文件，不打开编辑器。",
+    "--no-ai": "禁用 DashScope 纠错建议，只使用本地规则。",
+    "--no-proposal-open": "不打开生成的全量修改建议文件。",
+    "--category": "词条分类。",
+    "--lexicon-db": "指定词库 SQLite 路径。",
+    "--from-original": "忽略已有 corrected transcript，从原始转写开始。",
+    "--reveal": "显示密钥明文。",
+    "--overwrite": "覆盖已有配置值。",
+    "--status": "按状态过滤。",
+    "--query": "搜索标准词和别名。",
+    "--limit": "限制返回数量。",
+    "--context-limit": "限制显示的上下文数量。",
+    "--description": "词条说明。",
+    "--alias": "别名或常见 ASR 错词。",
+    "--output": "输出文件路径。",
+    "--active-only": "跳过 inactive 词条。",
+    "--target-model": "指定 DashScope ASR 目标模型。",
+    "--provider": "指定 provider。",
+    "--prefix": "指定 DashScope 词表前缀。",
+    "--force": "强制更新远端词表。",
+    "--dry-run": "只预览本地热词，不写远端。",
+    "--endpoint": "DashScope API 地址；默认读取配置。",
+    "--vocabulary-id": "DashScope 词表 ID。",
+    "--clear-cache": "同时清除匹配的本地缓存记录。",
+    "--rebuild": "重新生成已有 embedding。",
+    "--max-seconds": "限制每个声纹样本的最长秒数。",
+    "--padding-seconds": "样本前后保留的音频秒数。",
+    "--object-name": "指定 OSS object 名称。",
+    "--expires-seconds": "指定签名 URL 有效秒数。",
+    "--target": "指定 shell 类型。",
+    "--bin-dir": "指定 completion 安装目录。",
+    "--update-rc": "更新 shell rc 文件；可用 --no-update-rc 关闭。",
+    "--days": "对象保留天数。",
+    "--rule-id": "OSS 生命周期规则 ID。",
     "--json": "输出机器可读 JSON。",
     "--plain": "输出稳定的制表符分隔文本。",
     "--kind": "选择产物类型，例如 auto、plain、named、corrected、srt。",
     "--help": "显示帮助并退出。",
+}
+OPTION_ZH_BY_COMMAND = {
+    ("project", "transcribe", "--model"): "指定 DashScope ASR 模型。",
+    ("project", "summarize", "--model"): "指定会议总结使用的 DashScope 模型。",
+    ("project", "run", "--model"): "指定 DashScope ASR 模型。",
+    ("project", "correct", "edit", "--model"): "指定 DashScope 纠错模型。",
+    ("lexicon", "delete", "--permanent"): "物理删除词条及上下文。",
+    ("lexicon", "delete", "--yes"): "跳过删除确认。",
+    ("lexicon", "hotwords", "clear-cache", "--target-model"): "指定要清缓存的 ASR 目标模型。",
+    ("lexicon", "hotwords", "remote-delete", "--target-model"): "指定清缓存使用的 ASR 目标模型。",
+    ("lexicon", "hotwords", "remote-delete", "--yes"): "确认删除远端词表。",
 }
 OPTION_EN = {
     "--projects-dir": "Project store directory.",
@@ -155,8 +352,9 @@ def render_help(command: click.Command, command_path: tuple[str, ...]) -> None:
     body = _help_body(command, command_path, lang)
     if body:
         console.print(Padding(body, (0, 1, 1, 1)))
+    _print_examples_panel(command_path, lang, console)
     _print_arguments_panel(command, lang, console)
-    _print_options_panel(command, lang, console)
+    _print_options_panel(command, command_path, lang, console)
     _print_commands_panel(command, command_path, lang, console)
 
 
@@ -199,7 +397,16 @@ def _print_arguments_panel(command: click.Command, lang: str, console: Console) 
     console.print(Panel(table, title=LABELS[lang]["arguments"], border_style="dim"))
 
 
-def _print_options_panel(command: click.Command, lang: str, console: Console) -> None:
+def _print_examples_panel(command_path: tuple[str, ...], lang: str, console: Console) -> None:
+    """Print common invocations when examples are defined for a command."""
+    examples = EXAMPLES.get(command_path, {}).get(lang)
+    if not examples:
+        return
+    body = Text("\n".join(f"  {example}" for example in examples))
+    console.print(Panel(body, title=LABELS[lang]["examples"], border_style="blue"))
+
+
+def _print_options_panel(command: click.Command, command_path: tuple[str, ...], lang: str, console: Console) -> None:
     """Print option rows in a scan-friendly Rich panel."""
     options = [param for param in command.params if isinstance(param, click.Option)]
     if not any("--help" in option.opts for option in options):
@@ -211,7 +418,7 @@ def _print_options_panel(command: click.Command, lang: str, console: Console) ->
     table.add_column(style="magenta", no_wrap=True)
     table.add_column(ratio=1)
     for option in options:
-        table.add_row(_option_names(option), _option_metavar(option), _option_help(option, lang))
+        table.add_row(_option_names(option), _option_metavar(option), _option_help(option, command_path, lang))
     console.print(Panel(table, title=LABELS[lang]["options"], border_style="dim"))
 
 
@@ -255,10 +462,13 @@ def _option_metavar(option: click.Option) -> str:
     return option.metavar or option.type.name.upper()
 
 
-def _option_help(option: click.Option, lang: str) -> str:
+def _option_help(option: click.Option, command_path: tuple[str, ...], lang: str) -> str:
     """Return localized option help."""
     if lang == "zh":
         for name in option.opts:
+            path_specific = OPTION_ZH_BY_COMMAND.get((*command_path, name))
+            if path_specific:
+                return path_specific
             if name in OPTION_ZH:
                 return OPTION_ZH[name]
     for name in option.opts:
