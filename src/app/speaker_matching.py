@@ -29,6 +29,7 @@ from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddi
 class VoiceprintCandidate:
     """One ranked voiceprint candidate."""
 
+    person_id: int
     name: str
     score: float
 
@@ -47,6 +48,8 @@ class SpeakerMatch:
     best_score: float | None = None
     accepted_name: str | None = None
     threshold: float | None = None
+    best_person_id: int | None = None
+    accepted_person_id: int | None = None
     candidates: tuple[VoiceprintCandidate, ...] = ()
 
 
@@ -65,6 +68,24 @@ class SpeakerMatchSummary:
         """Return accepted speaker id to name mapping."""
         return {item.speaker_id: item.name for item in self.matches if item.accepted and item.name}
 
+    @property
+    def accepted_person_mapping(self) -> dict[int, int]:
+        """Return accepted speaker id to voiceprint person id mapping."""
+        return {
+            item.speaker_id: item.accepted_person_id
+            for item in self.matches
+            if item.accepted and item.accepted_person_id is not None
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _KnownSpeakerVector:
+    """Averaged voiceprint vector for one stable person id."""
+
+    person_id: int
+    name: str
+    vector: list[float]
+
 
 @dataclass(frozen=True, slots=True)
 class _MatchContext:
@@ -74,7 +95,7 @@ class _MatchContext:
     manifest: ProjectManifest
     source: Path
     segments: list[SentenceSegment]
-    known: dict[str, list[float]]
+    known: dict[int, _KnownSpeakerVector]
     provider: str
     model: str
 
@@ -166,20 +187,25 @@ def _match_context(
     )
 
 
-def _known_speaker_vectors(store_dir: Path | None, model: str) -> dict[str, list[float]]:
+def _known_speaker_vectors(store_dir: Path | None, model: str) -> dict[int, _KnownSpeakerVector]:
     """Load averaged known speaker vectors."""
     embeddings = list_voiceprint_embeddings(model, get_voiceprint_db_path(store_dir))
-    grouped: dict[str, list[list[float]]] = defaultdict(list)
+    grouped: dict[int, list[list[float]]] = defaultdict(list)
+    names: dict[int, str] = {}
     for row in embeddings:
-        grouped[row.speaker_name].append(row.vector)
-    return {name: _normalize(_mean_vector(vectors)) for name, vectors in grouped.items()}
+        grouped[row.speaker_id].append(row.vector)
+        names[row.speaker_id] = row.speaker_name
+    return {
+        person_id: _KnownSpeakerVector(person_id, names[person_id], _normalize(_mean_vector(vectors)))
+        for person_id, vectors in grouped.items()
+    }
 
 
 def _match_speaker_groups(
     project_root: Path,
     source: Path,
     segments: list[SentenceSegment],
-    known: dict[str, list[float]],
+    known: dict[int, _KnownSpeakerVector],
     provider: str | None,
     endpoint: str | None,
     threshold: float,
@@ -212,6 +238,7 @@ def _match_speaker_groups(
         best = candidates[0] if candidates else None
         accepted = best is not None and best.score >= threshold
         accepted_name = best.name if accepted and best is not None else None
+        accepted_person_id = best.person_id if accepted and best is not None else None
         matches.append(
             SpeakerMatch(
                 speaker_id,
@@ -224,6 +251,8 @@ def _match_speaker_groups(
                 best.score if best is not None else None,
                 accepted_name,
                 threshold,
+                best.person_id if best is not None else None,
+                accepted_person_id,
                 tuple(candidates),
             )
         )
@@ -257,6 +286,8 @@ def _unknown_speaker_matches(
             None,
             None,
             threshold,
+            None,
+            None,
             (),
         )
         for speaker_id, speaker_segments in speaker_groups
@@ -320,19 +351,27 @@ def _write_probe_clip(
     extract_audio_clip(source, output, start_seconds=start_ms / 1000, duration_seconds=(end_ms - start_ms) / 1000)
 
 
-def _ranked_matches(vector: list[float], known: dict[str, list[float]], *, limit: int) -> list[VoiceprintCandidate]:
+def _ranked_matches(
+    vector: list[float],
+    known: dict[int, _KnownSpeakerVector],
+    *,
+    limit: int,
+) -> list[VoiceprintCandidate]:
     """
     Return ranked matching known speakers.
 
     Args:
         vector: Probe speaker embedding.
-        known: Known speaker name to embedding mapping.
+        known: Known speaker id to embedding mapping.
         limit: Maximum candidate count.
 
     Returns:
         Candidates sorted by descending cosine score.
     """
-    candidates = [VoiceprintCandidate(name, _cosine(vector, known_vector)) for name, known_vector in known.items()]
+    candidates = [
+        VoiceprintCandidate(item.person_id, item.name, _cosine(vector, item.vector))
+        for item in known.values()
+    ]
     return sorted(candidates, key=lambda item: item.score, reverse=True)[:limit]
 
 
@@ -377,9 +416,14 @@ def _matches_payload(provider: str, model: str, threshold: float, matches: list[
                 "best_name": item.best_name,
                 "best_score": item.best_score,
                 "accepted_name": item.accepted_name,
+                "best_person_id": item.best_person_id,
+                "accepted_person_id": item.accepted_person_id,
                 "threshold": item.threshold,
                 "status": voiceprint_match_status(item),
-                "candidates": [{"name": candidate.name, "score": candidate.score} for candidate in item.candidates],
+                "candidates": [
+                    {"person_id": candidate.person_id, "name": candidate.name, "score": candidate.score}
+                    for candidate in item.candidates
+                ],
                 "sample_count": item.sample_count,
             }
             for item in matches

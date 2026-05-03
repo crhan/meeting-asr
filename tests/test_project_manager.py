@@ -1013,6 +1013,21 @@ def test_apply_project_speakers_writes_project_outputs(tmp_path: Path) -> None:
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
 
 
+def test_apply_project_speakers_keeps_person_map_in_sync(tmp_path: Path) -> None:
+    """Applying names without person ids should not leave stale identity links."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+
+    apply_project_speakers(project_dir, {0: "欧丁"}, person_mapping={0: 7})
+    assert json.loads((project_dir / "speakers" / "speaker_person_map.json").read_text(encoding="utf-8")) == {"0": 7}
+
+    apply_project_speakers(project_dir, {0: "新名字"})
+    manifest = load_manifest(project_dir)
+
+    assert not (project_dir / "speakers" / "speaker_person_map.json").exists()
+    assert "person_map" not in manifest.speakers
+
+
 def test_apply_project_speakers_ignores_low_information_speaker(tmp_path: Path) -> None:
     """Existing normalized transcripts should still drop backchannel-only speakers."""
     project_dir = _sample_project(tmp_path)

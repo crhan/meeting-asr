@@ -1,0 +1,102 @@
+"""Voiceprint match loading for the speaker review TUI."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+from app.speaker_match_status import (
+    MATCH_STATUS_MATCHED,
+    accepted_match_name,
+    best_candidate_name,
+    best_candidate_score,
+    match_threshold,
+    voiceprint_match_status,
+)
+from app.presentation.tui.speaker_people import optional_person_id
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerMatchCandidate:
+    """One voiceprint match candidate for a project speaker."""
+
+    name: str
+    score: float | None
+    accepted: bool
+    person_id: int | None = None
+    best_name: str | None = None
+    best_score: float | None = None
+    best_person_id: int | None = None
+    accepted_person_id: int | None = None
+    threshold: float | None = None
+    status: str = ""
+
+
+def load_match_candidates(path: Path) -> dict[int, SpeakerMatchCandidate]:
+    """
+    Load voiceprint match candidates if they exist.
+
+    Args:
+        path: speaker_matches.json path.
+
+    Returns:
+        Project speaker id to match candidate.
+    """
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    candidates: dict[int, SpeakerMatchCandidate] = {}
+    for item in payload.get("matches", []):
+        if isinstance(item, dict) and "speaker_id" in item:
+            candidates[int(item["speaker_id"])] = _match_candidate(item)
+    return candidates
+
+
+def accepted_review_name(match: SpeakerMatchCandidate | None) -> str | None:
+    """
+    Return a usable accepted match name.
+
+    Args:
+        match: Optional TUI match candidate.
+
+    Returns:
+        Accepted display name or ``None``.
+    """
+    if match is None or voiceprint_match_status(match) != MATCH_STATUS_MATCHED:
+        return None
+    return accepted_match_name(match)
+
+
+def accepted_review_person_id(match: SpeakerMatchCandidate | None) -> int | None:
+    """
+    Return an accepted match person id.
+
+    Args:
+        match: Optional TUI match candidate.
+
+    Returns:
+        Accepted person id or ``None``.
+    """
+    if match is None or voiceprint_match_status(match) != MATCH_STATUS_MATCHED:
+        return None
+    return match.accepted_person_id or match.person_id
+
+
+def _match_candidate(item: dict[str, object]) -> SpeakerMatchCandidate:
+    """Convert one raw match row into a TUI candidate."""
+    status = voiceprint_match_status(item)
+    name = accepted_match_name(item) if status == MATCH_STATUS_MATCHED else best_candidate_name(item)
+    score = best_candidate_score(item)
+    return SpeakerMatchCandidate(
+        name=name or "unknown",
+        score=score,
+        accepted=bool(item.get("accepted")),
+        person_id=optional_person_id(item.get("accepted_person_id") or item.get("person_id")),
+        best_name=best_candidate_name(item),
+        best_score=best_candidate_score(item),
+        best_person_id=optional_person_id(item.get("best_person_id")),
+        accepted_person_id=optional_person_id(item.get("accepted_person_id")),
+        threshold=match_threshold(item),
+        status=status,
+    )

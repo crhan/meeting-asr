@@ -13,6 +13,7 @@ from app.models import SentenceSegment
 from app.project_manager import create_project, project_paths
 from app.speaker_tui import (
     FOCUSED_PANE_CLASS,
+    KnownPerson,
     ReviewSpeaker,
     SpeakerMatchCandidate,
     SpeakerReviewApp,
@@ -200,6 +201,53 @@ def test_project_review_tui_can_request_transcript_correction() -> None:
     )
 
 
+def test_speaker_review_tui_binds_existing_person_by_name() -> None:
+    """Typing an existing person name should bind the stable person id."""
+    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"),)))
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("/")
+            field = app.query_one("#name-input", Input)
+            field.value = "欧丁"
+            await pilot.press("enter")
+            await pilot.press("s")
+
+    asyncio.run(scenario())
+
+    assert app.return_value == SpeakerReviewDecision(
+        saved=True,
+        mapping={0: "欧丁"},
+        person_mapping={0: 42},
+    )
+
+
+def test_speaker_review_tui_requires_explicit_new_person(tmp_path: Path) -> None:
+    """A new person must be created through the explicit +Name TUI flow."""
+    store_dir = tmp_path / "voiceprints"
+    app = SpeakerReviewApp(_session(store_dir=store_dir))
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("/")
+            field = app.query_one("#name-input", Input)
+            field.value = "新同学"
+            await pilot.press("enter")
+
+            assert app._speaker().current_name == "Speaker A"
+            assert "Unknown person" in str(app.query_one("#status", Static).render())
+
+            field.value = "+新同学"
+            await pilot.press("enter")
+            await pilot.press("s")
+
+    asyncio.run(scenario())
+
+    person_id = next(iter(app.return_value.person_mapping.values()))
+    assert app.return_value.mapping == {0: "新同学"}
+    assert person_id > 0
+
+
 def test_speaker_only_tui_does_not_launch_transcript_correction() -> None:
     """Speaker-only review should keep correction at the project review layer."""
 
@@ -360,6 +408,7 @@ def test_load_speaker_review_session_builds_project_overview_from_disk(tmp_path:
     assert len(overview.voiceprint.captured_sample_ids) == 1
     assert overview.voiceprint.embedded_sample_ids == overview.voiceprint.captured_sample_ids
     assert session.people_names == ["欧丁"]
+    assert session.people[0].person_id == session.speakers[0].person_id
     assert [speaker.current_name for speaker in session.speakers] == ["欧丁", "Speaker B"]
     assert [speaker.ignored for speaker in session.speakers] == [False, True]
 
@@ -414,6 +463,8 @@ def _session(
     with_status: bool = False,
     many_samples: bool = False,
     allow_correction: bool = False,
+    people: tuple[KnownPerson, ...] = (),
+    store_dir: Path | None = None,
 ) -> SpeakerReviewSession:
     """Build a minimal review session."""
     segments = [
@@ -463,9 +514,11 @@ def _session(
         source_media=Path("source.mp4"),
         overview=_overview(with_status=with_status),
         speakers=speakers,
-        people_names=["欧丁"],
+        people_names=[person.name for person in people],
         page_size=page_size,
         allow_correction=allow_correction,
+        people=people,
+        store_dir=store_dir,
     )
 
 
@@ -506,7 +559,11 @@ def _project_with_voiceprint_state(tmp_path: Path) -> tuple[Path, Path]:
     _force_project_identity(project_dir)
     _write_project_review_files(project_dir)
     store_dir = tmp_path / "voiceprints"
-    sample_id = _store_project_voiceprint(project_dir, store_dir)
+    sample_id, person_id = _store_project_voiceprint(project_dir, store_dir)
+    (project_dir / "speakers" / "speaker_person_map.json").write_text(
+        json.dumps({"0": person_id}, ensure_ascii=False),
+        encoding="utf-8",
+    )
     upsert_voiceprint_embedding(sample_id, LOCAL_SPEECHBRAIN_MODEL, [0.1, 0.2], get_voiceprint_db_path(store_dir))
     return project_dir, store_dir
 
@@ -564,8 +621,8 @@ def _write_project_review_files(project_dir: Path) -> None:
     )
 
 
-def _store_project_voiceprint(project_dir: Path, store_dir: Path) -> int:
-    """Store one voiceprint sample for the project fixture and return its id."""
+def _store_project_voiceprint(project_dir: Path, store_dir: Path) -> tuple[int, int]:
+    """Store one voiceprint sample for the project fixture and return sample and person ids."""
     clip_path = store_dir / "clips" / "clip_001.wav"
     clip_path.parent.mkdir(parents=True, exist_ok=True)
     clip_path.write_bytes(b"wav")
@@ -585,4 +642,4 @@ def _store_project_voiceprint(project_dir: Path, store_dir: Path) -> int:
     )
     db_path = store_voiceprint_samples([sample], get_voiceprint_db_path(store_dir))
     rows = list_voiceprint_samples_for_project("20260429-tui-test", db_path)
-    return rows[0].sample_id
+    return rows[0].sample_id, rows[0].speaker_id

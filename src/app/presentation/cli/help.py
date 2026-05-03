@@ -83,6 +83,11 @@ COMMAND_ZH = {
     ("voiceprint",): "管理跨项目声纹库。",
     ("voiceprint", "capture"): "从已标注项目采集声纹样本。",
     ("voiceprint", "list"): "列出全局声纹库里的说话人。",
+    ("voiceprint", "people"): "管理声纹库里的稳定人员 ID。",
+    ("voiceprint", "people", "list"): "列出稳定人员 ID。",
+    ("voiceprint", "people", "add"): "创建一个新的稳定人员 ID。",
+    ("voiceprint", "people", "rename"): "按 ID 修改人员显示名称。",
+    ("voiceprint", "people", "show"): "按 ID 显示人员详情。",
     ("voiceprint", "browse"): "打开声纹库浏览 TUI。",
     ("voiceprint", "embed"): "为声纹样本生成 embedding。",
     ("voiceprint", "show"): "显示某个说话人的声纹样本。",
@@ -238,6 +243,14 @@ EXAMPLES = {
     ("voiceprint", "browse"): {
         "en": ("meeting-asr voiceprint browse",),
         "zh": ("meeting-asr voiceprint browse",),
+    },
+    ("voiceprint", "people", "list"): {
+        "en": ("meeting-asr voiceprint people list",),
+        "zh": ("meeting-asr voiceprint people list",),
+    },
+    ("voiceprint", "people", "add"): {
+        "en": ("meeting-asr voiceprint people add NAME",),
+        "zh": ("meeting-asr voiceprint people add NAME",),
     },
     ("lexicon", "list"): {
         "en": ("meeting-asr lexicon list", "meeting-asr lexicon list --query 术语"),

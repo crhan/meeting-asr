@@ -123,6 +123,7 @@ class VoiceprintEmbeddingRow:
     """Stored voiceprint embedding row."""
 
     sample_id: int
+    speaker_id: int
     speaker_name: str
     clip_path: Path
     model: str
@@ -156,6 +157,7 @@ class StoredVoiceprintSample:
     clip_begin_time_ms: int
     clip_end_time_ms: int
     transcript_text: str
+    person_id: int | None = None
 
 
 def get_default_voiceprint_db_path() -> Path:
@@ -545,8 +547,32 @@ def _upsert_sample(connection: sqlite3.Connection, sample: StoredVoiceprintSampl
         sample: Sample metadata to store.
     """
     now = _now_iso()
-    speaker_id = _upsert_speaker(connection, sample.speaker_name, now)
+    speaker_id = _speaker_id_for_sample(connection, sample, now)
     connection.execute(UPSERT_SAMPLE_SQL, _sample_values(sample, speaker_id, now))
+
+
+def _speaker_id_for_sample(
+    connection: sqlite3.Connection,
+    sample: StoredVoiceprintSample,
+    now: str,
+) -> int:
+    """
+    Resolve the person id for a stored sample.
+
+    Args:
+        connection: SQLite connection.
+        sample: Sample metadata.
+        now: Current timestamp.
+
+    Returns:
+        Stable voiceprint person id.
+    """
+    if sample.person_id is None:
+        return _upsert_speaker(connection, sample.speaker_name, now)
+    row = _speaker_by_id(connection, sample.person_id)
+    if row is None:
+        raise LookupError(f"No voiceprint person found for id: {sample.person_id}")
+    return sample.person_id
 
 
 def _sample_values(sample: StoredVoiceprintSample, speaker_id: int, now: str) -> tuple[object, ...]:
@@ -778,7 +804,7 @@ def _embedding_rows_sql() -> str:
         SQL query.
     """
     return """
-        SELECT samples.id AS sample_id, speakers.name, samples.clip_path,
+        SELECT samples.id AS sample_id, speakers.id AS speaker_id, speakers.name, samples.clip_path,
                embeddings.model, embeddings.vector
         FROM voiceprint_embeddings AS embeddings
         JOIN voiceprint_samples AS samples ON samples.id = embeddings.sample_id
@@ -800,6 +826,7 @@ def _embedding_row(row: sqlite3.Row) -> VoiceprintEmbeddingRow:
     """
     return VoiceprintEmbeddingRow(
         sample_id=int(row["sample_id"]),
+        speaker_id=int(row["speaker_id"]),
         speaker_name=str(row["name"]),
         clip_path=Path(str(row["clip_path"])),
         model=str(row["model"]),

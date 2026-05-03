@@ -12,13 +12,14 @@ from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
 from app.project_manager import ensure_project_dirs, load_manifest, resolve_project_source_path, save_manifest
-from app.speaker_labeling import load_transcript_result
+from app.speaker_labeling import load_speaker_person_mapping, load_transcript_result
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_clip_dir,
     get_voiceprint_db_path,
     store_voiceprint_samples,
 )
+from app.voiceprint_people import get_voiceprint_person
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,7 @@ class VoiceprintSpeaker:
 
     speaker_id: int
     name: str
+    person_id: int | None
     clips: list[VoiceprintClip]
 
 
@@ -94,15 +96,15 @@ def capture_voiceprints(
     manifest = load_manifest(paths.root)
     source = resolve_project_source_path(paths.root, manifest)
     result = load_transcript_result(paths.asr_dir / "sentences.json")
-    mapping = _load_required_speaker_mapping(paths.speakers_dir / "speaker_map.json")
     resolved_store_dir = _resolve_store_dir(store_dir)
     clip_dir = get_voiceprint_clip_dir(resolved_store_dir)
     db_path = get_voiceprint_db_path(resolved_store_dir)
+    identities = _load_required_speaker_identities(paths.speakers_dir, db_path)
     speakers = _build_voiceprint_speakers(
         clip_dir,
         manifest.project_id,
         result,
-        mapping,
+        identities,
         sample_count,
         max_seconds,
         padding_seconds,
@@ -182,27 +184,69 @@ def _resolve_store_dir(store_dir: Path | None) -> Path:
     return store_dir.expanduser().resolve()
 
 
-def _load_required_speaker_mapping(path: Path) -> dict[int, str]:
+@dataclass(frozen=True, slots=True)
+class _SpeakerIdentity:
+    """Resolved project speaker identity for voiceprint capture."""
+
+    name: str
+    person_id: int | None
+
+
+def _load_required_speaker_identities(speakers_dir: Path, db_path: Path) -> dict[int, _SpeakerIdentity]:
     """
-    Load the speaker map required for named voiceprint references.
+    Load named speaker identities required for voiceprint references.
 
     Args:
-        path: Project speaker_map.json path.
+        speakers_dir: Project speakers directory.
+        db_path: Voiceprint SQLite path.
 
     Returns:
-        Speaker id to human name mapping.
+        Project speaker id to identity mapping.
     """
+    path = speakers_dir / "speaker_map.json"
     if not path.exists():
         raise FileNotFoundError("Speaker mapping does not exist. Run meeting-asr project review first.")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return {int(key): str(value) for key, value in payload.items()}
+    names = {int(key): str(value) for key, value in payload.items()}
+    person_map = load_speaker_person_mapping(speakers_dir / "speaker_person_map.json")
+    return {
+        speaker_id: _SpeakerIdentity(name, _person_id_for_capture(speaker_id, name, person_map, db_path))
+        for speaker_id, name in names.items()
+    }
+
+
+def _person_id_for_capture(
+    speaker_id: int,
+    name: str,
+    person_map: dict[int, int],
+    db_path: Path,
+) -> int | None:
+    """
+    Resolve a voiceprint person id for one project speaker.
+
+    Args:
+        speaker_id: Project speaker id.
+        name: Display name from the legacy speaker map.
+        person_map: Project speaker to voiceprint person id map.
+        db_path: Voiceprint SQLite path.
+
+    Returns:
+        Stable person id or ``None`` for legacy name-only projects.
+    """
+    person_id = person_map.get(speaker_id)
+    if person_id is None:
+        return None
+    person = get_voiceprint_person(person_id, db_path)
+    if person is None:
+        raise LookupError(f"speaker_person_map.json points to missing voiceprint person id {person_id} for {name}.")
+    return person_id
 
 
 def _build_voiceprint_speakers(
     clip_dir: Path,
     project_id: str,
     result: TranscriptResult,
-    mapping: dict[int, str],
+    identities: dict[int, _SpeakerIdentity],
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
@@ -214,7 +258,7 @@ def _build_voiceprint_speakers(
         clip_dir: Global voiceprint clip directory.
         project_id: Project id.
         result: Normalized transcript result.
-        mapping: Speaker id to human name mapping.
+        identities: Speaker id to resolved identity mapping.
         sample_count: Maximum clips per speaker.
         max_seconds: Maximum seconds per output clip.
         padding_seconds: Extra context around each sentence.
@@ -225,31 +269,37 @@ def _build_voiceprint_speakers(
     speakers: list[VoiceprintSpeaker] = []
     grouped = _speaker_segments_by_id(result)
     for speaker_id in sorted(grouped):
-        name = _identified_speaker_name(speaker_id, mapping)
-        if name is None:
+        identity = _identified_speaker_identity(speaker_id, identities)
+        if identity is None:
             continue
         selected = _select_segments(grouped[speaker_id], sample_count)
         clips = _build_clips(clip_dir, project_id, speaker_id, selected, max_seconds, padding_seconds)
         if clips:
-            speakers.append(VoiceprintSpeaker(speaker_id, name, clips))
+            speakers.append(VoiceprintSpeaker(speaker_id, identity.name, identity.person_id, clips))
     return speakers
 
 
-def _identified_speaker_name(speaker_id: int, mapping: dict[int, str]) -> str | None:
+def _identified_speaker_identity(
+    speaker_id: int,
+    identities: dict[int, _SpeakerIdentity],
+) -> _SpeakerIdentity | None:
     """
     Return a human name only when the speaker is actually identified.
 
     Args:
         speaker_id: Speaker id.
-        mapping: Speaker id to mapped name.
+        identities: Speaker id to mapped identity.
 
     Returns:
-        Human name, or ``None`` for anonymous fallback labels.
+        Human identity, or ``None`` for anonymous fallback labels.
     """
-    name = mapping.get(speaker_id, "").strip()
+    identity = identities.get(speaker_id)
+    if identity is None:
+        return None
+    name = identity.name.strip()
     if not name or name == speaker_id_to_label(speaker_id):
         return None
-    return name
+    return identity
 
 
 def _speaker_segments_by_id(result: TranscriptResult) -> dict[int, list[SentenceSegment]]:
@@ -456,6 +506,7 @@ def _stored_sample(
     """
     return StoredVoiceprintSample(
         speaker_name=speaker.name,
+        person_id=speaker.person_id,
         project_id=project_id,
         project_path=project_root,
         project_speaker_id=speaker.speaker_id,

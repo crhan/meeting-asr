@@ -592,7 +592,11 @@ def _run_project_workflow(
     )
     applied_mapping = matches.accepted_mapping
     if applied_mapping:
-        apply_project_speakers(project.project_dir, applied_mapping)
+        apply_project_speakers(
+            project.project_dir,
+            applied_mapping,
+            person_mapping=matches.accepted_person_mapping,
+        )
     emit_progress(progress, "Project run complete", completed=1, total=1)
     return ProjectRunSummary(project, transcription, meeting_summary, matches, applied_mapping)
 
@@ -842,7 +846,11 @@ def _handle_speaker_review_decision(
         typer.echo("Speaker review exited without saving.")
         return
     mapping_path, transcript_path, srt_path = run_with_cli_errors(
-        lambda: apply_project_speakers(project_dir, decision.mapping)
+        lambda: apply_project_speakers(
+            project_dir,
+            decision.mapping,
+            person_mapping=decision.person_mapping,
+        )
     )
     typer.echo(f"Mapping written to: {mapping_path}")
     typer.echo(f"Named transcript written to: {transcript_path}")
@@ -936,7 +944,13 @@ def speakers_match(
     )
     _echo_match_summary(summary)
     if apply_matches and summary.accepted_mapping:
-        run_with_cli_errors(lambda: apply_project_speakers(resolved_project_dir, summary.accepted_mapping))
+        run_with_cli_errors(
+            lambda: apply_project_speakers(
+                resolved_project_dir,
+                summary.accepted_mapping,
+                person_mapping=summary.accepted_person_mapping,
+            )
+        )
         typer.echo("Applied accepted speaker matches.")
 
 

@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from app.cli import app
 from app.project_manager import create_project
+from app.speaker_matching import _KnownSpeakerVector
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 
 runner = CliRunner()
@@ -44,10 +45,13 @@ def test_project_speakers_match_writes_suggestions(
     assert payload["matches"][0]["accepted"] is True
     assert payload["matches"][0]["accepted_name"] == "欧丁"
     assert payload["matches"][0]["best_name"] == "欧丁"
+    assert isinstance(payload["matches"][0]["accepted_person_id"], int)
+    assert payload["matches"][0]["accepted_person_id"] == payload["matches"][0]["best_person_id"]
     assert payload["matches"][0]["best_score"] == payload["matches"][0]["score"]
     assert payload["matches"][0]["threshold"] == 0.7
     assert payload["matches"][0]["status"] == "matched"
     assert payload["matches"][0]["candidates"][0]["name"] == "欧丁"
+    assert isinstance(payload["matches"][0]["candidates"][0]["person_id"], int)
     assert payload["provider"] == "local-speechbrain"
     assert payload["model"] == LOCAL_SPEECHBRAIN_MODEL
 
@@ -63,7 +67,7 @@ def test_project_speakers_match_keeps_below_threshold_best_candidate(
     _patch_audio_embedding(monkeypatch)
     monkeypatch.setattr(
         "app.speaker_matching._known_speaker_vectors",
-        lambda store_dir, model: {"墨泪": [0.8, 0.6]},
+        lambda store_dir, model: {7: _KnownSpeakerVector(7, "墨泪", [0.8, 0.6])},
     )
 
     result = runner.invoke(
@@ -88,7 +92,9 @@ def test_project_speakers_match_keeps_below_threshold_best_candidate(
     assert first["score"] == 0.8
     assert first["threshold"] == 0.9
     assert first["status"] == "below-threshold"
-    assert first["candidates"] == [{"name": "墨泪", "score": 0.8}]
+    assert first["best_person_id"] == 7
+    assert first["accepted_person_id"] is None
+    assert first["candidates"] == [{"person_id": 7, "name": "墨泪", "score": 0.8}]
 
 
 def test_project_speakers_match_can_apply_matches(
@@ -112,10 +118,12 @@ def test_project_speakers_match_can_apply_matches(
     )
 
     transcript = (project_dir / "exports" / "transcript_named.txt").read_text(encoding="utf-8")
+    person_map = json.loads((project_dir / "speakers" / "speaker_person_map.json").read_text(encoding="utf-8"))
     assert result.exit_code == 0
     assert "Applied accepted speaker matches." in result.output
     assert "欧丁" in transcript
     assert "敬悦" in transcript
+    assert set(person_map) == {"0", "1"}
 
 
 def test_project_speakers_match_allows_empty_voiceprint_library(

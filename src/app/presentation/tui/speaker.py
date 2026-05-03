@@ -6,7 +6,7 @@ import json
 import shlex
 import subprocess
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from rich.markup import escape
@@ -31,6 +31,19 @@ from app.speaker_match_status import (
 )
 from app.speaker_review import build_audio_preview_command
 from app.presentation.tui.speaker_help import BROWSE_STATUS, EDIT_STATUS, ShortcutHelpScreen
+from app.presentation.tui.speaker_matches import (
+    SpeakerMatchCandidate,
+    accepted_review_name,
+    accepted_review_person_id,
+    load_match_candidates,
+)
+from app.presentation.tui.speaker_people import (
+    KnownPerson,
+    find_person_by_name,
+    identity_candidates,
+    load_existing_person_mapping,
+    load_people,
+)
 from app.presentation.tui.speaker_status import (
     SpeakerReviewOverview,
     VoiceprintReviewProgress,
@@ -44,11 +57,11 @@ from app.presentation.tui.speaker_status import (
 )
 from app.utils import format_ms_timestamp
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
+from app.voiceprint_people import create_voiceprint_person
 from app.voiceprint_store import (
     get_voiceprint_db_path,
     list_embedded_sample_ids,
     list_voiceprint_samples_for_project,
-    list_voiceprint_speakers,
 )
 
 DEFAULT_SAMPLE_PAGE_SIZE = 6
@@ -56,20 +69,6 @@ SAMPLE_PANE_RESERVED_ROWS = 5
 COLUMNS = ("speakers", "samples")
 FOCUSED_PANE_CLASS = "focused-pane"
 UNFOCUSED_PANE_CLASS = "unfocused-pane"
-
-
-@dataclass(frozen=True, slots=True)
-class SpeakerMatchCandidate:
-    """One voiceprint match candidate for a project speaker."""
-
-    name: str
-    score: float | None
-    accepted: bool
-    best_name: str | None = None
-    best_score: float | None = None
-    threshold: float | None = None
-    status: str = ""
-
 
 @dataclass(slots=True)
 class ReviewSpeaker:
@@ -82,6 +81,7 @@ class ReviewSpeaker:
     match: SpeakerMatchCandidate | None
     selected_sample_index: int = 0
     ignored: bool = False
+    person_id: int | None = None
 
     @property
     def segment_count(self) -> int:
@@ -100,6 +100,8 @@ class SpeakerReviewSession:
     people_names: list[str]
     page_size: int | None = None
     allow_correction: bool = False
+    people: tuple[KnownPerson, ...] = ()
+    store_dir: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +111,7 @@ class SpeakerReviewDecision:
     saved: bool
     mapping: dict[int, str]
     action: str = "save"
+    person_mapping: dict[int, int] = field(default_factory=dict)
 
 
 class NameInput(Input):
@@ -206,6 +209,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.focused_column = "speakers"
         self.playback_process: subprocess.Popen | None = None
         self.search_query = ""
+        self.known_people = list(session.people)
 
     def compose(self) -> ComposeResult:
         """Build the TUI layout."""
@@ -290,7 +294,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         if candidate is None:
             self._set_status("No usable match for this speaker.")
             return
-        self._set_speaker_name(speaker, candidate)
+        person_id = None if speaker.match is None else speaker.match.best_person_id
+        if person_id is None:
+            person = find_person_by_name(candidate, self.known_people)
+            person_id = None if person is None else person.person_id
+        self._set_speaker_identity(speaker, candidate, person_id)
         self._set_status(f"Accepted match for {speaker.label}: {candidate}.")
         self._refresh()
 
@@ -301,8 +309,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._set_status("No matching person suggestion.")
             return
         speaker = self._speaker()
-        self._set_speaker_name(speaker, suggestions[0])
-        self._enter_browse_mode(f"Set {speaker.label} to {suggestions[0]}.")
+        self._set_speaker_identity(speaker, suggestions[0].name, suggestions[0].person_id)
+        self._enter_browse_mode(f"Set {speaker.label} to {suggestions[0].name}.")
         self._refresh()
 
     def action_ignore_speaker(self) -> None:
@@ -310,6 +318,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         speaker = self._speaker()
         speaker.current_name = speaker.label
         speaker.ignored = True
+        speaker.person_id = None
         self._set_status(f"Ignored {speaker.label}; it will stay anonymous and be skipped by capture.")
         self._refresh()
 
@@ -319,14 +328,27 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def action_save(self) -> None:
         """Return the reviewed mapping to the CLI command."""
-        self.exit(SpeakerReviewDecision(saved=True, mapping=self._mapping()))
+        self.exit(
+            SpeakerReviewDecision(
+                saved=True,
+                mapping=self._mapping(),
+                person_mapping=self._person_mapping(),
+            )
+        )
 
     def action_correct_transcript(self) -> None:
         """Save names and hand control to the transcript correction workflow."""
         if not self.session.allow_correction:
             self._set_status("Transcript correction is available from project review, not speaker-only review.")
             return
-        self.exit(SpeakerReviewDecision(saved=True, mapping=self._mapping(), action="correct"))
+        self.exit(
+            SpeakerReviewDecision(
+                saved=True,
+                mapping=self._mapping(),
+                action="correct",
+                person_mapping=self._person_mapping(),
+            )
+        )
 
     def action_quit_review(self) -> None:
         """Exit without saving."""
@@ -342,8 +364,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         name = event.value.strip()
         if name:
             speaker = self._speaker()
-            self._set_speaker_name(speaker, name)
-            status = f"Set {speaker.label} to {name}."
+            person = self._resolve_typed_person(name)
+            if person is None:
+                self._refresh()
+                return
+            self._set_speaker_identity(speaker, person.name, person.person_id)
+            status = f"Set {speaker.label} to {person.name}."
         else:
             status = BROWSE_STATUS
         self._enter_browse_mode(status)
@@ -438,23 +464,24 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _identity_pane(self) -> str:
         """Render current identity state and suggestions."""
         speaker = self._speaker()
-        lines = ["[b]Identity[/b]", f"Current: [green]{escape(speaker.current_name)}[/]"]
+        person = f"person #{speaker.person_id}" if speaker.person_id is not None else "no person id"
+        lines = ["[b]Identity[/b]", f"Current: [green]{escape(speaker.current_name)}[/] ([dim]{person}[/])"]
         lines.extend(render_match_lines(speaker.match))
-        lines.append("[b]Suggestions[/b]")
+        lines.append("[b]Known people[/b]")
         suggestions = self._suggestions(speaker)
-        lines.extend(f"- {escape(name)}" for name in suggestions[:5])
+        lines.extend(f"- {escape(person.name)} [dim]#{person.person_id}[/]" for person in suggestions[:5])
         if not suggestions:
-            lines.append("- Type a new name with /")
-        lines.append("[dim]Enter applies typed name. Tab chooses first suggestion. Esc cancels.[/]")
+            lines.append("- No matching known person")
+        lines.append("[dim]Enter selects an existing exact name. Use +Name to create. Tab chooses first.[/]")
         return "\n".join(lines)
 
-    def _suggestions(self, speaker: ReviewSpeaker) -> list[str]:
+    def _suggestions(self, speaker: ReviewSpeaker) -> list[KnownPerson]:
         """Return names relevant to the selected speaker and search query."""
-        names = _identity_candidates(speaker, self.session.people_names)
+        names = _identity_candidates(speaker, self.known_people)
         query = self.search_query.strip().casefold()
         if not query:
             return names
-        return [name for name in names if query in name.casefold()]
+        return [person for person in names if query in person.name.casefold()]
 
     def _play_sample(self, segment: SentenceSegment) -> None:
         """Start playback for the selected segment."""
@@ -498,10 +525,54 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             for speaker in self.session.speakers
         }
 
-    def _set_speaker_name(self, speaker: ReviewSpeaker, name: str) -> None:
-        """Set a speaker name and clear ignore unless the anonymous label is chosen."""
+    def _person_mapping(self) -> dict[int, int]:
+        """Return the current speaker to voiceprint person id mapping."""
+        return {
+            speaker.speaker_id: speaker.person_id
+            for speaker in self.session.speakers
+            if speaker.person_id is not None and not speaker.ignored
+        }
+
+    def _set_speaker_identity(
+        self,
+        speaker: ReviewSpeaker,
+        name: str,
+        person_id: int | None,
+    ) -> None:
+        """Set a speaker display name and optional voiceprint person id."""
         speaker.current_name = name.strip() or speaker.label
         speaker.ignored = speaker.current_name == speaker.label
+        speaker.person_id = None if speaker.ignored else person_id
+
+    def _resolve_typed_person(self, value: str) -> KnownPerson | None:
+        """Resolve typed input into an existing or explicitly created person."""
+        if value.startswith("+"):
+            return self._create_person_from_input(value[1:].strip())
+        person = find_person_by_name(value, self.known_people)
+        if person is not None:
+            return person
+        self._set_status(f"Unknown person: {value}. Select an existing person or type +{value} to create one.")
+        return None
+
+    def _create_person_from_input(self, name: str) -> KnownPerson | None:
+        """Create a new person through an explicit TUI flow."""
+        if not name:
+            self._set_status("New person name is empty. Use +Name.")
+            return None
+        duplicate = find_person_by_name(name, self.known_people)
+        if duplicate is not None:
+            self._set_status(f"Person already exists: {duplicate.name} #{duplicate.person_id}.")
+            return None
+        db_path = get_voiceprint_db_path(self.session.store_dir)
+        try:
+            row = create_voiceprint_person(name, db_path)
+        except Exception as exc:  # noqa: BLE001
+            self._set_status(f"Failed to create person: {exc}")
+            return None
+        person = KnownPerson(row.speaker_id, row.name)
+        self.known_people.append(person)
+        self._set_status(f"Created person {person.name} #{person.person_id}.")
+        return person
 
     def _speaker(self) -> ReviewSpeaker:
         """Return the selected speaker."""
@@ -592,8 +663,10 @@ def load_speaker_review_session(
     mapping_path = paths.speakers_dir / "speaker_map.json"
     match_path = paths.speakers_dir / "speaker_matches.json"
     mapping = _load_existing_mapping(mapping_path)
-    matches = _load_match_candidates(match_path)
-    speakers = _build_review_speakers(segments_by_speaker, mapping, matches)
+    matches = load_match_candidates(match_path)
+    people = load_people(store_dir)
+    person_mapping = load_existing_person_mapping(paths.speakers_dir / "speaker_person_map.json")
+    speakers = _build_review_speakers(segments_by_speaker, mapping, person_mapping, matches)
     return SpeakerReviewSession(
         project_dir=paths.root,
         source_media=source_media,
@@ -606,9 +679,11 @@ def load_speaker_review_session(
             store_dir=store_dir,
         ),
         speakers=speakers,
-        people_names=_load_people_names(store_dir),
+        people_names=[person.name for person in people],
         page_size=page_size,
         allow_correction=allow_correction,
+        people=tuple(people),
+        store_dir=store_dir,
     )
 
 
@@ -818,48 +893,15 @@ def _load_existing_mapping(path: Path) -> dict[int, str]:
     return {int(key): str(value) for key, value in payload.items()}
 
 
-def _load_match_candidates(path: Path) -> dict[int, SpeakerMatchCandidate]:
-    """Load voiceprint match candidates if they exist."""
-    if not path.exists():
-        return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    candidates: dict[int, SpeakerMatchCandidate] = {}
-    for item in payload.get("matches", []):
-        if isinstance(item, dict) and "speaker_id" in item:
-            candidates[int(item["speaker_id"])] = _match_candidate(item)
-    return candidates
-
-
-def _match_candidate(item: dict[str, object]) -> SpeakerMatchCandidate:
-    """Convert one raw match row into a TUI candidate."""
-    status = voiceprint_match_status(item)
-    name = accepted_match_name(item) if status == MATCH_STATUS_MATCHED else best_candidate_name(item)
-    score = best_candidate_score(item)
-    return SpeakerMatchCandidate(
-        name=name or "unknown",
-        score=score,
-        accepted=bool(item.get("accepted")),
-        best_name=best_candidate_name(item),
-        best_score=best_candidate_score(item),
-        threshold=match_threshold(item),
-        status=status,
-    )
-
-
-def _load_people_names(store_dir: Path | None) -> list[str]:
-    """Load known people names from the global voiceprint registry."""
-    db_path = get_voiceprint_db_path(store_dir)
-    return [row.name for row in list_voiceprint_speakers(db_path)]
-
-
 def _build_review_speakers(
     segments_by_speaker: dict[int, list[SentenceSegment]],
     mapping: dict[int, str],
+    person_mapping: dict[int, int],
     matches: dict[int, SpeakerMatchCandidate],
 ) -> list[ReviewSpeaker]:
     """Build mutable speaker review rows."""
     return [
-        _review_speaker(speaker_id, segments, mapping, matches)
+        _review_speaker(speaker_id, segments, mapping, person_mapping, matches)
         for speaker_id, segments in sorted(segments_by_speaker.items())
     ]
 
@@ -868,48 +910,35 @@ def _review_speaker(
     speaker_id: int,
     segments: list[SentenceSegment],
     mapping: dict[int, str],
+    person_mapping: dict[int, int],
     matches: dict[int, SpeakerMatchCandidate],
 ) -> ReviewSpeaker:
     """Build one speaker review row."""
     label = speaker_id_to_label(speaker_id)
     match = matches.get(speaker_id)
-    current_name = mapping.get(speaker_id) or _accepted_match_name(match) or label
+    current_name = mapping.get(speaker_id) or accepted_review_name(match) or label
+    person_id = person_mapping.get(speaker_id) or accepted_review_person_id(match)
     ignored = (
         speaker_id in mapping
         and current_name == label
         and (match is None or voiceprint_match_status(match) != MATCH_STATUS_BELOW_THRESHOLD)
     )
-    return ReviewSpeaker(speaker_id, label, segments, current_name, match, ignored=ignored)
+    return ReviewSpeaker(speaker_id, label, segments, current_name, match, ignored=ignored, person_id=person_id)
 
 
-def _accepted_match_name(match: SpeakerMatchCandidate | None) -> str | None:
-    """Return a usable accepted match name."""
-    if match is None or voiceprint_match_status(match) != MATCH_STATUS_MATCHED:
-        return None
-    return accepted_match_name(match)
-
-
-def _identity_candidates(speaker: ReviewSpeaker, people_names: list[str]) -> list[str]:
+def _identity_candidates(speaker: ReviewSpeaker, people: list[KnownPerson]) -> list[KnownPerson]:
     """Build deduplicated identity suggestions for one speaker."""
-    candidates = [speaker.current_name]
+    match_name = None
+    match_person_id = None
     if speaker.match and voiceprint_match_status(speaker.match) != MATCH_STATUS_NO_CANDIDATE:
-        candidate = best_candidate_name(speaker.match)
-        if candidate:
-            candidates.append(candidate)
-    candidates.extend(people_names)
-    return _dedupe_names(candidates)
-
-
-def _dedupe_names(names: list[str]) -> list[str]:
-    """Deduplicate names while preserving order."""
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for name in names:
-        normalized = name.strip()
-        if normalized and normalized not in seen:
-            seen.add(normalized)
-            deduped.append(normalized)
-    return deduped
+        match_name = best_candidate_name(speaker.match)
+        match_person_id = speaker.match.best_person_id or speaker.match.accepted_person_id or speaker.match.person_id
+    return identity_candidates(
+        current_person_id=speaker.person_id,
+        match_person_id=match_person_id,
+        match_name=match_name,
+        people=people,
+    )
 
 
 def _sample_page_start(selected_index: int, page_size: int) -> int:

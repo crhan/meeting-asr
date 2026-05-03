@@ -64,6 +64,7 @@ from app.speaker_labeling import (
     load_transcript_result,
     render_named_speaker_text,
     render_named_srt,
+    write_speaker_person_mapping,
     write_speaker_mapping,
 )
 from app.srt_utils import build_srt
@@ -104,9 +105,10 @@ DOWNSTREAM_ARTIFACT_PATHS = (
     "corrections/asr_hotwords.json",
     "corrections/applied.json",
     "speakers/speaker_map.json",
+    "speakers/speaker_person_map.json",
     "speakers/speaker_matches.json",
 )
-DOWNSTREAM_SPEAKER_KEYS = ("mapped", "matches", "voiceprints")
+DOWNSTREAM_SPEAKER_KEYS = ("mapped", "person_map", "matches", "voiceprints")
 
 LOGGER = logging.getLogger(__name__)
 
@@ -479,13 +481,19 @@ def transcribe_project(
         cost,
     )
 
-def apply_project_speakers(project_dir: Path, mappings: dict[int, str]) -> tuple[Path, Path, Path]:
+def apply_project_speakers(
+    project_dir: Path,
+    mappings: dict[int, str],
+    *,
+    person_mapping: dict[int, int] | None = None,
+) -> tuple[Path, Path, Path]:
     """
     Apply speaker names to project outputs.
 
     Args:
         project_dir: Project root.
-        mappings: Explicit speaker mappings.
+        mappings: Explicit speaker display-name mappings.
+        person_mapping: Optional project speaker to voiceprint person id mapping.
 
     Returns:
         Paths for map, transcript, and SRT.
@@ -495,6 +503,15 @@ def apply_project_speakers(project_dir: Path, mappings: dict[int, str]) -> tuple
     result = load_transcript_result(paths.asr_dir / "sentences.json")
     resolved_mapping = _merge_speaker_mapping(result, mappings)
     mapping_path = write_speaker_mapping(paths.speakers_dir / "speaker_map.json", resolved_mapping)
+    resolved_person_mapping = _merge_speaker_person_mapping(resolved_mapping, person_mapping or {})
+    person_map_path = paths.speakers_dir / "speaker_person_map.json"
+    if resolved_person_mapping:
+        write_speaker_person_mapping(person_map_path, resolved_person_mapping)
+        manifest.speakers["person_map"] = {str(key): value for key, value in sorted(resolved_person_mapping.items())}
+    else:
+        if person_map_path.exists():
+            person_map_path.unlink()
+        manifest.speakers.pop("person_map", None)
     transcript_path = safe_write_text(
         paths.exports_dir / "transcript_named.txt",
         render_named_speaker_text(result, resolved_mapping),
@@ -1062,6 +1079,18 @@ def _merge_speaker_mapping(result: TranscriptResult, mappings: dict[int, str]) -
             continue
         resolved[speaker_id] = name_text
     return resolved
+
+
+def _merge_speaker_person_mapping(
+    speaker_mapping: dict[int, str],
+    person_mapping: dict[int, int],
+) -> dict[int, int]:
+    """Return person mappings only for named project speakers."""
+    return {
+        speaker_id: person_id
+        for speaker_id, person_id in person_mapping.items()
+        if speaker_id in speaker_mapping and person_id > 0
+    }
 
 def _parse_mapping_item(item: str) -> tuple[int, str]:
     """Parse one speaker mapping value."""

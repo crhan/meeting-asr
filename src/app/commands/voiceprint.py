@@ -22,6 +22,11 @@ from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.completion_helpers import complete_voiceprint_model, complete_voiceprint_provider
 from app.utils import format_ms_timestamp
 from app.voiceprint_playback import build_voiceprint_play_command
+from app.voiceprint_people import (
+    create_voiceprint_person,
+    get_voiceprint_person,
+    rename_voiceprint_person,
+)
 from app.voiceprint_store import (
     delete_voiceprint_sample,
     delete_voiceprint_speaker,
@@ -46,6 +51,13 @@ app = MeetingAsrTyper(
     no_args_is_help=True,
     pretty_exceptions_enable=False,
 )
+people_app = MeetingAsrTyper(
+    add_completion=False,
+    context_settings=HELP_CONTEXT,
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+)
+app.add_typer(people_app, name="people", help="Manage stable voiceprint people.")
 
 
 @app.command("capture")
@@ -124,6 +136,83 @@ def browse_command(
             "Voiceprint browser TUI requires an interactive terminal. Use --summary to inspect."
         )
     run_voiceprint_library_tui(session)
+
+
+@people_app.command("list")
+def people_list_command(
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
+) -> None:
+    """List stable voiceprint people and their sample coverage."""
+    db_path = get_voiceprint_db_path(store_dir)
+    rows = run_with_cli_errors(lambda: list_voiceprint_speakers(db_path))
+    if as_json:
+        emit_json(_voiceprint_speakers_payload(db_path, rows))
+        return
+    if plain:
+        _echo_voiceprint_speaker_table_plain(rows)
+        return
+    typer.echo(f"Database: {db_path}")
+    if not rows:
+        typer.echo("No voiceprint people recorded.")
+        typer.echo("Create one with: meeting-asr voiceprint people add NAME")
+        return
+    _echo_voiceprint_speaker_table(rows, title="People")
+
+
+@people_app.command("add")
+def people_add_command(
+    name: str = typer.Argument(..., metavar="NAME"),
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Create one stable voiceprint person; names cannot be silently reused."""
+    db_path = get_voiceprint_db_path(store_dir)
+    row = run_with_cli_errors(lambda: create_voiceprint_person(name, db_path))
+    if as_json:
+        emit_json(_voiceprint_speaker_payload(row))
+        return
+    typer.echo(f"Created person: {row.name}")
+    typer.echo(f"Person ID: {row.speaker_id}")
+    typer.echo("Use this ID as the stable identity; display names may change later.")
+
+
+@people_app.command("rename")
+def people_rename_command(
+    person_id: int = typer.Argument(..., metavar="PERSON_ID", min=1),
+    name: str = typer.Argument(..., metavar="NAME"),
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Rename one stable voiceprint person by ID."""
+    db_path = get_voiceprint_db_path(store_dir)
+    row = run_with_cli_errors(lambda: rename_voiceprint_person(person_id, name, db_path))
+    if as_json:
+        emit_json(_voiceprint_speaker_payload(row))
+        return
+    typer.echo(f"Renamed person #{row.speaker_id}: {row.name}")
+
+
+@people_app.command("show")
+def people_show_command(
+    person_id: int = typer.Argument(..., metavar="PERSON_ID", min=1),
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Show one stable voiceprint person by ID."""
+    db_path = get_voiceprint_db_path(store_dir)
+    row = run_with_cli_errors(lambda: get_voiceprint_person(person_id, db_path))
+    if row is None:
+        raise typer.BadParameter(f"No voiceprint person found for id: {person_id}")
+    if as_json:
+        emit_json(_voiceprint_speaker_payload(row))
+        return
+    typer.echo(f"Person ID: {row.speaker_id}")
+    typer.echo(f"Name: {row.name}")
+    typer.echo(f"Samples: {row.sample_count}")
+    typer.echo(f"Projects: {row.project_count}")
+    typer.echo(f"Embedded: {row.embedded_sample_count}/{row.sample_count}")
 
 
 @app.command("embed")
@@ -245,16 +334,17 @@ def path_command(
     typer.echo(f"Clips: {get_voiceprint_clip_dir(store_dir)}")
 
 
-def _echo_voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> None:
+def _echo_voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow], *, title: str = "Speakers") -> None:
     """
     Print voiceprint speakers as a compact summary table.
 
     Args:
         rows: Speaker summary rows.
+        title: Human label for the first count.
     """
     sample_total = sum(row.sample_count for row in rows)
     embedded_total = sum(row.embedded_sample_count for row in rows)
-    typer.echo(f"Speakers: {len(rows)} | Samples: {sample_total} | Embedded samples: {embedded_total}/{sample_total}")
+    typer.echo(f"{title}: {len(rows)} | Samples: {sample_total} | Embedded samples: {embedded_total}/{sample_total}")
     _voiceprint_table_console().print(_voiceprint_speaker_table(rows))
 
 
@@ -466,7 +556,8 @@ def _echo_capture_summary(summary: VoiceprintCaptureSummary) -> None:
     typer.echo(f"Database: {summary.db_path}")
     typer.echo(f"Clips: {summary.clip_dir}")
     for speaker in summary.speakers:
-        typer.echo(f"{speaker.name} (speaker {speaker.speaker_id}): {len(speaker.clips)} sample(s)")
+        person = "" if speaker.person_id is None else f", person #{speaker.person_id}"
+        typer.echo(f"{speaker.name} (speaker {speaker.speaker_id}{person}): {len(speaker.clips)} sample(s)")
         for clip in speaker.clips:
             typer.echo(f"  - {clip.path}")
     if not summary.dry_run and summary.sample_count:

@@ -11,7 +11,11 @@ from app.cli import app
 from app.config import save_config_values
 from app.project_manager import create_project, load_manifest
 from app.voiceprint_embedding import BAILIAN_VOICEPRINT_MODEL, LOCAL_SPEECHBRAIN_MODEL
-from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings, list_voiceprint_samples_for_project
+from app.voiceprint_store import (
+    get_voiceprint_db_path,
+    list_voiceprint_embeddings,
+    list_voiceprint_samples_for_project,
+)
 
 runner = CliRunner()
 
@@ -86,6 +90,32 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert show_payload["samples"][0]["clip_path"].endswith("clip_001.wav")
 
 
+def test_voiceprint_people_lifecycle_uses_stable_ids(tmp_path: Path) -> None:
+    """People commands should create and rename by stable id, not by display name."""
+    store_dir = tmp_path / "voiceprints"
+
+    add_result = runner.invoke(app, ["voiceprint", "people", "add", "欧丁", "--store-dir", str(store_dir)])
+    duplicate_result = runner.invoke(app, ["voiceprint", "people", "add", "欧丁", "--store-dir", str(store_dir)])
+    list_result = runner.invoke(app, ["voiceprint", "people", "list", "--store-dir", str(store_dir)])
+    person_id = _speaker_id_from_list(list_result.output, "欧丁")
+    rename_result = runner.invoke(
+        app,
+        ["voiceprint", "people", "rename", person_id, "欧丁-新版", "--store-dir", str(store_dir)],
+    )
+    show_result = runner.invoke(app, ["voiceprint", "people", "show", person_id, "--store-dir", str(store_dir)])
+
+    assert add_result.exit_code == 0
+    assert "Person ID:" in add_result.output
+    assert duplicate_result.exit_code != 0
+    assert "already exists" in duplicate_result.output
+    assert list_result.exit_code == 0
+    assert "People: 1 | Samples: 0 | Embedded samples: 0/0" in list_result.output
+    assert rename_result.exit_code == 0
+    assert f"Renamed person #{person_id}: 欧丁-新版" in rename_result.output
+    assert show_result.exit_code == 0
+    assert "Name: 欧丁-新版" in show_result.output
+
+
 def test_voiceprint_browse_summary_uses_global_store(
     monkeypatch,
     tmp_path: Path,
@@ -136,6 +166,37 @@ def test_voiceprint_capture_skips_anonymous_speaker_labels(
     assert "Speakers: 1 | Samples: 1 | Embedded samples: 0/1" in list_result.output
     assert "欧丁" in list_result.output
     assert "Speaker C" not in list_result.output
+
+
+def test_voiceprint_capture_uses_project_person_map(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Capture should attach samples to existing person ids when the project saved a person map."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
+    _write_partially_named_speaker_inputs(project_dir)
+    add_result = runner.invoke(app, ["voiceprint", "people", "add", "欧丁", "--store-dir", str(store_dir)])
+    person_id = int(add_result.output.split("Person ID:", 1)[1].strip().splitlines()[0])
+    (project_dir / "speakers" / "speaker_person_map.json").write_text(
+        json.dumps({"0": person_id}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+
+    result = runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
+
+    manifest = load_manifest(project_dir)
+    samples = list_voiceprint_samples_for_project(manifest.project_id, get_voiceprint_db_path(store_dir))
+
+    assert result.exit_code == 0
+    assert f"person #{person_id}" in result.output
+    assert len(samples) == 1
+    assert samples[0].speaker_id == person_id
+    assert samples[0].speaker_name == "欧丁"
 
 
 def test_voiceprint_play_dry_run_prints_clip_command(

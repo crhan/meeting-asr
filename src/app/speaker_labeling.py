@@ -101,6 +101,40 @@ def write_speaker_mapping(path: Path, speaker_mapping: dict[int, str]) -> Path:
     return safe_write_json(path, payload)
 
 
+def write_speaker_person_mapping(path: Path, speaker_person_mapping: dict[int, int]) -> Path:
+    """
+    Write project speaker to voiceprint person id mapping.
+
+    Args:
+        path: Output path.
+        speaker_person_mapping: Mapping from project speaker id to voiceprint person id.
+
+    Returns:
+        Written path.
+    """
+    payload = {str(key): value for key, value in sorted(speaker_person_mapping.items())}
+    return safe_write_json(path, payload)
+
+
+def load_speaker_person_mapping(path: Path) -> dict[int, int]:
+    """
+    Load project speaker to voiceprint person id mapping.
+
+    Args:
+        path: Mapping JSON path.
+
+    Returns:
+        Project speaker id to voiceprint person id mapping.
+    """
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mapping: dict[int, int] = {}
+    for key, value in payload.items():
+        mapping[int(key)] = int(value)
+    return mapping
+
+
 def write_named_outputs(
     *,
     output_dir: Path,
