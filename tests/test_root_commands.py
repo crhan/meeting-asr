@@ -50,6 +50,33 @@ def test_root_help_command_prints_root_and_nested_help() -> None:
     assert "--plain" in nested_result.output
 
 
+def test_short_help_option_is_supported_for_root_and_nested_commands() -> None:
+    """Common CLI convention -h should work like --help."""
+    root_result = runner.invoke(app, ["-h"])
+    group_result = runner.invoke(app, ["project", "-h"])
+    command_result = runner.invoke(app, ["project", "list", "-h"])
+    direct_command_result = runner.invoke(app, ["doctor", "-h"])
+
+    assert root_result.exit_code == 0
+    assert "Quick start:" in root_result.output
+    assert "--help, -h" in root_result.output
+    assert group_result.exit_code == 0
+    assert "Usage:" in group_result.output
+    assert "project [OPTIONS]" in group_result.output
+    assert "--help" in group_result.output
+    assert "-h" in group_result.output
+    assert command_result.exit_code == 0
+    assert "Usage:" in command_result.output
+    assert "project list [OPTIONS]" in command_result.output
+    assert "--help" in command_result.output
+    assert "-h" in command_result.output
+    assert direct_command_result.exit_code == 0
+    assert "Usage:" in direct_command_result.output
+    assert "doctor [OPTIONS]" in direct_command_result.output
+    assert "--help" in direct_command_result.output
+    assert "-h" in direct_command_result.output
+
+
 def test_root_help_command_can_render_chinese(monkeypatch) -> None:
     """Help command should render Meeting-ASR-owned text in Chinese."""
     option_result = runner.invoke(app, ["--lang", "zh", "help", "project", "list"])

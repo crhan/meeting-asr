@@ -13,6 +13,8 @@ import typer
 from typer.completion import get_completion_script
 from typer.main import get_command
 
+from app.presentation.cli.typer_context import HELP_CONTEXT
+
 COMMAND_NAME = "meeting-asr"
 COMPLETE_VAR = "_MEETING_ASR_COMPLETE"
 ZSH_PROFILE_LOADER = ".zshrc.profile.d/*.zshrc"
@@ -50,7 +52,12 @@ INSTALLABLE_SHELLS = {
     CompletionShell.pwsh,
 }
 
-app = typer.Typer(add_completion=False, no_args_is_help=True, help="Generate or install shell completion scripts.")
+app = typer.Typer(
+    add_completion=False,
+    context_settings=HELP_CONTEXT,
+    no_args_is_help=True,
+    help="Generate or install shell completion scripts.",
+)
 
 
 @dataclass(frozen=True)

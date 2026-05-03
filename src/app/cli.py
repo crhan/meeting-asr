@@ -15,6 +15,7 @@ from app.completion_helpers import complete_cli_language
 from app.presentation.cli.help import render_help
 from app.presentation.cli.i18n import configure_cli_language
 from app.presentation.cli.output import configure_cli_output
+from app.presentation.cli.typer_context import HELP_CONTEXT
 from app.utils import configure_logging
 
 completion_init()
@@ -35,6 +36,7 @@ Inspect state:
 app = typer.Typer(
     add_completion=False,
     add_help_option=False,
+    context_settings=HELP_CONTEXT,
     invoke_without_command=True,
     no_args_is_help=False,
     pretty_exceptions_enable=False,
@@ -89,7 +91,7 @@ def root(
         help="Help language: auto, en, or zh.",
         autocompletion=complete_cli_language,
     ),
-    help_: bool = typer.Option(False, "--help", help="Show this message and exit."),
+    help_: bool = typer.Option(False, "--help", "-h", help="Show this message and exit."),
 ) -> None:
     """Configure root command options."""
     try:
@@ -132,15 +134,38 @@ def _resolve_help_command(root_command: click.Command, command_path: tuple[str, 
     return command
 
 
-app.command("doctor")(doctor.command)
-app.command("help", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(help_command)
-app.add_typer(config.app, name="config", help="Manage global XDG configuration.")
-app.add_typer(project.app, name="project", help="Manage project-based transcription workflows.")
-app.add_typer(voiceprint.app, name="voiceprint", help="Manage the cross-project voiceprint registry.")
-app.add_typer(lexicon.app, name="lexicon", help="Manage the cross-project correction lexicon.")
-app.add_typer(oss.app, name="oss", help="Upload, sign, and configure OSS objects.")
-app.add_typer(completion.app, name="completion", help="Generate or install shell completion scripts.")
-app.command("paths")(paths.command)
+app.command("doctor", context_settings=HELP_CONTEXT)(doctor.command)
+app.command(
+    "help",
+    context_settings={**HELP_CONTEXT, "allow_extra_args": True, "ignore_unknown_options": True},
+)(help_command)
+app.add_typer(config.app, name="config", help="Manage global XDG configuration.", context_settings=HELP_CONTEXT)
+app.add_typer(
+    project.app,
+    name="project",
+    help="Manage project-based transcription workflows.",
+    context_settings=HELP_CONTEXT,
+)
+app.add_typer(
+    voiceprint.app,
+    name="voiceprint",
+    help="Manage the cross-project voiceprint registry.",
+    context_settings=HELP_CONTEXT,
+)
+app.add_typer(
+    lexicon.app,
+    name="lexicon",
+    help="Manage the cross-project correction lexicon.",
+    context_settings=HELP_CONTEXT,
+)
+app.add_typer(oss.app, name="oss", help="Upload, sign, and configure OSS objects.", context_settings=HELP_CONTEXT)
+app.add_typer(
+    completion.app,
+    name="completion",
+    help="Generate or install shell completion scripts.",
+    context_settings=HELP_CONTEXT,
+)
+app.command("paths", context_settings=HELP_CONTEXT)(paths.command)
 
 
 def main() -> None:

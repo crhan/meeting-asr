@@ -52,6 +52,7 @@ meeting-asr completion bash
 ```bash
 meeting-asr
 meeting-asr --help
+meeting-asr -h
 meeting-asr help
 meeting-asr help project list
 meeting-asr help project transcript show
@@ -66,8 +67,8 @@ meeting-asr --lang zh help project list
 MEETING_ASR_LANG=zh meeting-asr help project list
 ```
 
-当前 root 空命令、root `--help` 和 `meeting-asr help ...` 会走 Meeting-ASR 的 i18n renderer。
-子命令原生 `project list --help` 仍由 Typer/Click 渲染。
+当前 root 空命令、root `--help`、root `-h` 和 `meeting-asr help ...` 会走 Meeting-ASR 的
+i18n renderer。子命令原生 `project list --help` / `project list -h` 仍由 Typer/Click 渲染。
 
 人类默认看 Rich 表格；脚本优先用 `--json`。如果只需要稳定、可 grep/awk/cut 的行文本，
 列表类命令提供 `--plain`：

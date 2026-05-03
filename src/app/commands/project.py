@@ -30,6 +30,7 @@ from app.presentation.cli.project_payloads import project_list_payload, project_
 from app.presentation.cli.project_list import render_project_list
 from app.presentation.cli.project_show import ProjectShowView, render_project_show
 from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
+from app.presentation.cli.typer_context import HELP_CONTEXT
 from app.core.project_workflow import (
     project_outputs_text,
     project_workflow_summary,
@@ -91,12 +92,37 @@ from app.presentation.tui.speaker import (
 from app.srt_compare import build_report, parse_srt
 from app.utils import configure_logging, format_ms_timestamp, safe_write_text
 
-app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
-speakers_app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
-app.add_typer(speakers_app, name="speakers", help="Review and name project speakers.")
-app.add_typer(transcript_commands.app, name="transcript", help="View project transcript artifacts.")
-app.add_typer(project_trash_commands.app, name="trash", help="Restore or permanently remove deleted projects.")
-app.add_typer(project_correct_commands.app, name="correct", help="Review and apply vocabulary corrections.")
+app = typer.Typer(
+    add_completion=False,
+    context_settings=HELP_CONTEXT,
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+)
+speakers_app = typer.Typer(
+    add_completion=False,
+    context_settings=HELP_CONTEXT,
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+)
+app.add_typer(speakers_app, name="speakers", help="Review and name project speakers.", context_settings=HELP_CONTEXT)
+app.add_typer(
+    transcript_commands.app,
+    name="transcript",
+    help="View project transcript artifacts.",
+    context_settings=HELP_CONTEXT,
+)
+app.add_typer(
+    project_trash_commands.app,
+    name="trash",
+    help="Restore or permanently remove deleted projects.",
+    context_settings=HELP_CONTEXT,
+)
+app.add_typer(
+    project_correct_commands.app,
+    name="correct",
+    help="Review and apply vocabulary corrections.",
+    context_settings=HELP_CONTEXT,
+)
 
 MORE_SAMPLES_COMMAND = "/more"
 AUDIO_PREVIEW_COMMAND = "/audio"

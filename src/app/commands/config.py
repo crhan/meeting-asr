@@ -8,6 +8,7 @@ import typer
 
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
+from app.presentation.cli.typer_context import HELP_CONTEXT
 from app.completion_helpers import complete_config_key
 from app.config import (
     CONFIG_KEYS,
@@ -18,7 +19,12 @@ from app.config import (
     visible_config_items,
 )
 
-app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_enable=False)
+app = typer.Typer(
+    add_completion=False,
+    context_settings=HELP_CONTEXT,
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+)
 
 
 @app.command("path")

@@ -66,7 +66,7 @@ scripts/install-tool.sh
 
 `completion install` 支持 `bash`、`zsh`、`fish`、`powershell` 和 `pwsh`；也可以用
 `meeting-asr completion zsh` 这类命令直接输出补全脚本。
-`meeting-asr`、`meeting-asr --help`、`meeting-asr help` 和
+`meeting-asr`、`meeting-asr --help`、`meeting-asr -h`、`meeting-asr help` 和
 `meeting-asr help project list` 都会按 locale 显示帮助。中文 help 可以用
 `LC_ALL=zh_CN.UTF-8 meeting-asr`、`meeting-asr --lang zh help project list`，或设置
 `MEETING_ASR_LANG=zh` 后运行 `meeting-asr help project list`。
