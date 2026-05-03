@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import tzinfo
 from pathlib import Path
 
 from rich import box
@@ -13,6 +14,7 @@ from app.core.project_models import ProjectListItem
 from app.core.project_workflow import ProjectWorkflowSummary, load_project_workflow_summary
 from app.presentation.cli.output import cli_console
 from app.presentation.cli.plain import echo_plain_table
+from app.presentation.time_format import format_local_minute
 
 
 def render_project_list(projects_dir: Path, projects: list[ProjectListItem], *, plain: bool = False) -> None:
@@ -41,6 +43,7 @@ def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> N
         return
     typer.echo("Use Project ID or Directory with PROJECT commands.")
     typer.echo("Start with: meeting-asr project show PROJECT_ID")
+    typer.echo("Times shown in local timezone.")
     _project_table_console().print(_project_list_table(projects))
 
 
@@ -58,7 +61,7 @@ def _project_list_table(projects: list[ProjectListItem]) -> Table:
     table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
     table.add_column("Project ID", no_wrap=True, style="bold cyan")
     table.add_column("State", no_wrap=True)
-    table.add_column("Updated", no_wrap=True)
+    table.add_column("Updated (Local)", no_wrap=True)
     table.add_column("Title")
     for project in projects:
         workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
@@ -89,6 +92,6 @@ def _project_table_console() -> Console:
     return cli_console(width=140)
 
 
-def _project_list_timestamp(value: str) -> str:
+def _project_list_timestamp(value: str, *, timezone: tzinfo | None = None) -> str:
     """Return a compact timestamp for project list rows."""
-    return value[:16].replace("T", " ")
+    return format_local_minute(value, timezone=timezone)

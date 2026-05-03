@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import wave
+from datetime import timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,7 @@ from app.project_manager import (
     save_manifest,
     summarize_project,
 )
+from app.presentation.cli.project_list import _project_list_timestamp
 from app.meeting_summary import MeetingSummary
 from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
 
@@ -535,7 +537,9 @@ def test_project_list_command_reads_default_projects_dir(
     assert f"Projects: {projects_dir.resolve()}" in result.output
     assert "Use Project ID or Directory" in result.output
     assert "meeting-asr project show PROJECT_ID" in result.output
+    assert "Times shown in local timezone." in result.output
     assert "Project ID" in result.output
+    assert "Updated (Local)" in result.output
     assert project_id in result.output
     assert "No." not in result.output
     assert "State" in result.output
@@ -866,6 +870,15 @@ def test_project_list_plain_prints_stable_rows(tmp_path: Path) -> None:
     assert f"{manifest.project_id}\tCreated\t" in result.output
     assert "Plain Demo" in result.output
     assert "╭" not in result.output
+
+
+def test_project_list_timestamp_uses_local_timezone() -> None:
+    """Project list timestamps should convert aware manifest times to local display time."""
+    china_timezone = timezone(timedelta(hours=8))
+
+    rendered = _project_list_timestamp("2026-05-03T00:51:31+00:00", timezone=china_timezone)
+
+    assert rendered == "2026-05-03 08:51"
 
 
 def test_project_show_accepts_project_id(tmp_path: Path) -> None:

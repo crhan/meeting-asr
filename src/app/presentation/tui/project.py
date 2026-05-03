@@ -14,6 +14,7 @@ from textual.widgets import Footer, Header, Static
 from app.core.project_models import ProjectListItem
 from app.core.project_refs import list_projects
 from app.core.project_workflow import load_project_workflow_summary, project_outputs_text
+from app.presentation.time_format import format_local_minute
 
 SHORTCUT_HELP = """\
 [b]Project List Shortcuts[/b]
@@ -193,7 +194,7 @@ class ProjectPickerApp(App[Path | None]):
             marker = ">" if index == self.selected_project_index else " "
             workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
             row = (
-                f"{marker} {project.project_id} | {project.updated_at[:19]} | "
+                f"{marker} {project.project_id} | {format_local_minute(project.updated_at)} | "
                 f"{workflow.state} | {project.title}"
             )
             lines.append(f"[reverse]{escape(row)}[/]" if marker == ">" else escape(row))
