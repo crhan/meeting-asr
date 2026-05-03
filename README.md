@@ -66,8 +66,9 @@ scripts/install-tool.sh
 
 `completion install` 支持 `bash`、`zsh`、`fish`、`powershell` 和 `pwsh`；也可以用
 `meeting-asr completion zsh` 这类命令直接输出补全脚本。
-`meeting-asr help` 和 `meeting-asr help project list` 可以查看 root 或嵌套命令帮助。
-中文 help 可以用 `meeting-asr --lang zh help project list`，或设置
+`meeting-asr`、`meeting-asr --help`、`meeting-asr help` 和
+`meeting-asr help project list` 都会按 locale 显示帮助。中文 help 可以用
+`LC_ALL=zh_CN.UTF-8 meeting-asr`、`meeting-asr --lang zh help project list`，或设置
 `MEETING_ASR_LANG=zh` 后运行 `meeting-asr help project list`。
 列表类命令优先给人看 Rich 表格；脚本里用 `--json`，需要稳定行文本时用 `--plain`。
 

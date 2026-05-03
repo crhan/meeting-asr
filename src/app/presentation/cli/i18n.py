@@ -43,7 +43,7 @@ def resolve_cli_language(value: str | None = None) -> str:
     Returns:
         ``en`` or ``zh``.
     """
-    raw = value or os.environ.get("MEETING_ASR_LANG") or "en"
+    raw = value or os.environ.get("MEETING_ASR_LANG") or "auto"
     normalized = raw.strip().lower().replace("_", "-")
     if normalized == "auto":
         normalized = _locale_language()

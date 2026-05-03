@@ -123,8 +123,10 @@ def _argument_block(command: click.Command, lang: str) -> list[str]:
 
 def _option_block(command: click.Command, lang: str) -> list[str]:
     """Build option rows."""
-    values = [_option_line(param, lang) for param in command.params if isinstance(param, click.Option)]
-    values.append(_help_option_line(lang))
+    options = [param for param in command.params if isinstance(param, click.Option)]
+    values = [_option_line(param, lang) for param in options]
+    if not any("--help" in option.opts for option in options):
+        values.append(_help_option_line(lang))
     return _section(lang, "options", values)
 
 

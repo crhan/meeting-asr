@@ -32,9 +32,15 @@ def test_root_paths_command_prints_json(monkeypatch, tmp_path) -> None:
 
 def test_root_help_command_prints_root_and_nested_help() -> None:
     """Git-like help command should expose root and subcommand help."""
+    no_args_result = runner.invoke(app, [])
+    native_help_result = runner.invoke(app, ["--help"])
     root_result = runner.invoke(app, ["help"])
     nested_result = runner.invoke(app, ["help", "project", "list"])
 
+    assert no_args_result.exit_code == 0
+    assert "Quick start:" in no_args_result.output
+    assert native_help_result.exit_code == 0
+    assert "Quick start:" in native_help_result.output
     assert root_result.exit_code == 0
     assert "Quick start:" in root_result.output
     assert "meeting-asr project run <video>" in root_result.output
@@ -47,6 +53,8 @@ def test_root_help_command_prints_root_and_nested_help() -> None:
 def test_root_help_command_can_render_chinese(monkeypatch) -> None:
     """Help command should render Meeting-ASR-owned text in Chinese."""
     option_result = runner.invoke(app, ["--lang", "zh", "help", "project", "list"])
+    locale_result = runner.invoke(app, [], env={"LC_ALL": "zh_CN.UTF-8"})
+    native_help_result = runner.invoke(app, ["--help"], env={"LANG": "zh_CN.UTF-8"})
     monkeypatch.setenv("MEETING_ASR_LANG", "zh")
     env_result = runner.invoke(app, ["help"])
 
@@ -54,6 +62,10 @@ def test_root_help_command_can_render_chinese(monkeypatch) -> None:
     assert "用法:" in option_result.output
     assert "列出默认或指定项目库里的项目。" in option_result.output
     assert "--plain                      输出稳定的制表符分隔文本。" in option_result.output
+    assert locale_result.exit_code == 0
+    assert "用于 DashScope 会议转写的项目化 CLI。" in locale_result.output
+    assert native_help_result.exit_code == 0
+    assert "快速开始:" in native_help_result.output
     assert env_result.exit_code == 0
     assert "快速开始:" in env_result.output
     assert "命令:" in env_result.output

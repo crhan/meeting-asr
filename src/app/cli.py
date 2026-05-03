@@ -34,7 +34,9 @@ Inspect state:
 
 app = typer.Typer(
     add_completion=False,
-    no_args_is_help=True,
+    add_help_option=False,
+    invoke_without_command=True,
+    no_args_is_help=False,
     pretty_exceptions_enable=False,
     help=ROOT_HELP,
 )
@@ -71,6 +73,7 @@ def _installed_version() -> str:
 
 @app.callback()
 def root(
+    ctx: typer.Context,
     version: bool = typer.Option(
         False,
         "--version",
@@ -86,6 +89,7 @@ def root(
         help="Help language: auto, en, or zh.",
         autocompletion=complete_cli_language,
     ),
+    help_: bool = typer.Option(False, "--help", help="Show this message and exit."),
 ) -> None:
     """Configure root command options."""
     try:
@@ -94,6 +98,9 @@ def root(
         raise click.BadParameter(str(exc), param_hint="--lang") from exc
     configure_cli_output(no_color=no_color, verbose=verbose)
     configure_logging(verbose=verbose)
+    if help_ or ctx.invoked_subcommand is None:
+        render_help(get_command(app), ())
+        raise typer.Exit()
 
 
 def help_command(ctx: typer.Context) -> None:
