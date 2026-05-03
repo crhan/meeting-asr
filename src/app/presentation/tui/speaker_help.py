@@ -10,8 +10,8 @@ BROWSE_STATUS = (
     "PgUp/PgDn page samples | Space play/stop | / name | e edit text | ? help | s save"
 )
 EDIT_STATUS = (
-    "Edit: type a name or search people | Tab first suggestion | "
-    "Enter apply | Esc cancel"
+    "Edit: type to filter people | Up/Down select | Enter choose | "
+    "+Name create | Esc cancel"
 )
 SHORTCUT_HELP = """\
 [b]Speaker Review Shortcuts[/b]
@@ -43,8 +43,10 @@ s                    Save speaker mapping and outputs
 q                    Quit without saving
 
 [b]Name edit[/b]
-Enter                Apply typed name
-Tab                  Use first suggestion
+Type                 Filter stable voiceprint people
+Up/Down              Move highlighted person
+Enter                Select highlighted/exact person, or create when input starts with +
+Tab                  Use highlighted suggestion
 Esc                  Cancel edit
 
 [dim]Press Esc, q, or ? to close this help.[/]

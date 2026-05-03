@@ -239,6 +239,58 @@ def test_speaker_review_tui_binds_existing_person_by_name() -> None:
     )
 
 
+def test_speaker_review_tui_shows_filterable_people_selector() -> None:
+    """Name edit should visibly filter and select stable voiceprint people."""
+    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"), KnownPerson(7, "敬悦"))))
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("/")
+            identity = str(app.query_one("#identity", Static).render())
+            assert "People" in identity
+            assert "欧丁" in identity
+            assert "#42" in identity
+
+            field = app.query_one("#name-input", Input)
+            field.value = "敬"
+            await pilot.pause()
+
+            identity = str(app.query_one("#identity", Static).render())
+            assert "敬悦" in identity
+            assert "#7" in identity
+
+            await pilot.press("enter")
+            await pilot.press("s")
+
+    asyncio.run(scenario())
+
+    assert app.return_value == SpeakerReviewDecision(
+        saved=True,
+        mapping={0: "敬悦"},
+        person_mapping={0: 7},
+    )
+
+
+def test_speaker_review_tui_arrow_selects_known_person() -> None:
+    """Up and down in name edit should move the highlighted person list row."""
+    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"), KnownPerson(7, "敬悦"))))
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("/")
+            await pilot.press("down")
+            await pilot.press("enter")
+            await pilot.press("s")
+
+    asyncio.run(scenario())
+
+    assert app.return_value == SpeakerReviewDecision(
+        saved=True,
+        mapping={0: "敬悦"},
+        person_mapping={0: 7},
+    )
+
+
 def test_speaker_review_tui_requires_explicit_new_person(tmp_path: Path) -> None:
     """A new person must be created through the explicit +Name TUI flow."""
     store_dir = tmp_path / "voiceprints"

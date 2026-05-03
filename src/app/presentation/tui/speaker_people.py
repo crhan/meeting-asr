@@ -6,7 +6,11 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from rich.markup import escape
+
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_speakers
+
+PEOPLE_LIST_LIMIT = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +136,45 @@ def optional_person_id(value: object) -> int | None:
     return person_id if person_id > 0 else None
 
 
+def render_people_selection_lines(
+    *,
+    suggestions: list[KnownPerson],
+    known_people: list[KnownPerson],
+    selected_index: int,
+    query: str,
+) -> list[str]:
+    """
+    Render the TUI known-person selector.
+
+    Args:
+        suggestions: Filtered people shown for the current speaker.
+        known_people: Complete known person list for duplicate checks.
+        selected_index: Highlighted suggestion index.
+        query: Current search input.
+
+    Returns:
+        Rich markup lines for the identity pane.
+    """
+    query_text = query.strip()
+    lines = [f"[b]People[/b] [dim]{len(suggestions)}/{len(known_people)} shown[/dim]"]
+    if not suggestions:
+        lines.append("- No matching known person")
+    start, visible = _visible_people_window(suggestions, selected_index)
+    for offset, person in enumerate(visible):
+        index = start + offset
+        marker = ">" if index == selected_index else " "
+        row = f"{marker} {escape(person.name)} [dim]#{person.person_id}[/]"
+        lines.append(f"[reverse]{row}[/]" if index == selected_index else row)
+    if len(suggestions) > PEOPLE_LIST_LIMIT:
+        end = start + len(visible)
+        lines.append(f"[dim]Showing {start + 1}-{end}/{len(suggestions)}. Type to filter.[/]")
+    if query_text.startswith("+"):
+        lines.append(_create_person_hint(query_text[1:].strip(), known_people))
+    else:
+        lines.append("[dim]Up/Down selects. Enter selects highlighted person. Use +Name to create.[/]")
+    return lines
+
+
 def _dedupe_people(people: list[KnownPerson]) -> list[KnownPerson]:
     """Deduplicate people by stable id while preserving order."""
     seen: set[int] = set()
@@ -146,3 +189,25 @@ def _dedupe_people(people: list[KnownPerson]) -> list[KnownPerson]:
 def _normalize_person_name(name: str) -> str:
     """Normalize a person display name for exact selection."""
     return " ".join(name.strip().split()).casefold()
+
+
+def _visible_people_window(
+    suggestions: list[KnownPerson],
+    selected_index: int,
+) -> tuple[int, list[KnownPerson]]:
+    """Return a scroll window that keeps the highlighted person visible."""
+    if len(suggestions) <= PEOPLE_LIST_LIMIT:
+        return 0, suggestions
+    last_start = max(0, len(suggestions) - PEOPLE_LIST_LIMIT)
+    start = max(0, min(selected_index - PEOPLE_LIST_LIMIT + 1, last_start))
+    return start, suggestions[start : start + PEOPLE_LIST_LIMIT]
+
+
+def _create_person_hint(name: str, people: list[KnownPerson]) -> str:
+    """Render explicit create-person guidance."""
+    if not name:
+        return "[dim]+Name creates a new stable person after Enter.[/]"
+    duplicate = find_person_by_name(name, people)
+    if duplicate is not None:
+        return f"[yellow]Person already exists: {escape(duplicate.name)} #{duplicate.person_id}[/]"
+    return f"[yellow]Enter will create new person: {escape(name)}[/]"
