@@ -28,11 +28,14 @@ def test_doctor_warns_when_local_voiceprint_dependencies_are_missing(
 
     assert result.exit_code == 0
     assert "Meeting-ASR Doctor" in result.output
-    assert "Summary: 6 ok, 1 warn, 0 fail" in result.output
-    assert "  WARN  voiceprint-embedding" in result.output
+    assert "6 OK" in result.output
+    assert "1 WARN" in result.output
+    assert "0 FAIL" in result.output
+    assert "WARN" in result.output
+    assert "voiceprint-embedding" in result.output
     assert "provider=local-speechbrain" in result.output
     assert "missing optional packages: speechbrain" in result.output
-    assert "Repair Prompts:" in result.output
+    assert "Repair Prompts" in result.output
     assert "uv sync --extra local-voiceprint" in result.output
 
 
@@ -45,7 +48,7 @@ def test_doctor_json_is_machine_readable(
     monkeypatch.setattr(doctor, "_missing_optional_modules", lambda modules: ["speechbrain"])
     save_config_values({"dashscope.api_key": "secret"})
 
-    result = runner.invoke(app, ["doctor", "--json"])
+    result = runner.invoke(app, ["doctor", "--json"], env={"MEETING_ASR_LANG": "zh"})
     payload = json.loads(result.output)
 
     assert result.exit_code == 0
@@ -76,9 +79,14 @@ def test_doctor_can_require_local_voiceprint_dependencies(
     result = runner.invoke(app, ["doctor", "--require-voiceprint-embedding"])
 
     assert result.exit_code == 1
-    assert "Summary: 6 ok, 0 warn, 1 fail" in result.output
-    assert "  FAIL  voiceprint-embedding" in result.output
-    assert "missing optional packages: speechbrain, torch" in result.output
+    assert "6 OK" in result.output
+    assert "0 WARN" in result.output
+    assert "1 FAIL" in result.output
+    assert "FAIL" in result.output
+    assert "voiceprint-embedding" in result.output
+    assert "missing optional packages:" in result.output
+    assert "speechbrain," in result.output
+    assert "torch" in result.output
     assert "meeting-asr doctor --require-voiceprint-embedding" in result.output
 
 
@@ -104,10 +112,33 @@ def test_doctor_accepts_bailian_voiceprint_embedding_endpoint(
     result = runner.invoke(app, ["doctor", "--require-voiceprint-embedding"])
 
     assert result.exit_code == 0
-    assert "Summary: 7 ok, 0 warn, 0 fail" in result.output
-    assert "  OK    voiceprint-embedding" in result.output
+    assert "7 OK" in result.output
+    assert "0 WARN" in result.output
+    assert "0 FAIL" in result.output
+    assert "OK" in result.output
+    assert "voiceprint-embedding" in result.output
     assert "provider=bailian" in result.output
-    assert "Repair Prompts:" not in result.output
+    assert "Repair Prompts" not in result.output
+
+
+def test_doctor_human_output_can_render_chinese(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Human doctor output should follow CLI language settings."""
+    _prepare_doctor(monkeypatch, tmp_path)
+    monkeypatch.setattr(doctor, "_missing_optional_modules", lambda modules: ["speechbrain"])
+    save_config_values({"dashscope.api_key": "secret"})
+
+    result = runner.invoke(app, ["doctor"], env={"MEETING_ASR_LANG": "zh"})
+
+    assert result.exit_code == 0
+    assert "Meeting-ASR 诊断" in result.output
+    assert "汇总" in result.output
+    assert "检查项" in result.output
+    assert "警告" in result.output
+    assert "缺少可选依赖： speechbrain" in result.output
+    assert "修复提示" in result.output
 
 
 def _prepare_doctor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

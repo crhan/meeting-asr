@@ -8,7 +8,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,7 @@ from uuid import uuid4
 import typer
 
 from app.config import get_configured_editor, load_settings
+from app.presentation.cli.doctor import render_doctor_report
 from app.presentation.cli.json_output import emit_json
 from app.uploader import build_oss_bucket, import_oss2
 from app.voiceprint_embedding import (
@@ -71,8 +71,7 @@ def command(
     if as_json:
         _echo_checks_json(checks)
     else:
-        _echo_checks(checks)
-        _echo_fix_prompts(checks)
+        render_doctor_report(checks)
     if any(check.failed for check in checks):
         raise typer.Exit(code=1)
 
@@ -467,27 +466,6 @@ def _format_oss_error(exc: Any) -> str:
     return f"OSS request failed: status={getattr(exc, 'status', None)}, code={getattr(exc, 'code', None)}"
 
 
-def _echo_checks(checks: list[CheckResult]) -> None:
-    """
-    Print a readable diagnostic report.
-
-    Args:
-        checks: Diagnostic results.
-
-    Returns:
-        None.
-    """
-    ok_count = sum(1 for check in checks if check.status == "ok")
-    warn_count = sum(1 for check in checks if check.status == "warn")
-    fail_count = sum(1 for check in checks if check.status == "fail")
-    typer.echo("Meeting-ASR Doctor")
-    typer.echo(f"Summary: {ok_count} ok, {warn_count} warn, {fail_count} fail")
-    typer.echo("")
-    typer.echo("Checks:")
-    for check in checks:
-        _echo_check(check)
-
-
 def _echo_checks_json(checks: list[CheckResult]) -> None:
     """
     Print diagnostic results as stable JSON.
@@ -526,43 +504,6 @@ def _check_payload(check: CheckResult) -> dict[str, str | bool | None]:
     }
 
 
-def _echo_check(check: CheckResult) -> None:
-    """
-    Print one check with wrapped detail.
-
-    Args:
-        check: Diagnostic result.
-
-    Returns:
-        None.
-    """
-    typer.echo(f"  {check.status.upper():5} {check.name}")
-    for line in _format_detail_lines(check.detail):
-        typer.echo(f"        {line}")
-
-
-def _echo_fix_prompts(checks: list[CheckResult]) -> None:
-    """
-    Print repair prompts for failed or warning checks.
-
-    Args:
-        checks: Diagnostic results.
-
-    Returns:
-        None.
-    """
-    problem_checks = [check for check in checks if check.needs_attention]
-    if not problem_checks:
-        return
-    typer.echo("")
-    typer.echo("Repair Prompts:")
-    for check in problem_checks:
-        typer.echo(f"  {check.name}")
-        typer.echo("    Prompt:")
-        for line in _wrap_text(check.fix_prompt or "", width=78):
-            typer.echo(f"      {line}")
-
-
 def _fix_prompt(check_name: str, detail: str, fix: str, verify: str) -> str:
     """
     Build a prompt that another model can use to repair a doctor issue.
@@ -587,57 +528,6 @@ def _fix_prompt(check_name: str, detail: str, fix: str, verify: str) -> str:
             "Do not print or commit secrets.",
         ]
     )
-
-
-def _format_detail_lines(detail: str) -> list[str]:
-    """
-    Split semicolon-heavy detail text before wrapping.
-
-    Args:
-        detail: Check detail text.
-
-    Returns:
-        Wrapped detail lines.
-    """
-    lines: list[str] = []
-    for part in detail.split("; "):
-        lines.extend(_wrap_text(part, width=86))
-    return lines
-
-
-def _wrap_text(value: str, *, width: int) -> list[str]:
-    """
-    Wrap terminal text while preserving explicit line breaks.
-
-    Args:
-        value: Text to wrap.
-        width: Maximum line width before indentation.
-
-    Returns:
-        Wrapped lines, never empty.
-    """
-    lines: list[str] = []
-    for raw_line in value.splitlines() or [""]:
-        if _looks_like_command(raw_line):
-            lines.append(raw_line)
-            continue
-        wrapped = textwrap.wrap(raw_line, width=width, break_long_words=False, break_on_hyphens=False)
-        lines.extend(wrapped or [""])
-    return lines
-
-
-def _looks_like_command(value: str) -> bool:
-    """
-    Return whether a prompt line should stay copyable as one command.
-
-    Args:
-        value: Raw prompt line.
-
-    Returns:
-        True when the line looks like a shell command.
-    """
-    stripped = value.strip()
-    return stripped.startswith(("meeting-asr ", "uv ", "brew ", "python "))
 
 
 def _find_iina_cli() -> str | None:
