@@ -797,12 +797,14 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     exports_dir = project_dir / "exports"
     exports_dir.mkdir(parents=True, exist_ok=True)
     (exports_dir / "transcript_named.txt").write_text("欧丁: 大家好\n", encoding="utf-8")
+    (exports_dir / "subtitle_named.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\n欧丁: 大家好\n", encoding="utf-8")
     (exports_dir / "meeting_summary.md").write_text("# Demo\n\n## 摘要\n关键结论。\n", encoding="utf-8")
     manifest.status = "named"
     manifest.outputs.update(
         {
             "meeting_summary": "exports/meeting_summary.md",
             "named_transcript": "exports/transcript_named.txt",
+            "named_subtitle": "exports/subtitle_named.srt",
         }
     )
     manifest.asr.update({"provider": "dashscope", "model": "fun-asr", "task_id": "task-1"})
@@ -820,7 +822,10 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     assert "Meeting Summary" in result.output
     assert "关键结论" in result.output
     assert "Final transcript" in result.output
-    assert "exports/transcript_named.txt" in result.output
+    assert "Location" not in result.output
+    assert "How to view" not in result.output
+    assert f"meeting-asr project transcript show {manifest.project_id} --kind auto" in result.output
+    assert f"meeting-asr project transcript show {manifest.project_id} --kind srt" in result.output
     assert f"meeting-asr project transcript show {manifest.project_id}" in result.output
     assert f"meeting-asr project transcript list {manifest.project_id}" in result.output
 

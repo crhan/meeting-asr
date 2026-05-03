@@ -104,10 +104,9 @@ def _outputs_table(view: ProjectShowView) -> Table:
     table = Table(title="Outputs", box=box.SIMPLE_HEAVY, show_edge=False, pad_edge=False)
     table.add_column("Artifact", style="bold", no_wrap=True)
     table.add_column("Status", no_wrap=True)
-    table.add_column("Location")
-    table.add_column("How to view", no_wrap=True)
+    table.add_column("Command", no_wrap=True)
     for row in _output_rows(view):
-        table.add_row(row.label, _output_status(row), _output_location(view.project_dir, row), _view_hint(row))
+        table.add_row(row.label, _output_status(row), _view_command(view, row))
     return table
 
 
@@ -199,20 +198,11 @@ def _output_status(row: _OutputRow) -> str:
     return "[green]ready[/]" if row.path else "[red]missing[/]"
 
 
-def _output_location(project_dir: Path, row: _OutputRow) -> str:
-    """Return a project-relative artifact path when available."""
+def _view_command(view: ProjectShowView, row: _OutputRow) -> str:
+    """Return a complete command for viewing one artifact."""
     if row.path is None:
         return "-"
-    return _relative_path(project_dir, row.path)
-
-
-def _view_hint(row: _OutputRow) -> str:
-    """Return a compact hint for viewing one artifact."""
-    if row.path is None:
-        return "-"
-    if row.kind == "summary":
-        return "open file"
-    return f"transcript show --kind {row.kind}"
+    return f"meeting-asr project transcript show {shlex.quote(view.project_ref)} --kind {row.kind}"
 
 
 def _unique_command_rows(rows: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -331,14 +321,6 @@ def _stored_path(root: Path, value: str) -> Path:
     if path.is_absolute():
         return path
     return root / path
-
-
-def _relative_path(project_dir: Path, path: Path) -> str:
-    """Format a path relative to the project root when possible."""
-    try:
-        return str(path.relative_to(project_dir))
-    except ValueError:
-        return str(path)
 
 
 def _show_console() -> Console:
