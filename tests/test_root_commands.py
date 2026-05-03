@@ -87,8 +87,9 @@ def test_root_help_command_can_render_chinese(monkeypatch) -> None:
 
     assert option_result.exit_code == 0
     assert "用法:" in option_result.output
-    assert "列出默认或指定项目库里的项目。" in option_result.output
-    assert "--plain                      输出稳定的制表符分隔文本。" in option_result.output
+    assert "列出 XDG 项目库里的项目。" in option_result.output
+    assert "--plain" in option_result.output
+    assert "输出稳定的制表符分隔文本。" in option_result.output
     assert locale_result.exit_code == 0
     assert "用于 DashScope 会议转写的项目化 CLI。" in locale_result.output
     assert native_help_result.exit_code == 0
@@ -111,9 +112,8 @@ def test_native_subcommand_help_uses_localized_renderer() -> None:
     assert "--help, -h" in group_result.output
     assert leaf_result.exit_code == 0
     assert "用法:" in leaf_result.output
-    assert "列出默认或指定项目库里的项目。" in leaf_result.output
-    assert "--projects-dir" in leaf_result.output
-    assert "指定项目库目录。" in leaf_result.output
+    assert "列出 XDG 项目库里的项目。" in leaf_result.output
+    assert "--projects-dir" not in leaf_result.output
     assert "--help, -h" in leaf_result.output
 
 
@@ -168,7 +168,7 @@ def test_help_flag_overrides_parse_errors() -> None:
     assert leaf_result.exit_code == 0
     assert "用法:" in leaf_result.output
     assert "meeting-asr project list [OPTIONS]" in leaf_result.output
-    assert "列出默认或指定项目库里的项目。" in leaf_result.output
+    assert "列出 XDG 项目库里的项目。" in leaf_result.output
     assert "No such option" not in leaf_result.output
 
 

@@ -56,7 +56,7 @@ def list_command(
 @app.command("restore")
 def restore_command(
     trash_ref: str = typer.Argument(..., metavar="TRASH"),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     project_dir: Optional[Path] = typer.Option(None, "--project-dir", file_okay=False, dir_okay=True),
 ) -> None:
     """Restore a trashed project by trash path, id, directory, or title."""

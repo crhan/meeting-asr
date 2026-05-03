@@ -105,8 +105,15 @@ meeting-asr project review PROJECT_ID
 
 ```bash
 meeting-asr project list
-meeting-asr project list --projects-dir "/path/to/projects"
 ```
+
+如果要临时使用另一套项目库，设置 XDG 数据目录：
+
+```bash
+XDG_DATA_HOME="/path/to/data-home" meeting-asr project list
+```
+
+此时项目目录是 `$XDG_DATA_HOME/meeting-asr/projects`，不要把项目分散到不符合 XDG 的任意位置。
 
 `project list` 的 `State` 不是内部 manifest status，而是从实际文件推导出的当前项目阶段。
 表格第一列就是稳定 Project ID，后续命令应复制这个 ID。下一步命令、`Artifacts`、

@@ -176,7 +176,7 @@ class ProjectRunSummary:
 def create(
     input: Path = typer.Argument(..., metavar="INPUT", exists=True, file_okay=True, dir_okay=False),
     title: Optional[str] = typer.Option(None, "--title", "-t"),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     project_dir: Optional[Path] = typer.Option(None, "--project-dir", file_okay=False, dir_okay=True),
     meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
     hash_source: bool = typer.Option(
@@ -206,7 +206,7 @@ def create(
 @app.command("prepare")
 def prepare(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
@@ -225,7 +225,7 @@ def prepare(
 @app.command("transcribe")
 def transcribe(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     speaker_count: Optional[int] = typer.Option(None, "--speaker-count", min=1),
     language: Optional[str] = typer.Option("zh,en", "--language"),
     model: str = typer.Option("fun-asr", "--model", autocompletion=complete_model),
@@ -271,7 +271,7 @@ def transcribe(
 @app.command("summarize")
 def summarize(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     model: Optional[str] = typer.Option(None, "--model", help="DashScope text model for meeting summary."),
     update_title: bool = typer.Option(True, "--update-title/--no-update-title"),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
@@ -302,7 +302,7 @@ def summarize(
 def run(
     input: Path = typer.Argument(..., metavar="INPUT", exists=True, file_okay=True, dir_okay=False),
     title: Optional[str] = typer.Option(None, "--title", "-t"),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     project_dir: Optional[Path] = typer.Option(None, "--project-dir", file_okay=False, dir_okay=True),
     meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
     speaker_count: Optional[int] = typer.Option(None, "--speaker-count", min=1),
@@ -368,11 +368,11 @@ def run(
 
 @app.command("list")
 def list_command(
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
     plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
 ) -> None:
-    """List projects under the default or specified projects directory."""
+    """List projects under the XDG project store."""
     result = run_with_cli_errors(lambda: list_projects(projects_dir))
     if as_json:
         emit_json(project_list_payload(result.projects_dir, result.projects))
@@ -383,7 +383,7 @@ def list_command(
 @app.command("show")
 def show(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show a human-friendly project overview and where outputs live."""
@@ -400,7 +400,7 @@ def show(
 @app.command("update")
 def update(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     title: Optional[str] = typer.Option(None, "--title", "-t"),
     meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
 ) -> None:
@@ -419,7 +419,7 @@ def update(
 @app.command("delete")
 def delete(
     project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not prompt for confirmation."),
     permanent: bool = typer.Option(False, "--permanent", help="Physically remove instead of moving to trash."),
 ) -> None:
@@ -436,7 +436,7 @@ def delete(
 @app.command("review")
 def review(
     project: Optional[str] = typer.Argument(None, metavar="PROJECT"),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     page_size: Optional[int] = typer.Option(
         None,
         "--page-size",
@@ -591,7 +591,7 @@ def _project_run_step_descriptions(summarize: bool) -> tuple[str, ...]:
 @app.command("status")
 def status(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Print a project status summary."""
@@ -627,7 +627,7 @@ def status(
 @app.command("git-init")
 def git_init(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
 ) -> None:
     """Initialize optional Git tracking for human-edited project files."""
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
@@ -639,7 +639,7 @@ def git_init(
 @speakers_app.command("inspect")
 def speakers_inspect(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     sample_count: int = typer.Option(5, "--sample-count", min=1, max=20),
 ) -> None:
     """Print diagnostic speaker samples; read-only, does not apply names."""
@@ -671,7 +671,7 @@ def speakers_inspect(
 @speakers_app.command("preview")
 def speakers_preview(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     speaker_id: Optional[int] = typer.Option(None, "--speaker-id"),
     padding_seconds: int = typer.Option(8, "--padding-seconds", min=0),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -699,7 +699,7 @@ def speakers_preview(
 @speakers_app.command("apply")
 def speakers_apply(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     mappings: list[str] = typer.Option([], "--map", help="Non-interactive speaker_id=name mapping."),
     sample_count: int = typer.Option(3, "--sample-count", min=1, max=20, help="Samples shown per speaker."),
 ) -> None:
@@ -736,7 +736,7 @@ def speakers_review(
         file_okay=False,
         dir_okay=True,
     ),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     page_size: Optional[int] = typer.Option(
         None,
         "--page-size",
@@ -819,7 +819,7 @@ def _resolve_review_project(project: str | None, projects_dir: Path | None, *, s
 @speakers_app.command("match")
 def speakers_match(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     provider: Optional[str] = typer.Option(None, "--provider", autocompletion=complete_voiceprint_provider),
     endpoint: Optional[str] = typer.Option(None, "--endpoint"),
@@ -858,7 +858,7 @@ def speakers_match(
 @speakers_app.command("compare-srt")
 def speakers_compare_srt(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     dingtalk_srt: Path = typer.Option(..., "--dingtalk-srt", exists=True, file_okay=True, dir_okay=False),
     output: Optional[Path] = typer.Option(None, "--output"),
 ) -> None:

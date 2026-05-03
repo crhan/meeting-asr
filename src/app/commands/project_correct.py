@@ -33,7 +33,7 @@ app = MeetingAsrTyper(
 @app.command("edit")
 def edit_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     editor: Optional[str] = typer.Option(None, "--editor", help="Editor command. Use {file} as optional placeholder."),
     review_file: Optional[Path] = typer.Option(None, "--review-file", exists=True, dir_okay=False, file_okay=True),
     no_open: bool = typer.Option(False, "--no-open", help="Only write the review file; do not launch an editor."),
@@ -70,7 +70,7 @@ def edit_command(
 @app.command("accept")
 def accept_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     proposal: Optional[Path] = typer.Option(None, "--proposal", exists=True, dir_okay=False, file_okay=True),
     lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
 ) -> None:

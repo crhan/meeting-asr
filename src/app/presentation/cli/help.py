@@ -49,7 +49,7 @@ COMMAND_ZH = {
     ("project", "transcribe"): "转写项目并写入结构化产物。",
     ("project", "summarize"): "基于已转写项目生成会议标题和摘要。",
     ("project", "run"): "创建项目、转写、总结并自动匹配 speaker。",
-    ("project", "list"): "列出默认或指定项目库里的项目。",
+    ("project", "list"): "列出 XDG 项目库里的项目。",
     ("project", "show"): "显示项目概览和产物查看方式。",
     ("project", "update"): "更新可编辑的项目元数据。",
     ("project", "delete"): "删除项目，默认移动到 Meeting-ASR 回收站。",
@@ -152,8 +152,16 @@ EXAMPLES = {
         ),
     },
     ("project", "list"): {
-        "en": ("meeting-asr project list", "meeting-asr project list --plain", "meeting-asr project list --json"),
-        "zh": ("meeting-asr project list", "meeting-asr project list --plain", "meeting-asr project list --json"),
+        "en": (
+            "meeting-asr project list",
+            "XDG_DATA_HOME=/path/to/data-home meeting-asr project list",
+            "meeting-asr project list --json",
+        ),
+        "zh": (
+            "meeting-asr project list",
+            "XDG_DATA_HOME=/path/to/data-home meeting-asr project list",
+            "meeting-asr project list --json",
+        ),
     },
     ("project", "show"): {
         "en": ("meeting-asr project show p-292d10c1232b79a0", "meeting-asr project show --json"),
@@ -270,7 +278,6 @@ OPTION_ZH = {
     "--check-oss-access": "检查 OSS bucket 元数据访问。",
     "--oss-upload-probe": "上传、签名 GET 并删除一个很小的 OSS 探测对象。",
     "--require-voiceprint-embedding": "声纹 embedding 后端不可运行时返回失败。",
-    "--projects-dir": "指定项目库目录。",
     "--project-dir": "指定项目目录。",
     "--hash-source": "兼容旧参数；项目身份始终基于内容 hash。",
     "--title": "设置会议标题；省略时可由总结步骤自动生成。",
@@ -349,9 +356,7 @@ OPTION_ZH_BY_COMMAND = {
     ("lexicon", "hotwords", "remote-delete", "--target-model"): "指定清缓存使用的 ASR 目标模型。",
     ("lexicon", "hotwords", "remote-delete", "--yes"): "确认删除远端词表。",
 }
-OPTION_EN = {
-    "--projects-dir": "Project store directory.",
-}
+OPTION_EN = {}
 
 
 def render_help(command: click.Command, command_path: tuple[str, ...]) -> None:
@@ -428,7 +433,7 @@ def _print_examples_panel(command_path: tuple[str, ...], lang: str, console: Con
 
 def _print_options_panel(command: click.Command, command_path: tuple[str, ...], lang: str, console: Console) -> None:
     """Print option rows in a scan-friendly Rich panel."""
-    options = [param for param in command.params if isinstance(param, click.Option)]
+    options = [param for param in command.params if isinstance(param, click.Option) and not param.hidden]
     if not any("--help" in option.opts for option in options):
         options.append(_implicit_help_option(lang))
     if not options:

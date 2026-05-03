@@ -56,7 +56,7 @@ class TranscriptArtifactRow:
 @app.command("list")
 def list_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
     plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
 ) -> None:
@@ -76,7 +76,7 @@ def list_command(
 @app.command("path")
 def path_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     kind: TranscriptKind = typer.Option(TranscriptKind.auto, "--kind", "-k"),
 ) -> None:
     """Print one transcript artifact path."""
@@ -88,7 +88,7 @@ def path_command(
 @app.command("show")
 def show_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     kind: TranscriptKind = typer.Option(TranscriptKind.auto, "--kind", "-k"),
 ) -> None:
     """Print one transcript artifact."""
@@ -100,7 +100,7 @@ def show_command(
 @app.command("open")
 def open_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     kind: TranscriptKind = typer.Option(TranscriptKind.auto, "--kind", "-k"),
 ) -> None:
     """Open one transcript artifact with the OS default application."""
