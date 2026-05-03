@@ -117,6 +117,32 @@ def test_native_subcommand_help_uses_localized_renderer() -> None:
     assert "--help, -h" in leaf_result.output
 
 
+def test_help_flag_overrides_parse_errors() -> None:
+    """clig.dev expects adding -h to invalid input to show help."""
+    root_result = runner.invoke(app, ["--bad", "-h"])
+    direct_result = runner.invoke(app, ["doctor", "--bad", "-h"])
+    group_result = runner.invoke(app, ["--lang", "zh", "project", "--bad", "-h"])
+    leaf_result = runner.invoke(app, ["--lang", "zh", "project", "list", "--bad", "-h"])
+
+    assert root_result.exit_code == 0
+    assert "Quick start:" in root_result.output
+    assert "No such option" not in root_result.output
+    assert direct_result.exit_code == 0
+    assert "Usage:" in direct_result.output
+    assert "meeting-asr doctor [OPTIONS]" in direct_result.output
+    assert "No such option" not in direct_result.output
+    assert group_result.exit_code == 0
+    assert "用法:" in group_result.output
+    assert "meeting-asr project [OPTIONS]" in group_result.output
+    assert "管理项目化转写流程。" in group_result.output
+    assert "No such option" not in group_result.output
+    assert leaf_result.exit_code == 0
+    assert "用法:" in leaf_result.output
+    assert "meeting-asr project list [OPTIONS]" in leaf_result.output
+    assert "列出默认或指定项目库里的项目。" in leaf_result.output
+    assert "No such option" not in leaf_result.output
+
+
 def test_root_lang_rejects_invalid_value_without_traceback() -> None:
     """Invalid language should fail as a CLI parameter error."""
     result = runner.invoke(app, ["--lang", "bad", "help"])

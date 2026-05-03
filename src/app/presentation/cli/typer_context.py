@@ -29,7 +29,11 @@ class LocalizedTyperGroup(TyperGroup):
         if not args and self.no_args_is_help and not ctx.resilient_parsing:
             self.format_help(ctx, ctx.make_formatter())
             raise click.exceptions.Exit(0)
-        return super().parse_args(ctx, args)
+        try:
+            return super().parse_args(ctx, args)
+        except click.ClickException as exc:
+            _show_help_if_requested(self, ctx, args, exc)
+            raise
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         """
@@ -64,7 +68,11 @@ class LocalizedTyperCommand(TyperCommand):
         if not args and self.no_args_is_help and not ctx.resilient_parsing:
             self.format_help(ctx, ctx.make_formatter())
             raise click.exceptions.Exit(0)
-        return super().parse_args(ctx, args)
+        try:
+            return super().parse_args(ctx, args)
+        except click.ClickException as exc:
+            _show_help_if_requested(self, ctx, args, exc)
+            raise
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         """
@@ -142,3 +150,80 @@ def _command_path(ctx: click.Context) -> tuple[str, ...]:
     """
     parts = tuple(part for part in ctx.command_path.split() if part)
     return parts[1:] if parts else ()
+
+
+def _show_help_if_requested(
+    command: click.Command,
+    ctx: click.Context,
+    args: list[str],
+    exc: click.ClickException,
+) -> None:
+    """
+    Prefer help over parse errors when ``-h`` or ``--help`` is present.
+
+    Args:
+        command: Command whose parsing failed.
+        ctx: Click context.
+        args: Remaining command-line arguments.
+        exc: Original Click parse exception.
+
+    Returns:
+        None.
+    """
+    if not _has_help_flag(args) or ctx.resilient_parsing:
+        return
+    _configure_presentation_from_context(ctx)
+    command.format_help(ctx, ctx.make_formatter())
+    raise click.exceptions.Exit(0) from exc
+
+
+def _has_help_flag(args: list[str]) -> bool:
+    """
+    Return whether help was requested anywhere in the remaining args.
+
+    Args:
+        args: Remaining command-line arguments.
+
+    Returns:
+        True when ``-h`` or ``--help`` is present.
+    """
+    return any(arg in HELP_CONTEXT["help_option_names"] for arg in args)
+
+
+def _configure_presentation_from_context(ctx: click.Context) -> None:
+    """
+    Apply parsed root presentation options before rendering rescued help.
+
+    Args:
+        ctx: Click context where parsing failed.
+
+    Returns:
+        None.
+    """
+    from app.presentation.cli.i18n import configure_cli_language
+    from app.presentation.cli.output import configure_cli_output
+
+    params = _merged_context_params(ctx)
+    configure_cli_language(params.get("lang"))
+    configure_cli_output(no_color=bool(params.get("no_color")), verbose=bool(params.get("verbose")))
+
+
+def _merged_context_params(ctx: click.Context) -> dict[str, Any]:
+    """
+    Merge parameters from the current context and its parents.
+
+    Args:
+        ctx: Click context where parsing failed.
+
+    Returns:
+        Parameter mapping with child values overriding parent values.
+    """
+    chain: list[click.Context] = []
+    current: click.Context | None = ctx
+    while current is not None:
+        chain.append(current)
+        current = current.parent
+    params: dict[str, Any] = {}
+    for item in reversed(chain):
+        params.update(item.params)
+    return params
