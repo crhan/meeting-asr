@@ -477,7 +477,7 @@ def _path_lines(outcome: SpeakerReviewSaveOutcome) -> list[str]:
 
 def _summary_lines(summary: CorrectionEditSummary) -> list[str]:
     """Render correction summary fields."""
-    state = "accepted" if summary.accepted else "proposal ready"
+    state = _correction_summary_state(summary)
     lines = [
         f"- State: {state}",
         f"- Sample changes: {summary.sample_change_count}",
@@ -490,6 +490,17 @@ def _summary_lines(summary: CorrectionEditSummary) -> list[str]:
         lines.append(f"- Corrected transcript: {escape(str(summary.corrected_named_transcript_path))}")
     lines.extend(_understanding_lines(summary))
     return lines
+
+
+def _correction_summary_state(summary: CorrectionEditSummary) -> str:
+    """Return a human-readable correction workflow state."""
+    if summary.accepted:
+        return "accepted"
+    if summary.proposal_json_path is not None:
+        return "proposal ready"
+    if summary.sample_change_count == 0 and summary.proposed_change_count == 0:
+        return "no transcript changes"
+    return "no proposal"
 
 
 def _understanding_lines(summary: CorrectionEditSummary) -> list[str]:

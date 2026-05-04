@@ -34,6 +34,7 @@ from app.presentation.tui.speaker_save import (
     CorrectionProposalDiffScreen,
     SpeakerReviewSaveOutcome,
     SpeakerReviewSaveScreen,
+    _summary_lines,
 )
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
@@ -804,6 +805,30 @@ def test_load_speaker_review_session_builds_project_overview_from_disk(tmp_path:
     assert [speaker.ignored for speaker in session.speakers] == [False, True]
 
 
+def test_load_speaker_review_session_prefers_corrected_transcript(tmp_path: Path) -> None:
+    """Project review should reopen the corrected transcript after correction acceptance."""
+    project_dir, store_dir = _project_with_voiceprint_state(tmp_path)
+    corrected = json.loads((project_dir / "asr" / "sentences.json").read_text(encoding="utf-8"))
+    corrected["sentences"][0]["text"] = "你好，我是修正后的欧丁。"
+    corrected["full_text"] = "你好，我是修正后的欧丁。收到。"
+    (project_dir / "asr" / "sentences_corrected.json").write_text(
+        json.dumps(corrected, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    session = load_speaker_review_session(project_dir, store_dir=store_dir)
+
+    assert session.speakers[0].segments[0].text == "你好，我是修正后的欧丁。"
+
+
+def test_save_summary_labels_empty_correction_as_no_changes() -> None:
+    """A zero-change inline edit should not be shown as a ready proposal."""
+    lines = _summary_lines(_correction_summary(accepted=False, no_proposal=True))
+
+    assert "- State: no transcript changes" in lines
+    assert all("proposal ready" not in line for line in lines)
+
+
 class _FakeProcess:
     """Minimal fake process for playback tests."""
 
@@ -939,16 +964,17 @@ def _correction_summary(
     accepted: bool,
     diff_path: Path | None = None,
     proposal_path: Path | None = None,
+    no_proposal: bool = False,
 ) -> CorrectionEditSummary:
     """Build a minimal correction summary for save modal tests."""
     return CorrectionEditSummary(
         review_path=Path("review.md"),
-        proposal_path=Path("proposal.md"),
-        proposal_diff_path=diff_path or Path("proposal.diff"),
-        proposal_json_path=proposal_path or Path("proposal.json"),
+        proposal_path=None if no_proposal else Path("proposal.md"),
+        proposal_diff_path=None if no_proposal else diff_path or Path("proposal.diff"),
+        proposal_json_path=None if no_proposal else proposal_path or Path("proposal.json"),
         change_count=1 if accepted else 0,
-        sample_change_count=1,
-        proposed_change_count=1,
+        sample_change_count=0 if no_proposal else 1,
+        proposed_change_count=0 if no_proposal else 1,
         learned_count=1 if accepted else 0,
         accepted=accepted,
         model="test-model",

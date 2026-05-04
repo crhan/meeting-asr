@@ -1013,6 +1013,35 @@ def test_apply_project_speakers_writes_project_outputs(tmp_path: Path) -> None:
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
 
 
+def test_apply_project_speakers_refreshes_corrected_named_outputs(tmp_path: Path) -> None:
+    """Speaker naming should keep corrected transcript outputs aligned with new names."""
+    project_dir = _sample_project(tmp_path)
+    sentences_path = project_dir / "asr" / "sentences.json"
+    _write_sample_sentences(sentences_path)
+    corrected = json.loads(sentences_path.read_text(encoding="utf-8"))
+    corrected["sentences"][0]["text"] = "修正后的大家好。"
+    corrected["full_text"] = "修正后的大家好。收到。再补一句。"
+    (project_dir / "asr" / "sentences_corrected.json").write_text(
+        json.dumps(corrected, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    manifest = load_manifest(project_dir)
+    manifest.status = "corrected"
+    save_manifest(project_dir, manifest)
+
+    apply_project_speakers(project_dir, {0: "欧丁"})
+
+    reloaded = load_manifest(project_dir)
+    corrected_named = project_dir / "exports" / "transcript_named_corrected.txt"
+    corrected_srt = project_dir / "exports" / "subtitle_named_corrected.srt"
+
+    assert reloaded.status == "corrected"
+    assert reloaded.outputs["corrected_named_transcript"] == "exports/transcript_named_corrected.txt"
+    assert reloaded.outputs["corrected_named_subtitle"] == "exports/subtitle_named_corrected.srt"
+    assert "修正后的大家好" in corrected_named.read_text(encoding="utf-8")
+    assert "欧丁" in corrected_srt.read_text(encoding="utf-8")
+
+
 def test_apply_project_speakers_keeps_person_map_in_sync(tmp_path: Path) -> None:
     """Applying names without person ids should not leave stale identity links."""
     project_dir = _sample_project(tmp_path)

@@ -521,13 +521,34 @@ def apply_project_speakers(
         render_named_speaker_text(result, resolved_mapping),
     )
     srt_path = safe_write_text(paths.exports_dir / "subtitle_named.srt", render_named_srt(result, resolved_mapping))
+    corrected_result = _load_corrected_result(paths)
+    if corrected_result is not None:
+        corrected_transcript_path = safe_write_text(
+            paths.exports_dir / "transcript_named_corrected.txt",
+            render_named_speaker_text(corrected_result, resolved_mapping),
+        )
+        corrected_srt_path = safe_write_text(
+            paths.exports_dir / "subtitle_named_corrected.srt",
+            render_named_srt(corrected_result, resolved_mapping),
+        )
+        manifest.outputs["corrected_named_transcript"] = _relative_path(paths.root, corrected_transcript_path)
+        manifest.outputs["corrected_named_subtitle"] = _relative_path(paths.root, corrected_srt_path)
     manifest.speakers["detected_ids"] = result.detected_speakers
     manifest.speakers["mapped"] = {str(key): value for key, value in sorted(resolved_mapping.items())}
     manifest.outputs["named_transcript"] = _relative_path(paths.root, transcript_path)
     manifest.outputs["named_subtitle"] = _relative_path(paths.root, srt_path)
-    manifest.status = "named"
+    manifest.status = "corrected" if corrected_result is not None else "named"
     save_manifest(paths.root, manifest)
     return mapping_path, transcript_path, srt_path
+
+
+def _load_corrected_result(paths: ProjectPaths) -> TranscriptResult | None:
+    """Load corrected transcript artifacts when vocabulary correction exists."""
+    corrected_path = paths.asr_dir / "sentences_corrected.json"
+    if not corrected_path.exists():
+        return None
+    return load_transcript_result(corrected_path)
+
 
 def summarize_project(
     project_dir: Path,

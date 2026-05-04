@@ -15,7 +15,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Footer, Header, Static
 
-from app.models import SentenceSegment
+from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
 from app.project_manager import ProjectManifest, load_manifest, project_paths, resolve_project_source_path
 from app.speaker_labeling import load_transcript_result
@@ -646,7 +646,7 @@ def load_speaker_review_session(
         Speaker review session.
     """
     paths = project_paths(project_dir)
-    result = load_transcript_result(paths.asr_dir / "sentences.json")
+    result = _load_review_transcript_result(paths.asr_dir)
     segments_by_speaker = _segments_by_speaker(result.sentences)
     if not segments_by_speaker:
         raise RuntimeError("No detected speakers found in the transcript.")
@@ -799,6 +799,14 @@ def _project_duration_ms(sentences: list[SentenceSegment]) -> int:
         Duration in milliseconds.
     """
     return max((sentence.end_time_ms for sentence in sentences), default=0)
+
+
+def _load_review_transcript_result(asr_dir: Path) -> TranscriptResult:
+    """Load the transcript version humans should review."""
+    corrected = asr_dir / "sentences_corrected.json"
+    if corrected.exists():
+        return load_transcript_result(corrected)
+    return load_transcript_result(asr_dir / "sentences.json")
 
 
 def _segments_by_speaker(sentences: list[SentenceSegment]) -> dict[int, list[SentenceSegment]]:
