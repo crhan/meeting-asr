@@ -331,7 +331,6 @@ class CorrectionProposalDiffScreen(ModalScreen[CorrectionProposalSelection | Non
         Binding("end", "scroll_end", "Bottom", show=False),
         Binding("x", "toggle_change", "Toggle"),
         Binding("a", "accept_selected", "Apply selected"),
-        Binding("enter", "close_diff", "Back"),
         Binding("escape", "close_diff", "Back", show=False),
         Binding("q", "close_diff", "Back"),
     ]
@@ -369,7 +368,7 @@ class CorrectionProposalDiffScreen(ModalScreen[CorrectionProposalSelection | Non
             yield Static(self._legend(), id="diff-legend")
             with ScrollableContainer(id="diff-scroll"):
                 yield Static(self._diff_renderable(), id="diff-content")
-            yield Static("up/down or j/k choose change | x include/exclude | a apply selected | Enter returns", id="diff-actions")
+            yield Static("up/down or j/k choose change | x include/exclude | a apply selected | Esc returns", id="diff-actions")
 
     def action_page_down(self) -> None:
         """Scroll the diff one page down."""

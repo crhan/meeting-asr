@@ -346,7 +346,7 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
             assert any(str(span.style) == "bold green" for span in styled_diff.spans)
             assert any(str(span.style) == "bold red" for span in styled_diff.spans)
 
-            await pilot.press("enter")
+            await pilot.press("escape")
             await pilot.pause()
 
             await pilot.press("a")
@@ -430,6 +430,8 @@ def test_correction_diff_viewer_uses_standard_vertical_keys(tmp_path: Path) -> N
 
             assert screen.current_change_index == 0
             assert "up/down" in str(screen.query_one("#diff-actions", Static).render())
+            assert "Esc returns" in str(screen.query_one("#diff-actions", Static).render())
+            assert "Enter returns" not in str(screen.query_one("#diff-actions", Static).render())
             assert "n/p" not in str(screen.query_one("#diff-actions", Static).render())
 
             await pilot.press("down")
@@ -441,6 +443,16 @@ def test_correction_diff_viewer_uses_standard_vertical_keys(tmp_path: Path) -> N
             await pilot.pause()
 
             assert screen.current_change_index == 0
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, CorrectionProposalDiffScreen)
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert not isinstance(pilot.app.screen, CorrectionProposalDiffScreen)
 
     asyncio.run(scenario())
 
