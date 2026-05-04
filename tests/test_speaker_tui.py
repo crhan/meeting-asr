@@ -250,7 +250,7 @@ def test_transcript_correction_input_uses_readline_cursor_keys() -> None:
 
 def test_identity_input_uses_readline_cursor_keys() -> None:
     """Identity edit should share non-destructive cursor keys."""
-    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"),)))
+    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁", "vpp-0000000000000042"),)))
 
     async def scenario() -> None:
         async with app.run_test() as pilot:
@@ -271,7 +271,7 @@ def test_identity_input_uses_readline_cursor_keys() -> None:
 
 def test_speaker_review_tui_binds_existing_person_by_name() -> None:
     """Typing an existing person name should bind the stable person id."""
-    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"),)))
+    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁", "vpp-0000000000000042"),)))
 
     async def scenario() -> None:
         async with app.run_test() as pilot:
@@ -288,12 +288,20 @@ def test_speaker_review_tui_binds_existing_person_by_name() -> None:
         saved=True,
         mapping={0: "欧丁"},
         person_mapping={0: 42},
+        person_public_mapping={0: "vpp-0000000000000042"},
     )
 
 
 def test_speaker_review_tui_shows_filterable_people_selector() -> None:
     """Name edit should visibly filter and select stable voiceprint people."""
-    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"), KnownPerson(7, "敬悦"))))
+    app = SpeakerReviewApp(
+        _session(
+            people=(
+                KnownPerson(42, "欧丁", "vpp-0000000000000042"),
+                KnownPerson(7, "敬悦", "vpp-0000000000000007"),
+            )
+        )
+    )
 
     async def scenario() -> None:
         async with app.run_test() as pilot:
@@ -302,7 +310,7 @@ def test_speaker_review_tui_shows_filterable_people_selector() -> None:
             identity = str(app.screen.query_one("#identity-list", Static).render())
             assert "People" in identity
             assert "欧丁" in identity
-            assert "#42" in identity
+            assert "vpp-0000000000000042" in identity
 
             field = app.screen.query_one("#identity-search", Input)
             field.value = "敬"
@@ -310,7 +318,7 @@ def test_speaker_review_tui_shows_filterable_people_selector() -> None:
 
             identity = str(app.screen.query_one("#identity-list", Static).render())
             assert "敬悦" in identity
-            assert "#7" in identity
+            assert "vpp-0000000000000007" in identity
 
             await pilot.press("enter")
             await pilot.press("s")
@@ -321,6 +329,7 @@ def test_speaker_review_tui_shows_filterable_people_selector() -> None:
         saved=True,
         mapping={0: "敬悦"},
         person_mapping={0: 7},
+        person_public_mapping={0: "vpp-0000000000000007"},
     )
 
 
@@ -340,7 +349,13 @@ def test_speaker_review_identity_modal_sorts_people_by_score() -> None:
         ),
     )
     app = SpeakerReviewApp(
-        _session(people=(KnownPerson(10, "墨泪"), KnownPerson(37, "华璟"), KnownPerson(34, "丰禾")))
+        _session(
+            people=(
+                KnownPerson(10, "墨泪", "vpp-0000000000000010"),
+                KnownPerson(37, "华璟", "vpp-0000000000000037"),
+                KnownPerson(34, "丰禾", "vpp-0000000000000034"),
+            )
+        )
     )
     app.session.speakers[0].match = match
 
@@ -361,7 +376,14 @@ def test_speaker_review_identity_modal_sorts_people_by_score() -> None:
 
 def test_speaker_review_tui_arrow_selects_known_person() -> None:
     """Up and down in name edit should move the highlighted person list row."""
-    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁"), KnownPerson(7, "敬悦"))))
+    app = SpeakerReviewApp(
+        _session(
+            people=(
+                KnownPerson(42, "欧丁", "vpp-0000000000000042"),
+                KnownPerson(7, "敬悦", "vpp-0000000000000007"),
+            )
+        )
+    )
     app.session.speakers[0].match = SpeakerMatchCandidate(
         "欧丁",
         0.95,
@@ -386,6 +408,7 @@ def test_speaker_review_tui_arrow_selects_known_person() -> None:
         saved=True,
         mapping={0: "敬悦"},
         person_mapping={0: 7},
+        person_public_mapping={0: "vpp-0000000000000007"},
     )
 
 

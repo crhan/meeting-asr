@@ -101,7 +101,7 @@ def write_speaker_mapping(path: Path, speaker_mapping: dict[int, str]) -> Path:
     return safe_write_json(path, payload)
 
 
-def write_speaker_person_mapping(path: Path, speaker_person_mapping: dict[int, int]) -> Path:
+def write_speaker_person_mapping(path: Path, speaker_person_mapping: dict[int, int | str]) -> Path:
     """
     Write project speaker to voiceprint person id mapping.
 
@@ -116,7 +116,7 @@ def write_speaker_person_mapping(path: Path, speaker_person_mapping: dict[int, i
     return safe_write_json(path, payload)
 
 
-def load_speaker_person_mapping(path: Path) -> dict[int, int]:
+def load_speaker_person_mapping(path: Path) -> dict[int, int | str]:
     """
     Load project speaker to voiceprint person id mapping.
 
@@ -124,14 +124,14 @@ def load_speaker_person_mapping(path: Path) -> dict[int, int]:
         path: Mapping JSON path.
 
     Returns:
-        Project speaker id to voiceprint person id mapping.
+        Project speaker id to voiceprint person id reference mapping.
     """
     if not path.exists():
         return {}
     payload = json.loads(path.read_text(encoding="utf-8"))
-    mapping: dict[int, int] = {}
+    mapping: dict[int, int | str] = {}
     for key, value in payload.items():
-        mapping[int(key)] = int(value)
+        mapping[int(key)] = value
     return mapping
 
 

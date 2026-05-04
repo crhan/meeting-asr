@@ -27,6 +27,7 @@ class IdentitySelection:
     """Selected stable speaker identity."""
 
     person_id: int
+    public_id: str
     name: str
     created: bool = False
 
@@ -36,6 +37,7 @@ class ScoredPerson:
     """Known person with a speaker-match score for display."""
 
     person_id: int
+    public_id: str
     name: str
     score: float | None
 
@@ -172,7 +174,7 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
         """Accept the highlighted person."""
         person = self._selected_person()
         if person is not None:
-            self.dismiss(IdentitySelection(person.person_id, person.name))
+            self.dismiss(IdentitySelection(person.person_id, _display_public_id(person), person.name))
 
     def action_cancel_identity(self) -> None:
         """Cancel identity selection."""
@@ -185,11 +187,11 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
             return
         exact = find_person_by_name(value, self.people) if value else None
         if exact is not None:
-            self.dismiss(IdentitySelection(exact.person_id, exact.name))
+            self.dismiss(IdentitySelection(exact.person_id, _display_public_id(exact), exact.name))
             return
         person = self._selected_person()
         if person is not None:
-            self.dismiss(IdentitySelection(person.person_id, person.name))
+            self.dismiss(IdentitySelection(person.person_id, _display_public_id(person), person.name))
             return
         self.query_one("#identity-status", Static).update(
             f"Unknown person: {escape(value)}. Use +Name to create."
@@ -203,7 +205,7 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
         duplicate = find_person_by_name(name, self.people)
         if duplicate is not None:
             self.query_one("#identity-status", Static).update(
-                f"Person already exists: {escape(duplicate.name)} #{duplicate.person_id}."
+                f"Person already exists: {escape(duplicate.name)} {_display_public_id(duplicate)}."
             )
             return
         try:
@@ -211,7 +213,7 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
         except Exception as exc:  # noqa: BLE001
             self.query_one("#identity-status", Static).update(f"Failed to create person: {escape(str(exc))}")
             return
-        self.dismiss(IdentitySelection(row.speaker_id, row.name, created=True))
+        self.dismiss(IdentitySelection(row.speaker_id, row.public_id, row.name, created=True))
 
     def _move_selection(self, delta: int) -> None:
         """Move highlighted person within the filtered list."""
@@ -237,7 +239,7 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
         for offset, person in enumerate(visible):
             index = start + offset
             marker = ">" if index == self.selected_index else " "
-            row = f"{marker} {escape(person.name):<24} {_score_text(person.score):<11} [dim]#{person.person_id}[/]"
+            row = f"{marker} {escape(person.name):<24} {_score_text(person.score):<11} [dim]{_display_public_id(person)}[/]"
             lines.append(f"[reverse]{row}[/]" if index == self.selected_index else row)
         if len(people) > IDENTITY_LIST_LIMIT:
             end = start + len(visible)
@@ -246,7 +248,8 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
 
     def _context_text(self) -> str:
         """Render current identity and match context."""
-        person = f"person #{self.current_person_id}" if self.current_person_id is not None else "no person id"
+        public_id = _known_public_id(self.people, self.current_person_id)
+        person = f"person {public_id}" if public_id is not None else "no person id"
         lines = [f"Current: [green]{escape(self.current_name)}[/] ([dim]{person}[/])"]
         if self.match is not None:
             lines.extend(render_match_lines(self.match))
@@ -285,6 +288,7 @@ def _scored_people(
     rows = [
         ScoredPerson(
             person.person_id,
+            person.public_id,
             person.name,
             _person_score(person, score_by_person, score_by_name),
         )
@@ -344,7 +348,8 @@ def _missing_match_people(
     missing = []
     for candidate in match.candidates:
         if candidate.person_id is not None and candidate.person_id not in known_ids:
-            missing.append(ScoredPerson(candidate.person_id, candidate.name, candidate.score))
+            public_id = candidate.person_public_id or f"legacy-{candidate.person_id}"
+            missing.append(ScoredPerson(candidate.person_id, public_id, candidate.name, candidate.score))
             known_ids.add(candidate.person_id)
     return missing
 
@@ -368,6 +373,21 @@ def _visible_window(people: list[ScoredPerson], selected_index: int) -> tuple[in
     last_start = max(0, len(people) - IDENTITY_LIST_LIMIT)
     start = max(0, min(selected_index - IDENTITY_LIST_LIMIT + 1, last_start))
     return start, people[start : start + IDENTITY_LIST_LIMIT]
+
+
+def _known_public_id(people: list[KnownPerson], person_id: int | None) -> str | None:
+    """Return a known public id for an internal person id."""
+    if person_id is None:
+        return None
+    for person in people:
+        if person.person_id == person_id:
+            return _display_public_id(person)
+    return None
+
+
+def _display_public_id(person: KnownPerson | ScoredPerson) -> str:
+    """Return a stable display id for old test rows and new public-id rows."""
+    return person.public_id or f"legacy-{person.person_id}"
 
 
 def _normalize_name(name: str) -> str:

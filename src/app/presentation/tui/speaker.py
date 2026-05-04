@@ -35,6 +35,7 @@ from app.presentation.tui.speaker_matches import (
     SpeakerMatchCandidate,
     accepted_review_name,
     accepted_review_person_id,
+    accepted_review_person_public_id,
     load_match_candidates,
 )
 from app.presentation.tui.speaker_people import (
@@ -79,6 +80,7 @@ class ReviewSpeaker:
     selected_sample_index: int = 0
     ignored: bool = False
     person_id: int | None = None
+    person_public_id: str | None = None
 
     @property
     def segment_count(self) -> int:
@@ -109,6 +111,7 @@ class SpeakerReviewDecision:
     mapping: dict[int, str]
     action: str = "save"
     person_mapping: dict[int, int] = field(default_factory=dict)
+    person_public_mapping: dict[int, str] = field(default_factory=dict)
     correction_edit: SentenceCorrectionEdit | None = None
 
 
@@ -271,7 +274,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         if person_id is None:
             person = find_person_by_name(candidate, self.known_people)
             person_id = None if person is None else person.person_id
-        self._set_speaker_identity(speaker, candidate, person_id)
+        person_public_id = _known_person_public_id(self.known_people, person_id)
+        person_public_id = person_public_id or (None if speaker.match is None else speaker.match.best_person_public_id)
+        self._set_speaker_identity(speaker, candidate, person_id, person_public_id)
         self._set_status(f"Accepted match for {speaker.label}: {candidate}.")
         self._refresh()
 
@@ -281,6 +286,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         speaker.current_name = speaker.label
         speaker.ignored = True
         speaker.person_id = None
+        speaker.person_public_id = None
         self._set_status(f"Ignored {speaker.label}; it will stay anonymous and be skipped by capture.")
         self._refresh()
 
@@ -297,6 +303,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 mapping=self._mapping(),
                 action=action,
                 person_mapping=self._person_mapping(),
+                person_public_mapping=self._person_public_mapping(),
                 correction_edit=self.correction_edit,
             )
         )
@@ -338,9 +345,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             return
         speaker = self._speaker()
         self._remember_known_person(selection)
-        self._set_speaker_identity(speaker, selection.name, selection.person_id)
+        self._set_speaker_identity(speaker, selection.name, selection.person_id, selection.public_id)
         action = "Created" if selection.created else "Set"
-        self._set_status(f"{action} {speaker.label} to {selection.name} #{selection.person_id}.")
+        self._set_status(f"{action} {speaker.label} to {selection.name} {selection.public_id}.")
         self._refresh()
 
     def _move_focused_row(self, delta: int) -> None:
@@ -480,21 +487,31 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             if speaker.person_id is not None and not speaker.ignored
         }
 
+    def _person_public_mapping(self) -> dict[int, str]:
+        """Return the current speaker to voiceprint person public id mapping."""
+        return {
+            speaker.speaker_id: speaker.person_public_id
+            for speaker in self.session.speakers
+            if speaker.person_public_id is not None and not speaker.ignored
+        }
+
     def _set_speaker_identity(
         self,
         speaker: ReviewSpeaker,
         name: str,
         person_id: int | None,
+        person_public_id: str | None,
     ) -> None:
         """Set a speaker display name and optional voiceprint person id."""
         speaker.current_name = name.strip() or speaker.label
         speaker.ignored = speaker.current_name == speaker.label
         speaker.person_id = None if speaker.ignored else person_id
+        speaker.person_public_id = None if speaker.ignored else person_public_id
 
     def _remember_known_person(self, selection: IdentitySelection) -> None:
         """Keep newly-created or match-only people available in later modal opens."""
         if find_person_by_name(selection.name, self.known_people) is None:
-            self.known_people.append(KnownPerson(selection.person_id, selection.name))
+            self.known_people.append(KnownPerson(selection.person_id, selection.name, selection.public_id))
 
     def _speaker(self) -> ReviewSpeaker:
         """Return the selected speaker."""
@@ -588,8 +605,11 @@ def load_speaker_review_session(
     mapping = _load_existing_mapping(mapping_path)
     matches = load_match_candidates(match_path)
     people = load_people(store_dir)
-    person_mapping = load_existing_person_mapping(paths.speakers_dir / "speaker_person_map.json")
-    speakers = _build_review_speakers(segments_by_speaker, mapping, person_mapping, matches)
+    person_mapping, person_public_mapping = load_existing_person_mapping(
+        paths.speakers_dir / "speaker_person_map.json",
+        people,
+    )
+    speakers = _build_review_speakers(segments_by_speaker, mapping, person_mapping, person_public_mapping, matches)
     return SpeakerReviewSession(
         project_dir=paths.root,
         source_media=source_media,
@@ -739,11 +759,12 @@ def _build_review_speakers(
     segments_by_speaker: dict[int, list[SentenceSegment]],
     mapping: dict[int, str],
     person_mapping: dict[int, int],
+    person_public_mapping: dict[int, str],
     matches: dict[int, SpeakerMatchCandidate],
 ) -> list[ReviewSpeaker]:
     """Build mutable speaker review rows."""
     return [
-        _review_speaker(speaker_id, segments, mapping, person_mapping, matches)
+        _review_speaker(speaker_id, segments, mapping, person_mapping, person_public_mapping, matches)
         for speaker_id, segments in sorted(segments_by_speaker.items())
     ]
 
@@ -753,6 +774,7 @@ def _review_speaker(
     segments: list[SentenceSegment],
     mapping: dict[int, str],
     person_mapping: dict[int, int],
+    person_public_mapping: dict[int, str],
     matches: dict[int, SpeakerMatchCandidate],
 ) -> ReviewSpeaker:
     """Build one speaker review row."""
@@ -760,12 +782,22 @@ def _review_speaker(
     match = matches.get(speaker_id)
     current_name = mapping.get(speaker_id) or accepted_review_name(match) or label
     person_id = person_mapping.get(speaker_id) or accepted_review_person_id(match)
+    person_public_id = person_public_mapping.get(speaker_id) or accepted_review_person_public_id(match)
     ignored = (
         speaker_id in mapping
         and current_name == label
         and (match is None or voiceprint_match_status(match) != MATCH_STATUS_BELOW_THRESHOLD)
     )
-    return ReviewSpeaker(speaker_id, label, segments, current_name, match, ignored=ignored, person_id=person_id)
+    return ReviewSpeaker(
+        speaker_id,
+        label,
+        segments,
+        current_name,
+        match,
+        ignored=ignored,
+        person_id=person_id,
+        person_public_id=person_public_id,
+    )
 
 
 def _sample_page_start(selected_index: int, page_size: int) -> int:
@@ -803,6 +835,16 @@ def _same_sentence(segment: SentenceSegment, edit: SentenceCorrectionEdit) -> bo
         and segment.begin_time_ms == edit.begin_time_ms
         and segment.end_time_ms == edit.end_time_ms
     )
+
+
+def _known_person_public_id(people: list[KnownPerson], person_id: int | None) -> str | None:
+    """Return a known public id for an internal person id."""
+    if person_id is None:
+        return None
+    for person in people:
+        if person.person_id == person_id:
+            return person.public_id
+    return None
 
 
 def _trim_sample_text(text: str, *, limit: int = 90) -> str:

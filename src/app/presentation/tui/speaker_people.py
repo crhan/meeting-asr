@@ -15,6 +15,7 @@ class KnownPerson:
 
     person_id: int
     name: str
+    public_id: str = ""
 
 
 def load_people(store_dir: Path | None) -> list[KnownPerson]:
@@ -28,23 +29,33 @@ def load_people(store_dir: Path | None) -> list[KnownPerson]:
         Stable person rows for the TUI.
     """
     db_path = get_voiceprint_db_path(store_dir)
-    return [KnownPerson(row.speaker_id, row.name) for row in list_voiceprint_speakers(db_path)]
+    return [KnownPerson(row.speaker_id, row.name, row.public_id) for row in list_voiceprint_speakers(db_path)]
 
 
-def load_existing_person_mapping(path: Path) -> dict[int, int]:
+def load_existing_person_mapping(path: Path, people: list[KnownPerson]) -> tuple[dict[int, int], dict[int, str]]:
     """
     Load the current project speaker-to-person map if it exists.
 
     Args:
         path: Mapping JSON path.
+        people: Known voiceprint people for resolving public ids.
 
     Returns:
-        Project speaker id to voiceprint person id mapping.
+        Internal and public project speaker to voiceprint person id mappings.
     """
     if not path.exists():
-        return {}
+        return {}, {}
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return {int(key): int(value) for key, value in payload.items()}
+    internal: dict[int, int] = {}
+    public: dict[int, str] = {}
+    for key, value in payload.items():
+        speaker_id = int(key)
+        person = _resolve_person(value, people)
+        if person is None:
+            continue
+        internal[speaker_id] = person.person_id
+        public[speaker_id] = person.public_id
+    return internal, public
 
 
 def find_person_by_name(name: str, people: list[KnownPerson]) -> KnownPerson | None:
@@ -82,6 +93,24 @@ def optional_person_id(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return person_id if person_id > 0 else None
+
+
+def _resolve_person(value: object, people: list[KnownPerson]) -> KnownPerson | None:
+    """Resolve a person map value through public id first, then numeric id."""
+    if isinstance(value, str):
+        by_public_id = _person_by_public_id(value, people)
+        if by_public_id is not None:
+            return by_public_id
+    person_id = optional_person_id(value)
+    if person_id is None:
+        return None
+    return next((person for person in people if person.person_id == person_id), None)
+
+
+def _person_by_public_id(public_id: str, people: list[KnownPerson]) -> KnownPerson | None:
+    """Return a known person by public id."""
+    stripped = public_id.strip()
+    return next((person for person in people if person.public_id == stripped), None)
 
 
 def _normalize_person_name(name: str) -> str:

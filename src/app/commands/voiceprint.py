@@ -174,13 +174,13 @@ def people_add_command(
         emit_json(_voiceprint_speaker_payload(row))
         return
     typer.echo(f"Created person: {row.name}")
-    typer.echo(f"Person ID: {row.speaker_id}")
+    typer.echo(f"Person ID: {row.public_id}")
     typer.echo("Use this ID as the stable identity; display names may change later.")
 
 
 @people_app.command("rename")
 def people_rename_command(
-    person_id: int = typer.Argument(..., metavar="PERSON_ID", min=1),
+    person_id: str = typer.Argument(..., metavar="PERSON_ID"),
     name: str = typer.Argument(..., metavar="NAME"),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
@@ -191,12 +191,12 @@ def people_rename_command(
     if as_json:
         emit_json(_voiceprint_speaker_payload(row))
         return
-    typer.echo(f"Renamed person #{row.speaker_id}: {row.name}")
+    typer.echo(f"Renamed person {row.public_id}: {row.name}")
 
 
 @people_app.command("show")
 def people_show_command(
-    person_id: int = typer.Argument(..., metavar="PERSON_ID", min=1),
+    person_id: str = typer.Argument(..., metavar="PERSON_ID"),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
@@ -208,7 +208,7 @@ def people_show_command(
     if as_json:
         emit_json(_voiceprint_speaker_payload(row))
         return
-    typer.echo(f"Person ID: {row.speaker_id}")
+    typer.echo(f"Person ID: {row.public_id}")
     typer.echo(f"Name: {row.name}")
     typer.echo(f"Samples: {row.sample_count}")
     typer.echo(f"Projects: {row.project_count}")
@@ -264,8 +264,8 @@ def show_command(
         start = format_ms_timestamp(row.source_begin_time_ms)
         end = format_ms_timestamp(row.source_end_time_ms)
         typer.echo(f"[{index}] {row.speaker_name} | {row.project_id} | speaker {row.project_speaker_id}")
-        typer.echo(f"  speaker_id: {row.speaker_id}")
-        typer.echo(f"  sample_id: {row.sample_id}")
+        typer.echo(f"  person_id: {row.speaker_public_id}")
+        typer.echo(f"  sample_id: {row.public_id}")
         typer.echo(f"  clip: {row.clip_path}")
         typer.echo(f"  time: {start} - {end}")
         typer.echo(f"  sha256: {row.clip_sha256}")
@@ -318,7 +318,7 @@ def delete_speaker_command(
     deleted = run_with_cli_errors(
         lambda: delete_voiceprint_speaker(speaker, db_path=db_path, delete_clips=not keep_clips)
     )
-    typer.echo(f"Deleted speaker: {deleted[0].speaker_name} (id {deleted[0].speaker_id})")
+    typer.echo(f"Deleted speaker: {deleted[0].speaker_name} (id {deleted[0].speaker_public_id})")
     for item in deleted:
         _echo_deleted_sample(item.clip_path, item.clip_deleted, kept=keep_clips)
 
@@ -357,6 +357,7 @@ def _echo_voiceprint_speaker_table_plain(rows: list[VoiceprintSpeakerRow]) -> No
     """
     plain_rows = [
         (
+            row.public_id,
             row.speaker_id,
             row.name,
             row.sample_count,
@@ -367,7 +368,7 @@ def _echo_voiceprint_speaker_table_plain(rows: list[VoiceprintSpeakerRow]) -> No
         )
         for row in rows
     ]
-    echo_plain_table(("id", "speaker", "samples", "projects", "embedded", "models", "updated"), plain_rows)
+    echo_plain_table(("id", "internal_id", "speaker", "samples", "projects", "embedded", "models", "updated"), plain_rows)
 
 
 def _voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> Table:
@@ -381,7 +382,7 @@ def _voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> Table:
         Rich table ready to print.
     """
     table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
-    table.add_column("ID", justify="right", no_wrap=True, style="bold cyan")
+    table.add_column("ID", no_wrap=True, style="bold cyan")
     table.add_column("Speaker")
     table.add_column("Samples", justify="right", no_wrap=True)
     table.add_column("Projects", justify="right", no_wrap=True)
@@ -390,7 +391,7 @@ def _voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> Table:
     table.add_column("Updated", no_wrap=True)
     for row in rows:
         table.add_row(
-            str(row.speaker_id),
+            row.public_id,
             row.name,
             str(row.sample_count),
             str(row.project_count),
@@ -435,6 +436,7 @@ def _voiceprint_speaker_payload(row: VoiceprintSpeakerRow) -> dict[str, object]:
     """
     return {
         "speaker_id": row.speaker_id,
+        "public_id": row.public_id,
         "name": row.name,
         "sample_count": row.sample_count,
         "project_count": row.project_count,
@@ -482,7 +484,9 @@ def _voiceprint_sample_payload(index: int, row: VoiceprintSampleRow) -> dict[str
     return {
         "index": index,
         "sample_id": row.sample_id,
+        "public_id": row.public_id,
         "speaker_id": row.speaker_id,
+        "speaker_public_id": row.speaker_public_id,
         "speaker_name": row.speaker_name,
         "project_id": row.project_id,
         "project_speaker_id": row.project_speaker_id,
@@ -556,7 +560,7 @@ def _echo_capture_summary(summary: VoiceprintCaptureSummary) -> None:
     typer.echo(f"Database: {summary.db_path}")
     typer.echo(f"Clips: {summary.clip_dir}")
     for speaker in summary.speakers:
-        person = "" if speaker.person_id is None else f", person #{speaker.person_id}"
+        person = "" if speaker.person_public_id is None else f", person {speaker.person_public_id}"
         typer.echo(f"{speaker.name} (speaker {speaker.speaker_id}{person}): {len(speaker.clips)} sample(s)")
         for clip in speaker.clips:
             typer.echo(f"  - {clip.path}")
@@ -616,7 +620,7 @@ def _speaker_label(speaker: str, db_path: Path) -> str:
     rows = run_with_cli_errors(lambda: list_voiceprint_samples(speaker, db_path))
     if not rows:
         return speaker
-    return f"{rows[0].speaker_name} (id {rows[0].speaker_id})"
+    return f"{rows[0].speaker_name} (id {rows[0].speaker_public_id})"
 
 
 def _echo_deleted_sample(path: Path, clip_deleted: bool, *, kept: bool = False) -> None:

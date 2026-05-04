@@ -5,13 +5,25 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import struct
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from app.config import get_data_dir
+from app.voiceprint_ids import (
+    ensure_voiceprint_public_ids,
+    new_sample_public_id,
+    new_speaker_public_id,
+    valid_person_public_id,
+)
+from app.voiceprint_models import (
+    DeletedVoiceprintSample,
+    StoredVoiceprintSample,
+    VoiceprintEmbeddingRow,
+    VoiceprintSampleRow,
+    VoiceprintSpeakerRow,
+)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 VOICEPRINT_STORE_DIR = "voiceprints"
 VOICEPRINT_DB_FILENAME = "voiceprints.sqlite"
 VOICEPRINT_CLIPS_DIR = "clips"
@@ -19,6 +31,7 @@ VOICEPRINT_CLIPS_DIR = "clips"
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS voiceprint_speakers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  public_id TEXT UNIQUE,
   name TEXT NOT NULL,
   normalized_name TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL,
@@ -27,6 +40,7 @@ CREATE TABLE IF NOT EXISTS voiceprint_speakers (
 
 CREATE TABLE IF NOT EXISTS voiceprint_samples (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  public_id TEXT UNIQUE,
   speaker_id INTEGER NOT NULL REFERENCES voiceprint_speakers(id) ON DELETE CASCADE,
   project_id TEXT NOT NULL,
   project_path TEXT NOT NULL,
@@ -66,11 +80,11 @@ CREATE INDEX IF NOT EXISTS idx_voiceprint_embeddings_model
 
 UPSERT_SAMPLE_SQL = """
 INSERT INTO voiceprint_samples (
-  speaker_id, project_id, project_path, project_speaker_id,
+  public_id, speaker_id, project_id, project_path, project_speaker_id,
   source_path, clip_path, clip_rel_path, clip_sha256,
   source_begin_time_ms, source_end_time_ms, clip_begin_time_ms,
   clip_end_time_ms, transcript_text, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(clip_path) DO UPDATE SET
   speaker_id = excluded.speaker_id,
   project_id = excluded.project_id,
@@ -86,78 +100,6 @@ ON CONFLICT(clip_path) DO UPDATE SET
   transcript_text = excluded.transcript_text,
   updated_at = excluded.updated_at
 """
-
-
-@dataclass(frozen=True, slots=True)
-class VoiceprintSampleRow:
-    """Stored voiceprint sample row."""
-
-    sample_id: int
-    speaker_id: int
-    speaker_name: str
-    project_id: str
-    project_speaker_id: int
-    clip_path: Path
-    clip_rel_path: str
-    clip_sha256: str
-    source_begin_time_ms: int
-    source_end_time_ms: int
-    transcript_text: str
-
-
-@dataclass(frozen=True, slots=True)
-class VoiceprintSpeakerRow:
-    """Stored speaker summary row."""
-
-    speaker_id: int
-    name: str
-    sample_count: int
-    project_count: int
-    embedded_sample_count: int
-    embedding_model_count: int
-    updated_at: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class VoiceprintEmbeddingRow:
-    """Stored voiceprint embedding row."""
-
-    sample_id: int
-    speaker_id: int
-    speaker_name: str
-    clip_path: Path
-    model: str
-    vector: list[float]
-
-
-@dataclass(frozen=True, slots=True)
-class DeletedVoiceprintSample:
-    """Deleted voiceprint sample result."""
-
-    sample_id: int
-    speaker_id: int
-    speaker_name: str
-    clip_path: Path
-    clip_deleted: bool
-
-
-@dataclass(frozen=True, slots=True)
-class StoredVoiceprintSample:
-    """Voiceprint sample passed to SQLite storage."""
-
-    speaker_name: str
-    project_id: str
-    project_path: Path
-    project_speaker_id: int
-    source_path: Path
-    clip_path: Path
-    clip_rel_path: str
-    source_begin_time_ms: int
-    source_end_time_ms: int
-    clip_begin_time_ms: int
-    clip_end_time_ms: int
-    transcript_text: str
-    person_id: int | None = None
 
 
 def get_default_voiceprint_db_path() -> Path:
@@ -245,7 +187,7 @@ def list_voiceprint_speakers(db_path: Path | None = None) -> list[VoiceprintSpea
         _ensure_schema(connection)
         rows = connection.execute(
             """
-            SELECT speakers.id, speakers.name,
+            SELECT speakers.id, speakers.public_id, speakers.name,
                    COUNT(DISTINCT samples.id) AS sample_count,
                    COUNT(DISTINCT samples.project_id) AS project_count,
                    COUNT(DISTINCT embeddings.sample_id) AS embedded_sample_count,
@@ -283,7 +225,8 @@ def list_voiceprint_samples(speaker: str, db_path: Path | None = None) -> list[V
             return []
         rows = connection.execute(
             """
-            SELECT samples.id, speakers.id AS speaker_id, speakers.name,
+            SELECT samples.id, samples.public_id,
+                   speakers.id AS speaker_id, speakers.public_id AS speaker_public_id, speakers.name,
                    samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
@@ -316,7 +259,8 @@ def list_all_voiceprint_samples(db_path: Path | None = None) -> list[VoiceprintS
         _ensure_schema(connection)
         rows = connection.execute(
             """
-            SELECT samples.id, speakers.id AS speaker_id, speakers.name,
+            SELECT samples.id, samples.public_id,
+                   speakers.id AS speaker_id, speakers.public_id AS speaker_public_id, speakers.name,
                    samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
@@ -348,7 +292,8 @@ def list_voiceprint_samples_for_project(project_id: str, db_path: Path | None = 
         _ensure_schema(connection)
         rows = connection.execute(
             """
-            SELECT samples.id, speakers.id AS speaker_id, speakers.name,
+            SELECT samples.id, samples.public_id,
+                   speakers.id AS speaker_id, speakers.public_id AS speaker_public_id, speakers.name,
                    samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
@@ -535,6 +480,7 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         connection: SQLite connection.
     """
     connection.executescript(SCHEMA_SQL)
+    ensure_voiceprint_public_ids(connection)
     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
@@ -548,7 +494,7 @@ def _upsert_sample(connection: sqlite3.Connection, sample: StoredVoiceprintSampl
     """
     now = _now_iso()
     speaker_id = _speaker_id_for_sample(connection, sample, now)
-    connection.execute(UPSERT_SAMPLE_SQL, _sample_values(sample, speaker_id, now))
+    connection.execute(UPSERT_SAMPLE_SQL, _sample_values(sample, speaker_id, new_sample_public_id(connection), now))
 
 
 def _speaker_id_for_sample(
@@ -575,19 +521,21 @@ def _speaker_id_for_sample(
     return sample.person_id
 
 
-def _sample_values(sample: StoredVoiceprintSample, speaker_id: int, now: str) -> tuple[object, ...]:
+def _sample_values(sample: StoredVoiceprintSample, speaker_id: int, public_id: str, now: str) -> tuple[object, ...]:
     """
     Build SQLite values for one voiceprint sample.
 
     Args:
         sample: Sample metadata.
         speaker_id: Stored speaker id.
+        public_id: Stable sample public id for new rows.
         now: Current timestamp.
 
     Returns:
         Values for ``UPSERT_SAMPLE_SQL``.
     """
     return (
+        public_id,
         speaker_id,
         sample.project_id,
         str(sample.project_path.expanduser().resolve()),
@@ -621,13 +569,13 @@ def _upsert_speaker(connection: sqlite3.Connection, name: str, now: str) -> int:
     normalized = _normalize_name(name)
     connection.execute(
         """
-        INSERT INTO voiceprint_speakers (name, normalized_name, created_at, updated_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO voiceprint_speakers (public_id, name, normalized_name, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(normalized_name) DO UPDATE SET
           name = excluded.name,
           updated_at = excluded.updated_at
         """,
-        (name, normalized, now, now),
+        (new_speaker_public_id(connection), name, normalized, now, now),
     )
     row = connection.execute(
         "SELECT id FROM voiceprint_speakers WHERE normalized_name = ?",
@@ -649,12 +597,33 @@ def _find_speaker(connection: sqlite3.Connection, speaker: str) -> VoiceprintSpe
     Returns:
         Matching speaker row, or ``None`` when absent.
     """
+    row = _speaker_by_public_id(connection, speaker)
+    if row is not None:
+        return row
     speaker_id = _parse_speaker_id(speaker)
     if speaker_id is not None:
         row = _speaker_by_id(connection, speaker_id)
         if row is not None:
             return row
     return _speaker_by_name(connection, speaker)
+
+
+def _speaker_by_public_id(connection: sqlite3.Connection, public_id: str) -> VoiceprintSpeakerRow | None:
+    """
+    Find one speaker by public id.
+
+    Args:
+        connection: SQLite connection.
+        public_id: Voiceprint person public id.
+
+    Returns:
+        Matching speaker row, or ``None`` when absent.
+    """
+    stripped = public_id.strip().lower()
+    if not valid_person_public_id(stripped):
+        return None
+    row = connection.execute(_speaker_summary_sql("speakers.public_id = ?"), (stripped,)).fetchone()
+    return _optional_speaker_row(row)
 
 
 def _speaker_by_id(connection: sqlite3.Connection, speaker_id: int) -> VoiceprintSpeakerRow | None:
@@ -669,19 +638,7 @@ def _speaker_by_id(connection: sqlite3.Connection, speaker_id: int) -> Voiceprin
         Matching speaker row, or ``None`` when absent.
     """
     row = connection.execute(
-        """
-        SELECT speakers.id, speakers.name,
-               COUNT(DISTINCT samples.id) AS sample_count,
-               COUNT(DISTINCT samples.project_id) AS project_count,
-               COUNT(DISTINCT embeddings.sample_id) AS embedded_sample_count,
-               COUNT(DISTINCT embeddings.model) AS embedding_model_count,
-               MAX(samples.updated_at) AS updated_at
-        FROM voiceprint_speakers AS speakers
-        LEFT JOIN voiceprint_samples AS samples ON samples.speaker_id = speakers.id
-        LEFT JOIN voiceprint_embeddings AS embeddings ON embeddings.sample_id = samples.id
-        WHERE speakers.id = ?
-        GROUP BY speakers.id
-        """,
+        _speaker_summary_sql("speakers.id = ?"),
         (speaker_id,),
     ).fetchone()
     return _optional_speaker_row(row)
@@ -699,8 +656,24 @@ def _speaker_by_name(connection: sqlite3.Connection, name: str) -> VoiceprintSpe
         Matching speaker row, or ``None`` when absent.
     """
     row = connection.execute(
-        """
-        SELECT speakers.id, speakers.name,
+        _speaker_summary_sql("speakers.normalized_name = ?"),
+        (_normalize_name(name),),
+    ).fetchone()
+    return _optional_speaker_row(row)
+
+
+def _speaker_summary_sql(where_sql: str) -> str:
+    """
+    Build the common speaker summary query.
+
+    Args:
+        where_sql: SQL predicate for the speaker row.
+
+    Returns:
+        SQL string.
+    """
+    return f"""
+        SELECT speakers.id, speakers.public_id, speakers.name,
                COUNT(DISTINCT samples.id) AS sample_count,
                COUNT(DISTINCT samples.project_id) AS project_count,
                COUNT(DISTINCT embeddings.sample_id) AS embedded_sample_count,
@@ -709,12 +682,9 @@ def _speaker_by_name(connection: sqlite3.Connection, name: str) -> VoiceprintSpe
         FROM voiceprint_speakers AS speakers
         LEFT JOIN voiceprint_samples AS samples ON samples.speaker_id = speakers.id
         LEFT JOIN voiceprint_embeddings AS embeddings ON embeddings.sample_id = samples.id
-        WHERE speakers.normalized_name = ?
+        WHERE {where_sql}
         GROUP BY speakers.id
-        """,
-        (_normalize_name(name),),
-    ).fetchone()
-    return _optional_speaker_row(row)
+    """
 
 
 def _optional_speaker_row(row: sqlite3.Row | None) -> VoiceprintSpeakerRow | None:
@@ -761,7 +731,9 @@ def _sample_row(row: sqlite3.Row) -> VoiceprintSampleRow:
     """
     return VoiceprintSampleRow(
         sample_id=int(row["id"]),
+        public_id=str(row["public_id"]),
         speaker_id=int(row["speaker_id"]),
+        speaker_public_id=str(row["speaker_public_id"]),
         speaker_name=str(row["name"]),
         project_id=str(row["project_id"]),
         project_speaker_id=int(row["project_speaker_id"]),
@@ -787,6 +759,7 @@ def _speaker_row(row: sqlite3.Row) -> VoiceprintSpeakerRow:
     updated_at = row["updated_at"]
     return VoiceprintSpeakerRow(
         speaker_id=int(row["id"]),
+        public_id=str(row["public_id"]),
         name=str(row["name"]),
         sample_count=int(row["sample_count"]),
         project_count=int(row["project_count"]),
@@ -804,7 +777,9 @@ def _embedding_rows_sql() -> str:
         SQL query.
     """
     return """
-        SELECT samples.id AS sample_id, speakers.id AS speaker_id, speakers.name, samples.clip_path,
+        SELECT samples.id AS sample_id, samples.public_id AS sample_public_id,
+               speakers.id AS speaker_id, speakers.public_id AS speaker_public_id,
+               speakers.name, samples.clip_path,
                embeddings.model, embeddings.vector
         FROM voiceprint_embeddings AS embeddings
         JOIN voiceprint_samples AS samples ON samples.id = embeddings.sample_id
@@ -826,7 +801,9 @@ def _embedding_row(row: sqlite3.Row) -> VoiceprintEmbeddingRow:
     """
     return VoiceprintEmbeddingRow(
         sample_id=int(row["sample_id"]),
+        sample_public_id=str(row["sample_public_id"]),
         speaker_id=int(row["speaker_id"]),
+        speaker_public_id=str(row["speaker_public_id"]),
         speaker_name=str(row["name"]),
         clip_path=Path(str(row["clip_path"])),
         model=str(row["model"]),
@@ -915,7 +892,15 @@ def _deleted_sample(row: VoiceprintSampleRow, delete_clip: bool) -> DeletedVoice
         Deleted sample summary.
     """
     clip_deleted = _delete_clip_file(row.clip_path) if delete_clip else False
-    return DeletedVoiceprintSample(row.sample_id, row.speaker_id, row.speaker_name, row.clip_path, clip_deleted)
+    return DeletedVoiceprintSample(
+        row.sample_id,
+        row.public_id,
+        row.speaker_id,
+        row.speaker_public_id,
+        row.speaker_name,
+        row.clip_path,
+        clip_deleted,
+    )
 
 
 def _delete_clip_file(path: Path) -> bool:

@@ -24,6 +24,7 @@ class SpeakerMatchPerson:
     person_id: int | None
     name: str
     score: float | None
+    person_public_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +38,9 @@ class SpeakerMatchCandidate:
     best_name: str | None = None
     best_score: float | None = None
     best_person_id: int | None = None
+    best_person_public_id: str | None = None
     accepted_person_id: int | None = None
+    accepted_person_public_id: str | None = None
     threshold: float | None = None
     status: str = ""
     candidates: tuple[SpeakerMatchPerson, ...] = ()
@@ -93,6 +96,21 @@ def accepted_review_person_id(match: SpeakerMatchCandidate | None) -> int | None
     return match.accepted_person_id or match.person_id
 
 
+def accepted_review_person_public_id(match: SpeakerMatchCandidate | None) -> str | None:
+    """
+    Return an accepted match person public id.
+
+    Args:
+        match: Optional TUI match candidate.
+
+    Returns:
+        Accepted person public id or ``None``.
+    """
+    if match is None or voiceprint_match_status(match) != MATCH_STATUS_MATCHED:
+        return None
+    return match.accepted_person_public_id or match.best_person_public_id
+
+
 def _match_candidate(item: dict[str, object]) -> SpeakerMatchCandidate:
     """Convert one raw match row into a TUI candidate."""
     status = voiceprint_match_status(item)
@@ -106,7 +124,9 @@ def _match_candidate(item: dict[str, object]) -> SpeakerMatchCandidate:
         best_name=best_candidate_name(item),
         best_score=best_candidate_score(item),
         best_person_id=optional_person_id(item.get("best_person_id")),
+        best_person_public_id=_optional_person_public_id(item.get("best_person_public_id")),
         accepted_person_id=optional_person_id(item.get("accepted_person_id")),
+        accepted_person_public_id=_optional_person_public_id(item.get("accepted_person_public_id")),
         threshold=match_threshold(item),
         status=status,
         candidates=_person_candidates(item),
@@ -125,13 +145,15 @@ def _person_candidates(item: dict[str, object]) -> tuple[SpeakerMatchPerson, ...
                         optional_person_id(raw.get("person_id")),
                         str(raw.get("name") or "unknown"),
                         _optional_score(raw.get("score")),
+                        _optional_person_public_id(raw.get("person_public_id")),
                     )
                 )
     best_name = best_candidate_name(item)
     best_person_id = optional_person_id(item.get("best_person_id"))
+    best_person_public_id = _optional_person_public_id(item.get("best_person_public_id"))
     best_score = best_candidate_score(item)
     if best_name and not _has_candidate(rows, best_person_id, best_name):
-        rows.append(SpeakerMatchPerson(best_person_id, best_name, best_score))
+        rows.append(SpeakerMatchPerson(best_person_id, best_name, best_score, best_person_public_id))
     return tuple(sorted(rows, key=_candidate_sort_key))
 
 
@@ -158,3 +180,11 @@ def _optional_score(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_person_public_id(value: object) -> str | None:
+    """Parse an optional voiceprint person public id."""
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None

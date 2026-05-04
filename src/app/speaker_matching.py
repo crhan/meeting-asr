@@ -32,6 +32,7 @@ class VoiceprintCandidate:
     person_id: int
     name: str
     score: float
+    person_public_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +50,9 @@ class SpeakerMatch:
     accepted_name: str | None = None
     threshold: float | None = None
     best_person_id: int | None = None
+    best_person_public_id: str | None = None
     accepted_person_id: int | None = None
+    accepted_person_public_id: str | None = None
     candidates: tuple[VoiceprintCandidate, ...] = ()
 
 
@@ -77,6 +80,15 @@ class SpeakerMatchSummary:
             if item.accepted and item.accepted_person_id is not None
         }
 
+    @property
+    def accepted_person_public_mapping(self) -> dict[int, str]:
+        """Return accepted speaker id to voiceprint person public id mapping."""
+        return {
+            item.speaker_id: item.accepted_person_public_id
+            for item in self.matches
+            if item.accepted and item.accepted_person_public_id
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class _KnownSpeakerVector:
@@ -85,6 +97,7 @@ class _KnownSpeakerVector:
     person_id: int
     name: str
     vector: list[float]
+    person_public_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,11 +205,18 @@ def _known_speaker_vectors(store_dir: Path | None, model: str) -> dict[int, _Kno
     embeddings = list_voiceprint_embeddings(model, get_voiceprint_db_path(store_dir))
     grouped: dict[int, list[list[float]]] = defaultdict(list)
     names: dict[int, str] = {}
+    public_ids: dict[int, str] = {}
     for row in embeddings:
         grouped[row.speaker_id].append(row.vector)
         names[row.speaker_id] = row.speaker_name
+        public_ids[row.speaker_id] = row.speaker_public_id
     return {
-        person_id: _KnownSpeakerVector(person_id, names[person_id], _normalize(_mean_vector(vectors)))
+        person_id: _KnownSpeakerVector(
+            person_id,
+            names[person_id],
+            _normalize(_mean_vector(vectors)),
+            public_ids[person_id],
+        )
         for person_id, vectors in grouped.items()
     }
 
@@ -239,6 +259,7 @@ def _match_speaker_groups(
         accepted = best is not None and best.score >= threshold
         accepted_name = best.name if accepted and best is not None else None
         accepted_person_id = best.person_id if accepted and best is not None else None
+        accepted_person_public_id = best.person_public_id if accepted and best is not None else None
         matches.append(
             SpeakerMatch(
                 speaker_id,
@@ -252,7 +273,9 @@ def _match_speaker_groups(
                 accepted_name,
                 threshold,
                 best.person_id if best is not None else None,
+                best.person_public_id if best is not None else None,
                 accepted_person_id,
+                accepted_person_public_id,
                 tuple(candidates),
             )
         )
@@ -286,6 +309,8 @@ def _unknown_speaker_matches(
             None,
             None,
             threshold,
+            None,
+            None,
             None,
             None,
             (),
@@ -369,7 +394,7 @@ def _ranked_matches(
         Candidates sorted by descending cosine score.
     """
     candidates = [
-        VoiceprintCandidate(item.person_id, item.name, _cosine(vector, item.vector))
+        VoiceprintCandidate(item.person_id, item.name, _cosine(vector, item.vector), item.person_public_id)
         for item in known.values()
     ]
     return sorted(candidates, key=lambda item: item.score, reverse=True)[:limit]
@@ -417,11 +442,18 @@ def _matches_payload(provider: str, model: str, threshold: float, matches: list[
                 "best_score": item.best_score,
                 "accepted_name": item.accepted_name,
                 "best_person_id": item.best_person_id,
+                "best_person_public_id": item.best_person_public_id,
                 "accepted_person_id": item.accepted_person_id,
+                "accepted_person_public_id": item.accepted_person_public_id,
                 "threshold": item.threshold,
                 "status": voiceprint_match_status(item),
                 "candidates": [
-                    {"person_id": candidate.person_id, "name": candidate.name, "score": candidate.score}
+                    {
+                        "person_id": candidate.person_id,
+                        "person_public_id": candidate.person_public_id,
+                        "name": candidate.name,
+                        "score": candidate.score,
+                    }
                     for candidate in item.candidates
                 ],
                 "sample_count": item.sample_count,

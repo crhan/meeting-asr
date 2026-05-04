@@ -12,7 +12,7 @@ from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
 from app.project_manager import ensure_project_dirs, load_manifest, resolve_project_source_path, save_manifest
-from app.speaker_labeling import load_speaker_person_mapping, load_transcript_result
+from app.speaker_labeling import load_transcript_result
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_clip_dir,
@@ -47,6 +47,7 @@ class VoiceprintSpeaker:
     speaker_id: int
     name: str
     person_id: int | None
+    person_public_id: str | None
     clips: list[VoiceprintClip]
 
 
@@ -190,6 +191,7 @@ class _SpeakerIdentity:
 
     name: str
     person_id: int | None
+    person_public_id: str | None
 
 
 def _load_required_speaker_identities(speakers_dir: Path, db_path: Path) -> dict[int, _SpeakerIdentity]:
@@ -208,17 +210,33 @@ def _load_required_speaker_identities(speakers_dir: Path, db_path: Path) -> dict
         raise FileNotFoundError("Speaker mapping does not exist. Run meeting-asr project review first.")
     payload = json.loads(path.read_text(encoding="utf-8"))
     names = {int(key): str(value) for key, value in payload.items()}
-    person_map = load_speaker_person_mapping(speakers_dir / "speaker_person_map.json")
+    person_map = _load_speaker_person_refs(speakers_dir / "speaker_person_map.json")
     return {
-        speaker_id: _SpeakerIdentity(name, _person_id_for_capture(speaker_id, name, person_map, db_path))
+        speaker_id: _identity_for_capture(speaker_id, name, person_map, db_path)
         for speaker_id, name in names.items()
     }
 
 
-def _person_id_for_capture(
+def _load_speaker_person_refs(path: Path) -> dict[int, int | str]:
+    """
+    Load project speaker to voiceprint person references.
+
+    Args:
+        path: Mapping JSON path.
+
+    Returns:
+        Speaker id to numeric or public voiceprint person reference.
+    """
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return {int(key): value for key, value in payload.items() if isinstance(value, int | str)}
+
+
+def _identity_for_capture(
     speaker_id: int,
     name: str,
-    person_map: dict[int, int],
+    person_map: dict[int, int | str],
     db_path: Path,
 ) -> int | None:
     """
@@ -231,15 +249,15 @@ def _person_id_for_capture(
         db_path: Voiceprint SQLite path.
 
     Returns:
-        Stable person id or ``None`` for legacy name-only projects.
+        Speaker identity with stable person ids when present.
     """
-    person_id = person_map.get(speaker_id)
-    if person_id is None:
-        return None
-    person = get_voiceprint_person(person_id, db_path)
+    person_ref = person_map.get(speaker_id)
+    if person_ref is None:
+        return _SpeakerIdentity(name, None, None)
+    person = get_voiceprint_person(person_ref, db_path)
     if person is None:
-        raise LookupError(f"speaker_person_map.json points to missing voiceprint person id {person_id} for {name}.")
-    return person_id
+        raise LookupError(f"speaker_person_map.json points to missing voiceprint person id {person_ref} for {name}.")
+    return _SpeakerIdentity(name, person.speaker_id, person.public_id)
 
 
 def _build_voiceprint_speakers(
@@ -275,7 +293,7 @@ def _build_voiceprint_speakers(
         selected = _select_segments(grouped[speaker_id], sample_count)
         clips = _build_clips(clip_dir, project_id, speaker_id, selected, max_seconds, padding_seconds)
         if clips:
-            speakers.append(VoiceprintSpeaker(speaker_id, identity.name, identity.person_id, clips))
+            speakers.append(VoiceprintSpeaker(speaker_id, identity.name, identity.person_id, identity.person_public_id, clips))
     return speakers
 
 

@@ -5,10 +5,12 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from app.voiceprint_ids import new_speaker_public_id
 from app.voiceprint_store import (
     VoiceprintSpeakerRow,
     _configure_connection,
     _ensure_schema,
+    _find_speaker,
     _normalize_name,
     _now_iso,
     _resolve_db_path,
@@ -40,13 +42,13 @@ def create_voiceprint_person(name: str, db_path: Path | None = None) -> Voicepri
         _ensure_schema(connection)
         existing = _speaker_by_name(connection, name)
         if existing is not None:
-            raise ValueError(f"Person already exists: {existing.name} (id {existing.speaker_id}).")
+            raise ValueError(f"Person already exists: {existing.name} (id {existing.public_id}).")
         cursor = connection.execute(
             """
-            INSERT INTO voiceprint_speakers (name, normalized_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO voiceprint_speakers (public_id, name, normalized_name, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (name.strip(), normalized, now, now),
+            (new_speaker_public_id(connection), name.strip(), normalized, now, now),
         )
         created = _speaker_by_id(connection, int(cursor.lastrowid))
     if created is None:
@@ -54,18 +56,18 @@ def create_voiceprint_person(name: str, db_path: Path | None = None) -> Voicepri
     return created
 
 
-def get_voiceprint_person(person_id: int, db_path: Path | None = None) -> VoiceprintSpeakerRow | None:
+def get_voiceprint_person(person_ref: int | str, db_path: Path | None = None) -> VoiceprintSpeakerRow | None:
     """
     Load one voiceprint person by stable id.
 
     Args:
-        person_id: Voiceprint person id.
+        person_ref: Voiceprint person public id, numeric id, or name.
         db_path: Optional SQLite path.
 
     Returns:
         Matching person row, or ``None``.
     """
-    if person_id <= 0:
+    if isinstance(person_ref, int) and person_ref <= 0:
         return None
     database_path = _resolve_db_path(db_path)
     if not database_path.exists():
@@ -73,15 +75,17 @@ def get_voiceprint_person(person_id: int, db_path: Path | None = None) -> Voicep
     with sqlite3.connect(database_path) as connection:
         _configure_connection(connection)
         _ensure_schema(connection)
-        return _speaker_by_id(connection, person_id)
+        if isinstance(person_ref, int):
+            return _speaker_by_id(connection, person_ref)
+        return _find_speaker(connection, person_ref)
 
 
-def rename_voiceprint_person(person_id: int, name: str, db_path: Path | None = None) -> VoiceprintSpeakerRow:
+def rename_voiceprint_person(person_ref: int | str, name: str, db_path: Path | None = None) -> VoiceprintSpeakerRow:
     """
     Rename an existing voiceprint person by stable id.
 
     Args:
-        person_id: Voiceprint person id.
+        person_ref: Voiceprint person public id, numeric id, or name.
         name: New display name.
         db_path: Optional SQLite path.
 
@@ -92,31 +96,31 @@ def rename_voiceprint_person(person_id: int, name: str, db_path: Path | None = N
         LookupError: If the person id does not exist.
         ValueError: If the name is empty or already belongs to another person.
     """
-    if person_id <= 0:
-        raise LookupError(f"No voiceprint person found for id: {person_id}")
+    if isinstance(person_ref, int) and person_ref <= 0:
+        raise LookupError(f"No voiceprint person found for id: {person_ref}")
     database_path = _resolve_db_path(db_path)
     if not database_path.exists():
-        raise LookupError(f"No voiceprint person found for id: {person_id}")
+        raise LookupError(f"No voiceprint person found for id: {person_ref}")
     now = _now_iso()
     normalized = _normalize_name(name)
     with sqlite3.connect(database_path) as connection:
         _configure_connection(connection)
         _ensure_schema(connection)
-        existing = _speaker_by_id(connection, person_id)
+        existing = _speaker_by_id(connection, person_ref) if isinstance(person_ref, int) else _find_speaker(connection, person_ref)
         if existing is None:
-            raise LookupError(f"No voiceprint person found for id: {person_id}")
+            raise LookupError(f"No voiceprint person found for id: {person_ref}")
         duplicate = _speaker_by_name(connection, name)
-        if duplicate is not None and duplicate.speaker_id != person_id:
-            raise ValueError(f"Person name already belongs to id {duplicate.speaker_id}: {duplicate.name}.")
+        if duplicate is not None and duplicate.speaker_id != existing.speaker_id:
+            raise ValueError(f"Person name already belongs to id {duplicate.public_id}: {duplicate.name}.")
         connection.execute(
             """
             UPDATE voiceprint_speakers
             SET name = ?, normalized_name = ?, updated_at = ?
             WHERE id = ?
             """,
-            (name.strip(), normalized, now, person_id),
+            (name.strip(), normalized, now, existing.speaker_id),
         )
-        updated = _speaker_by_id(connection, person_id)
+        updated = _speaker_by_id(connection, existing.speaker_id)
     if updated is None:
-        raise RuntimeError(f"Failed to rename voiceprint person id {person_id}")
+        raise RuntimeError(f"Failed to rename voiceprint person id {person_ref}")
     return updated

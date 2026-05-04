@@ -1021,6 +1021,16 @@ def test_apply_project_speakers_keeps_person_map_in_sync(tmp_path: Path) -> None
     apply_project_speakers(project_dir, {0: "欧丁"}, person_mapping={0: 7})
     assert json.loads((project_dir / "speakers" / "speaker_person_map.json").read_text(encoding="utf-8")) == {"0": 7}
 
+    apply_project_speakers(
+        project_dir,
+        {0: "欧丁"},
+        person_mapping={0: 7},
+        person_public_mapping={0: "vpp-0000000000000007"},
+    )
+    assert json.loads((project_dir / "speakers" / "speaker_person_map.json").read_text(encoding="utf-8")) == {
+        "0": "vpp-0000000000000007"
+    }
+
     apply_project_speakers(project_dir, {0: "新名字"})
     manifest = load_manifest(project_dir)
 

@@ -596,6 +596,7 @@ def _run_project_workflow(
             project.project_dir,
             applied_mapping,
             person_mapping=matches.accepted_person_mapping,
+            person_public_mapping=matches.accepted_person_public_mapping,
         )
     emit_progress(progress, "Project run complete", completed=1, total=1)
     return ProjectRunSummary(project, transcription, meeting_summary, matches, applied_mapping)
@@ -850,6 +851,7 @@ def _handle_speaker_review_decision(
             project_dir,
             decision.mapping,
             person_mapping=decision.person_mapping,
+            person_public_mapping=decision.person_public_mapping,
         )
     )
     typer.echo(f"Mapping written to: {mapping_path}")
@@ -978,6 +980,7 @@ def speakers_match(
                 resolved_project_dir,
                 summary.accepted_mapping,
                 person_mapping=summary.accepted_person_mapping,
+                person_public_mapping=summary.accepted_person_public_mapping,
             )
         )
         typer.echo("Applied accepted speaker matches.")

@@ -486,6 +486,7 @@ def apply_project_speakers(
     mappings: dict[int, str],
     *,
     person_mapping: dict[int, int] | None = None,
+    person_public_mapping: dict[int, str] | None = None,
 ) -> tuple[Path, Path, Path]:
     """
     Apply speaker names to project outputs.
@@ -493,7 +494,8 @@ def apply_project_speakers(
     Args:
         project_dir: Project root.
         mappings: Explicit speaker display-name mappings.
-        person_mapping: Optional project speaker to voiceprint person id mapping.
+        person_mapping: Optional project speaker to internal voiceprint person id mapping.
+        person_public_mapping: Optional project speaker to voiceprint person public id mapping.
 
     Returns:
         Paths for map, transcript, and SRT.
@@ -504,10 +506,12 @@ def apply_project_speakers(
     resolved_mapping = _merge_speaker_mapping(result, mappings)
     mapping_path = write_speaker_mapping(paths.speakers_dir / "speaker_map.json", resolved_mapping)
     resolved_person_mapping = _merge_speaker_person_mapping(resolved_mapping, person_mapping or {})
+    resolved_public_mapping = _merge_speaker_person_public_mapping(resolved_mapping, person_public_mapping or {})
+    stored_person_mapping = resolved_public_mapping or resolved_person_mapping
     person_map_path = paths.speakers_dir / "speaker_person_map.json"
-    if resolved_person_mapping:
-        write_speaker_person_mapping(person_map_path, resolved_person_mapping)
-        manifest.speakers["person_map"] = {str(key): value for key, value in sorted(resolved_person_mapping.items())}
+    if stored_person_mapping:
+        write_speaker_person_mapping(person_map_path, stored_person_mapping)
+        manifest.speakers["person_map"] = {str(key): value for key, value in sorted(stored_person_mapping.items())}
     else:
         if person_map_path.exists():
             person_map_path.unlink()
@@ -1090,6 +1094,18 @@ def _merge_speaker_person_mapping(
         speaker_id: person_id
         for speaker_id, person_id in person_mapping.items()
         if speaker_id in speaker_mapping and person_id > 0
+    }
+
+
+def _merge_speaker_person_public_mapping(
+    speaker_mapping: dict[int, str],
+    person_mapping: dict[int, str],
+) -> dict[int, str]:
+    """Return public person mappings only for named project speakers."""
+    return {
+        speaker_id: person_id.strip()
+        for speaker_id, person_id in person_mapping.items()
+        if speaker_id in speaker_mapping and person_id.strip()
     }
 
 def _parse_mapping_item(item: str) -> tuple[int, str]:

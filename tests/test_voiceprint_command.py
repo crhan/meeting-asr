@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -61,19 +62,22 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
 
     assert list_result.exit_code == 0
     assert "Speakers: 2 | Samples: 2 | Embedded samples: 0/2" in list_result.output
-    assert speaker_id.isdecimal()
+    assert re.fullmatch(r"vpp-[0-9a-f]{16}", speaker_id)
     assert "ID" in list_result.output
     assert "Speaker" in list_result.output
     assert "Embedded" in list_result.output
     assert "欧丁" in list_result.output
     assert list_plain_result.exit_code == 0
-    assert list_plain_result.output.splitlines()[0] == "id\tspeaker\tsamples\tprojects\tembedded\tmodels\tupdated"
+    assert list_plain_result.output.splitlines()[0] == (
+        "id\tinternal_id\tspeaker\tsamples\tprojects\tembedded\tmodels\tupdated"
+    )
     assert "\t欧丁\t" in list_plain_result.output
     assert "╭" not in list_plain_result.output
     assert show_result.exit_code == 0
     assert show_by_name_result.exit_code == 0
     assert "[1] 欧丁" in show_result.output
-    assert f"speaker_id: {speaker_id}" in show_result.output
+    assert f"person_id: {speaker_id}" in show_result.output
+    assert re.search(r"sample_id: vps-[0-9a-f]{16}", show_result.output)
     assert "sample_id:" in show_result.output
     assert manifest.project_id in show_result.output
     assert "clip_001.wav" in show_result.output
@@ -82,9 +86,12 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert list_payload["count"] == 2
     assert list_payload["sample_count"] == 2
     assert any(speaker["name"] == "欧丁" for speaker in list_payload["speakers"])
+    assert re.fullmatch(r"vpp-[0-9a-f]{16}", list_payload["speakers"][0]["public_id"])
     assert show_json_result.exit_code == 0
     assert show_payload["speaker"] == speaker_id
     assert show_payload["count"] == 1
+    assert re.fullmatch(r"vps-[0-9a-f]{16}", show_payload["samples"][0]["public_id"])
+    assert show_payload["samples"][0]["speaker_public_id"] == speaker_id
     assert show_payload["samples"][0]["speaker_name"] == "欧丁"
     assert show_payload["samples"][0]["project_id"] == manifest.project_id
     assert show_payload["samples"][0]["clip_path"].endswith("clip_001.wav")
@@ -111,7 +118,7 @@ def test_voiceprint_people_lifecycle_uses_stable_ids(tmp_path: Path) -> None:
     assert list_result.exit_code == 0
     assert "People: 1 | Samples: 0 | Embedded samples: 0/0" in list_result.output
     assert rename_result.exit_code == 0
-    assert f"Renamed person #{person_id}: 欧丁-新版" in rename_result.output
+    assert f"Renamed person {person_id}: 欧丁-新版" in rename_result.output
     assert show_result.exit_code == 0
     assert "Name: 欧丁-新版" in show_result.output
 
@@ -177,9 +184,13 @@ def test_voiceprint_capture_uses_project_person_map(
     store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
     _write_partially_named_speaker_inputs(project_dir)
     add_result = runner.invoke(app, ["voiceprint", "people", "add", "欧丁", "--store-dir", str(store_dir)])
-    person_id = int(add_result.output.split("Person ID:", 1)[1].strip().splitlines()[0])
+    public_id = add_result.output.split("Person ID:", 1)[1].strip().splitlines()[0]
+    person_payload = json.loads(
+        runner.invoke(app, ["voiceprint", "people", "show", public_id, "--store-dir", str(store_dir), "--json"]).output
+    )
+    person_id = int(person_payload["speaker_id"])
     (project_dir / "speakers" / "speaker_person_map.json").write_text(
-        json.dumps({"0": person_id}, ensure_ascii=False),
+        json.dumps({"0": public_id}, ensure_ascii=False),
         encoding="utf-8",
     )
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
@@ -193,7 +204,7 @@ def test_voiceprint_capture_uses_project_person_map(
     samples = list_voiceprint_samples_for_project(manifest.project_id, get_voiceprint_db_path(store_dir))
 
     assert result.exit_code == 0
-    assert f"person #{person_id}" in result.output
+    assert f"person {public_id}" in result.output
     assert len(samples) == 1
     assert samples[0].speaker_id == person_id
     assert samples[0].speaker_name == "欧丁"
@@ -457,9 +468,14 @@ def _speaker_id_from_list(output: str, name: str) -> str:
         if name not in line:
             continue
         columns = [column.strip() for column in line.split("|")]
-        if len(columns) >= 2 and columns[1] == name and columns[0].isdecimal():
+        if len(columns) >= 2 and columns[1] == name and _is_voiceprint_public_id(columns[0]):
             return columns[0]
         cells = [cell.strip() for cell in line.split("│") if cell.strip()]
-        if len(cells) >= 2 and cells[1] == name and cells[0].isdecimal():
+        if len(cells) >= 2 and cells[1] == name and _is_voiceprint_public_id(cells[0]):
             return cells[0]
     raise AssertionError(f"speaker not found in list output: {name}")
+
+
+def _is_voiceprint_public_id(value: str) -> bool:
+    """Return whether a table cell is a voiceprint person public id."""
+    return re.fullmatch(r"vpp-[0-9a-f]{16}", value) is not None

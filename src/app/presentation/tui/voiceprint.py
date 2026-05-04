@@ -62,6 +62,7 @@ class VoiceprintSpeakerEntry:
     """Mutable TUI row for one stored voiceprint speaker."""
 
     speaker_id: int
+    public_id: str
     name: str
     sample_count: int
     project_count: int
@@ -360,7 +361,7 @@ class VoiceprintLibraryApp(App[None]):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self._set_status(f"Playing {sample.speaker_name} sample #{sample.sample_id}.")
+        self._set_status(f"Playing {sample.speaker_name} sample {sample.public_id}.")
 
     def _stop_playback(self) -> None:
         """Stop the current playback child process if it is still running."""
@@ -494,6 +495,7 @@ def _speaker_entry(row: VoiceprintSpeakerRow, samples: list[VoiceprintSampleRow]
     """Build a mutable speaker entry from store rows."""
     return VoiceprintSpeakerEntry(
         speaker_id=row.speaker_id,
+        public_id=row.public_id,
         name=row.name,
         sample_count=row.sample_count,
         project_count=row.project_count,
@@ -507,7 +509,7 @@ def _speaker_entry(row: VoiceprintSpeakerRow, samples: list[VoiceprintSampleRow]
 def _summary_line(speaker: VoiceprintSpeakerEntry) -> str:
     """Render one plain summary row."""
     return (
-        f"{speaker.name} id={speaker.speaker_id} samples={speaker.sample_count} "
+        f"{speaker.name} id={speaker.public_id} samples={speaker.sample_count} "
         f"projects={speaker.project_count} embedded={speaker.embedded_sample_count}/{speaker.sample_count}"
     )
 
@@ -517,7 +519,7 @@ def _selected_speaker_summary(speaker: VoiceprintSpeakerEntry | None) -> str:
     if speaker is None:
         return "-"
     return (
-        f"{speaker.name} id={speaker.speaker_id} | samples {speaker.sample_count} | "
+        f"{speaker.name} id={speaker.public_id} | samples {speaker.sample_count} | "
         f"projects {speaker.project_count} | models {speaker.embedding_model_count}"
     )
 
@@ -526,7 +528,7 @@ def _selected_sample_summary(sample: VoiceprintSampleRow | None) -> str:
     """Render selected sample summary."""
     if sample is None:
         return "-"
-    return f"sample_id {sample.sample_id} | clip {sample.clip_path}"
+    return f"sample_id {sample.public_id} | clip {sample.clip_path}"
 
 
 def _sample_line(sample: VoiceprintSampleRow) -> str:
