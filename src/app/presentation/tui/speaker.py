@@ -6,13 +6,14 @@ import json
 import subprocess
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.worker import Worker, WorkerState
 from textual.widgets import Footer, Header, Static
 
 from app.models import SentenceSegment, TranscriptResult
@@ -56,6 +57,11 @@ from app.presentation.tui.speaker_status import (
     status_icon,
     status_style,
 )
+from app.presentation.tui.voiceprint_review import (
+    VoiceprintReviewDecision,
+    VoiceprintReviewScreen,
+    load_voiceprint_review_session,
+)
 from app.utils import format_ms_timestamp
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_store import (
@@ -63,6 +69,7 @@ from app.voiceprint_store import (
     list_embedded_sample_ids,
     list_voiceprint_samples_for_project,
 )
+from app.voiceprints import VoiceprintCaptureSummary, persist_voiceprint_capture_selection
 
 DEFAULT_SAMPLE_PAGE_SIZE = 6
 SAMPLE_PANE_RESERVED_ROWS = 5
@@ -176,6 +183,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("i", "ignore_speaker", "Ignore"),
         Binding("e", "edit_sample_text", "Edit text"),
         Binding("c", "edit_sample_text", "Correct text", show=False),
+        Binding("v", "voiceprint_review", "Voiceprint"),
         Binding("?", "show_shortcuts", "Help"),
         Binding("s", "save", "Save"),
         Binding("q", "quit_review", "Quit"),
@@ -224,6 +232,15 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def on_unmount(self) -> None:
         """Stop any child player when the TUI closes."""
         self._stop_playback()
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Update project review after an embedded voiceprint capture finishes."""
+        if event.worker.group != "speaker-review-voiceprint":
+            return
+        if event.state == WorkerState.SUCCESS:
+            self._handle_voiceprint_capture_success(event.worker.result)
+        elif event.state == WorkerState.ERROR:
+            self._set_status(f"Voiceprint capture failed: {event.worker.error}")
 
     def action_down(self) -> None:
         """Move down in the focused column."""
@@ -306,6 +323,25 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def action_show_shortcuts(self) -> None:
         """Show keyboard shortcut help."""
         self.push_screen(ShortcutHelpScreen())
+
+    def action_voiceprint_review(self) -> None:
+        """Open the embedded voiceprint review screen from project review."""
+        if self._has_unsaved_speaker_names():
+            self._set_status("Save speaker names with s before opening voiceprint review.")
+            return
+        try:
+            session, planned = load_voiceprint_review_session(
+                project_dir=self.session.project_dir,
+                store_dir=self.session.store_dir,
+                page_size=self.session.page_size,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._set_status(f"Voiceprint review unavailable: {exc}")
+            return
+        self.push_screen(
+            VoiceprintReviewScreen(session),
+            lambda decision: self._handle_voiceprint_review_decision(decision, planned),
+        )
 
     def action_save(self) -> None:
         """Save review state or return the reviewed mapping to the CLI command."""
@@ -546,6 +582,45 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._refresh()
             return
         self._set_status("Saved project review. Continue reviewing or press q to exit.")
+
+    def _handle_voiceprint_review_decision(
+        self,
+        decision: VoiceprintReviewDecision | None,
+        planned: VoiceprintCaptureSummary | None,
+    ) -> None:
+        """Persist samples selected in the embedded voiceprint review."""
+        if decision is None or not decision.saved:
+            self._set_status("Voiceprint review closed; no samples were written.")
+            return
+        if planned is None:
+            self._set_status("No project voiceprint candidates were available.")
+            return
+        self._set_status("Capturing selected voiceprint samples...")
+        self.run_worker(
+            lambda: persist_voiceprint_capture_selection(
+                self.session.project_dir,
+                planned=planned,
+                selected_clip_rel_paths=decision.selected_clip_rel_paths,
+            ),
+            group="speaker-review-voiceprint",
+            name="capture",
+            thread=True,
+        )
+
+    def _handle_voiceprint_capture_success(self, summary: VoiceprintCaptureSummary) -> None:
+        """Refresh project voiceprint progress after sample capture."""
+        overview = replace(
+            self.session.overview,
+            voiceprint=_load_voiceprint_review_progress(self.session.overview.project_id, self.session.store_dir),
+        )
+        self.session = replace(self.session, overview=overview)
+        self._set_status(f"Captured {summary.sample_count} voiceprint sample(s). Run voiceprint embed when ready.")
+        self._refresh()
+
+    def _has_unsaved_speaker_names(self) -> bool:
+        """Return whether speaker names differ from the saved project map."""
+        saved = self.session.overview.saved_names_by_speaker
+        return any((speaker.current_name.strip() or speaker.label) != saved.get(speaker.speaker_id) for speaker in self.session.speakers)
 
     def _set_speaker_identity(
         self,

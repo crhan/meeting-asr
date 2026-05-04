@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from rich.markup import escape
@@ -13,16 +14,23 @@ from textual.containers import Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Static
 
-from app.presentation.tui.voiceprint import VoiceprintLibrarySession, VoiceprintSpeakerEntry
+from app.presentation.tui.voiceprint import (
+    VoiceprintLibrarySession,
+    VoiceprintSpeakerEntry,
+    load_voiceprint_library_session,
+)
 from app.presentation.tui.voiceprint_capture import (
     VoiceprintCaptureClipEntry,
     VoiceprintCaptureReviewSession,
     VoiceprintCaptureSpeakerEntry,
+    load_voiceprint_capture_review_session,
 )
+from app.project_manager import load_manifest, project_paths, resolve_project_source_path
 from app.speaker_review import build_audio_preview_command
 from app.utils import format_ms_timestamp
 from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_store import VoiceprintSampleRow
+from app.voiceprints import VoiceprintCaptureSummary, plan_voiceprint_capture
 
 Mode = Literal["project", "library"]
 Column = Literal["speakers", "samples"]
@@ -117,8 +125,8 @@ class VoiceprintReviewHelpScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
-class VoiceprintReviewApp(App[VoiceprintReviewDecision]):
-    """Keyboard-first TUI that switches between project capture and global library."""
+class _VoiceprintReviewBase:
+    """Shared controller for the voiceprint review app and embeddable screen."""
 
     CSS = """
     Screen {
@@ -308,7 +316,7 @@ class VoiceprintReviewApp(App[VoiceprintReviewDecision]):
         if not selected:
             self._set_status("No samples selected. Toggle at least one sample before capture.")
             return
-        self.exit(VoiceprintReviewDecision(True, frozenset(selected)))
+        self._finish(VoiceprintReviewDecision(True, frozenset(selected)))
 
     def action_show_shortcuts(self) -> None:
         """Show keyboard shortcut help."""
@@ -316,7 +324,11 @@ class VoiceprintReviewApp(App[VoiceprintReviewDecision]):
 
     def action_quit(self) -> None:
         """Exit without writing project samples."""
-        self.exit(VoiceprintReviewDecision(False, frozenset()))
+        self._finish(VoiceprintReviewDecision(False, frozenset()))
+
+    def _finish(self, decision: VoiceprintReviewDecision) -> None:
+        """Return the review decision to the active Textual host."""
+        raise NotImplementedError
 
     def _switch_to(self, mode: Mode) -> None:
         """Switch to a specific mode and refresh the screen."""
@@ -720,6 +732,70 @@ class VoiceprintReviewApp(App[VoiceprintReviewDecision]):
         return LIBRARY_MODE
 
 
+class VoiceprintReviewApp(_VoiceprintReviewBase, App[VoiceprintReviewDecision]):
+    """Standalone voiceprint review app used by the CLI command."""
+
+    CSS = _VoiceprintReviewBase.CSS
+    BINDINGS = _VoiceprintReviewBase.BINDINGS
+
+    def _finish(self, decision: VoiceprintReviewDecision) -> None:
+        """Exit the standalone app with a review decision."""
+        self.exit(decision)
+
+
+class VoiceprintReviewScreen(_VoiceprintReviewBase, ModalScreen[VoiceprintReviewDecision]):
+    """Embeddable voiceprint review screen used by project review."""
+
+    CSS = _VoiceprintReviewBase.CSS
+    BINDINGS = _VoiceprintReviewBase.BINDINGS
+
+    def _finish(self, decision: VoiceprintReviewDecision) -> None:
+        """Dismiss the screen with a review decision."""
+        self.dismiss(decision)
+
+
+def load_voiceprint_review_session(
+    *,
+    project_dir: Path | None = None,
+    sample_count: int = 3,
+    max_seconds: float = 12.0,
+    padding_seconds: float = 0.5,
+    store_dir: Path | None = None,
+    page_size: int | None = None,
+) -> tuple[VoiceprintReviewSession, VoiceprintCaptureSummary | None]:
+    """
+    Load project capture candidates and the global voiceprint library.
+
+    Args:
+        project_dir: Optional project root.
+        sample_count: Maximum clips per speaker.
+        max_seconds: Maximum seconds per output clip.
+        padding_seconds: Extra context around each sentence.
+        store_dir: Optional voiceprint store directory.
+        page_size: Optional TUI samples per page.
+
+    Returns:
+        Unified TUI session and the planned capture summary, if a project was loaded.
+    """
+    planned = None
+    capture_session = None
+    if project_dir is not None:
+        planned = plan_voiceprint_capture(
+            project_dir,
+            sample_count=sample_count,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+            store_dir=store_dir,
+        )
+        capture_session = load_voiceprint_capture_review_session(
+            summary=planned,
+            source_path=_voiceprint_capture_source_path(project_dir),
+            page_size=page_size,
+        )
+    library_session = load_voiceprint_library_session(store_dir=store_dir, page_size=page_size)
+    return VoiceprintReviewSession(capture=capture_session, library=library_session), planned
+
+
 def run_voiceprint_review_tui(session: VoiceprintReviewSession) -> VoiceprintReviewDecision:
     """
     Run the unified voiceprint review app.
@@ -732,6 +808,21 @@ def run_voiceprint_review_tui(session: VoiceprintReviewSession) -> VoiceprintRev
     """
     result = VoiceprintReviewApp(session).run()
     return result or VoiceprintReviewDecision(False, frozenset())
+
+
+def _voiceprint_capture_source_path(project_dir: Path) -> Path:
+    """
+    Resolve the project source media path used for sample playback.
+
+    Args:
+        project_dir: Project root.
+
+    Returns:
+        Resolved source media path.
+    """
+    paths = project_paths(project_dir)
+    manifest = load_manifest(paths.root)
+    return resolve_project_source_path(paths.root, manifest)
 
 
 def render_voiceprint_review_summary(session: VoiceprintReviewSession) -> str:

@@ -36,6 +36,8 @@ from app.presentation.tui.speaker_save import (
     SpeakerReviewSaveScreen,
     _summary_lines,
 )
+from app.presentation.tui.voiceprint import VoiceprintLibrarySession
+from app.presentation.tui.voiceprint_review import VoiceprintReviewScreen, VoiceprintReviewSession
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
@@ -512,6 +514,46 @@ def test_identity_input_uses_readline_cursor_keys() -> None:
 
             assert field.value == "欧丁"
             assert field.cursor_position == 0
+
+    asyncio.run(scenario())
+
+
+def test_project_review_tui_opens_embedded_voiceprint_review(monkeypatch, tmp_path: Path) -> None:
+    """Project review should open the shared voiceprint screen without leaving the TUI."""
+    library = VoiceprintLibrarySession(db_path=tmp_path / "voiceprints.sqlite", speakers=[])
+
+    monkeypatch.setattr(
+        speaker_tui,
+        "load_voiceprint_review_session",
+        lambda **kwargs: (VoiceprintReviewSession(capture=None, library=library), None),
+    )
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session(with_status=True)).run_test(size=(120, 24)) as pilot:
+            await pilot.press("v")
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, VoiceprintReviewScreen)
+
+            await pilot.press("q")
+            await pilot.pause()
+
+            assert not isinstance(pilot.app.screen, VoiceprintReviewScreen)
+            assert "no samples were written" in str(pilot.app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
+
+
+def test_project_review_tui_requires_saved_names_before_voiceprint() -> None:
+    """Voiceprint capture from project review should not use stale unsaved speaker names."""
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session()).run_test(size=(120, 24)) as pilot:
+            await pilot.press("v")
+            await pilot.pause()
+
+            assert not isinstance(pilot.app.screen, VoiceprintReviewScreen)
+            assert "Save speaker names" in str(pilot.app.query_one("#status", Static).render())
 
     asyncio.run(scenario())
 

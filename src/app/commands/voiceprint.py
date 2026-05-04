@@ -43,21 +43,16 @@ from app.presentation.tui.voiceprint import (
     render_voiceprint_library_summary,
     run_voiceprint_library_tui,
 )
-from app.presentation.tui.voiceprint_capture import (
-    load_voiceprint_capture_review_session,
-)
 from app.presentation.tui.voiceprint_review import (
-    VoiceprintReviewSession,
+    load_voiceprint_review_session,
     render_voiceprint_review_summary,
     run_voiceprint_review_tui,
 )
 from app.voiceprint_embedding import embed_voiceprint_samples
-from app.project_manager import load_manifest, project_paths, resolve_project_source_path
 from app.voiceprints import (
     VoiceprintCaptureSummary,
     capture_voiceprints,
     persist_voiceprint_capture_selection,
-    plan_voiceprint_capture,
 )
 
 app = MeetingAsrTyper(
@@ -97,13 +92,15 @@ def review_command(
     resolved_project_dir = None
     if project_dir is not None:
         resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
-    session, planned = _build_voiceprint_review_session(
-        project_dir=resolved_project_dir,
-        sample_count=sample_count,
-        max_seconds=max_seconds,
-        padding_seconds=padding_seconds,
-        store_dir=store_dir,
-        page_size=page_size,
+    session, planned = run_with_cli_errors(
+        lambda: load_voiceprint_review_session(
+            project_dir=resolved_project_dir,
+            sample_count=sample_count,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+            store_dir=store_dir,
+            page_size=page_size,
+        )
     )
     if summary:
         typer.echo(render_voiceprint_review_summary(session))
@@ -233,68 +230,6 @@ def _run_capture_review_workflow(
     )
 
 
-def _voiceprint_capture_source_path(project_dir: Path) -> Path:
-    """
-    Resolve the project source media path used for sample playback.
-
-    Args:
-        project_dir: Project root.
-
-    Returns:
-        Resolved source media path.
-    """
-    paths = project_paths(project_dir)
-    manifest = load_manifest(paths.root)
-    return resolve_project_source_path(paths.root, manifest)
-
-
-def _build_voiceprint_review_session(
-    *,
-    project_dir: Path | None,
-    sample_count: int,
-    max_seconds: float,
-    padding_seconds: float,
-    store_dir: Path | None,
-    page_size: int | None,
-) -> tuple[VoiceprintReviewSession, VoiceprintCaptureSummary | None]:
-    """
-    Load project capture candidates and the global voiceprint library.
-
-    Args:
-        project_dir: Optional project root.
-        sample_count: Maximum clips per speaker.
-        max_seconds: Maximum seconds per output clip.
-        padding_seconds: Extra context around each sentence.
-        store_dir: Optional voiceprint store directory.
-        page_size: Optional TUI samples per page.
-
-    Returns:
-        Unified TUI session and the planned capture summary, if a project was loaded.
-    """
-    planned = None
-    capture_session = None
-    if project_dir is not None:
-        planned = run_with_cli_errors(
-            lambda: plan_voiceprint_capture(
-                project_dir,
-                sample_count=sample_count,
-                max_seconds=max_seconds,
-                padding_seconds=padding_seconds,
-                store_dir=store_dir,
-            )
-        )
-        source_path = run_with_cli_errors(lambda: _voiceprint_capture_source_path(project_dir))
-        capture_session = load_voiceprint_capture_review_session(
-            summary=planned,
-            source_path=source_path,
-            page_size=page_size,
-        )
-    library_session = run_with_cli_errors(
-        lambda: load_voiceprint_library_session(store_dir=store_dir, page_size=page_size)
-    )
-    return VoiceprintReviewSession(capture=capture_session, library=library_session), planned
-
-
 def _run_unified_voiceprint_review_workflow(
     *,
     project_dir: Path,
@@ -320,13 +255,15 @@ def _run_unified_voiceprint_review_workflow(
     Returns:
         Captured summary, or None when the review was cancelled.
     """
-    session, planned = _build_voiceprint_review_session(
-        project_dir=project_dir,
-        sample_count=sample_count,
-        max_seconds=max_seconds,
-        padding_seconds=padding_seconds,
-        store_dir=store_dir,
-        page_size=page_size,
+    session, planned = run_with_cli_errors(
+        lambda: load_voiceprint_review_session(
+            project_dir=project_dir,
+            sample_count=sample_count,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+            store_dir=store_dir,
+            page_size=page_size,
+        )
     )
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         typer.echo(render_voiceprint_review_summary(session))

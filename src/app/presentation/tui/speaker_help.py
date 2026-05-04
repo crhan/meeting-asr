@@ -7,7 +7,7 @@ from textual.widgets import Static
 
 BROWSE_STATUS = (
     "Browse: h/l or left/right choose column | j/k or up/down move | "
-    "PgUp/PgDn page samples | Space play/stop | / name | e edit text | ? help | s save"
+    "PgUp/PgDn page samples | Space play/stop | / name | e edit text | v voiceprint | ? help | s save"
 )
 EDIT_STATUS = (
     "Identity modal: type to filter people | Up/Down select | Enter choose | "
@@ -39,6 +39,7 @@ i                    Ignore this speaker: keep anonymous and skip capture
 /                    Open identity modal
 e                    Edit selected transcript text inside this TUI
 c                    Same as e
+v                    Open voiceprint review: project candidates and global library
 s                    Save speaker mapping, then run staged text correction if present
 q                    Quit without saving
 
