@@ -400,13 +400,47 @@ def test_project_review_tui_can_exclude_one_proposed_change(tmp_path: Path) -> N
             await pilot.pause()
             await pilot.press("d")
             await pilot.pause()
-            await pilot.press("n")
+            await pilot.press("down")
             await pilot.press("x")
             await pilot.press("a")
             await pilot.pause()
             await pilot.pause()
 
             assert accepted_indices == [(0,)]
+
+    asyncio.run(scenario())
+
+
+def test_correction_diff_viewer_uses_standard_vertical_keys(tmp_path: Path) -> None:
+    """Proposal diff selection should use up/down and j/k like the rest of the TUI."""
+    proposal_path = tmp_path / "proposal.json"
+    diff_path = tmp_path / "proposal.diff"
+    proposal_path.write_text(json.dumps(_proposal_payload()), encoding="utf-8")
+    diff_path.write_text("- IC\n+ isee\n- AS\n+ IaaS\n", encoding="utf-8")
+    screen = CorrectionProposalDiffScreen(
+        diff_path=diff_path,
+        proposal_path=proposal_path,
+        selected_indices=None,
+    )
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session()).run_test() as pilot:
+            pilot.app.push_screen(screen)
+            await pilot.pause()
+
+            assert screen.current_change_index == 0
+            assert "up/down" in str(screen.query_one("#diff-actions", Static).render())
+            assert "n/p" not in str(screen.query_one("#diff-actions", Static).render())
+
+            await pilot.press("down")
+            await pilot.pause()
+
+            assert screen.current_change_index == 1
+
+            await pilot.press("k")
+            await pilot.pause()
+
+            assert screen.current_change_index == 0
 
     asyncio.run(scenario())
 

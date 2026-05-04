@@ -321,16 +321,14 @@ class CorrectionProposalDiffScreen(ModalScreen[CorrectionProposalSelection | Non
     """
 
     BINDINGS = [
-        Binding("j", "scroll_down", "Down"),
-        Binding("k", "scroll_up", "Up"),
-        Binding("down", "scroll_down", "Down", show=False),
-        Binding("up", "scroll_up", "Up", show=False),
+        Binding("j", "next_change", "Next change"),
+        Binding("k", "previous_change", "Previous change"),
+        Binding("down", "next_change", "Next change", show=False),
+        Binding("up", "previous_change", "Previous change", show=False),
         Binding("pagedown", "page_down", "Page down"),
         Binding("pageup", "page_up", "Page up"),
         Binding("home", "scroll_home", "Top", show=False),
         Binding("end", "scroll_end", "Bottom", show=False),
-        Binding("n", "next_change", "Next change"),
-        Binding("p", "previous_change", "Previous change"),
         Binding("x", "toggle_change", "Toggle"),
         Binding("a", "accept_selected", "Apply selected"),
         Binding("enter", "close_diff", "Back"),
@@ -371,15 +369,7 @@ class CorrectionProposalDiffScreen(ModalScreen[CorrectionProposalSelection | Non
             yield Static(self._legend(), id="diff-legend")
             with ScrollableContainer(id="diff-scroll"):
                 yield Static(self._diff_renderable(), id="diff-content")
-            yield Static("n/p choose change | x include/exclude | a apply selected | Enter returns", id="diff-actions")
-
-    def action_scroll_down(self) -> None:
-        """Scroll the diff down."""
-        self.query_one("#diff-scroll", ScrollableContainer).scroll_down()
-
-    def action_scroll_up(self) -> None:
-        """Scroll the diff up."""
-        self.query_one("#diff-scroll", ScrollableContainer).scroll_up()
+            yield Static("up/down or j/k choose change | x include/exclude | a apply selected | Enter returns", id="diff-actions")
 
     def action_page_down(self) -> None:
         """Scroll the diff one page down."""
@@ -442,7 +432,7 @@ class CorrectionProposalDiffScreen(ModalScreen[CorrectionProposalSelection | Non
         """Return current selection legend."""
         return (
             f"[green]selected {len(self.selected_indices)}/{len(self.changes)}[/]  "
-            "[bold]n/p[/] change  [bold]x[/] include/exclude"
+            "[bold]up/down j/k[/] change  [bold]x[/] include/exclude"
         )
 
     def _move_change(self, delta: int) -> None:
