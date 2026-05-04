@@ -89,7 +89,7 @@ def terms_list_command(
     if not terms:
         typer.echo("No lexicon terms.")
         return
-    cli_console().print(_terms_table(terms))
+    cli_console(width=120).print(_terms_table(terms))
 
 
 @app.command("show")
@@ -155,6 +155,7 @@ def term_delete_command(
     detail = run_with_cli_errors(lambda: delete_lexicon_term(term, db_path=db_path, permanent=permanent))
     header = "Lexicon term deleted permanently." if permanent else "Lexicon term deactivated."
     typer.echo(header)
+    typer.echo(f"ID: {detail.term.public_id}")
     typer.echo(f"Term: {detail.term.canonical}")
     typer.echo(f"Lexicon DB: {db_path}")
 
@@ -376,6 +377,7 @@ def remote_delete_command(
 def _terms_table(terms: list[LexiconTerm]) -> Table:
     """Build a scan-friendly local lexicon term table."""
     table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
+    table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Term", style="bold cyan")
     table.add_column("Category", no_wrap=True)
     table.add_column("Status", no_wrap=True)
@@ -384,6 +386,7 @@ def _terms_table(terms: list[LexiconTerm]) -> Table:
     table.add_column("Updated", no_wrap=True)
     for term in terms:
         table.add_row(
+            term.public_id,
             term.canonical,
             term.category,
             _status_text(term.status),
@@ -402,16 +405,25 @@ def _echo_terms_plain(terms: list[LexiconTerm]) -> None:
         terms: Term rows to print.
     """
     rows = [
-        (term.canonical, term.category, term.status, term.alias_count, term.context_count, term.updated_at)
+        (
+            term.public_id,
+            term.canonical,
+            term.category,
+            term.status,
+            term.alias_count,
+            term.context_count,
+            term.updated_at,
+        )
         for term in terms
     ]
-    echo_plain_table(("term", "category", "status", "aliases", "contexts", "updated"), rows)
+    echo_plain_table(("id", "term", "category", "status", "aliases", "contexts", "updated"), rows)
 
 
 def _echo_term_detail(db_path: Path, detail: LexiconTermDetail) -> None:
     """Print one local lexicon term with aliases and contexts."""
     term = detail.term
     typer.echo(f"Lexicon DB: {db_path}")
+    typer.echo(f"ID: {term.public_id}")
     typer.echo(f"Term: {term.canonical}")
     typer.echo(f"Category: {term.category}")
     typer.echo(f"Status: {term.status}")

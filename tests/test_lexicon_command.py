@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -52,13 +54,15 @@ def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
     assert add_result.exit_code == 0
     assert "Lexicon term saved." in add_result.output
     assert list_result.exit_code == 0
+    assert re.search(r"lex-[0-9a-f]{16}", list_result.output)
     assert "iSee" in list_result.output
     assert "system" in list_result.output
     assert plain_result.exit_code == 0
-    assert plain_result.output.splitlines()[0] == "term\tcategory\tstatus\taliases\tcontexts\tupdated"
-    assert "iSee\tsystem\tactive\t1\t0\t" in plain_result.output
+    assert plain_result.output.splitlines()[0] == "id\tterm\tcategory\tstatus\taliases\tcontexts\tupdated"
+    assert re.search(r"lex-[0-9a-f]{16}\tiSee\tsystem\tactive\t1\t0\t", plain_result.output)
     assert "╭" not in plain_result.output
     assert show_result.exit_code == 0
+    assert "ID: lex-" in show_result.output
     assert "Term: iSee" in show_result.output
     assert "艾赛 (asr_error)" in show_result.output
     assert stats_result.exit_code == 0
@@ -79,7 +83,96 @@ def test_lexicon_show_json_prints_term_detail(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert payload["term"]["canonical"] == "iSee"
+    assert re.fullmatch(r"lex-[0-9a-f]{16}", payload["term"]["public_id"])
     assert payload["aliases"][0]["alias"] == "艾赛"
+
+
+def test_lexicon_commands_accept_prefixed_public_id(tmp_path: Path) -> None:
+    """Lifecycle commands should target terms by stable prefixed public id."""
+    db_path = tmp_path / "lexicon.sqlite"
+    runner.invoke(
+        app,
+        ["lexicon", "add", "iSee", "--category", "system", "--alias", "艾赛", "--lexicon-db", str(db_path)],
+    )
+    list_result = runner.invoke(app, ["lexicon", "list", "--lexicon-db", str(db_path), "--json"])
+    public_id = json.loads(list_result.output)["terms"][0]["public_id"]
+
+    show_result = runner.invoke(app, ["lexicon", "show", public_id, "--lexicon-db", str(db_path), "--json"])
+    delete_result = runner.invoke(app, ["lexicon", "delete", public_id, "--lexicon-db", str(db_path), "--yes"])
+    all_result = runner.invoke(app, ["lexicon", "list", "--lexicon-db", str(db_path), "--status", "all"])
+
+    assert re.fullmatch(r"lex-[0-9a-f]{16}", public_id)
+    assert show_result.exit_code == 0
+    assert json.loads(show_result.output)["term"]["canonical"] == "iSee"
+    assert delete_result.exit_code == 0
+    assert f"ID: {public_id}" in delete_result.output
+    assert public_id in all_result.output
+    assert "inactive" in all_result.output
+
+
+def test_lexicon_list_backfills_public_ids_for_existing_database(tmp_path: Path) -> None:
+    """Opening an existing v1 lexicon database should create stable public ids."""
+    db_path = tmp_path / "old.sqlite"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO metadata(key, value) VALUES ('schema_version', '1');
+            CREATE TABLE terms (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              canonical TEXT NOT NULL UNIQUE,
+              category TEXT NOT NULL,
+              description TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'active',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE aliases (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+              alias TEXT NOT NULL,
+              alias_type TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE(term_id, alias, alias_type)
+            );
+            CREATE TABLE contexts (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+              wrong_text TEXT NOT NULL,
+              corrected_text TEXT NOT NULL,
+              left_context TEXT NOT NULL,
+              right_context TEXT NOT NULL,
+              speaker_name TEXT,
+              project_id TEXT NOT NULL,
+              sentence_id INTEGER,
+              source TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE asr_hotword_vocabularies (
+              target_model TEXT NOT NULL,
+              endpoint TEXT NOT NULL,
+              vocabulary_hash TEXT NOT NULL,
+              vocabulary_id TEXT NOT NULL,
+              hotword_count INTEGER NOT NULL,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY(target_model, endpoint)
+            );
+            INSERT INTO terms(canonical, category) VALUES ('iSee', 'system');
+            """
+        )
+
+    result = runner.invoke(app, ["lexicon", "list", "--lexicon-db", str(db_path), "--json"])
+    payload = json.loads(result.output)
+    public_id = payload["terms"][0]["public_id"]
+
+    assert result.exit_code == 0
+    assert re.fullmatch(r"lex-[0-9a-f]{16}", public_id)
+    with sqlite3.connect(db_path) as connection:
+        stored_public_id = connection.execute("SELECT public_id FROM terms WHERE canonical = 'iSee'").fetchone()[0]
+        schema_version = connection.execute("SELECT value FROM metadata WHERE key = 'schema_version'").fetchone()[0]
+    assert stored_public_id == public_id
+    assert schema_version == "2"
 
 
 def test_lexicon_delete_deactivates_term_and_hotword(tmp_path: Path) -> None:
@@ -125,6 +218,7 @@ def test_lexicon_export_import_round_trip(tmp_path: Path) -> None:
     assert "Terms: 1" in import_result.output
     assert show_result.exit_code == 0
     assert "Term: iSee" in show_result.output
+    assert "ID: lex-" in show_result.output
     assert "艾赛 (asr_error)" in show_result.output
     assert "p-demo#1" in show_result.output
 
