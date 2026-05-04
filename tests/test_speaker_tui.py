@@ -33,6 +33,7 @@ from app.presentation.tui.speaker_save import (
     CorrectionProposalDiffScreen,
     SpeakerReviewSaveOutcome,
     SpeakerReviewSaveScreen,
+    _styled_diff_text,
 )
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
@@ -325,7 +326,11 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
             await pilot.pause()
 
             assert isinstance(app.screen, CorrectionProposalDiffScreen)
-            assert "+ IaaS" in str(app.screen.query_one("#diff-content", Static).render())
+            diff_render = app.screen.query_one("#diff-content", Static).render()
+            assert "+ IaaS" in diff_render.plain
+            styled_diff = _styled_diff_text("- AS\n+ IaaS\n")
+            assert any(str(span.style) == "green" for span in styled_diff.spans)
+            assert any(str(span.style) == "red" for span in styled_diff.spans)
 
             await pilot.press("enter")
             await pilot.pause()

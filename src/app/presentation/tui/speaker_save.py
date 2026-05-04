@@ -8,9 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from rich.markup import escape
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import ScrollableContainer, Vertical
 from textual.screen import ModalScreen
 from textual.worker import Worker, WorkerState
 from textual.widgets import Static
@@ -245,6 +246,14 @@ class CorrectionProposalDiffScreen(ModalScreen[None]):
         height: 1;
         text-style: bold;
     }
+    #diff-path {
+        height: 1;
+        color: $text-muted;
+    }
+    #diff-legend {
+        height: 1;
+        color: $text-muted;
+    }
     #diff-scroll {
         height: 1fr;
         margin: 1 0;
@@ -282,46 +291,48 @@ class CorrectionProposalDiffScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         """Build diff inspection layout."""
         with Vertical(id="diff-box"):
-            yield Static(f"Correction proposal diff: {escape(str(self.diff_path))}", id="diff-title")
-            with VerticalScroll(id="diff-scroll"):
-                yield Static(self._diff_text(), id="diff-content")
+            yield Static("Correction proposal diff", id="diff-title")
+            yield Static(escape(str(self.diff_path)), id="diff-path")
+            yield Static("[red]removed[/]  [green]added[/]  [cyan]hunk[/]  [dim]context[/]", id="diff-legend")
+            with ScrollableContainer(id="diff-scroll"):
+                yield Static(self._diff_renderable(), id="diff-content")
             yield Static("j/k or arrows scroll | PageUp/PageDown | Enter returns", id="diff-actions")
 
     def action_scroll_down(self) -> None:
         """Scroll the diff down."""
-        self.query_one("#diff-scroll", VerticalScroll).scroll_down()
+        self.query_one("#diff-scroll", ScrollableContainer).scroll_down()
 
     def action_scroll_up(self) -> None:
         """Scroll the diff up."""
-        self.query_one("#diff-scroll", VerticalScroll).scroll_up()
+        self.query_one("#diff-scroll", ScrollableContainer).scroll_up()
 
     def action_page_down(self) -> None:
         """Scroll the diff one page down."""
-        self.query_one("#diff-scroll", VerticalScroll).scroll_page_down()
+        self.query_one("#diff-scroll", ScrollableContainer).scroll_page_down()
 
     def action_page_up(self) -> None:
         """Scroll the diff one page up."""
-        self.query_one("#diff-scroll", VerticalScroll).scroll_page_up()
+        self.query_one("#diff-scroll", ScrollableContainer).scroll_page_up()
 
     def action_scroll_home(self) -> None:
         """Scroll the diff to the top."""
-        self.query_one("#diff-scroll", VerticalScroll).scroll_home()
+        self.query_one("#diff-scroll", ScrollableContainer).scroll_home()
 
     def action_scroll_end(self) -> None:
         """Scroll the diff to the bottom."""
-        self.query_one("#diff-scroll", VerticalScroll).scroll_end()
+        self.query_one("#diff-scroll", ScrollableContainer).scroll_end()
 
     def action_close_diff(self) -> None:
         """Close the diff modal."""
         self.dismiss(None)
 
-    def _diff_text(self) -> str:
-        """Return escaped diff text or a readable error."""
+    def _diff_renderable(self) -> Text:
+        """Return styled diff text or a readable error."""
         try:
             text = self.diff_path.read_text(encoding="utf-8")
         except OSError as exc:
-            return escape(f"Unable to read diff: {exc}")
-        return escape(text or "(empty diff)")
+            return Text(f"Unable to read diff: {exc}", style="red")
+        return _styled_diff_text(text)
 
 
 def _path_lines(outcome: SpeakerReviewSaveOutcome) -> list[str]:
@@ -361,3 +372,29 @@ def _understanding_lines(summary: CorrectionEditSummary) -> list[str]:
             f"({item.proposed_count} proposed)"
         )
     return lines
+
+
+def _styled_diff_text(diff_text: str) -> Text:
+    """Return line-styled unified diff text."""
+    if not diff_text:
+        return Text("(empty diff)", style="dim")
+    rendered = Text(no_wrap=False)
+    for line in diff_text.splitlines():
+        rendered.append(line, style=_diff_line_style(line))
+        rendered.append("\n")
+    return rendered
+
+
+def _diff_line_style(line: str) -> str:
+    """Return the style for one unified diff line."""
+    if line.startswith("@@"):
+        return "bold cyan"
+    if line.startswith("---") or line.startswith("+++"):
+        return "bold white on dark_blue"
+    if line.startswith("-"):
+        return "red"
+    if line.startswith("+"):
+        return "green"
+    if line.startswith("\\"):
+        return "yellow"
+    return "dim"
