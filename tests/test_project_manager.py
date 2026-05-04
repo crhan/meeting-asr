@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 from app.cli import app
 from app.commands import project as project_commands
 from app.core.project_refs import list_projects, resolve_project_ref
+from app.correction_types import CorrectionEditSummary
 from app.models import SentenceSegment
 from app.project_manager import (
     _invalidate_downstream_artifacts,
@@ -216,6 +217,98 @@ def test_project_run_applies_accepted_voiceprint_matches(
     assert "meeting-asr project review" not in result.output
     assert "欧丁" in transcript.read_text(encoding="utf-8")
     assert "敬悦" in transcript.read_text(encoding="utf-8")
+
+
+def test_project_run_generates_default_transcript_polish_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project run should prepare a reviewable transcript polish proposal after ASR."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    projects_dir = tmp_path / "projects"
+    calls = {}
+
+    def fake_transcribe_project(project_dir, options, progress=None, **kwargs):
+        _write_sample_sentences(project_dir / "asr" / "sentences.json")
+        return ProjectTranscribeSummary(project_dir, "task-1", "test", 1, 3)
+
+    def fake_summarize_project(project_dir, model=None, update_title=True, progress=None):
+        summary_path = project_dir / "exports" / "meeting_summary.md"
+        json_path = project_dir / "exports" / "meeting_summary.json"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text("# 自动会议标题\n", encoding="utf-8")
+        json_path.write_text("{}\n", encoding="utf-8")
+        return ProjectMeetingSummary(project_dir, "自动会议标题", summary_path, json_path, "qwen-test", False)
+
+    def fake_match_project_speakers(project_dir, **kwargs):
+        return SpeakerMatchSummary(
+            project_dir / "speakers" / "speaker_matches.json",
+            "fake-provider",
+            "fake-model",
+            0.75,
+            [SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2)],
+        )
+
+    def fake_prepare_polish(project_dir, correction_model):
+        calls["model"] = correction_model
+        proposal_dir = project_dir / "tmp" / "corrections"
+        proposal_dir.mkdir(parents=True, exist_ok=True)
+        review_path = proposal_dir / "review_polish_test.md"
+        proposal_path = proposal_dir / "proposal_test.md"
+        diff_path = proposal_dir / "proposal_test.diff"
+        json_path = proposal_dir / "proposal_test.json"
+        for path in (review_path, proposal_path, diff_path, json_path):
+            path.write_text("proposal\n", encoding="utf-8")
+        return CorrectionEditSummary(
+            review_path=review_path,
+            proposal_path=proposal_path,
+            proposal_diff_path=diff_path,
+            proposal_json_path=json_path,
+            change_count=0,
+            sample_change_count=0,
+            proposed_change_count=1,
+            learned_count=0,
+            accepted=False,
+            model=correction_model,
+            model_error=None,
+            understanding=[],
+            corrected_sentences_path=None,
+            corrected_transcript_path=None,
+            corrected_named_transcript_path=None,
+            corrected_srt_path=None,
+            hotwords_path=None,
+            applied_path=None,
+            lexicon_db=tmp_path / "lexicon.sqlite",
+        )
+
+    monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+    monkeypatch.setattr(project_commands, "summarize_project", fake_summarize_project)
+    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+    monkeypatch.setattr(project_commands, "_prepare_run_transcript_polish", fake_prepare_polish)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "run",
+            str(source),
+            "--projects-dir",
+            str(projects_dir),
+            "--correction-model",
+            "qwen-test",
+        ],
+    )
+    project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
+    manifest = load_manifest(project_dir)
+
+    assert result.exit_code == 0
+    assert calls["model"] == "qwen-test"
+    assert "Transcript polish" in result.output
+    assert "proposal ready (1 change(s))" in result.output
+    assert "Transcript polish proposal" in result.output
+    assert f"meeting-asr project correct diff {manifest.project_id}" in result.output
+    assert f"meeting-asr project correct accept {manifest.project_id}" in result.output
 
 
 def test_project_run_reports_review_when_matches_are_incomplete(

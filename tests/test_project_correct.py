@@ -229,6 +229,37 @@ def test_project_correct_uses_ai_understanding_for_chinese_terms(tmp_path: Path,
     assert proposal["proposed_changes"][0]["replacements"][0]["wrong_text"] == "云原声"
 
 
+def test_project_correct_polish_creates_non_lexicon_proposal(tmp_path: Path, monkeypatch) -> None:
+    """Transcript polish should propose sentence rewrites without learning vocabulary replacements."""
+    bad_text = "这个入参的时候输出什么，然后出参的时候输出什么，就类有点类似于出参跟入参记录起来"
+    good_text = "入参的时候输出什么，出参的时候输出什么，有点类似于把入参和出参记录起来。"
+    project_dir = _sample_project_with_text(tmp_path, bad_text)
+
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+    monkeypatch.setattr(
+        "app.transcript_corrections.propose_transcript_polish",
+        lambda **kwargs: LlmCorrectionResult("修复口语语序", {"c0": good_text}, kwargs["model"]),
+    )
+
+    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+
+    assert result.exit_code == 0
+    assert "Transcript polish proposal ready." in result.output
+    assert "Correction proposal left pending." in result.output
+    proposal = _latest_proposal(project_dir)
+    assert proposal["category"] == "polish"
+    assert proposal["sample_changes"] == []
+    assert proposal["proposed_changes"][0]["corrected_text"] == good_text
+    assert proposal["proposed_changes"][0]["replacements"] == []
+    assert not (project_dir / "asr" / "sentences_corrected.json").exists()
+    diff_result = runner.invoke(app, ["project", "correct", "diff", str(project_dir)])
+    assert diff_result.exit_code == 0
+    assert good_text in diff_result.output
+
+
 def test_project_transcript_show_can_select_corrected_output(tmp_path: Path) -> None:
     """Corrected transcript artifacts should be viewable through project transcript show."""
     project_dir = _sample_project(tmp_path)

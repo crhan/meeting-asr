@@ -1,4 +1,4 @@
-"""Project vocabulary correction commands."""
+"""Project transcript correction commands."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import typer
 
 from app.core.project_models import ProjectManifest
 from app.core.project_refs import resolve_project_ref
+from app.correction_proposals import load_correction_proposal
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.project_manager import load_manifest, project_paths, save_manifest
@@ -22,6 +23,7 @@ from app.transcript_corrections import (
     accept_correction_proposal,
     prepare_editor_correction,
     prepare_inline_corrections,
+    prepare_transcript_polish,
 )
 
 app = MeetingAsrTyper(
@@ -66,6 +68,37 @@ def edit_command(
     _finish_correction_edit(paths, manifest, speaker_mapping, summary, lexicon_db, yes, auto_accept=not no_open)
 
 
+@app.command("polish")
+def polish_command(
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Accept the generated polish proposal without prompting."),
+    model: Optional[str] = typer.Option(None, "--model", help="DashScope correction model id."),
+    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    from_original: bool = typer.Option(False, "--from-original", help="Polish from the original ASR transcript."),
+) -> None:
+    """Generate an AI transcript polish proposal for word order, repetitions, and obvious ASR wording issues."""
+    paths, manifest, speaker_mapping = _load_command_context(project_dir, projects_dir)
+    options = CorrectionEditOptions(
+        open_editor=False,
+        open_proposal=False,
+        category="polish",
+        lexicon_db=lexicon_db,
+        from_original=from_original,
+        use_ai=True,
+        model=model,
+    )
+    summary = run_with_cli_errors(
+        lambda: prepare_transcript_polish(
+            paths=paths,
+            manifest=manifest,
+            speaker_mapping=speaker_mapping,
+            options=options,
+        )
+    )
+    _finish_correction_edit(paths, manifest, speaker_mapping, summary, lexicon_db, yes, auto_accept=True)
+
+
 def finish_editor_correction(
     *,
     paths,
@@ -96,6 +129,40 @@ def finish_editor_correction(
         options.lexicon_db,
         yes,
         auto_accept=options.open_editor,
+    )
+
+
+def prepare_transcript_polish_for_review(
+    *,
+    paths,
+    manifest: ProjectManifest,
+    speaker_mapping: dict[int, str],
+    options: CorrectionEditOptions,
+) -> CorrectionEditSummary:
+    """
+    Prepare a pending transcript polish proposal without printing or prompting.
+
+    Args:
+        paths: Project paths.
+        manifest: Loaded project manifest.
+        speaker_mapping: Speaker id to display name mapping.
+        options: Correction options.
+
+    Returns:
+        Pending polish summary, or a no-change summary.
+    """
+    polish_options = replace(
+        options,
+        open_editor=False,
+        open_proposal=False,
+        category=options.category or "polish",
+        use_ai=True,
+    )
+    return prepare_transcript_polish(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        options=polish_options,
     )
 
 
@@ -247,7 +314,7 @@ def accept_command(
     proposal: Optional[Path] = typer.Option(None, "--proposal", exists=True, dir_okay=False, file_okay=True),
     lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
 ) -> None:
-    """Accept the latest or specified vocabulary correction proposal."""
+    """Accept the latest or specified transcript correction proposal."""
     paths, manifest, speaker_mapping = _load_command_context(project_dir, projects_dir)
     summary = run_with_cli_errors(
         lambda: accept_correction_proposal(
@@ -261,6 +328,18 @@ def accept_command(
     record_correction_outputs(paths.root, manifest, summary)
     run_with_cli_errors(lambda: save_manifest(paths.root, manifest))
     _echo_correction_summary(summary)
+
+
+@app.command("diff")
+def diff_command(
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    proposal: Optional[Path] = typer.Option(None, "--proposal", exists=True, dir_okay=False, file_okay=True),
+) -> None:
+    """Print the latest or specified correction proposal diff for human review."""
+    paths, _, _ = _load_command_context(project_dir, projects_dir)
+    correction_proposal = run_with_cli_errors(lambda: load_correction_proposal(paths, proposal))
+    typer.echo(correction_proposal.diff_path.read_text(encoding="utf-8"), nl=False)
 
 
 def _load_command_context(
@@ -424,9 +503,10 @@ def _echo_correction_summary(summary: CorrectionEditSummary) -> None:
     Returns:
         None.
     """
-    header = "Vocabulary correction accepted." if summary.accepted else "Vocabulary correction proposal ready."
+    label = _correction_label(summary)
+    header = f"{label} accepted." if summary.accepted else f"{label} proposal ready."
     if summary.proposal_json_path is None and summary.change_count == 0:
-        header = "Vocabulary correction review complete."
+        header = f"{label} review complete."
     typer.echo(header)
     typer.echo(f"Review file: {summary.review_path}")
     _echo_proposal_fields(summary)
@@ -441,6 +521,13 @@ def _echo_correction_summary(summary: CorrectionEditSummary) -> None:
         return
     if summary.accepted:
         _echo_output_paths(summary)
+
+
+def _correction_label(summary: CorrectionEditSummary) -> str:
+    """Return the user-facing correction workflow label."""
+    if summary.review_path.name.startswith("review_polish_"):
+        return "Transcript polish"
+    return "Vocabulary correction"
 
 
 def _echo_proposal_fields(summary: CorrectionEditSummary) -> None:

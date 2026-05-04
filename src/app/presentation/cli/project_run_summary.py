@@ -13,6 +13,7 @@ from rich.table import Table
 
 from app.asr_pricing import format_asr_cost
 from app.core.project_models import ProjectManifest, ProjectMeetingSummary, ProjectTranscribeSummary
+from app.correction_types import CorrectionEditSummary
 from app.presentation.cli.output import cli_console
 from app.presentation.cli.speaker_match_table import (
     SpeakerMatchRow,
@@ -35,6 +36,7 @@ class ProjectRunSummaryView:
     unresolved_matches: int
     source_label: str
     meeting_summary: ProjectMeetingSummary | None
+    correction_summary: CorrectionEditSummary | None
     transcription: ProjectTranscribeSummary
     speaker_matches: tuple[SpeakerMatchRow, ...]
 
@@ -111,7 +113,7 @@ def _agent_prompt_panel(view: ProjectRunSummaryView) -> Panel:
     prompt = (
         f"Open project review for {view.project_ref}, resolve "
         f"{view.below_threshold_matches} below-threshold and {view.no_candidate_matches} no-candidate speaker(s), "
-        "save named outputs, run vocabulary correction, then verify the corrected transcript and subtitle preview."
+        "save named outputs, review transcript correction proposals, then verify the corrected transcript and subtitle preview."
     )
     return Panel(prompt, title="[bold yellow]Agent prompt:[/]", border_style="yellow", expand=False)
 
@@ -134,6 +136,9 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         rows.append(("Summary", _relative_project_output(view.project_dir, view.meeting_summary.summary_path)))
         if view.meeting_summary.title_updated:
             rows.append(("Auto title", view.meeting_summary.title))
+    polish_label = _polish_label(view.correction_summary)
+    if polish_label:
+        rows.append(("Transcript polish", polish_label))
     return rows
 
 
@@ -149,15 +154,22 @@ def _output_rows(view: ProjectRunSummaryView) -> list[tuple[str, str, str]]:
     if view.meeting_summary is not None:
         rows.append(("Meeting summary", "ready", "exports/meeting_summary.md"))
         rows.append(("Summary JSON", "supporting", "exports/meeting_summary.json"))
+    if view.correction_summary and view.correction_summary.proposal_diff_path:
+        rows.append((
+            "Transcript polish proposal",
+            "review",
+            _relative_project_output(view.project_dir, view.correction_summary.proposal_diff_path),
+        ))
     return rows
 
 
 def _next_step_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
     """Return action rows for next-step commands."""
     quoted_ref = shlex.quote(view.project_ref)
+    polish_steps = _polish_next_steps(view)
     if view.unresolved_matches == 0:
-        return [
-            ("Correct vocabulary", f"meeting-asr project correct edit {quoted_ref}"),
+        return polish_steps + [
+            ("Correct vocabulary samples", f"meeting-asr project correct edit {quoted_ref}"),
             ("View corrected transcript", f"meeting-asr project transcript show {quoted_ref} --kind corrected"),
             ("Preview subtitles", f"meeting-asr project speakers preview {quoted_ref}"),
         ]
@@ -172,10 +184,23 @@ def _next_step_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         [
             ("Capture confirmed voices", f"meeting-asr voiceprint capture {quoted_ref}"),
             ("Embed voiceprints", "meeting-asr voiceprint embed"),
-            ("Then correct vocabulary", f"meeting-asr project correct edit {quoted_ref}"),
+            *polish_steps,
+            ("Then correct vocabulary samples", f"meeting-asr project correct edit {quoted_ref}"),
         ]
     )
     return rows
+
+
+def _polish_next_steps(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
+    """Return follow-up commands for a pending transcript polish proposal."""
+    summary = view.correction_summary
+    if summary is None or summary.proposal_json_path is None or summary.proposed_change_count == 0:
+        return []
+    quoted_ref = shlex.quote(view.project_ref)
+    return [
+        ("Review transcript polish diff", f"meeting-asr project correct diff {quoted_ref}"),
+        ("Accept transcript polish", f"meeting-asr project correct accept {quoted_ref}"),
+    ]
 
 
 def _voiceprint_label(view: ProjectRunSummaryView) -> str:
@@ -202,8 +227,20 @@ def _status_text(status: str) -> str:
         "supporting": "cyan",
         "partial": "yellow",
         "blocked": "red",
+        "review": "yellow",
     }
     return f"[{styles.get(status, 'white')}]{status}[/]"
+
+
+def _polish_label(summary: CorrectionEditSummary | None) -> str | None:
+    """Return a compact transcript polish state label."""
+    if summary is None:
+        return None
+    if summary.proposed_change_count:
+        return f"proposal ready ({summary.proposed_change_count} change(s))"
+    if summary.model_error:
+        return "skipped; run doctor if this was unexpected"
+    return "no changes proposed"
 
 
 def _relative_project_output(project_dir: Path, output_path: Path) -> str:

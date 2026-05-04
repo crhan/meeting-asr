@@ -12,7 +12,12 @@ from pathlib import Path
 from app.config import Settings, load_settings
 from app.correction_editor import open_editor
 from app.correction_hotwords import hotwords_from_understanding, write_hotword_artifact
-from app.correction_llm import LlmCorrectionCandidate, LlmCorrectionSample, propose_vocabulary_corrections
+from app.correction_llm import (
+    LlmCorrectionCandidate,
+    LlmCorrectionSample,
+    propose_transcript_polish,
+    propose_vocabulary_corrections,
+)
 from app.correction_proposals import load_correction_proposal, write_correction_proposal_files
 from app.correction_types import (
     CorrectionChange,
@@ -145,6 +150,45 @@ def prepare_inline_corrections(
     return _proposal_summary(proposal, lexicon_db)
 
 
+def prepare_transcript_polish(
+    *,
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    speaker_mapping: dict[int, str],
+    options: CorrectionEditOptions,
+) -> CorrectionEditSummary:
+    """
+    Prepare a full-transcript readability polish proposal.
+
+    Args:
+        paths: Project paths.
+        manifest: Project manifest.
+        speaker_mapping: Speaker id to display name mapping.
+        options: Correction options.
+
+    Returns:
+        Pending polish proposal summary, or a no-change summary.
+    """
+    source = _load_correction_source(paths, from_original=options.from_original)
+    review_path = options.review_file or _write_polish_review_file(paths, manifest, source.result, speaker_mapping)
+    lexicon_db = options.lexicon_db or default_lexicon_db_path()
+    proposed_changes, model, model_error = _propose_polish_changes(source.result, speaker_mapping, options)
+    if not proposed_changes:
+        return _empty_summary(review_path, lexicon_db, model=model, model_error=model_error)
+    proposal = _build_polish_proposal(
+        paths=paths,
+        manifest=manifest,
+        source=source,
+        review_path=review_path,
+        proposed_changes=proposed_changes,
+        speaker_mapping=speaker_mapping,
+        options=replace(options, category=options.category or "polish"),
+        model=model,
+        model_error=model_error,
+    )
+    return _proposal_summary(proposal, lexicon_db)
+
+
 def accept_correction_proposal(
     *,
     paths: ProjectPaths,
@@ -266,7 +310,13 @@ def _write_accept_hotwords(
     return write_hotword_artifact(paths.root / "corrections" / "asr_hotwords.json", hotwords)
 
 
-def _empty_summary(review_path: Path, lexicon_db: Path) -> CorrectionEditSummary:
+def _empty_summary(
+    review_path: Path,
+    lexicon_db: Path,
+    *,
+    model: str | None = None,
+    model_error: str | None = None,
+) -> CorrectionEditSummary:
     """Build a no-change correction summary."""
     return CorrectionEditSummary(
         review_path=review_path,
@@ -278,8 +328,8 @@ def _empty_summary(review_path: Path, lexicon_db: Path) -> CorrectionEditSummary
         proposed_change_count=0,
         learned_count=0,
         accepted=False,
-        model=None,
-        model_error=None,
+        model=model,
+        model_error=model_error,
         understanding=[],
         corrected_sentences_path=None,
         corrected_transcript_path=None,
@@ -367,6 +417,37 @@ def _build_proposal(
         model_error=model_error,
     )
 
+
+def _build_polish_proposal(
+    *,
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    source: CorrectionSource,
+    review_path: Path,
+    proposed_changes: list[CorrectionChange],
+    speaker_mapping: dict[int, str],
+    options: CorrectionEditOptions,
+    model: str,
+    model_error: str | None,
+) -> CorrectionProposal:
+    """Build and persist a transcript polish proposal."""
+    proposed = _apply_changes(source.result, proposed_changes)
+    return write_correction_proposal_files(
+        paths=paths,
+        manifest=manifest,
+        source=source,
+        proposed=proposed,
+        review_path=review_path,
+        sample_changes=[],
+        proposed_changes=proposed_changes,
+        understanding=[],
+        speaker_mapping=speaker_mapping,
+        options=options,
+        model=model,
+        model_error=model_error,
+    )
+
+
 def _inline_sample_change(
     result: TranscriptResult,
     correction_edit: object,
@@ -441,6 +522,33 @@ def _write_inline_review_file(
     return safe_write_text(review_path, "\n".join(lines))
 
 
+def _write_polish_review_file(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    result: TranscriptResult,
+    speaker_mapping: dict[int, str],
+) -> Path:
+    """Write the source snapshot used by an automatic polish proposal."""
+    review_dir = paths.root / "tmp" / REVIEW_DIR
+    review_dir.mkdir(parents=True, exist_ok=True)
+    review_path = review_dir / f"review_polish_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    lines = [
+        "# Meeting-ASR Transcript Polish Review",
+        "",
+        "This file records the source transcript used for an automatic polish proposal.",
+        f"Project ID: {manifest.project_id}",
+        f"Title: {manifest.title}",
+        "",
+    ]
+    for sentence in result.sentences:
+        if not sentence.text.strip():
+            continue
+        lines.append(_anchor(sentence))
+        lines.append(_review_sentence_line(sentence, speaker_mapping))
+        lines.append("")
+    return safe_write_text(review_path, "\n".join(lines))
+
+
 def _propose_full_document_changes(
     result: TranscriptResult,
     sample_changes: list[CorrectionChange],
@@ -485,6 +593,38 @@ def _ai_rule_changes(
         )
         corrected_by_id.update(llm_result.corrected_text_by_id)
     return _changes_from_llm_result(result, sample_changes, candidates, corrected_by_id, speaker_mapping, rules)
+
+
+def _propose_polish_changes(
+    result: TranscriptResult,
+    speaker_mapping: dict[int, str],
+    options: CorrectionEditOptions,
+) -> tuple[list[CorrectionChange], str, str | None]:
+    """Propose sentence-level polish changes with DashScope."""
+    if not options.use_ai:
+        return [], "disabled", "transcript polish requires AI"
+    try:
+        settings = load_settings(require_oss=False, require_dashscope=True)
+        model = options.model or settings.dashscope_correction_model
+        changes = _ai_polish_changes(result, speaker_mapping, settings, model)
+        return changes, model, None
+    except Exception as exc:
+        return [], options.model or "dashscope-correction", str(exc)
+
+
+def _ai_polish_changes(
+    result: TranscriptResult,
+    speaker_mapping: dict[int, str],
+    settings: Settings,
+    model: str,
+) -> list[CorrectionChange]:
+    """Use DashScope to propose transcript polish changes for all sentences."""
+    candidates = _all_llm_candidates(result, speaker_mapping)
+    corrected_by_id: dict[str, str] = {}
+    for batch in _batches(candidates, MAX_LLM_BATCH_SIZE):
+        llm_result = propose_transcript_polish(candidates=batch, settings=settings, model=model)
+        corrected_by_id.update(llm_result.corrected_text_by_id)
+    return _changes_from_polish_result(result, candidates, corrected_by_id, speaker_mapping)
 
 
 def _local_rule_changes(
@@ -593,6 +733,26 @@ def _llm_candidates(
     return candidates
 
 
+def _all_llm_candidates(
+    result: TranscriptResult,
+    speaker_mapping: dict[int, str],
+) -> list[LlmCorrectionCandidate]:
+    """Build model candidates from all non-empty transcript sentences."""
+    candidates = []
+    for index, sentence in enumerate(result.sentences):
+        if not sentence.text.strip():
+            continue
+        candidates.append(
+            LlmCorrectionCandidate(
+                candidate_id=f"c{index}",
+                sentence_id=sentence.sentence_id,
+                speaker_name=_speaker_name(sentence.speaker_id, speaker_mapping),
+                text=sentence.text,
+            )
+        )
+    return candidates
+
+
 def _llm_samples(changes: list[CorrectionChange]) -> list[LlmCorrectionSample]:
     """Build model samples from user-edited sentence changes."""
     return [
@@ -626,6 +786,28 @@ def _changes_from_llm_result(
             proposed_text = sample_change.corrected_text if sample_change else None
         if proposed_text and proposed_text != sentence.text.strip():
             changes.append(_change_from_sentence_with_rules(sentence, proposed_text, speaker_mapping, rules))
+    return changes
+
+
+def _changes_from_polish_result(
+    result: TranscriptResult,
+    candidates: list[LlmCorrectionCandidate],
+    corrected_by_id: dict[str, str],
+    speaker_mapping: dict[int, str],
+) -> list[CorrectionChange]:
+    """Convert model polish text into safe non-lexicon correction changes."""
+    candidate_ids = {candidate.candidate_id for candidate in candidates}
+    changes = []
+    for index, sentence in enumerate(result.sentences):
+        if f"c{index}" not in candidate_ids:
+            continue
+        proposed_text = corrected_by_id.get(f"c{index}")
+        if not _valid_model_text(sentence.text, proposed_text):
+            continue
+        if proposed_text == sentence.text.strip():
+            continue
+        change = _change_from_sentence(sentence, proposed_text, speaker_mapping)
+        changes.append(replace(change, replacements=[]))
     return changes
 
 

@@ -9,6 +9,7 @@ from app.correction_llm import (
     LlmCorrectionCandidate,
     LlmCorrectionSample,
     infer_vocabulary_replacements,
+    propose_transcript_polish,
     propose_vocabulary_corrections,
 )
 
@@ -71,3 +72,38 @@ def test_infer_vocabulary_replacements_parses_term_level_rules(monkeypatch) -> N
     assert len(rules) == 1
     assert rules[0].wrong_text == "云原声"
     assert rules[0].corrected_text == "云原生"
+
+
+def test_propose_transcript_polish_parses_dashscope_json(monkeypatch) -> None:
+    """Transcript polish helper should allow safe wording and word-order fixes."""
+    calls = {}
+
+    def fake_call(**kwargs):
+        calls.update(kwargs)
+        content = (
+            '{"understanding":"修复入参/出参语序",'
+            '"corrections":[{"id":"c1","corrected_text":"入参和出参需要记录起来。"}]}'
+        )
+        return SimpleNamespace(status_code=200, output={"choices": [{"message": {"content": content}}]})
+
+    monkeypatch.setattr("app.correction_llm.Generation.call", fake_call)
+    settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
+
+    result = propose_transcript_polish(
+        candidates=[
+            LlmCorrectionCandidate(
+                "c1",
+                813,
+                "米汤",
+                "这个入参的时候输出什么，然后出参的时候输出什么，就类有点类似于出参跟入参记录起来",
+            )
+        ],
+        settings=settings,
+        model="qwen-test",
+    )
+
+    prompt = calls["messages"][1]["content"]
+    assert "语序断裂" in prompt
+    assert "不要总结、扩写" in prompt
+    assert result.understanding == "修复入参/出参语序"
+    assert result.corrected_text_by_id == {"c1": "入参和出参需要记录起来。"}

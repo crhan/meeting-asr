@@ -134,7 +134,7 @@ app.add_typer(
 app.add_typer(
     project_correct_commands.app,
     name="correct",
-    help="Review and apply vocabulary corrections.",
+    help="Review and apply transcript correction proposals.",
     context_settings=HELP_CONTEXT,
 )
 
@@ -172,6 +172,7 @@ class ProjectRunSummary:
     project: ProjectCreateSummary
     transcription: ProjectTranscribeSummary
     meeting_summary: ProjectMeetingSummary | None
+    correction_summary: CorrectionEditSummary | None
     matches: SpeakerMatchSummary
     applied_mapping: dict[int, str]
 
@@ -339,6 +340,8 @@ def run(
     match_threshold: float = typer.Option(0.75, "--match-threshold", min=0.0, max=1.0),
     summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Generate title and summary after ASR."),
     summary_model: Optional[str] = typer.Option(None, "--summary-model", help="DashScope model for meeting summary."),
+    polish: bool = typer.Option(True, "--polish/--no-polish", help="Generate transcript polish proposal after ASR."),
+    correction_model: Optional[str] = typer.Option(None, "--correction-model", help="DashScope model for transcript polish."),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Create a project, transcribe, summarize, and match speakers automatically."""
@@ -370,6 +373,8 @@ def run(
             match_threshold=match_threshold,
             summarize=summarize,
             summary_model=summary_model,
+            polish=polish,
+            correction_model=correction_model,
             progress=reporter,
         ),
         description="Running project workflow",
@@ -510,6 +515,8 @@ def _run_project_workflow(
     match_threshold: float,
     summarize: bool,
     summary_model: str | None,
+    polish: bool,
+    correction_model: str | None,
     progress: CliProgressReporter | None,
 ) -> ProjectRunSummary:
     """
@@ -534,8 +541,8 @@ def _run_project_workflow(
     Returns:
         Project run summary.
     """
-    step_total = 10 if summarize else 9
-    step_descriptions = _project_run_step_descriptions(summarize)
+    step_total = 7 + int(polish) + int(summarize) + 2
+    step_descriptions = _project_run_step_descriptions(summarize, polish)
     emit_progress(
         progress,
         "Creating or reusing project",
@@ -554,17 +561,23 @@ def _run_project_workflow(
         progress=progress,
     )
     transcription = transcribe_project(project.project_dir, options, progress=progress, step_offset=1, step_total=step_total)
+    correction_summary = None
+    if polish:
+        polish_step = 8
+        emit_progress(progress, "Generating transcript polish proposal", step_index=polish_step, step_total=step_total)
+        correction_summary = _prepare_run_transcript_polish(project.project_dir, correction_model)
     meeting_summary = None
     if summarize:
-        emit_progress(progress, "Summarizing meeting", step_index=8, step_total=step_total, reset_total=True)
+        summary_step = 8 + int(polish)
+        emit_progress(progress, "Summarizing meeting", step_index=summary_step, step_total=step_total, reset_total=True)
         meeting_summary = summarize_project(
             project.project_dir,
             model=summary_model,
             update_title=title is None,
             progress=progress,
         )
-    match_step = 9 if summarize else 8
-    apply_step = 10 if summarize else 9
+    match_step = 8 + int(polish) + int(summarize)
+    apply_step = match_step + 1
     emit_progress(
         progress,
         "Matching speakers with voiceprints",
@@ -600,15 +613,16 @@ def _run_project_workflow(
             person_public_mapping=matches.accepted_person_public_mapping,
         )
     emit_progress(progress, "Project run complete", completed=1, total=1)
-    return ProjectRunSummary(project, transcription, meeting_summary, matches, applied_mapping)
+    return ProjectRunSummary(project, transcription, meeting_summary, correction_summary, matches, applied_mapping)
 
 
-def _project_run_step_descriptions(summarize: bool) -> tuple[str, ...]:
+def _project_run_step_descriptions(summarize: bool, polish: bool) -> tuple[str, ...]:
     """
     Return the planned step names for ``project run``.
 
     Args:
         summarize: Whether the summary step is enabled.
+        polish: Whether the transcript polish step is enabled.
 
     Returns:
         Ordered step descriptions.
@@ -622,15 +636,44 @@ def _project_run_step_descriptions(summarize: bool) -> tuple[str, ...]:
         "Downloading transcription result",
         "Writing transcript artifacts",
     )
+    steps = list(transcription_steps)
+    if polish:
+        steps.append("Generating transcript polish proposal")
     if summarize:
-        return transcription_steps + (
-            "Summarizing meeting",
-            "Matching speakers with voiceprints",
-            "Applying accepted speaker matches",
-        )
-    return transcription_steps + (
-        "Matching speakers with voiceprints",
-        "Applying accepted speaker matches",
+        steps.append("Summarizing meeting")
+    steps.extend(("Matching speakers with voiceprints", "Applying accepted speaker matches"))
+    return tuple(steps)
+
+
+def _prepare_run_transcript_polish(
+    project_dir: Path,
+    correction_model: str | None,
+) -> CorrectionEditSummary:
+    """
+    Prepare the default transcript polish proposal used by ``project run``.
+
+    Args:
+        project_dir: Project root.
+        correction_model: Optional DashScope model override.
+
+    Returns:
+        Pending polish summary, or a no-change/error summary.
+    """
+    paths = project_paths(project_dir)
+    manifest = load_manifest(paths.root)
+    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    options = CorrectionEditOptions(
+        open_editor=False,
+        open_proposal=False,
+        category="polish",
+        use_ai=True,
+        model=correction_model,
+    )
+    return project_correct_commands.prepare_transcript_polish_for_review(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        options=options,
     )
 
 
@@ -1184,6 +1227,7 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
         unresolved_matches=below_threshold_matches + no_candidate_matches,
         source_label="new project" if summary.project.created else "reused project",
         meeting_summary=summary.meeting_summary,
+        correction_summary=summary.correction_summary,
         transcription=summary.transcription,
         speaker_matches=speaker_match_rows(summary.matches.matches, default_threshold=summary.matches.threshold),
     )

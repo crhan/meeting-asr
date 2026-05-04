@@ -92,6 +92,44 @@ def propose_vocabulary_corrections(
     return _parse_result(content, model=model, candidate_ids={item.candidate_id for item in candidates})
 
 
+def propose_transcript_polish(
+    *,
+    candidates: list[LlmCorrectionCandidate],
+    settings: Settings,
+    model: str,
+) -> LlmCorrectionResult:
+    """
+    Ask DashScope to propose safe full-transcript wording polish.
+
+    Args:
+        candidates: Transcript sentences to inspect.
+        settings: Runtime DashScope settings.
+        model: DashScope text generation model id.
+
+    Returns:
+        Structured sentence-level polish proposal.
+    """
+    _configure_dashscope(settings)
+    prompt = _build_polish_prompt(candidates)
+
+    def _call() -> Any:
+        response = Generation.call(
+            model=model,
+            api_key=settings.dashscope_api_key,
+            messages=[
+                {"role": "system", "content": _polish_system_prompt()},
+                {"role": "user", "content": prompt},
+            ],
+            result_format="message",
+            temperature=0.1,
+        )
+        _raise_for_generation_error(response)
+        return response
+
+    content = _extract_generation_text(retry(_call, attempts=3, delay_seconds=1.0))
+    return _parse_result(content, model=model, candidate_ids={item.candidate_id for item in candidates})
+
+
 def infer_vocabulary_replacements(
     *,
     samples: list[LlmCorrectionSample],
@@ -157,6 +195,16 @@ def _system_prompt() -> str:
     return "你是会议转写词汇纠错助手。只输出 JSON，不要输出 Markdown，不要解释。"
 
 
+def _polish_system_prompt() -> str:
+    """
+    Return the fixed transcript polish system prompt.
+
+    Returns:
+        System prompt text.
+    """
+    return "你是会议转写可读性修复助手。只输出 JSON，不要输出 Markdown，不要解释。"
+
+
 def _build_prompt(samples: list[LlmCorrectionSample], candidates: list[LlmCorrectionCandidate]) -> str:
     """
     Build a bounded correction prompt.
@@ -182,6 +230,37 @@ def _build_prompt(samples: list[LlmCorrectionSample], candidates: list[LlmCorrec
         "4. corrected_text 必须保留原句结构，只替换必要词汇。\n"
         "5. 返回 JSON 对象，字段为 understanding 和 corrections。\n"
         "6. corrections 是数组，每项包含 id, corrected_text, reason。\n\n"
+        f"输入：\n{json.dumps(payload, ensure_ascii=False)}"
+    )
+
+
+def _build_polish_prompt(candidates: list[LlmCorrectionCandidate]) -> str:
+    """
+    Build a prompt for safe transcript wording polish.
+
+    Args:
+        candidates: Candidate transcript sentences.
+
+    Returns:
+        Prompt text.
+    """
+    payload = {"candidates": [_candidate_payload(item) for item in candidates]}
+    return (
+        "逐句检查会议 ASR 转写，提出轻量的可读性修复。\n"
+        "目标：把明显破碎的口语 ASR 文本修成可读会议记录，但不能改变说话人的事实含义。\n"
+        "允许修改：\n"
+        "1. 删除明显重复的口头填充、卡顿和无意义重复。\n"
+        "2. 修复 ASR 导致的中文语序断裂、词语错位和不自然表达。\n"
+        "3. 根据同一句上下文修正明显术语顺序，例如入参/出参、输入/输出这类成对概念。\n"
+        "4. 修正明显的专有词、系统名、技术词误识别，但只在上下文足够明确时修改。\n"
+        "禁止修改：\n"
+        "1. 不要总结、扩写、补充新信息或改变技术结论。\n"
+        "2. 不要改变人名、数字、时间、任务归属、否定/肯定语义。\n"
+        "3. 没有把握的句子不要返回。\n"
+        "4. 每个 corrected_text 仍然必须是一句转写文本，不要输出解释。\n"
+        "返回 JSON 对象，字段为 understanding 和 corrections。\n"
+        "understanding 用一句话概括本批次主要修复类型。\n"
+        "corrections 是数组，每项包含 id, corrected_text, reason。\n\n"
         f"输入：\n{json.dumps(payload, ensure_ascii=False)}"
     )
 
