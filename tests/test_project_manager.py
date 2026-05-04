@@ -381,7 +381,7 @@ def test_project_run_reports_review_when_matches_are_incomplete(
     assert result.output.index(f"meeting-asr project review {manifest.project_id}") < result.output.index(
         f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name"
     )
-    assert f"meeting-asr voiceprint capture {manifest.project_id}" in result.output
+    assert f"meeting-asr voiceprint review {manifest.project_id}" in result.output
     assert "meeting-asr voiceprint embed" in result.output
     mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
     assert mapping == {"0": "欧丁"}
@@ -1277,7 +1277,7 @@ def test_project_speakers_inspect_shows_below_threshold_candidates(tmp_path: Pat
     assert f"Recommended next step: meeting-asr project speakers review {manifest.project_id}" in result.output
     assert f"meeting-asr project speakers inspect {manifest.project_id} --sample-count 5" in result.output
     assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name" in result.output
-    assert f"meeting-asr voiceprint capture {manifest.project_id}" in result.output
+    assert f"meeting-asr voiceprint review {manifest.project_id}" in result.output
 
 
 def test_project_speakers_inspect_marks_voiceprint_conflicts(tmp_path: Path) -> None:
@@ -1437,7 +1437,7 @@ def test_project_review_summary_shows_below_threshold_best_candidate(tmp_path: P
     assert result.output.index(f"meeting-asr project review {manifest.project_id}") < result.output.index(
         f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name"
     )
-    assert f"meeting-asr voiceprint capture {manifest.project_id}" in result.output
+    assert f"meeting-asr voiceprint review {manifest.project_id}" in result.output
 
 
 def test_project_review_summary_accepts_project_id(tmp_path: Path) -> None:
@@ -1519,7 +1519,7 @@ def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     assert mapping == {"0": "欧丁", "1": "敬悦"}
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
     assert "meeting-asr project speakers preview" in result.output
-    assert "meeting-asr voiceprint capture" in result.output
+    assert "meeting-asr voiceprint review PROJECT_ID" in result.output
     assert f"open {transcript_path.resolve()}" in result.output
 
 

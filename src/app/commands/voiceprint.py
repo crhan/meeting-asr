@@ -45,8 +45,11 @@ from app.presentation.tui.voiceprint import (
 )
 from app.presentation.tui.voiceprint_capture import (
     load_voiceprint_capture_review_session,
-    render_voiceprint_capture_review_summary,
-    run_voiceprint_capture_review_tui,
+)
+from app.presentation.tui.voiceprint_review import (
+    VoiceprintReviewSession,
+    render_voiceprint_review_summary,
+    run_voiceprint_review_tui,
 )
 from app.voiceprint_embedding import embed_voiceprint_samples
 from app.project_manager import load_manifest, project_paths, resolve_project_source_path
@@ -72,6 +75,62 @@ people_app = MeetingAsrTyper(
 app.add_typer(people_app, name="people", help="Manage stable voiceprint people.")
 
 
+@app.command("review")
+def review_command(
+    project_dir: Optional[Path] = typer.Argument(None, metavar="[PROJECT]", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    sample_count: int = typer.Option(3, "--sample-count", min=1, max=20),
+    max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
+    padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    page_size: Optional[int] = typer.Option(
+        None,
+        "--page-size",
+        min=1,
+        max=50,
+        help="Override samples per page. By default the TUI uses the pane height.",
+    ),
+    summary: bool = typer.Option(False, "--summary", help="Print project candidates and library without opening TUI."),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+) -> None:
+    """Open the unified voiceprint TUI for project candidates and the global library."""
+    resolved_project_dir = None
+    if project_dir is not None:
+        resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    session, planned = _build_voiceprint_review_session(
+        project_dir=resolved_project_dir,
+        sample_count=sample_count,
+        max_seconds=max_seconds,
+        padding_seconds=padding_seconds,
+        store_dir=store_dir,
+        page_size=page_size,
+    )
+    if summary:
+        typer.echo(render_voiceprint_review_summary(session))
+        return
+    if session.capture is None and not session.library.speakers:
+        typer.echo("No project was provided and no voiceprints are recorded.")
+        typer.echo("Start with: meeting-asr voiceprint review PROJECT_ID")
+        return
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        typer.echo(render_voiceprint_review_summary(session))
+        raise typer.BadParameter("Voiceprint review TUI requires an interactive terminal. Use --summary to inspect.")
+    decision = run_voiceprint_review_tui(session)
+    if not decision.saved:
+        typer.echo("Voiceprint review closed; no samples were written.")
+        return
+    if resolved_project_dir is None or planned is None:
+        typer.echo("No project candidates were saved.")
+        return
+    captured = _persist_review_decision(
+        project_dir=resolved_project_dir,
+        planned=planned,
+        selected_clip_rel_paths=decision.selected_clip_rel_paths,
+        progress=progress,
+    )
+    _echo_capture_summary(captured)
+
+
 @app.command("capture")
 def capture_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
@@ -80,7 +139,7 @@ def capture_command(
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    review: bool = typer.Option(False, "--review", help="Review candidate samples in a TUI before capture."),
+    review: bool = typer.Option(False, "--review", help="Compatibility shortcut; prefer `voiceprint review PROJECT`."),
     page_size: Optional[int] = typer.Option(
         None,
         "--page-size",
@@ -163,36 +222,14 @@ def _run_capture_review_workflow(
     Returns:
         Captured summary, or None when the review was cancelled.
     """
-    planned = run_with_cli_errors(
-        lambda: plan_voiceprint_capture(
-            project_dir,
-            sample_count=sample_count,
-            max_seconds=max_seconds,
-            padding_seconds=padding_seconds,
-            store_dir=store_dir,
-        )
-    )
-    source_path = run_with_cli_errors(lambda: _voiceprint_capture_source_path(project_dir))
-    session = load_voiceprint_capture_review_session(summary=planned, source_path=source_path, page_size=page_size)
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        typer.echo(render_voiceprint_capture_review_summary(session))
-        raise typer.BadParameter(
-            "Voiceprint capture review TUI requires an interactive terminal. "
-            "Use --dry-run to inspect without writing."
-        )
-    decision = run_voiceprint_capture_review_tui(session)
-    if not decision.saved:
-        typer.echo("Voiceprint capture cancelled; no samples were written.")
-        return None
-    return run_with_progress(
-        lambda reporter: persist_voiceprint_capture_selection(
-            project_dir,
-            planned=planned,
-            selected_clip_rel_paths=decision.selected_clip_rel_paths,
-            progress=reporter,
-        ),
-        description="Capturing selected voiceprints",
-        enabled=progress,
+    return _run_unified_voiceprint_review_workflow(
+        project_dir=project_dir,
+        sample_count=sample_count,
+        max_seconds=max_seconds,
+        padding_seconds=padding_seconds,
+        store_dir=store_dir,
+        page_size=page_size,
+        progress=progress,
     )
 
 
@@ -209,6 +246,137 @@ def _voiceprint_capture_source_path(project_dir: Path) -> Path:
     paths = project_paths(project_dir)
     manifest = load_manifest(paths.root)
     return resolve_project_source_path(paths.root, manifest)
+
+
+def _build_voiceprint_review_session(
+    *,
+    project_dir: Path | None,
+    sample_count: int,
+    max_seconds: float,
+    padding_seconds: float,
+    store_dir: Path | None,
+    page_size: int | None,
+) -> tuple[VoiceprintReviewSession, VoiceprintCaptureSummary | None]:
+    """
+    Load project capture candidates and the global voiceprint library.
+
+    Args:
+        project_dir: Optional project root.
+        sample_count: Maximum clips per speaker.
+        max_seconds: Maximum seconds per output clip.
+        padding_seconds: Extra context around each sentence.
+        store_dir: Optional voiceprint store directory.
+        page_size: Optional TUI samples per page.
+
+    Returns:
+        Unified TUI session and the planned capture summary, if a project was loaded.
+    """
+    planned = None
+    capture_session = None
+    if project_dir is not None:
+        planned = run_with_cli_errors(
+            lambda: plan_voiceprint_capture(
+                project_dir,
+                sample_count=sample_count,
+                max_seconds=max_seconds,
+                padding_seconds=padding_seconds,
+                store_dir=store_dir,
+            )
+        )
+        source_path = run_with_cli_errors(lambda: _voiceprint_capture_source_path(project_dir))
+        capture_session = load_voiceprint_capture_review_session(
+            summary=planned,
+            source_path=source_path,
+            page_size=page_size,
+        )
+    library_session = run_with_cli_errors(
+        lambda: load_voiceprint_library_session(store_dir=store_dir, page_size=page_size)
+    )
+    return VoiceprintReviewSession(capture=capture_session, library=library_session), planned
+
+
+def _run_unified_voiceprint_review_workflow(
+    *,
+    project_dir: Path,
+    sample_count: int,
+    max_seconds: float,
+    padding_seconds: float,
+    store_dir: Path | None,
+    page_size: int | None,
+    progress: bool,
+) -> VoiceprintCaptureSummary | None:
+    """
+    Run unified review with a project loaded, then persist selected samples.
+
+    Args:
+        project_dir: Project root.
+        sample_count: Maximum clips per speaker.
+        max_seconds: Maximum seconds per output clip.
+        padding_seconds: Extra context around each sentence.
+        store_dir: Optional voiceprint store directory.
+        page_size: Optional TUI samples per page.
+        progress: Whether to show capture progress after review.
+
+    Returns:
+        Captured summary, or None when the review was cancelled.
+    """
+    session, planned = _build_voiceprint_review_session(
+        project_dir=project_dir,
+        sample_count=sample_count,
+        max_seconds=max_seconds,
+        padding_seconds=padding_seconds,
+        store_dir=store_dir,
+        page_size=page_size,
+    )
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        typer.echo(render_voiceprint_review_summary(session))
+        raise typer.BadParameter(
+            "Voiceprint review TUI requires an interactive terminal. "
+            "Use --dry-run from capture, or `meeting-asr voiceprint review PROJECT --summary` to inspect."
+        )
+    decision = run_voiceprint_review_tui(session)
+    if not decision.saved:
+        typer.echo("Voiceprint review closed; no samples were written.")
+        return None
+    if planned is None:
+        return None
+    return _persist_review_decision(
+        project_dir=project_dir,
+        planned=planned,
+        selected_clip_rel_paths=decision.selected_clip_rel_paths,
+        progress=progress,
+    )
+
+
+def _persist_review_decision(
+    *,
+    project_dir: Path,
+    planned: VoiceprintCaptureSummary,
+    selected_clip_rel_paths: frozenset[str],
+    progress: bool,
+) -> VoiceprintCaptureSummary:
+    """
+    Persist selected review samples into the global voiceprint store.
+
+    Args:
+        project_dir: Project root.
+        planned: Dry-run capture plan.
+        selected_clip_rel_paths: Human-approved planned clip relative paths.
+        progress: Whether to show capture progress.
+
+    Returns:
+        Captured voiceprint summary.
+    """
+    return run_with_progress(
+        lambda reporter: persist_voiceprint_capture_selection(
+            project_dir,
+            planned=planned,
+            selected_clip_rel_paths=selected_clip_rel_paths,
+            progress=reporter,
+        ),
+        description="Capturing selected voiceprints",
+        enabled=progress,
+    )
 
 
 @app.command("list")
@@ -233,7 +401,7 @@ def list_command(
     _echo_voiceprint_speaker_table(rows)
 
 
-@app.command("browse")
+@app.command("browse", hidden=True)
 def browse_command(
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     page_size: Optional[int] = typer.Option(
@@ -245,7 +413,7 @@ def browse_command(
     ),
     summary: bool = typer.Option(False, "--summary", help="Print the library without opening the TUI."),
 ) -> None:
-    """Open a TUI for browsing the global voiceprint library."""
+    """Open the legacy global-library TUI; prefer `voiceprint review`."""
     session = run_with_cli_errors(
         lambda: load_voiceprint_library_session(store_dir=store_dir, page_size=page_size)
     )
@@ -692,7 +860,7 @@ def _echo_capture_summary(summary: VoiceprintCaptureSummary) -> None:
         typer.echo("")
         typer.echo("Next steps:")
         typer.echo(f"  {_voiceprint_embed_command(summary.store_dir)}")
-        typer.echo("  meeting-asr voiceprint browse")
+        typer.echo("  meeting-asr voiceprint review")
         typer.echo("  meeting-asr voiceprint list")
 
 

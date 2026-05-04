@@ -175,6 +175,32 @@ def test_voiceprint_capture_command_accepts_project_id_for_dry_run(tmp_path: Pat
     assert "Alice (speaker 0): 2 sample(s)" in result.output
 
 
+def test_voiceprint_review_command_summarizes_project_and_library(tmp_path: Path) -> None:
+    """Unified review should accept project ids and show both review scopes."""
+    project_dir = _sample_project(tmp_path)
+    manifest = load_manifest(project_dir)
+
+    result = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "review",
+            manifest.project_id,
+            "--projects-dir",
+            str(tmp_path / "projects"),
+            "--store-dir",
+            str(tmp_path / "voiceprints"),
+            "--summary",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Voiceprint review" in result.output
+    assert f"Project candidates: {manifest.project_id}" in result.output
+    assert "Candidate speakers: 1 | samples: 2" in result.output
+    assert "Global library:" in result.output
+
+
 class _RunningFakeProcess:
     """Fake process that remains alive until terminated."""
 

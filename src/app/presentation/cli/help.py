@@ -81,6 +81,7 @@ COMMAND_ZH = {
     ("config", "unset"): "删除一个全局配置值。",
     ("config", "import-env"): "从 .env 文件导入配置。",
     ("voiceprint",): "管理跨项目声纹库。",
+    ("voiceprint", "review"): "打开统一声纹 TUI，在项目候选样本和全局声纹库之间切换。",
     ("voiceprint", "capture"): "从已标注项目采集声纹样本。",
     ("voiceprint", "list"): "列出全局声纹库里的说话人。",
     ("voiceprint", "people"): "管理声纹库里的稳定人员 ID。",
@@ -232,9 +233,13 @@ EXAMPLES = {
         "en": ("meeting-asr voiceprint list", "meeting-asr voiceprint list --plain"),
         "zh": ("meeting-asr voiceprint list", "meeting-asr voiceprint list --plain"),
     },
+    ("voiceprint", "review"): {
+        "en": ("meeting-asr voiceprint review <project-id>", "meeting-asr voiceprint review"),
+        "zh": ("meeting-asr voiceprint review <project-id>", "meeting-asr voiceprint review"),
+    },
     ("voiceprint", "capture"): {
-        "en": ("meeting-asr voiceprint capture <project-id> --review",),
-        "zh": ("meeting-asr voiceprint capture <project-id> --review",),
+        "en": ("meeting-asr voiceprint capture <project-id>",),
+        "zh": ("meeting-asr voiceprint capture <project-id>",),
     },
     ("voiceprint", "embed"): {
         "en": ("meeting-asr voiceprint embed", "meeting-asr voiceprint embed --provider local-speechbrain"),

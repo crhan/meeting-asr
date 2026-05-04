@@ -78,7 +78,8 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
     assert "transcript" in project_commands
     assert "speakers" in project_commands
     assert "review" in speaker_commands
-    assert "browse" in voiceprint_commands
+    assert "review" in voiceprint_commands
+    assert "browse" not in voiceprint_commands
     assert "list" in lexicon_commands
     assert "hotwords" in lexicon_commands
     assert "stats" in lexicon_commands

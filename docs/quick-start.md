@@ -76,7 +76,7 @@ meeting-asr project speakers preview PROJECT_ID
 如果这次人工确认了新人，把他们补进跨项目声纹库：
 
 ```bash
-meeting-asr voiceprint capture PROJECT_ID
+meeting-asr voiceprint review PROJECT_ID
 meeting-asr voiceprint embed
 ```
 

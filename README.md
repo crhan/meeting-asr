@@ -141,9 +141,9 @@ meeting-asr project speakers match PROJECT_ID --apply
 meeting-asr project review PROJECT_ID
 meeting-asr project speakers preview PROJECT_ID
 meeting-asr project transcript show PROJECT_ID
-meeting-asr voiceprint capture
+meeting-asr voiceprint review PROJECT_ID
 meeting-asr voiceprint embed
-meeting-asr voiceprint browse
+meeting-asr voiceprint review
 ```
 
 `project create` 会复制源视频到 `source/`，后续命令只需要项目目录，不需要再次传视频路径。
@@ -266,7 +266,7 @@ proposal。
 4. `meeting-asr project speakers apply --map 0=Name` 是 advanced/scripted 路径，只适合脚本或已经确认好的映射，不是人类默认修正入口。
 5. 用 `meeting-asr project speakers preview` 复核带名字的字幕。
 6. 确认无误后，最终项目产物就是 `exports/transcript_named.txt` 和 `exports/subtitle_named.srt`。
-7. 如果有新确认的人，再跑 `meeting-asr voiceprint capture && meeting-asr voiceprint embed`，把他们补进跨项目声纹库。
+7. 如果有新确认的人，再跑 `meeting-asr voiceprint review PROJECT_ID && meeting-asr voiceprint embed`，把他们补进跨项目声纹库。
 
 `meeting-asr project speakers match --apply` 只是快捷路径：它只会应用已 accepted
 的匹配，适合你确定自动结果已经足够时使用；如果还有未匹配的人，应使用交互式
@@ -292,9 +292,9 @@ meeting-asr project transcript open --kind named
 常用命令：
 
 ```bash
-meeting-asr voiceprint capture
+meeting-asr voiceprint review PROJECT_ID
 meeting-asr voiceprint embed
-meeting-asr voiceprint browse
+meeting-asr voiceprint review
 meeting-asr voiceprint list
 meeting-asr voiceprint show 1
 meeting-asr voiceprint play 1 --sample 1
@@ -303,12 +303,13 @@ meeting-asr voiceprint delete-speaker 1 --yes
 meeting-asr voiceprint path
 ```
 
-`voiceprint capture` 只记录已确认姓名的 speaker；仍是 `Speaker A`、`Speaker C`
+`voiceprint review PROJECT_ID` 会在同一个 TUI 里切换项目待采样候选和全局声纹库；
+保存时只记录已确认姓名的 speaker。仍是 `Speaker A`、`Speaker C`
 这种匿名 label 的人会跳过。`voiceprint list` 会显示 speaker ID，并按 speaker
 汇总样本数、项目数和 embedding 覆盖率；`show`、`play`、`delete-sample` 和
 `delete-speaker` 可用姓名或 ID 引用同一个人。`show` 会显示样本编号，`play` 和
 `delete-sample` 都按这个编号精确操作。
-`voiceprint browse` 是声纹库 TUI：左边选人，右边看这个人的 WAV 样本、来源项目、
+不带 PROJECT 的 `voiceprint review` 直接进入全局声纹库视图：左边选人，右边看这个人的 WAV 样本、来源项目、
 时间戳和转写文本；`space` 播放/停止当前样本，`?` 看快捷键。删除仍用显式 CLI，
 避免在浏览界面里误删。
 
