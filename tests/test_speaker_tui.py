@@ -329,8 +329,8 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
             diff_render = app.screen.query_one("#diff-content", Static).render()
             assert "+ IaaS" in diff_render.plain
             styled_diff = _styled_diff_text("- AS\n+ IaaS\n")
-            assert any(str(span.style) == "green" for span in styled_diff.spans)
-            assert any(str(span.style) == "red" for span in styled_diff.spans)
+            assert any(str(span.style) == "bold green" for span in styled_diff.spans)
+            assert any(str(span.style) == "bold red" for span in styled_diff.spans)
 
             await pilot.press("enter")
             await pilot.pause()
@@ -344,6 +344,16 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
             assert "correction accepted" in str(app.screen.query_one("#save-title", Static).render())
 
     asyncio.run(scenario())
+
+
+def test_correction_diff_viewer_highlights_changed_tokens_only() -> None:
+    """Diff rendering should highlight changed tokens, not just whole lines."""
+    styled_diff = _styled_diff_text("- 我们看一下IC系统。\n+ 我们看一下isee系统。\n")
+
+    assert styled_diff.plain == "- 我们看一下IC系统。\n+ 我们看一下isee系统。\n"
+    assert _style_for_text(styled_diff, "IC") == "bold red"
+    assert _style_for_text(styled_diff, "isee") == "bold green"
+    assert _style_for_text(styled_diff, "我们看一下") == "dim red"
 
 
 def test_transcript_correction_input_uses_readline_cursor_keys() -> None:
@@ -883,6 +893,17 @@ def _correction_summary(*, accepted: bool, diff_path: Path | None = None) -> Cor
         applied_path=Path("applied.json") if accepted else None,
         lexicon_db=Path("lexicon.sqlite"),
     )
+
+
+def _style_for_text(text: object, needle: str) -> str | None:
+    """Return the first Rich style that covers a substring."""
+    plain = text.plain
+    start = plain.index(needle)
+    end = start + len(needle)
+    for span in text.spans:
+        if span.start <= start and span.end >= end:
+            return str(span.style)
+    return None
 
 
 def _project_with_voiceprint_state(tmp_path: Path) -> tuple[Path, Path]:
