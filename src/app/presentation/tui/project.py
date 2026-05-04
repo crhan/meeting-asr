@@ -72,8 +72,8 @@ class ProjectPickerHelpScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
-class ProjectPickerApp(App[Path | None]):
-    """Keyboard-first TUI for choosing a project."""
+class _ProjectPickerBase:
+    """Shared controller for standalone and embedded project pickers."""
 
     CSS = """
     Screen {
@@ -107,6 +107,7 @@ class ProjectPickerApp(App[Path | None]):
         Binding("up", "up", "Up", show=False),
         Binding("enter", "open_project", "Open"),
         Binding("?", "show_shortcuts", "Help"),
+        Binding("escape", "quit", "Back", show=False),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -148,15 +149,19 @@ class ProjectPickerApp(App[Path | None]):
         if project is None:
             self.query_one("#status", Static).update("No project selected.")
             return
-        self.exit(project.project_dir)
+        self._finish(project.project_dir)
 
     def action_show_shortcuts(self) -> None:
         """Show keyboard shortcut help."""
-        self.push_screen(ProjectPickerHelpScreen())
+        self.app.push_screen(ProjectPickerHelpScreen())
 
     def action_quit(self) -> None:
         """Exit without selecting a project."""
-        self.exit(None)
+        self._finish(None)
+
+    def _finish(self, project_dir: Path | None) -> None:
+        """Return the selected project to the active Textual host."""
+        raise NotImplementedError
 
     def _move_project(self, delta: int) -> None:
         """Move the selected project index."""
@@ -224,6 +229,28 @@ class ProjectPickerApp(App[Path | None]):
         if not self.session.projects:
             return None
         return self.session.projects[self.selected_project_index]
+
+
+class ProjectPickerApp(_ProjectPickerBase, App[Path | None]):
+    """Standalone keyboard-first TUI for choosing a project."""
+
+    CSS = _ProjectPickerBase.CSS
+    BINDINGS = _ProjectPickerBase.BINDINGS
+
+    def _finish(self, project_dir: Path | None) -> None:
+        """Exit the standalone app with the selected project."""
+        self.exit(project_dir)
+
+
+class ProjectPickerScreen(_ProjectPickerBase, ModalScreen[Path | None]):
+    """Embeddable project picker used inside project review."""
+
+    CSS = _ProjectPickerBase.CSS
+    BINDINGS = _ProjectPickerBase.BINDINGS
+
+    def _finish(self, project_dir: Path | None) -> None:
+        """Dismiss the embedded picker with the selected project."""
+        self.dismiss(project_dir)
 
 
 def load_project_picker_session(projects_dir: Path | None = None) -> ProjectPickerSession:

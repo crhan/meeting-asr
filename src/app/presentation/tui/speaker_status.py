@@ -265,7 +265,10 @@ def render_selected_speaker_line(speaker: ReviewSpeakerLike) -> str:
 
 def _page_overview_line() -> str:
     """Render the active top-level TUI page."""
-    return "[reverse][b] PROJECT REVIEW [/b][/]  v: Voiceprint Review | /: identity | e: edit text | s: save | q: quit"
+    return (
+        "[reverse][b] PROJECT REVIEW [/b][/]  "
+        "p: switch project | v: Voiceprint Review | /: identity | e: edit text | s: save | q: quit"
+    )
 
 
 def _project_overview_line(overview: SpeakerReviewOverview, speaker_count: int) -> str:

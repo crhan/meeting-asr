@@ -212,6 +212,7 @@ def test_project_run_applies_accepted_voiceprint_matches(
     assert str((project_dir / "exports" / "meeting_summary.md").resolve()) in result.output
     assert "Voiceprint matches" in result.output
     assert "2/2 matched | below-threshold 0 | no-candidate 0" in result.output
+    assert f"meeting-asr voiceprint review {manifest.project_id}" in result.output
     assert f"meeting-asr project correct edit {manifest.project_id}" in result.output
     assert f"meeting-asr project transcript show {manifest.project_id} --kind corrected" in result.output
     assert "meeting-asr project review" not in result.output

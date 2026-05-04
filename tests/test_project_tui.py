@@ -7,6 +7,7 @@ from pathlib import Path
 
 from textual.widgets import Static
 
+from app.presentation.tui.project import ProjectPickerScreen
 from app.project_manager import create_project, load_manifest
 from app.project_tui import (
     ProjectPickerApp,
@@ -49,6 +50,26 @@ def test_project_picker_tui_returns_selected_project(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
     assert app.return_value == project_dir.resolve()
+
+
+def test_project_picker_screen_returns_selected_project(tmp_path: Path) -> None:
+    """The same picker should be embeddable inside other TUI workflows."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Embedded Selector")
+    session = load_project_picker_session(projects_dir)
+    selected: list[Path | None] = []
+    app = ProjectPickerApp(session)
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            pilot.app.push_screen(ProjectPickerScreen(session), selected.append)
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+    asyncio.run(scenario())
+
+    assert selected == [project_dir.resolve()]
 
 
 def test_project_picker_tui_question_mark_shows_help(tmp_path: Path) -> None:

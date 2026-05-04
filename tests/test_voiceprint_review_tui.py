@@ -142,6 +142,20 @@ def test_voiceprint_review_quit_returns_unsaved_decision(tmp_path: Path) -> None
     assert app.return_value.saved is False
 
 
+def test_voiceprint_review_escape_returns_unsaved_decision(tmp_path: Path) -> None:
+    """Esc should behave like back/quit in the unified voiceprint review."""
+    app = VoiceprintReviewApp(_review_session(tmp_path))
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.press("escape")
+
+    asyncio.run(scenario())
+
+    assert app.return_value is not None
+    assert app.return_value.saved is False
+
+
 def _review_session(tmp_path: Path) -> VoiceprintReviewSession:
     """Build a unified review session fixture."""
     source_path = tmp_path / "meeting.mp4"

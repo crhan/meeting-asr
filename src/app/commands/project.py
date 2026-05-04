@@ -878,15 +878,30 @@ def _run_speaker_review(
             "Speaker review TUI requires an interactive terminal. Use --summary to inspect."
         )
     if correction_options is not None:
-        run_speaker_review_tui(
-            session,
-            save_handler=lambda decision: _save_review_from_tui(project_dir, decision, correction_options),
-            accept_handler=lambda proposal_path, selected_indices: _accept_review_correction_from_tui(
-                project_dir,
+        def save_active_project(
+            active_project_dir: Path,
+            decision: SpeakerReviewDecision,
+        ) -> SpeakerReviewSaveOutcome:
+            """Save review state for the project currently shown in the TUI."""
+            return _save_review_from_tui(active_project_dir, decision, correction_options)
+
+        def accept_active_project(
+            active_project_dir: Path,
+            proposal_path: Path | None,
+            selected_indices: tuple[int, ...] | None,
+        ) -> SpeakerReviewSaveOutcome:
+            """Accept correction proposal for the project currently shown in the TUI."""
+            return _accept_review_correction_from_tui(
+                active_project_dir,
                 proposal_path,
                 correction_options,
                 selected_indices,
-            ),
+            )
+
+        run_speaker_review_tui(
+            session,
+            project_save_handler=save_active_project,
+            project_accept_handler=accept_active_project,
         )
         return
     decision = run_speaker_review_tui(session)
@@ -902,6 +917,7 @@ def _handle_speaker_review_decision(
     if not decision.saved:
         typer.echo("Speaker review exited without saving.")
         return
+    project_dir = decision.project_dir or project_dir
     mapping_path, transcript_path, srt_path = run_with_cli_errors(
         lambda: apply_project_speakers(
             project_dir,

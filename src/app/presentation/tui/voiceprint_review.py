@@ -72,7 +72,7 @@ s                    Capture checked project samples into the global voiceprint 
 space                Play or stop selected stored WAV sample
 
 [b]Exit[/b]
-q                    Quit without writing new samples
+q / Esc              Return to caller without writing new samples
 ?                    Show or close this help
 """
 
@@ -186,6 +186,7 @@ class _VoiceprintReviewBase:
         Binding("a", "toggle_speaker", "Toggle speaker"),
         Binding("s", "save", "Capture selected"),
         Binding("?", "show_shortcuts", "Help"),
+        Binding("escape", "quit", "Back", show=False),
         Binding("q", "quit", "Quit"),
     ]
 

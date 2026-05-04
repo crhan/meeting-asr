@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
-from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from pathlib import Path
 
 from rich.markup import escape
@@ -16,16 +14,10 @@ from textual.containers import Horizontal
 from textual.worker import Worker, WorkerState
 from textual.widgets import Footer, Header, Static
 
-from app.models import SentenceSegment, TranscriptResult
-from app.postprocess import speaker_id_to_label
-from app.project_manager import ProjectManifest, load_manifest, project_paths, resolve_project_source_path
-from app.speaker_labeling import load_transcript_result
-from app.speaker_match_status import (
-    MATCH_STATUS_BELOW_THRESHOLD,
-    best_candidate_name,
-    voiceprint_match_status,
-)
+from app.models import SentenceSegment
+from app.speaker_match_status import best_candidate_name
 from app.speaker_review import build_audio_preview_command
+from app.presentation.tui.project import ProjectPickerScreen, load_project_picker_session
 from app.presentation.tui.speaker_correction import (
     CorrectionQueuedScreen,
     SentenceCorrectionEdit,
@@ -33,20 +25,14 @@ from app.presentation.tui.speaker_correction import (
 )
 from app.presentation.tui.speaker_help import BROWSE_STATUS, EDIT_STATUS, ShortcutHelpScreen
 from app.presentation.tui.speaker_identity import IdentityEditScreen, IdentitySelection
-from app.presentation.tui.speaker_matches import (
-    SpeakerMatchCandidate,
-    accepted_review_name,
-    accepted_review_person_id,
-    accepted_review_person_public_id,
-    load_match_candidates,
-)
+from app.presentation.tui.speaker_matches import SpeakerMatchCandidate
+from app.presentation.tui.speaker_models import ReviewSpeaker, SpeakerReviewDecision, SpeakerReviewSession
 from app.presentation.tui.speaker_people import (
     KnownPerson,
     find_person_by_name,
-    load_existing_person_mapping,
-    load_people,
 )
 from app.presentation.tui.speaker_save import SpeakerReviewSaveOutcome, SpeakerReviewSaveScreen
+from app.presentation.tui.speaker_session import load_speaker_review_session, load_voiceprint_review_progress
 from app.presentation.tui.speaker_status import (
     SpeakerReviewOverview,
     VoiceprintReviewProgress,
@@ -63,12 +49,6 @@ from app.presentation.tui.voiceprint_review import (
     load_voiceprint_review_session,
 )
 from app.utils import format_ms_timestamp
-from app.voiceprint_embedding import resolve_voiceprint_embedding_options
-from app.voiceprint_store import (
-    get_voiceprint_db_path,
-    list_embedded_sample_ids,
-    list_voiceprint_samples_for_project,
-)
 from app.voiceprints import VoiceprintCaptureSummary, persist_voiceprint_capture_selection
 
 DEFAULT_SAMPLE_PAGE_SIZE = 6
@@ -77,52 +57,23 @@ COLUMNS = ("speakers", "samples")
 FOCUSED_PANE_CLASS = "focused-pane"
 UNFOCUSED_PANE_CLASS = "unfocused-pane"
 
-@dataclass(slots=True)
-class ReviewSpeaker:
-    """Mutable review state for one project speaker."""
-
-    speaker_id: int
-    label: str
-    segments: list[SentenceSegment]
-    current_name: str
-    match: SpeakerMatchCandidate | None
-    selected_sample_index: int = 0
-    ignored: bool = False
-    person_id: int | None = None
-    person_public_id: str | None = None
-
-    @property
-    def segment_count(self) -> int:
-        """Return the total number of transcript segments for this speaker."""
-        return len(self.segments)
-
-
-@dataclass(frozen=True, slots=True)
-class SpeakerReviewSession:
-    """Inputs needed by the speaker review TUI."""
-
-    project_dir: Path
-    source_media: Path
-    overview: SpeakerReviewOverview
-    speakers: list[ReviewSpeaker]
-    people_names: list[str]
-    page_size: int | None = None
-    allow_correction: bool = False
-    people: tuple[KnownPerson, ...] = ()
-    store_dir: Path | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SpeakerReviewDecision:
-    """Result returned by the TUI when it exits."""
-
-    saved: bool
-    mapping: dict[int, str]
-    action: str = "save"
-    person_mapping: dict[int, int] = field(default_factory=dict)
-    person_public_mapping: dict[int, str] = field(default_factory=dict)
-    correction_edit: SentenceCorrectionEdit | None = None
-    correction_edits: tuple[SentenceCorrectionEdit, ...] = ()
+__all__ = [
+    "FOCUSED_PANE_CLASS",
+    "IdentityEditScreen",
+    "KnownPerson",
+    "ReviewSpeaker",
+    "SentenceCorrectionScreen",
+    "ShortcutHelpScreen",
+    "SpeakerMatchCandidate",
+    "SpeakerReviewApp",
+    "SpeakerReviewDecision",
+    "SpeakerReviewOverview",
+    "SpeakerReviewSession",
+    "UNFOCUSED_PANE_CLASS",
+    "VoiceprintReviewProgress",
+    "load_speaker_review_session",
+    "run_speaker_review_tui",
+]
 
 
 class SpeakerReviewApp(App[SpeakerReviewDecision]):
@@ -183,6 +134,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("i", "ignore_speaker", "Ignore"),
         Binding("e", "edit_sample_text", "Edit text"),
         Binding("c", "edit_sample_text", "Correct text", show=False),
+        Binding("p", "switch_project", "Switch project"),
         Binding("v", "voiceprint_review", "Voiceprint"),
         Binding("?", "show_shortcuts", "Help"),
         Binding("s", "save", "Save"),
@@ -195,6 +147,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         *,
         save_handler: Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
         accept_handler: Callable[[Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome] | None = None,
+        project_save_handler: Callable[[Path, SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
+        project_accept_handler: Callable[
+            [Path, Path | None, tuple[int, ...] | None],
+            SpeakerReviewSaveOutcome,
+        ]
+        | None = None,
     ) -> None:
         """
         Create the TUI app.
@@ -203,11 +161,15 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             session: Speaker review inputs.
             save_handler: Optional in-TUI save workflow callback.
             accept_handler: Optional in-TUI correction proposal accept callback.
+            project_save_handler: Project-aware save callback used after switching projects.
+            project_accept_handler: Project-aware correction accept callback used after switching projects.
         """
         super().__init__()
         self.session = session
         self.save_handler = save_handler
         self.accept_handler = accept_handler
+        self.project_save_handler = project_save_handler
+        self.project_accept_handler = project_accept_handler
         self.selected_speaker_index = 0
         self.focused_column = "speakers"
         self.playback_process: subprocess.Popen | None = None
@@ -324,6 +286,21 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Show keyboard shortcut help."""
         self.push_screen(ShortcutHelpScreen())
 
+    def action_switch_project(self) -> None:
+        """Open the embedded project picker and switch review context."""
+        if self._has_unsaved_review_changes():
+            self._set_status("Save current project changes with s before switching projects.")
+            return
+        try:
+            picker_session = load_project_picker_session(self.session.projects_dir)
+        except Exception as exc:  # noqa: BLE001
+            self._set_status(f"Project switch unavailable: {exc}")
+            return
+        if not picker_session.projects:
+            self._set_status("No projects found to switch to.")
+            return
+        self.push_screen(ProjectPickerScreen(picker_session), self._handle_project_switch)
+
     def action_voiceprint_review(self) -> None:
         """Open the embedded voiceprint review screen from project review."""
         if self._has_unsaved_speaker_names():
@@ -347,14 +324,14 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def action_save(self) -> None:
         """Save review state or return the reviewed mapping to the CLI command."""
         decision = self._decision()
-        if self.save_handler is None:
+        if self.save_handler is None and self.project_save_handler is None:
             self.exit(decision)
             return
         self.push_screen(
             SpeakerReviewSaveScreen(
                 decision=decision,
-                save_handler=self.save_handler,
-                accept_handler=self.accept_handler,
+                save_handler=self._save_handler_for_current_project(),
+                accept_handler=self._accept_handler_for_current_project(),
                 on_result=self._handle_save_outcome,
             )
         )
@@ -400,6 +377,33 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self._set_speaker_identity(speaker, selection.name, selection.person_id, selection.public_id)
         action = "Created" if selection.created else "Set"
         self._set_status(f"{action} {speaker.label} to {selection.name} {selection.public_id}.")
+        self._refresh()
+
+    def _handle_project_switch(self, project_dir: Path | None) -> None:
+        """Replace the current review session with another project."""
+        if project_dir is None:
+            self._set_status("Project switch canceled.")
+            return
+        if project_dir.resolve() == self.session.project_dir.resolve():
+            self._set_status("Already reviewing the selected project.")
+            return
+        try:
+            session = load_speaker_review_session(
+                project_dir,
+                page_size=self.session.page_size,
+                store_dir=self.session.store_dir,
+                allow_correction=self.session.allow_correction,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._set_status(f"Project switch failed: {exc}")
+            return
+        self._stop_playback()
+        self.session = session
+        self.selected_speaker_index = 0
+        self.focused_column = "speakers"
+        self.known_people = list(session.people)
+        self.correction_edits.clear()
+        self._enter_browse_mode(f"Switched to project {session.overview.project_id}.")
         self._refresh()
 
     def _move_focused_row(self, delta: int) -> None:
@@ -560,6 +564,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             person_public_mapping=self._person_public_mapping(),
             correction_edit=latest_edit,
             correction_edits=correction_edits,
+            project_dir=self.session.project_dir,
         )
 
     def _upsert_correction_edit(self, edit: SentenceCorrectionEdit) -> None:
@@ -583,6 +588,26 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._refresh()
             return
         self._set_status("Saved project review. Continue reviewing or press q to exit.")
+
+    def _save_handler_for_current_project(self) -> Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome]:
+        """Return a save handler bound to the currently visible project."""
+        if self.project_save_handler is not None:
+            return lambda decision: self.project_save_handler(self.session.project_dir, decision)
+        if self.save_handler is not None:
+            return self.save_handler
+        raise RuntimeError("Save handler is not configured.")
+
+    def _accept_handler_for_current_project(
+        self,
+    ) -> Callable[[Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome] | None:
+        """Return a correction accept handler bound to the current project."""
+        if self.project_accept_handler is not None:
+            return lambda proposal_path, selected_indices: self.project_accept_handler(
+                self.session.project_dir,
+                proposal_path,
+                selected_indices,
+            )
+        return self.accept_handler
 
     def _handle_voiceprint_review_decision(
         self,
@@ -612,7 +637,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Refresh project voiceprint progress after sample capture."""
         overview = replace(
             self.session.overview,
-            voiceprint=_load_voiceprint_review_progress(self.session.overview.project_id, self.session.store_dir),
+            voiceprint=load_voiceprint_review_progress(self.session.overview.project_id, self.session.store_dir),
         )
         self.session = replace(self.session, overview=overview)
         self._set_status(f"Captured {summary.sample_count} voiceprint sample(s). Run voiceprint embed when ready.")
@@ -622,6 +647,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Return whether speaker names differ from the saved project map."""
         saved = self.session.overview.saved_names_by_speaker
         return any((speaker.current_name.strip() or speaker.label) != saved.get(speaker.speaker_id) for speaker in self.session.speakers)
+
+    def _has_unsaved_review_changes(self) -> bool:
+        """Return whether switching projects would discard visible TUI edits."""
+        return self._has_unsaved_speaker_names() or bool(self.correction_edits)
 
     def _set_speaker_identity(
         self,
@@ -702,67 +731,17 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.query_one("#status", Static).update(escape(message))
 
 
-def load_speaker_review_session(
-    project_dir: Path,
-    *,
-    page_size: int | None = None,
-    store_dir: Path | None = None,
-    allow_correction: bool = False,
-) -> SpeakerReviewSession:
-    """
-    Load all data needed by the speaker review TUI.
-
-    Args:
-        project_dir: Project root.
-        page_size: Optional samples-per-page override.
-        store_dir: Optional voiceprint store directory.
-        allow_correction: Whether the TUI may launch transcript correction.
-
-    Returns:
-        Speaker review session.
-    """
-    paths = project_paths(project_dir)
-    result = _load_review_transcript_result(paths.asr_dir)
-    segments_by_speaker = _segments_by_speaker(result.sentences)
-    if not segments_by_speaker:
-        raise RuntimeError("No detected speakers found in the transcript.")
-    manifest = load_manifest(paths.root)
-    source_media = resolve_project_source_path(paths.root, manifest)
-    mapping_path = paths.speakers_dir / "speaker_map.json"
-    match_path = paths.speakers_dir / "speaker_matches.json"
-    mapping = _load_existing_mapping(mapping_path)
-    matches = load_match_candidates(match_path)
-    people = load_people(store_dir)
-    person_mapping, person_public_mapping = load_existing_person_mapping(
-        paths.speakers_dir / "speaker_person_map.json",
-        people,
-    )
-    speakers = _build_review_speakers(segments_by_speaker, mapping, person_mapping, person_public_mapping, matches)
-    return SpeakerReviewSession(
-        project_dir=paths.root,
-        source_media=source_media,
-        overview=_build_review_overview(
-            manifest=manifest,
-            source_media=source_media,
-            sentences=result.sentences,
-            match_file_exists=match_path.exists(),
-            saved_names_by_speaker=mapping,
-            store_dir=store_dir,
-        ),
-        speakers=speakers,
-        people_names=[person.name for person in people],
-        page_size=page_size,
-        allow_correction=allow_correction,
-        people=tuple(people),
-        store_dir=store_dir,
-    )
-
-
 def run_speaker_review_tui(
     session: SpeakerReviewSession,
     *,
     save_handler: Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
     accept_handler: Callable[[Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome] | None = None,
+    project_save_handler: Callable[[Path, SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
+    project_accept_handler: Callable[
+        [Path, Path | None, tuple[int, ...] | None],
+        SpeakerReviewSaveOutcome,
+    ]
+    | None = None,
 ) -> SpeakerReviewDecision:
     """
     Run the Textual speaker review app.
@@ -771,6 +750,8 @@ def run_speaker_review_tui(
         session: Speaker review inputs.
         save_handler: Optional in-TUI save callback.
         accept_handler: Optional in-TUI correction accept callback.
+        project_save_handler: Optional project-aware save callback.
+        project_accept_handler: Optional project-aware correction accept callback.
 
     Returns:
         Save decision and mapping.
@@ -779,172 +760,10 @@ def run_speaker_review_tui(
         session,
         save_handler=save_handler,
         accept_handler=accept_handler,
+        project_save_handler=project_save_handler,
+        project_accept_handler=project_accept_handler,
     ).run()
     return decision or SpeakerReviewDecision(saved=False, mapping={}, action="quit")
-
-
-def _build_review_overview(
-    *,
-    manifest: ProjectManifest,
-    source_media: Path,
-    sentences: list[SentenceSegment],
-    match_file_exists: bool,
-    saved_names_by_speaker: dict[int, str],
-    store_dir: Path | None,
-) -> SpeakerReviewOverview:
-    """
-    Build the immutable project state shown by the TUI.
-
-    Args:
-        manifest: Project manifest.
-        source_media: Resolved source media path.
-        sentences: Transcript sentences.
-        match_file_exists: Whether a match result file exists.
-        saved_names_by_speaker: Existing speaker map loaded from disk.
-        store_dir: Optional voiceprint store directory.
-
-    Returns:
-        Project overview for display.
-    """
-    return SpeakerReviewOverview(
-        project_id=manifest.project_id,
-        title=manifest.title,
-        project_status=manifest.status,
-        source_name=manifest.source.filename or source_media.name,
-        duration_ms=_project_duration_ms(sentences),
-        match_file_exists=match_file_exists,
-        saved_names_by_speaker=dict(saved_names_by_speaker),
-        voiceprint=_load_voiceprint_review_progress(manifest.project_id, store_dir),
-    )
-
-
-def _load_voiceprint_review_progress(project_id: str, store_dir: Path | None) -> VoiceprintReviewProgress:
-    """
-    Load project-scoped voiceprint capture and embedding state.
-
-    Args:
-        project_id: Project id from the manifest.
-        store_dir: Optional voiceprint store directory.
-
-    Returns:
-        Voiceprint progress for the current project.
-    """
-    db_path = get_voiceprint_db_path(store_dir)
-    samples = list_voiceprint_samples_for_project(project_id, db_path)
-    names_by_speaker: dict[int, set[str]] = defaultdict(set)
-    for sample in samples:
-        names_by_speaker[sample.project_speaker_id].add(sample.speaker_name)
-    model, embedded_ids, embed_error = _load_embedding_state(db_path)
-    return VoiceprintReviewProgress(
-        captured_names_by_speaker={
-            speaker_id: frozenset(names)
-            for speaker_id, names in names_by_speaker.items()
-        },
-        captured_sample_ids=frozenset(sample.sample_id for sample in samples),
-        embed_model=model,
-        embedded_sample_ids=embedded_ids,
-        embed_error=embed_error,
-    )
-
-
-def _load_embedding_state(db_path: Path) -> tuple[str | None, frozenset[int] | None, str | None]:
-    """
-    Load embedded sample ids for the configured voiceprint model.
-
-    Args:
-        db_path: Voiceprint SQLite path.
-
-    Returns:
-        Model, embedded sample ids, and optional error text.
-    """
-    try:
-        _, model = resolve_voiceprint_embedding_options(provider=None, model=None)
-        return model, frozenset(list_embedded_sample_ids(model, db_path)), None
-    except Exception as exc:  # noqa: BLE001
-        return None, None, str(exc)
-
-
-def _project_duration_ms(sentences: list[SentenceSegment]) -> int:
-    """
-    Return the transcript duration from the latest sentence end.
-
-    Args:
-        sentences: Transcript sentences.
-
-    Returns:
-        Duration in milliseconds.
-    """
-    return max((sentence.end_time_ms for sentence in sentences), default=0)
-
-
-def _load_review_transcript_result(asr_dir: Path) -> TranscriptResult:
-    """Load the transcript version humans should review."""
-    corrected = asr_dir / "sentences_corrected.json"
-    if corrected.exists():
-        return load_transcript_result(corrected)
-    return load_transcript_result(asr_dir / "sentences.json")
-
-
-def _segments_by_speaker(sentences: list[SentenceSegment]) -> dict[int, list[SentenceSegment]]:
-    """Group non-empty transcript segments by speaker id."""
-    grouped: dict[int, list[SentenceSegment]] = defaultdict(list)
-    for sentence in sentences:
-        if sentence.speaker_id is not None and sentence.text.strip():
-            grouped[sentence.speaker_id].append(sentence)
-    return dict(grouped)
-
-
-def _load_existing_mapping(path: Path) -> dict[int, str]:
-    """Load the current project speaker map if it exists."""
-    if not path.exists():
-        return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return {int(key): str(value) for key, value in payload.items()}
-
-
-def _build_review_speakers(
-    segments_by_speaker: dict[int, list[SentenceSegment]],
-    mapping: dict[int, str],
-    person_mapping: dict[int, int],
-    person_public_mapping: dict[int, str],
-    matches: dict[int, SpeakerMatchCandidate],
-) -> list[ReviewSpeaker]:
-    """Build mutable speaker review rows."""
-    return [
-        _review_speaker(speaker_id, segments, mapping, person_mapping, person_public_mapping, matches)
-        for speaker_id, segments in sorted(segments_by_speaker.items())
-    ]
-
-
-def _review_speaker(
-    speaker_id: int,
-    segments: list[SentenceSegment],
-    mapping: dict[int, str],
-    person_mapping: dict[int, int],
-    person_public_mapping: dict[int, str],
-    matches: dict[int, SpeakerMatchCandidate],
-) -> ReviewSpeaker:
-    """Build one speaker review row."""
-    label = speaker_id_to_label(speaker_id)
-    match = matches.get(speaker_id)
-    current_name = mapping.get(speaker_id) or accepted_review_name(match) or label
-    person_id = person_mapping.get(speaker_id) or accepted_review_person_id(match)
-    person_public_id = person_public_mapping.get(speaker_id) or accepted_review_person_public_id(match)
-    ignored = (
-        speaker_id in mapping
-        and current_name == label
-        and (match is None or voiceprint_match_status(match) != MATCH_STATUS_BELOW_THRESHOLD)
-    )
-    return ReviewSpeaker(
-        speaker_id,
-        label,
-        segments,
-        current_name,
-        match,
-        ignored=ignored,
-        person_id=person_id,
-        person_public_id=person_public_id,
-    )
 
 
 def _sample_page_start(selected_index: int, page_size: int) -> int:

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from textual.widgets import Input, Static, TextArea
 
 from app import speaker_tui
 from app.correction_types import CorrectionEditSummary
+from app.core.project_models import ProjectListItem
 from app.models import SentenceSegment
 from app.project_manager import create_project, project_paths
 from app.speaker_tui import (
@@ -30,6 +32,7 @@ from app.speaker_tui import (
     load_speaker_review_session,
 )
 from app.presentation.tui.diff_render import styled_unified_diff
+from app.presentation.tui.project import ProjectPickerScreen, ProjectPickerSession
 from app.presentation.tui.speaker_save import (
     CorrectionProposalDiffScreen,
     SpeakerReviewSaveOutcome,
@@ -558,7 +561,7 @@ def test_project_review_tui_opens_embedded_voiceprint_review(monkeypatch, tmp_pa
 
             assert isinstance(pilot.app.screen, VoiceprintReviewScreen)
 
-            await pilot.press("q")
+            await pilot.press("escape")
             await pilot.pause()
 
             assert not isinstance(pilot.app.screen, VoiceprintReviewScreen)
@@ -605,6 +608,78 @@ def test_project_review_tui_requires_saved_names_before_voiceprint() -> None:
 
             assert not isinstance(pilot.app.screen, VoiceprintReviewScreen)
             assert "Save speaker names" in str(pilot.app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
+
+
+def test_project_review_tui_switches_projects_and_saves_active_project(monkeypatch, tmp_path: Path) -> None:
+    """Project switching should reload review state and bind save to the active project."""
+    current_dir = (tmp_path / "projects" / "p-current").resolve()
+    target_dir = (tmp_path / "projects" / "p-target").resolve()
+    current_dir.mkdir(parents=True)
+    target_dir.mkdir(parents=True)
+    current_session = _session_for_project(current_dir, project_id="p-current", title="Current")
+    target_session = _session_for_project(target_dir, project_id="p-target", title="Target")
+    picker_session = ProjectPickerSession(
+        projects_dir=current_dir.parent,
+        projects=[
+            _project_list_item(current_dir, "p-current", "Current"),
+            _project_list_item(target_dir, "p-target", "Target"),
+        ],
+    )
+    saved_projects: list[Path] = []
+
+    monkeypatch.setattr(speaker_tui, "load_project_picker_session", lambda projects_dir: picker_session)
+    monkeypatch.setattr(
+        speaker_tui,
+        "load_speaker_review_session",
+        lambda project_dir, **kwargs: target_session if Path(project_dir).resolve() == target_dir else current_session,
+    )
+
+    def save_active_project(project_dir: Path, decision: SpeakerReviewDecision) -> SpeakerReviewSaveOutcome:
+        saved_projects.append(project_dir)
+        assert decision.project_dir == target_dir
+        return SpeakerReviewSaveOutcome(Path("speaker_map.json"), Path("transcript.txt"), Path("subtitle.srt"))
+
+    app = SpeakerReviewApp(current_session, project_save_handler=save_active_project)
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.press("p")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ProjectPickerScreen)
+
+            await pilot.press("down")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert not isinstance(app.screen, ProjectPickerScreen)
+            assert app.session.project_dir == target_dir
+            assert "p-target" in app._overview_pane()
+
+            await pilot.press("s")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, SpeakerReviewSaveScreen)
+
+    asyncio.run(scenario())
+
+    assert saved_projects == [target_dir]
+
+
+def test_project_review_tui_blocks_project_switch_with_unsaved_changes() -> None:
+    """Project switching should not silently discard edited speaker names or text."""
+    app = SpeakerReviewApp(_session())
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.press("p")
+            await pilot.pause()
+
+            assert not isinstance(app.screen, ProjectPickerScreen)
+            assert "Save current project changes" in str(app.query_one("#status", Static).render())
 
     asyncio.run(scenario())
 
@@ -1074,6 +1149,30 @@ def _session(
         allow_correction=allow_correction,
         people=people,
         store_dir=store_dir,
+    )
+
+
+def _session_for_project(project_dir: Path, *, project_id: str, title: str) -> SpeakerReviewSession:
+    """Build a saved review session bound to a specific project."""
+    overview = replace(_overview(with_status=True), project_id=project_id, title=title)
+    return replace(
+        _session(with_status=True),
+        project_dir=project_dir,
+        projects_dir=project_dir.parent,
+        overview=overview,
+    )
+
+
+def _project_list_item(project_dir: Path, project_id: str, title: str) -> ProjectListItem:
+    """Build one project picker row."""
+    return ProjectListItem(
+        project_dir=project_dir,
+        project_id=project_id,
+        title=title,
+        meeting_time=None,
+        status="named",
+        created_at="2026-05-04T10:00:00+08:00",
+        updated_at="2026-05-04T10:00:00+08:00",
     )
 
 

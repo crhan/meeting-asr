@@ -169,6 +169,7 @@ def _next_step_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
     polish_steps = _polish_next_steps(view)
     if view.unresolved_matches == 0:
         return polish_steps + [
+            ("Review/capture voiceprints", f"meeting-asr voiceprint review {quoted_ref}"),
             ("Correct vocabulary samples", f"meeting-asr project correct edit {quoted_ref}"),
             ("View corrected transcript", f"meeting-asr project transcript show {quoted_ref} --kind corrected"),
             ("Preview subtitles", f"meeting-asr project speakers preview {quoted_ref}"),
@@ -182,7 +183,7 @@ def _next_step_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         rows.append(("Advanced/scripted", f"meeting-asr project speakers apply {quoted_ref} --map 0=Name"))
     rows.extend(
         [
-            ("Review voiceprints", f"meeting-asr voiceprint review {quoted_ref}"),
+            ("Review/capture voiceprints", f"meeting-asr voiceprint review {quoted_ref}"),
             ("Embed voiceprints", "meeting-asr voiceprint embed"),
             *polish_steps,
             ("Then correct vocabulary samples", f"meeting-asr project correct edit {quoted_ref}"),
