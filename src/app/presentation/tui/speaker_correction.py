@@ -13,6 +13,7 @@ from textual.widgets import Static, TextArea
 
 from app.models import SentenceSegment
 from app.presentation.tui.diff_render import styled_before_after
+from app.presentation.tui.i18n import tr
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,13 +109,22 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
     def compose(self) -> ComposeResult:
         """Build the correction popup."""
         original = self.segment.text.strip()
-        title = f"Edit Transcript Text | {self.speaker_label} / {self.speaker_name}"
+        title = tr(
+            f"Edit Transcript Text | {self.speaker_label} / {self.speaker_name}",
+            f"编辑转写文本 | {self.speaker_label} / {self.speaker_name}",
+        )
         with Vertical(id="correction-box"):
             yield Static(title, id="correction-title")
             with ScrollableContainer(id="correction-original"):
-                yield Static(f"[b]Original:[/]\n{original}")
+                yield Static(tr(f"[b]Original:[/]\n{original}", f"[b]原文：[/]\n{original}"))
             yield CorrectionTextArea(original, id="correction-input", soft_wrap=True, show_line_numbers=False)
-            yield Static("Enter applies this edit. Esc cancels. Ctrl-F/Ctrl-B move cursor.", id="correction-status")
+            yield Static(
+                tr(
+                    "Enter applies this edit. Esc cancels. Ctrl-F/Ctrl-B move cursor.",
+                    "Enter 应用修改。Esc 取消。Ctrl-F/Ctrl-B 移动光标。",
+                ),
+                id="correction-status",
+            )
 
     def on_mount(self) -> None:
         """Focus the correction editor."""
@@ -127,7 +137,7 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
         corrected = value.strip()
         original = self.segment.text.strip()
         if not corrected:
-            self.query_one("#correction-status", Static).update("Corrected text cannot be empty.")
+            self.query_one("#correction-status", Static).update(tr("Corrected text cannot be empty.", "修正后的文本不能为空。"))
             return
         if corrected == original:
             self.dismiss(None)
@@ -200,7 +210,7 @@ class CorrectionQueuedScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         """Build staged correction feedback."""
         with Vertical(id="queued-box"):
-            yield Static("Transcript correction staged", id="queued-title")
+            yield Static(tr("Transcript correction staged", "文字修正已暂存"), id="queued-title")
             with ScrollableContainer(id="queued-body"):
                 yield Static(self._body(), id="queued-diff")
             yield Static(self._actions(), id="queued-actions")
@@ -208,16 +218,19 @@ class CorrectionQueuedScreen(ModalScreen[None]):
     def _body(self) -> Text:
         """Build the token-level staged correction preview."""
         body = Text(no_wrap=False)
-        body.append("This edit is staged in the TUI.\n", style="bold")
-        body.append(f"Total staged edits: {self.count}\n\n")
+        body.append(tr("This edit is staged in the TUI.\n", "这条修改已暂存在 TUI 中。\n"), style="bold")
+        body.append(tr(f"Total staged edits: {self.count}\n\n", f"当前暂存修改数：{self.count}\n\n"))
         body.append_text(styled_before_after(self.edit.original_text, self.edit.corrected_text))
         return body
 
     def _actions(self) -> str:
         """Return available actions for the staged correction modal."""
         return (
-            "Press [b]s[/b] to save and run correction in the TUI.\n"
-            "Press [b]Enter[/b] to keep reviewing; the sample stays marked as edited."
+            tr(
+                "Press [b]s[/b] to save and run correction in the TUI.\n"
+                "Press [b]Enter[/b] to keep reviewing; the sample stays marked as edited.",
+                "按 [b]s[/b] 在 TUI 内保存并运行修正流程。\n按 [b]Enter[/b] 继续 review；该 sample 会保持 edited 标记。",
+            )
         )
 
     def action_close_feedback(self) -> None:

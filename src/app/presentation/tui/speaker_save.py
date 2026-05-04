@@ -23,6 +23,7 @@ from app.presentation.tui.diff_render import (
     styled_unified_diff,
     word_diff_segments,
 )
+from app.presentation.tui.i18n import tr
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,9 +127,9 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         """Build modal layout."""
         with Vertical(id="save-box"):
-            yield Static("Saving project review", id="save-title")
-            yield Static("Starting save workflow...", id="save-body")
-            yield Static("Working...", id="save-actions")
+            yield Static(tr("Saving project review", "正在保存 Project Review"), id="save-title")
+            yield Static(tr("Starting save workflow...", "正在启动保存流程..."), id="save-body")
+            yield Static(tr("Working...", "处理中..."), id="save-actions")
 
     def on_mount(self) -> None:
         """Start saving as soon as the modal is visible."""
@@ -151,9 +152,9 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         if proposal_path is None:
             return
         if self.selected_change_indices is not None and not self.selected_change_indices:
-            self.query_one("#save-actions", Static).update("No changes selected. Press d to select changes.")
+            self.query_one("#save-actions", Static).update(tr("No changes selected. Press d to select changes.", "没有选中修改。按 d 选择修改。"))
             return
-        self._set_running("Accepting correction proposal...")
+        self._set_running(tr("Accepting correction proposal...", "正在接受修正建议..."))
         self.run_worker(
             lambda: self.accept_handler(proposal_path, self.selected_change_indices),
             group="speaker-review-save",
@@ -192,7 +193,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
 
     def _start_save(self) -> None:
         """Run the initial save workflow."""
-        self._set_running("Saving speaker names and preparing corrections...")
+        self._set_running(tr("Saving speaker names and preparing corrections...", "正在保存 speaker 姓名并准备文字修正..."))
         self.run_worker(self._run_save, group="speaker-review-save", name="save", thread=True)
 
     def _run_save(self) -> SpeakerReviewSaveOutcome:
@@ -214,35 +215,35 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         """Render a failed worker outcome."""
         self.running = False
         self.error = error
-        self.query_one("#save-title", Static).update("[red]Project review save failed[/]")
+        self.query_one("#save-title", Static).update(tr("[red]Project review save failed[/]", "[red]Project Review 保存失败[/]"))
         self.query_one("#save-body", Static).update(escape(error))
-        self.query_one("#save-actions", Static).update("Press Enter to return to review.")
+        self.query_one("#save-actions", Static).update(tr("Press Enter to return to review.", "按 Enter 返回 review。"))
 
     def _set_running(self, message: str) -> None:
         """Render a running state."""
         self.running = True
         self.error = None
-        self.query_one("#save-title", Static).update("Saving project review")
+        self.query_one("#save-title", Static).update(tr("Saving project review", "正在保存 Project Review"))
         self.query_one("#save-body", Static).update(escape(message))
-        self.query_one("#save-actions", Static).update("Working...")
+        self.query_one("#save-actions", Static).update(tr("Working...", "处理中..."))
 
     def _title(self) -> str:
         """Return the current modal title."""
         summary = None if self.outcome is None else self.outcome.correction_summary
         if summary is not None and summary.accepted:
-            return "[green]Project review saved and correction accepted[/]"
+            return tr("[green]Project review saved and correction accepted[/]", "[green]Project Review 已保存，文字修正已接受[/]")
         if self._pending_proposal_path() is not None:
-            return "[yellow]Project review saved; correction proposal needs review[/]"
-        return "[green]Project review saved[/]"
+            return tr("[yellow]Project review saved; correction proposal needs review[/]", "[yellow]Project Review 已保存；文字修正建议需要确认[/]")
+        return tr("[green]Project review saved[/]", "[green]Project Review 已保存[/]")
 
     def _body(self) -> str:
         """Render save result details."""
         if self.outcome is None:
             return ""
-        lines = ["[b]Speaker outputs[/b]"]
+        lines = [tr("[b]Speaker outputs[/b]", "[b]Speaker 产物[/b]")]
         lines.extend(_path_lines(self.outcome))
         if self.outcome.correction_summary is not None:
-            lines.extend(["", "[b]Transcript correction[/b]"])
+            lines.extend(["", tr("[b]Transcript correction[/b]", "[b]文字修正[/b]")])
             lines.extend(_summary_lines(self.outcome.correction_summary))
         return "\n".join(lines)
 
@@ -251,8 +252,14 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         followup = f" | v {self.followup_label}" if self.followup_handler is not None else ""
         if self._pending_proposal_path() is not None:
             count = self._selected_count_label()
-            return f"Press d to review/select changes | a to accept {count}{followup} | Enter to continue reviewing"
-        return f"Press Enter to continue reviewing{followup} | q quits from the main screen"
+            return tr(
+                f"Press d to review/select changes | a to accept {count}{followup} | Enter to continue reviewing",
+                f"按 d 查看/选择修改 | 按 a 接受 {count}{followup} | Enter 继续 review",
+            )
+        return tr(
+            f"Press Enter to continue reviewing{followup} | q quits from the main screen",
+            f"按 Enter 继续 review{followup} | q 从主界面退出",
+        )
 
     def _handle_proposal_selection(self, selection: CorrectionProposalSelection | None) -> None:
         """Store selected proposal changes or accept them immediately."""
@@ -378,12 +385,18 @@ class CorrectionProposalDiffScreen(ModalScreen[CorrectionProposalSelection | Non
     def compose(self) -> ComposeResult:
         """Build diff inspection layout."""
         with Vertical(id="diff-box"):
-            yield Static("Correction proposal diff", id="diff-title")
+            yield Static(tr("Correction proposal diff", "文字修正建议 diff"), id="diff-title")
             yield Static(escape(str(self.diff_path)), id="diff-path")
             yield Static(self._legend(), id="diff-legend")
             with ScrollableContainer(id="diff-scroll"):
                 yield Static(self._diff_renderable(), id="diff-content")
-            yield Static("up/down or j/k choose change | x include/exclude | a apply selected | Esc returns", id="diff-actions")
+            yield Static(
+                tr(
+                    "up/down or j/k choose change | x include/exclude | a apply selected | Esc returns",
+                    "↑/↓ 或 j/k 选择修改 | x 选中/排除 | a 应用已选 | Esc 返回",
+                ),
+                id="diff-actions",
+            )
 
     def action_page_down(self) -> None:
         """Scroll the diff one page down."""
@@ -439,14 +452,18 @@ class CorrectionProposalDiffScreen(ModalScreen[CorrectionProposalSelection | Non
         try:
             text = self.diff_path.read_text(encoding="utf-8")
         except OSError as exc:
-            return Text(f"Unable to read diff: {exc}", style="red")
+            return Text(tr(f"Unable to read diff: {exc}", f"无法读取 diff：{exc}"), style="red")
         return styled_unified_diff(text)
 
     def _legend(self) -> str:
         """Return current selection legend."""
         return (
-            f"[green]selected {len(self.selected_indices)}/{len(self.changes)}[/]  "
-            "[bold]up/down j/k[/] change  [bold]x[/] include/exclude"
+            tr(
+                f"[green]selected {len(self.selected_indices)}/{len(self.changes)}[/]  "
+                "[bold]up/down j/k[/] change  [bold]x[/] include/exclude",
+                f"[green]已选 {len(self.selected_indices)}/{len(self.changes)}[/]  "
+                "[bold]↑/↓ j/k[/] 切换修改  [bold]x[/] 选中/排除",
+            )
         )
 
     def _move_change(self, delta: int) -> None:
@@ -473,9 +490,9 @@ class CorrectionProposalDiffScreen(ModalScreen[CorrectionProposalSelection | Non
 def _path_lines(outcome: SpeakerReviewSaveOutcome) -> list[str]:
     """Render saved speaker artifact paths."""
     return [
-        f"- Mapping: {escape(str(outcome.mapping_path))}",
-        f"- Transcript: {escape(str(outcome.transcript_path))}",
-        f"- Subtitle: {escape(str(outcome.srt_path))}",
+        tr(f"- Mapping: {escape(str(outcome.mapping_path))}", f"- 映射：{escape(str(outcome.mapping_path))}"),
+        tr(f"- Transcript: {escape(str(outcome.transcript_path))}", f"- 转写：{escape(str(outcome.transcript_path))}"),
+        tr(f"- Subtitle: {escape(str(outcome.srt_path))}", f"- 字幕：{escape(str(outcome.srt_path))}"),
     ]
 
 
@@ -483,15 +500,20 @@ def _summary_lines(summary: CorrectionEditSummary) -> list[str]:
     """Render correction summary fields."""
     state = _correction_summary_state(summary)
     lines = [
-        f"- State: {state}",
-        f"- Sample changes: {summary.sample_change_count}",
-        f"- Proposed changes: {summary.proposed_change_count}",
-        f"- Changed sentences: {summary.change_count}",
+        tr(f"- State: {state}", f"- 状态：{state}"),
+        tr(f"- Sample changes: {summary.sample_change_count}", f"- 样例修改：{summary.sample_change_count}"),
+        tr(f"- Proposed changes: {summary.proposed_change_count}", f"- 建议修改：{summary.proposed_change_count}"),
+        tr(f"- Changed sentences: {summary.change_count}", f"- 已修改句子：{summary.change_count}"),
     ]
     if summary.proposal_diff_path is not None:
-        lines.append(f"- Diff: {escape(str(summary.proposal_diff_path))}")
+        lines.append(tr(f"- Diff: {escape(str(summary.proposal_diff_path))}", f"- Diff：{escape(str(summary.proposal_diff_path))}"))
     if summary.corrected_named_transcript_path is not None:
-        lines.append(f"- Corrected transcript: {escape(str(summary.corrected_named_transcript_path))}")
+        lines.append(
+            tr(
+                f"- Corrected transcript: {escape(str(summary.corrected_named_transcript_path))}",
+                f"- 修正后转写：{escape(str(summary.corrected_named_transcript_path))}",
+            )
+        )
     lines.extend(_understanding_lines(summary))
     return lines
 
@@ -499,23 +521,23 @@ def _summary_lines(summary: CorrectionEditSummary) -> list[str]:
 def _correction_summary_state(summary: CorrectionEditSummary) -> str:
     """Return a human-readable correction workflow state."""
     if summary.accepted:
-        return "accepted"
+        return tr("accepted", "已接受")
     if summary.proposal_json_path is not None:
-        return "proposal ready"
+        return tr("proposal ready", "建议已生成")
     if summary.sample_change_count == 0 and summary.proposed_change_count == 0:
-        return "no transcript changes"
-    return "no proposal"
+        return tr("no transcript changes", "无文字修改")
+    return tr("no proposal", "无建议")
 
 
 def _understanding_lines(summary: CorrectionEditSummary) -> list[str]:
     """Render inferred correction rules."""
     if not summary.understanding:
         return []
-    lines = ["", "[b]Understanding[/b]"]
+    lines = ["", tr("[b]Understanding[/b]", "[b]理解[/b]")]
     for item in summary.understanding:
+        count_text = tr(f"({item.proposed_count} proposed)", f"（建议 {item.proposed_count} 处）")
         lines.append(
-            f"- {escape(item.wrong_text)} -> {escape(item.corrected_text)} "
-            f"({item.proposed_count} proposed)"
+            f"- {escape(item.wrong_text)} -> {escape(item.corrected_text)} {count_text}"
         )
     return lines
 
@@ -578,7 +600,10 @@ def _append_change_header(
     """Append one selectable proposal change header."""
     marker = ">" if current else " "
     checkbox = "[x]" if selected else "[ ]"
-    label = f"{marker} {checkbox} Change {position + 1}/{total}"
-    details = f" sentence_id={change.sentence_id} speaker={change.speaker_name}"
+    label = tr(f"{marker} {checkbox} Change {position + 1}/{total}", f"{marker} {checkbox} 修改 {position + 1}/{total}")
+    details = tr(
+        f" sentence_id={change.sentence_id} speaker={change.speaker_name}",
+        f" 句子ID={change.sentence_id} speaker={change.speaker_name}",
+    )
     style = "bold white on dark_blue" if current else "bold"
     rendered.append(label + details + "\n", style=style)

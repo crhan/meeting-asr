@@ -8,6 +8,7 @@ from typing import Protocol
 
 from rich.markup import escape
 
+from app.presentation.tui.i18n import tr
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
     MATCH_STATUS_MATCHED,
@@ -212,10 +213,14 @@ def match_badge(speaker: ReviewSpeakerLike) -> str:
         Human-readable match summary.
     """
     if speaker.match is None:
-        return "match=- ignored" if is_ignored(speaker) else "match=-"
+        return tr("match=- ignored", "匹配=- 已忽略") if is_ignored(speaker) else tr("match=-", "匹配=-")
     state = voiceprint_match_status(speaker.match)
     display_name = accepted_match_name(speaker.match) if state == MATCH_STATUS_MATCHED else best_candidate_name(speaker.match)
-    display = "match=-" if state == MATCH_STATUS_NO_CANDIDATE else f"match={escape(display_name or 'unrecorded')}"
+    display = (
+        tr("match=-", "匹配=-")
+        if state == MATCH_STATUS_NO_CANDIDATE
+        else tr(f"match={escape(display_name or 'unrecorded')}", f"匹配={escape(display_name or '未录入')}")
+    )
     score = best_candidate_score(speaker.match)
     score_text = "-" if score is None else f"{score:.3f}"
     if is_ignored(speaker):
@@ -224,7 +229,7 @@ def match_badge(speaker: ReviewSpeakerLike) -> str:
         state = "CONFLICT"
     elif has_mismatch(speaker):
         state = "mismatch"
-    return f"{display} score={score_text} {state}"
+    return tr(f"{display} score={score_text} {state}", f"{display} 分数={score_text} {state}")
 
 
 def render_match_lines(match: SpeakerMatchLike | None) -> list[str]:
@@ -238,15 +243,15 @@ def render_match_lines(match: SpeakerMatchLike | None) -> list[str]:
         Lines for the identity pane.
     """
     if match is None:
-        return ["Match: -"]
+        return [tr("Match: -", "匹配：-")]
     state = voiceprint_match_status(match)
     if state == MATCH_STATUS_NO_CANDIDATE:
-        return ["Match: -", "Status: no-candidate"]
+        return [tr("Match: -", "匹配：-"), tr("Status: no-candidate", "状态：无候选")]
     name = accepted_match_name(match) if state == MATCH_STATUS_MATCHED else best_candidate_name(match)
     score = best_candidate_score(match)
     score_text = "-" if score is None else f"{score:.3f}"
-    prefix = "Match" if state == MATCH_STATUS_MATCHED else "Best candidate"
-    return [f"{prefix}: {escape(name or 'unrecorded')}", f"Score: {score_text} status={state}"]
+    prefix = tr("Match", "匹配") if state == MATCH_STATUS_MATCHED else tr("Best candidate", "最佳候选")
+    return [f"{prefix}: {escape(name or tr('unrecorded', '未录入'))}", tr(f"Score: {score_text} status={state}", f"分数：{score_text} 状态={state}")]
 
 
 def render_selected_speaker_line(speaker: ReviewSpeakerLike) -> str:
@@ -260,14 +265,20 @@ def render_selected_speaker_line(speaker: ReviewSpeakerLike) -> str:
         Rich markup line.
     """
     status = speaker_status(speaker)
-    return f"Name: [b]{escape(speaker.current_name)}[/] | status={status} | {match_badge(speaker)}"
+    return tr(
+        f"Name: [b]{escape(speaker.current_name)}[/] | status={status} | {match_badge(speaker)}",
+        f"姓名：[b]{escape(speaker.current_name)}[/] | 状态={status} | {match_badge(speaker)}",
+    )
 
 
 def _page_overview_line() -> str:
     """Render the active top-level TUI page."""
     return (
         "[reverse][b] PROJECT REVIEW [/b][/]  "
-        "p: switch project | v: capture voiceprints | b: embed | /: identity | e: edit text | s: save | q: quit"
+        + tr(
+            "p: switch project | v: capture voiceprints | b: embed | /: identity | e: edit text | s: save | q: quit",
+            "p: 切项目 | v: 声纹采样 | b: embedding | /: 身份 | e: 改文字 | s: 保存 | q: 退出",
+        )
     )
 
 
@@ -275,23 +286,34 @@ def _project_overview_line(overview: SpeakerReviewOverview, speaker_count: int) 
     """Render the project identity line."""
     duration = format_ms_timestamp(overview.duration_ms)
     return (
-        f"[b]Project[/b]  {escape(overview.title)} [dim]({escape(overview.project_id)})[/] | "
-        f"{duration} | {speaker_count} speakers | project={escape(overview.project_status)}"
+        tr("[b]Project[/b]", "[b]项目[/b]")
+        + f"  {escape(overview.title)} [dim]({escape(overview.project_id)})[/] | "
+        + tr(
+            f"{duration} | {speaker_count} speakers | project={escape(overview.project_status)}",
+            f"{duration} | {speaker_count} 个 speaker | 项目状态={escape(overview.project_status)}",
+        )
     )
 
 
 def _workflow_overview_line(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReviewOverview) -> str:
     """Render project workflow progress."""
     voiceprint = overview.voiceprint
-    match_state = _badge("Match", "done" if overview.match_file_exists else "pending", overview.match_file_exists)
+    match_state = _badge(tr("Match", "匹配"), tr("done", "完成") if overview.match_file_exists else tr("pending", "待处理"), overview.match_file_exists)
     manual_state = _manual_state(speakers, overview)
     capture_todo = _capture_todo_count(speakers, voiceprint)
     capture_state = (
-        f"Capture=[{'green' if capture_todo == 0 else 'yellow'}]todo {capture_todo}[/], "
-        f"{len(voiceprint.captured_names_by_speaker)} speakers/{len(voiceprint.captured_sample_ids)} clips"
+        tr("Capture", "采样")
+        + f"=[{'green' if capture_todo == 0 else 'yellow'}]"
+        + tr(f"todo {capture_todo}", f"待处理 {capture_todo}")
+        + "[/], "
+        + tr(
+            f"{len(voiceprint.captured_names_by_speaker)} speakers/{len(voiceprint.captured_sample_ids)} clips",
+            f"{len(voiceprint.captured_names_by_speaker)} 个 speaker/{len(voiceprint.captured_sample_ids)} 个片段",
+        )
     )
     return (
-        f"[b]Steps[/b]    1 {match_state} | 2 Names={manual_state} | "
+        tr("[b]Steps[/b]", "[b]步骤[/b]")
+        + f"    1 {match_state} | 2 {tr('Names', '姓名')}={manual_state} | "
         f"3 {capture_state} | 4 {_embed_state(voiceprint)}"
     )
 
@@ -305,8 +327,11 @@ def _match_overview_line(speakers: Sequence[ReviewSpeakerLike]) -> str:
     scores = [score for match in matches if (score := best_candidate_score(match)) is not None]
     score_summary = _score_summary(scores)
     return (
-        f"[b]Auto[/b]     matched {matched}/{len(speakers)} | below-threshold {below} | "
-        f"no-candidate {no_candidate} | {score_summary}"
+        tr("[b]Auto[/b]", "[b]自动[/b]")
+        + tr(
+            f"     matched {matched}/{len(speakers)} | below-threshold {below} | no-candidate {no_candidate} | {score_summary}",
+            f"     已接受 {matched}/{len(speakers)} | 低于阈值 {below} | 无候选 {no_candidate} | {score_summary}",
+        )
     )
 
 
@@ -317,40 +342,59 @@ def _risk_overview_line(speakers: Sequence[ReviewSpeakerLike], selected: ReviewS
     ignored = sum(1 for speaker in speakers if is_ignored(speaker))
     risk_style = "bold red" if conflicts else "yellow" if mismatches else "green"
     return (
-        f"[b]Check[/b]    [{risk_style}]conflict {conflicts} | mismatch {mismatches}[/] | "
-        f"ignored {ignored} | "
-        f"selected {escape(selected.label)}: {speaker_status(selected)} | {match_badge(selected)}"
+        tr("[b]Check[/b]", "[b]检查[/b]")
+        + tr(
+            f"    [{risk_style}]conflict {conflicts} | mismatch {mismatches}[/] | ignored {ignored} | "
+            f"selected {escape(selected.label)}: {speaker_status(selected)} | {match_badge(selected)}",
+            f"    [{risk_style}]冲突 {conflicts} | 不一致 {mismatches}[/] | 已忽略 {ignored} | "
+            f"当前 {escape(selected.label)}: {speaker_status(selected)} | {match_badge(selected)}",
+        )
     )
 
 
 def _output_overview_line() -> str:
     """Render the final project artifacts users should look for."""
-    return "[b]Output[/b]   final: exports/transcript_named.txt + exports/subtitle_named.srt"
+    return tr(
+        "[b]Output[/b]   final: exports/transcript_named.txt + exports/subtitle_named.srt",
+        "[b]产物[/b]     最终文本: exports/transcript_named.txt + exports/subtitle_named.srt",
+    )
 
 
 def _next_action_line(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReviewOverview) -> str:
     """Render the most useful next action from current state."""
     if any(has_conflict(speaker) for speaker in speakers):
-        return "[bold red]Next[/]     resolve conflicts before saving."
+        return tr("[bold red]Next[/]     resolve conflicts before saving.", "[bold red]下一步[/]   保存前先解决冲突。")
     if not overview.match_file_exists:
-        return "[yellow]Next[/]     run `meeting-asr project speakers match`."
+        return tr("[yellow]Next[/]     run `meeting-asr project speakers match`.", "[yellow]下一步[/]   运行 `meeting-asr project speakers match`。")
     if _manual_saved_count(speakers, overview) < len(speakers):
-        return "[yellow]Next[/]     review speakers, then press `s` to save."
+        return tr("[yellow]Next[/]     review speakers, then press `s` to save.", "[yellow]下一步[/]   review speaker，然后按 `s` 保存。")
     if _has_unsaved_names(speakers, overview):
-        return "[yellow]Next[/]     press `s` to write the updated speaker map."
+        return tr("[yellow]Next[/]     press `s` to write the updated speaker map.", "[yellow]下一步[/]   按 `s` 写入更新后的 speaker map。")
     if _capture_todo_count(speakers, overview.voiceprint):
-        return "[green]Done[/]     project outputs ready. Optional voiceprint: `meeting-asr voiceprint review PROJECT_ID`."
+        return tr(
+            "[green]Done[/]     project outputs ready. Optional voiceprint: `meeting-asr voiceprint review PROJECT_ID`.",
+            "[green]完成[/]     项目产物已就绪。可选声纹步骤：`meeting-asr voiceprint review PROJECT_ID`。",
+        )
     embed_todo = _embed_todo_count(overview.voiceprint)
     if embed_todo is None and overview.voiceprint.captured_sample_ids:
         return (
-            "[green]Done[/]     project outputs ready. Optional voiceprint: "
-            "fix voiceprint embedding config, then `meeting-asr voiceprint embed`."
+            tr(
+                "[green]Done[/]     project outputs ready. Optional voiceprint: "
+                "fix voiceprint embedding config, then `meeting-asr voiceprint embed`.",
+                "[green]完成[/]     项目产物已就绪。可选声纹步骤：先修复 embedding 配置，再运行 `meeting-asr voiceprint embed`。",
+            )
         )
     if embed_todo:
-        return "[green]Done[/]     project outputs ready. Optional voiceprint: `meeting-asr voiceprint embed`."
+        return tr(
+            "[green]Done[/]     project outputs ready. Optional voiceprint: `meeting-asr voiceprint embed`.",
+            "[green]完成[/]     项目产物已就绪。可选声纹步骤：`meeting-asr voiceprint embed`。",
+        )
     return (
-        "[green]Done[/]     preview: `meeting-asr project speakers preview`; "
-        "read: `meeting-asr project transcript show`."
+        tr(
+            "[green]Done[/]     preview: `meeting-asr project speakers preview`; "
+            "read: `meeting-asr project transcript show`.",
+            "[green]完成[/]     预览：`meeting-asr project speakers preview`；查看：`meeting-asr project transcript show`。",
+        )
     )
 
 
@@ -360,9 +404,12 @@ def _manual_state(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReview
     named = sum(1 for speaker in speakers if speaker.current_name != speaker.label)
     ignored = sum(1 for speaker in speakers if is_ignored(speaker))
     total = len(speakers)
-    state = "saved" if saved == total else "partial" if saved else "pending"
+    state = tr("saved", "已保存") if saved == total else tr("partial", "部分") if saved else tr("pending", "待处理")
     style = "green" if saved == total else "yellow" if saved else "red"
-    return f"[{style}]{state} {saved}/{total}[/], named {named}/{total}, ignored {ignored}"
+    return tr(
+        f"[{style}]{state} {saved}/{total}[/], named {named}/{total}, ignored {ignored}",
+        f"[{style}]{state} {saved}/{total}[/], 已命名 {named}/{total}, 已忽略 {ignored}",
+    )
 
 
 def _manual_saved_count(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReviewOverview) -> int:
@@ -388,11 +435,14 @@ def _embed_state(progress: VoiceprintReviewProgress) -> str:
     """Render project-scoped voiceprint embedding progress."""
     embed_todo = _embed_todo_count(progress)
     if embed_todo is None:
-        reason = _trim_status_text(progress.embed_error or "unknown config", limit=48)
-        return f"Embed=[yellow]unknown[/] {escape(reason)}"
+        reason = _trim_status_text(progress.embed_error or tr("unknown config", "未知配置"), limit=48)
+        return tr(f"Embed=[yellow]unknown[/] {escape(reason)}", f"Embedding=[yellow]未知[/] {escape(reason)}")
     embedded = len(progress.captured_sample_ids & (progress.embedded_sample_ids or frozenset()))
     style = "green" if embed_todo == 0 else "yellow"
-    return f"Embed=[{style}]todo {embed_todo}[/], embedded {embedded}/{len(progress.captured_sample_ids)}"
+    return tr(
+        f"Embed=[{style}]todo {embed_todo}[/], embedded {embedded}/{len(progress.captured_sample_ids)}",
+        f"Embedding=[{style}]待处理 {embed_todo}[/], 已生成 {embedded}/{len(progress.captured_sample_ids)}",
+    )
 
 
 def _embed_todo_count(progress: VoiceprintReviewProgress) -> int | None:
@@ -411,9 +461,9 @@ def _has_unsaved_names(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerR
 def _score_summary(scores: list[float]) -> str:
     """Render average and best match score."""
     if not scores:
-        return "score avg -, best -"
+        return tr("score avg -, best -", "分数平均 -, 最高 -")
     average = sum(scores) / len(scores)
-    return f"score avg {average:.3f}, best {max(scores):.3f}"
+    return tr(f"score avg {average:.3f}, best {max(scores):.3f}", f"分数平均 {average:.3f}, 最高 {max(scores):.3f}")
 
 
 def _badge(label: str, value: str, good: bool) -> str:

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from textual.widgets import Static
 
+from app.presentation.cli.i18n import configure_cli_language
 from app.presentation.tui.voiceprint import load_voiceprint_library_session
 from app.presentation.tui.voiceprint_capture import load_voiceprint_capture_review_session
 from app.presentation.tui.voiceprint_review import (
@@ -52,6 +53,20 @@ def test_voiceprint_review_tui_switches_project_and_library_views(tmp_path: Path
             assert app.mode == "project"
 
     asyncio.run(scenario())
+
+
+def test_voiceprint_review_tui_uses_chinese_language(tmp_path: Path) -> None:
+    """Unified voiceprint review should localize visible project guidance."""
+    try:
+        configure_cli_language("zh")
+        app = VoiceprintReviewApp(_review_session(tmp_path))
+
+        assert "视图=[bold cyan]项目候选样本" in app._overview_pane()
+        assert "[b]项目[/b]" in app._overview_pane()
+        assert "[b]目标[/b]" in app._overview_pane()
+        assert "全局声纹人员" in app._library_speaker_pane()
+    finally:
+        configure_cli_language("en")
 
 
 def test_voiceprint_review_tui_saves_only_selected_project_samples(tmp_path: Path) -> None:

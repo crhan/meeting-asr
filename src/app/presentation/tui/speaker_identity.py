@@ -12,6 +12,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
+from app.presentation.tui.i18n import tr
 from app.presentation.tui.inputs import ReadlineInput
 from app.presentation.tui.speaker_matches import SpeakerMatchCandidate
 from app.presentation.tui.speaker_people import KnownPerson, find_person_by_name
@@ -139,9 +140,12 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
     def compose(self) -> ComposeResult:
         """Build the identity selection modal."""
         with Vertical(id="identity-box"):
-            yield Static(f"Edit Identity | {self.speaker_label}", id="identity-title")
+            yield Static(tr(f"Edit Identity | {self.speaker_label}", f"编辑身份 | {self.speaker_label}"), id="identity-title")
             yield Static(self._context_text(), id="identity-context")
-            yield IdentityInput(placeholder="Type to filter people, or +Name to create", id="identity-search")
+            yield IdentityInput(
+                placeholder=tr("Type to filter people, or +Name to create", "输入过滤人员，或用 +名字 新建"),
+                id="identity-search",
+            )
             yield Static(id="identity-list")
             yield Static(self._status_text(), id="identity-status")
 
@@ -194,24 +198,27 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
             self.dismiss(IdentitySelection(person.person_id, _display_public_id(person), person.name))
             return
         self.query_one("#identity-status", Static).update(
-            f"Unknown person: {escape(value)}. Use +Name to create."
+            tr(f"Unknown person: {escape(value)}. Use +Name to create.", f"未知人员：{escape(value)}。使用 +名字 新建。")
         )
 
     def _create_person(self, name: str) -> None:
         """Create a new stable person explicitly."""
         if not name:
-            self.query_one("#identity-status", Static).update("New person name is empty. Use +Name.")
+            self.query_one("#identity-status", Static).update(tr("New person name is empty. Use +Name.", "新人员姓名为空。请使用 +名字。"))
             return
         duplicate = find_person_by_name(name, self.people)
         if duplicate is not None:
             self.query_one("#identity-status", Static).update(
-                f"Person already exists: {escape(duplicate.name)} {_display_public_id(duplicate)}."
+                tr(
+                    f"Person already exists: {escape(duplicate.name)} {_display_public_id(duplicate)}.",
+                    f"人员已存在：{escape(duplicate.name)} {_display_public_id(duplicate)}。",
+                )
             )
             return
         try:
             row = create_voiceprint_person(name, get_voiceprint_db_path(self.store_dir))
         except Exception as exc:  # noqa: BLE001
-            self.query_one("#identity-status", Static).update(f"Failed to create person: {escape(str(exc))}")
+            self.query_one("#identity-status", Static).update(tr(f"Failed to create person: {escape(str(exc))}", f"创建人员失败：{escape(str(exc))}"))
             return
         self.dismiss(IdentitySelection(row.speaker_id, row.public_id, row.name, created=True))
 
@@ -232,9 +239,14 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
     def _list_text(self) -> str:
         """Render the sorted people list."""
         people = self._filtered_people()
-        lines = [f"[b]People[/b] [dim]{len(people)}/{len(self.people)} shown, sorted by score[/dim]"]
+        lines = [
+            tr(
+                f"[b]People[/b] [dim]{len(people)}/{len(self.people)} shown, sorted by score[/dim]",
+                f"[b]人员[/b] [dim]显示 {len(people)}/{len(self.people)}，按分数排序[/dim]",
+            )
+        ]
         if not people:
-            lines.append("- No matching known person")
+            lines.append(tr("- No matching known person", "- 没有匹配的已知人员"))
         start, visible = _visible_window(people, self.selected_index)
         for offset, person in enumerate(visible):
             index = start + offset
@@ -243,14 +255,19 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
             lines.append(f"[reverse]{row}[/]" if index == self.selected_index else row)
         if len(people) > IDENTITY_LIST_LIMIT:
             end = start + len(visible)
-            lines.append(f"[dim]Showing {start + 1}-{end}/{len(people)}. Type to filter.[/]")
+            lines.append(
+                tr(
+                    f"[dim]Showing {start + 1}-{end}/{len(people)}. Type to filter.[/]",
+                    f"[dim]显示 {start + 1}-{end}/{len(people)}。输入可过滤。[/]",
+                )
+            )
         return "\n".join(lines)
 
     def _context_text(self) -> str:
         """Render current identity and match context."""
         public_id = _known_public_id(self.people, self.current_person_id)
-        person = f"person {public_id}" if public_id is not None else "no person id"
-        lines = [f"Current: [green]{escape(self.current_name)}[/] ([dim]{person}[/])"]
+        person = f"person {public_id}" if public_id is not None else tr("no person id", "无人员 ID")
+        lines = [tr(f"Current: [green]{escape(self.current_name)}[/] ([dim]{person}[/])", f"当前：[green]{escape(self.current_name)}[/] ([dim]{person}[/])")]
         if self.match is not None:
             lines.extend(render_match_lines(self.match))
         return "\n".join(lines)
@@ -259,8 +276,12 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
         """Render action hints."""
         query = self.search_query.strip()
         if query.startswith("+"):
-            return f"Enter creates new stable person: {escape(query[1:].strip() or 'Name')}"
-        return "Up/Down select | Enter choose highlighted/exact person | +Name create | Esc cancel"
+            name = escape(query[1:].strip() or tr("Name", "名字"))
+            return tr(f"Enter creates new stable person: {name}", f"Enter 新建稳定人员：{name}")
+        return tr(
+            "Up/Down select | Enter choose highlighted/exact person | +Name create | Esc cancel",
+            "↑/↓ 选择 | Enter 选择高亮/精确匹配人员 | +名字 新建 | Esc 取消",
+        )
 
     def _filtered_people(self) -> list[ScoredPerson]:
         """Return scored people filtered by search query."""

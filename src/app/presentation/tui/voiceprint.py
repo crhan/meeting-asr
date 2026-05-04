@@ -12,8 +12,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Header, Static
 
+from app.presentation.tui.i18n import tr
 from app.utils import format_ms_timestamp
 from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_store import (
@@ -29,11 +30,21 @@ SAMPLE_PANE_RESERVED_ROWS = 5
 COLUMNS = ("speakers", "samples")
 FOCUSED_PANE_CLASS = "focused-pane"
 UNFOCUSED_PANE_CLASS = "unfocused-pane"
-BROWSE_STATUS = (
-    "Browse: h/l or left/right choose column | j/k or up/down move | "
-    "PgUp/PgDn page samples | Space play/stop | ? help | q quit"
-)
-SHORTCUT_HELP = """\
+def browse_status() -> str:
+    """Return localized voiceprint-library status text."""
+    return tr(
+        (
+            "Browse: h/l or left/right choose column | j/k or up/down move | "
+            "PgUp/PgDn page samples | Space play/stop | ? help | q quit"
+        ),
+        "浏览：h/l 或 ←/→ 切列 | j/k 或 ↑/↓ 移动 | PgUp/PgDn 翻页 | Space 播放/停止 | ? 帮助 | q 退出",
+    )
+
+
+def shortcut_help() -> str:
+    """Return localized voiceprint-library shortcut help."""
+    return tr(
+        """\
 [b]Voiceprint Library Shortcuts[/b]
 
 [b]What This Shows[/b]
@@ -54,7 +65,30 @@ q                    Quit
 
 [dim]Delete from CLI: meeting-asr voiceprint delete-sample SPEAKER --sample N[/]
 [dim]Delete person:  meeting-asr voiceprint delete-speaker SPEAKER[/]
-"""
+""",
+        """\
+[b]声纹库快捷键[/b]
+
+[b]这里展示什么[/b]
+左侧                 全局声纹库里的人员
+右侧                 当前人员的 WAV 样本
+顶部状态             库路径、数量、embedding 覆盖率、当前样本
+
+[b]导航[/b]
+h/l 或 ←/→           切换当前列
+j/k 或 ↑/↓           在当前列内移动
+PageUp/PageDown      上一页/下一页 sample
+[ / ]                上一页/下一页 sample
+
+[b]操作[/b]
+space                播放或停止当前 sample
+?                    显示帮助
+q                    退出
+
+[dim]从 CLI 删除样本：meeting-asr voiceprint delete-sample SPEAKER --sample N[/]
+[dim]删除人员：      meeting-asr voiceprint delete-speaker SPEAKER[/]
+""",
+    )
 
 
 @dataclass(slots=True)
@@ -106,7 +140,7 @@ class VoiceprintHelpScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         """Build the help popup."""
-        yield Static(SHORTCUT_HELP, id="voiceprint-help")
+        yield Static(shortcut_help(), id="voiceprint-help")
 
     def action_close_help(self) -> None:
         """Close the shortcut help popup."""
@@ -190,8 +224,7 @@ class VoiceprintLibraryApp(App[None]):
         with Horizontal(id="main"):
             yield Static(id="speakers", classes="pane")
             yield Static(id="samples", classes="pane")
-        yield Static(BROWSE_STATUS, id="status")
-        yield Footer()
+        yield Static(browse_status(), id="status")
 
     def on_mount(self) -> None:
         """Render the initial library state."""
@@ -229,16 +262,16 @@ class VoiceprintLibraryApp(App[None]):
         """Play or stop the selected sample."""
         if self._is_playing():
             self._stop_playback()
-            self._set_status("Stopped sample playback.")
+            self._set_status(tr("Stopped sample playback.", "已停止 sample 播放。"))
             return
         sample = self._selected_sample()
         if sample is None:
-            self._set_status("No sample for this speaker.")
+            self._set_status(tr("No sample for this speaker.", "当前 speaker 没有样本。"))
             return
         try:
             self._play_sample(sample)
         except Exception as exc:  # noqa: BLE001
-            self._set_status(f"Playback failed: {exc}")
+            self._set_status(tr(f"Playback failed: {exc}", f"播放失败：{exc}"))
 
     def action_show_shortcuts(self) -> None:
         """Show keyboard shortcut help."""
@@ -311,33 +344,39 @@ class VoiceprintLibraryApp(App[None]):
         sample_count = sum(item.sample_count for item in self.session.speakers)
         embedded = sum(item.embedded_sample_count for item in self.session.speakers)
         lines = [
-            f"[b]Store[/b]    {escape(str(self.session.db_path))}",
-            f"[b]Library[/b]  speakers {len(self.session.speakers)} | samples {sample_count} | embedded {embedded}/{sample_count}",
-            f"[b]Focus[/b]    {escape(_selected_speaker_summary(speaker))}",
-            f"[b]Sample[/b]   {escape(_selected_sample_summary(sample))}",
+            f"{tr('[b]Store[/b]', '[b]库路径[/b]')}    {escape(str(self.session.db_path))}",
+            tr(
+                f"[b]Library[/b]  speakers {len(self.session.speakers)} | samples {sample_count} | embedded {embedded}/{sample_count}",
+                f"[b]声纹库[/b]   speaker {len(self.session.speakers)} | 样本 {sample_count} | embedding {embedded}/{sample_count}",
+            ),
+            tr(f"[b]Focus[/b]    {escape(_selected_speaker_summary(speaker))}", f"[b]当前[/b]     {escape(_selected_speaker_summary(speaker))}"),
+            tr(f"[b]Sample[/b]   {escape(_selected_sample_summary(sample))}", f"[b]样本[/b]     {escape(_selected_sample_summary(sample))}"),
         ]
         return "\n".join(lines)
 
     def _speaker_pane(self) -> str:
         """Render the speaker list."""
-        lines = [self._pane_title("Voiceprint speakers", "speakers")]
+        lines = [self._pane_title(tr("Voiceprint speakers", "声纹人员"), "speakers")]
         if not self.session.speakers:
-            lines.append("[yellow]No voiceprints recorded.[/]")
+            lines.append(tr("[yellow]No voiceprints recorded.[/]", "[yellow]尚未录入声纹。[/]"))
             return "\n".join(lines)
         for index, speaker in enumerate(self.session.speakers):
             marker = ">" if index == self.selected_speaker_index else " "
             embedded = f"{speaker.embedded_sample_count}/{speaker.sample_count}"
-            label = f"{marker} {speaker.name}  samples {speaker.sample_count}  embedded {embedded}"
+            label = tr(
+                f"{marker} {speaker.name}  samples {speaker.sample_count}  embedded {embedded}",
+                f"{marker} {speaker.name}  样本 {speaker.sample_count}  embedding {embedded}",
+            )
             lines.append(escape(label))
         return "\n".join(lines)
 
     def _sample_pane(self) -> str:
         """Render samples for the selected speaker."""
         speaker = self._speaker()
-        title = "Samples" if speaker is None else f"{speaker.name} samples"
+        title = tr("Samples", "样本") if speaker is None else tr(f"{speaker.name} samples", f"{speaker.name} 样本")
         lines = [self._pane_title(title, "samples")]
         if speaker is None:
-            lines.append("[yellow]No speaker selected.[/]")
+            lines.append(tr("[yellow]No speaker selected.[/]", "[yellow]未选择 speaker。[/]"))
             return "\n".join(lines)
         page_start, samples = self._visible_samples(speaker)
         for offset, sample in enumerate(samples):
@@ -346,7 +385,7 @@ class VoiceprintLibraryApp(App[None]):
             line = f"{prefix} #{index + 1} {_sample_line(sample)}"
             lines.append(f"[reverse]{escape(line)}[/]" if prefix == ">" else escape(line))
         if not samples:
-            lines.append("[yellow]No samples for this speaker.[/]")
+            lines.append(tr("[yellow]No samples for this speaker.[/]", "[yellow]当前 speaker 没有样本。[/]"))
         lines.append("")
         lines.append(self._sample_page_footer(speaker, page_start))
         return "\n".join(lines)
@@ -361,7 +400,7 @@ class VoiceprintLibraryApp(App[None]):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self._set_status(f"Playing {sample.speaker_name} sample {sample.public_id}.")
+        self._set_status(tr(f"Playing {sample.speaker_name} sample {sample.public_id}.", f"正在播放 {sample.speaker_name} 的样本 {sample.public_id}。"))
 
     def _stop_playback(self) -> None:
         """Stop the current playback child process if it is still running."""
@@ -415,7 +454,10 @@ class VoiceprintLibraryApp(App[None]):
         page_number = page_start // page_size + 1
         start = page_start + 1 if speaker.samples else 0
         end = min(page_start + page_size, len(speaker.samples))
-        return f"Page {page_number}/{page_count}  Samples {start}-{end}/{len(speaker.samples)}"
+        return tr(
+            f"Page {page_number}/{page_count}  Samples {start}-{end}/{len(speaker.samples)}",
+            f"第 {page_number}/{page_count} 页  样本 {start}-{end}/{len(speaker.samples)}",
+        )
 
     def _pane_title(self, title: str, column: str) -> str:
         """Render a pane title with focused-column state."""
@@ -519,8 +561,12 @@ def _selected_speaker_summary(speaker: VoiceprintSpeakerEntry | None) -> str:
     if speaker is None:
         return "-"
     return (
-        f"{speaker.name} id={speaker.public_id} | samples {speaker.sample_count} | "
-        f"projects {speaker.project_count} | models {speaker.embedding_model_count}"
+        tr(
+            f"{speaker.name} id={speaker.public_id} | samples {speaker.sample_count} | "
+            f"projects {speaker.project_count} | models {speaker.embedding_model_count}",
+            f"{speaker.name} id={speaker.public_id} | 样本 {speaker.sample_count} | "
+            f"项目 {speaker.project_count} | 模型 {speaker.embedding_model_count}",
+        )
     )
 
 
@@ -528,7 +574,7 @@ def _selected_sample_summary(sample: VoiceprintSampleRow | None) -> str:
     """Render selected sample summary."""
     if sample is None:
         return "-"
-    return f"sample_id {sample.public_id} | clip {sample.clip_path}"
+    return tr(f"sample_id {sample.public_id} | clip {sample.clip_path}", f"样本ID {sample.public_id} | 文件 {sample.clip_path}")
 
 
 def _sample_line(sample: VoiceprintSampleRow) -> str:

@@ -9,14 +9,18 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Header, Static
 
 from app.core.project_models import ProjectListItem
 from app.core.project_refs import list_projects
 from app.core.project_workflow import load_project_workflow_summary, project_outputs_text
+from app.presentation.tui.i18n import tr
 from app.presentation.time_format import format_local_minute
 
-SHORTCUT_HELP = """\
+def shortcut_help() -> str:
+    """Return localized project-picker shortcut help."""
+    return tr(
+        """\
 [b]Project List Shortcuts[/b]
 
 [b]Navigation[/b]
@@ -30,7 +34,23 @@ You can also skip this list and run:
 meeting-asr project review PROJECT_ID
 meeting-asr project review PROJECT_PATH
 meeting-asr project review PROJECT_TITLE
-"""
+""",
+        """\
+[b]项目列表快捷键[/b]
+
+[b]导航[/b]
+j/k 或 ↑/↓           选择上一个/下一个项目
+enter                打开选中项目的 Review TUI
+?                    显示帮助
+q                    退出
+
+[b]项目引用[/b]
+也可以跳过列表，直接运行：
+meeting-asr project review PROJECT_ID
+meeting-asr project review PROJECT_PATH
+meeting-asr project review PROJECT_TITLE
+""",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +85,7 @@ class ProjectPickerHelpScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         """Build the help popup."""
-        yield Static(SHORTCUT_HELP, id="project-picker-help")
+        yield Static(shortcut_help(), id="project-picker-help")
 
     def action_close_help(self) -> None:
         """Close the shortcut help popup."""
@@ -128,8 +148,13 @@ class _ProjectPickerBase:
         yield Static(id="overview")
         yield Static(id="projects")
         yield Static(id="detail")
-        yield Static("Use ↑/↓ or j/k, Enter opens review, ? help, q quit", id="status")
-        yield Footer()
+        yield Static(
+            tr(
+                "Use ↑/↓ or j/k, Enter opens review, ? help, q quit",
+                "使用 ↑/↓ 或 j/k 选择，Enter 打开 review，? 帮助，q 退出",
+            ),
+            id="status",
+        )
 
     def on_mount(self) -> None:
         """Render the initial project list."""
@@ -147,7 +172,7 @@ class _ProjectPickerBase:
         """Exit with the selected project path."""
         project = self._project()
         if project is None:
-            self.query_one("#status", Static).update("No project selected.")
+            self.query_one("#status", Static).update(tr("No project selected.", "未选择项目。"))
             return
         self._finish(project.project_dir)
 
@@ -183,17 +208,17 @@ class _ProjectPickerBase:
         selected_text = "-" if selected is None else f"{selected.project_id} | {selected.title}"
         return "\n".join(
             [
-                f"[b]Projects[/b] {escape(str(self.session.projects_dir))}",
-                f"[b]Count[/b]    {len(self.session.projects)}",
-                f"[b]Selected[/b] {escape(selected_text)}",
+                f"{tr('[b]Projects[/b]', '[b]项目[/b]')} {escape(str(self.session.projects_dir))}",
+                f"{tr('[b]Count[/b]', '[b]数量[/b]')}    {len(self.session.projects)}",
+                f"{tr('[b]Selected[/b]', '[b]当前[/b]')} {escape(selected_text)}",
             ]
         )
 
     def _project_list_pane(self) -> str:
         """Render selectable project rows."""
-        lines = ["[b]Project List[/b]"]
+        lines = [tr("[b]Project List[/b]", "[b]项目列表[/b]")]
         if not self.session.projects:
-            lines.append("[yellow]No projects found.[/]")
+            lines.append(tr("[yellow]No projects found.[/]", "[yellow]没有找到项目。[/]"))
             return "\n".join(lines)
         for index, project in enumerate(self.session.projects):
             marker = ">" if index == self.selected_project_index else " "
@@ -209,18 +234,18 @@ class _ProjectPickerBase:
         """Render detail for the selected project."""
         project = self._project()
         if project is None:
-            return "[b]Detail[/b]\nNo project selected."
+            return tr("[b]Detail[/b]\nNo project selected.", "[b]详情[/b]\n未选择项目。")
         workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
         return "\n".join(
             [
-                "[b]Detail[/b]",
-                f"Project ID: {escape(project.project_id)}",
-                f"Title: {escape(project.title)}",
-                f"State: {escape(workflow.state)}",
-                f"Next: {escape(workflow.next_command_short)}",
-                f"Artifacts: {escape(project_outputs_text(workflow.outputs))}",
-                f"Path: {escape(str(project.project_dir))}",
-                f"Open: meeting-asr project review {escape(project.project_id)}",
+                tr("[b]Detail[/b]", "[b]详情[/b]"),
+                tr(f"Project ID: {escape(project.project_id)}", f"项目 ID：{escape(project.project_id)}"),
+                tr(f"Title: {escape(project.title)}", f"标题：{escape(project.title)}"),
+                tr(f"State: {escape(workflow.state)}", f"状态：{escape(workflow.state)}"),
+                tr(f"Next: {escape(workflow.next_command_short)}", f"下一步：{escape(workflow.next_command_short)}"),
+                tr(f"Artifacts: {escape(project_outputs_text(workflow.outputs))}", f"产物：{escape(project_outputs_text(workflow.outputs))}"),
+                tr(f"Path: {escape(str(project.project_dir))}", f"路径：{escape(str(project.project_dir))}"),
+                tr(f"Open: meeting-asr project review {escape(project.project_id)}", f"打开：meeting-asr project review {escape(project.project_id)}"),
             ]
         )
 

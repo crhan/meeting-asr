@@ -11,8 +11,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Header, Static
 
+from app.presentation.tui.i18n import tr
 from app.speaker_review import build_audio_preview_command
 from app.utils import format_ms_timestamp
 from app.voiceprints import VoiceprintCaptureSummary
@@ -22,11 +23,21 @@ SAMPLE_PANE_RESERVED_ROWS = 5
 COLUMNS = ("speakers", "samples")
 FOCUSED_PANE_CLASS = "focused-pane"
 UNFOCUSED_PANE_CLASS = "unfocused-pane"
-CAPTURE_REVIEW_STATUS = (
-    "Capture review: h/l or left/right choose column | j/k or up/down move | "
-    "x include/exclude | space play/stop | s capture selected | ? help | q cancel"
-)
-SHORTCUT_HELP = """\
+def capture_review_status() -> str:
+    """Return localized voiceprint-capture review status text."""
+    return tr(
+        (
+            "Capture review: h/l or left/right choose column | j/k or up/down move | "
+            "x include/exclude | space play/stop | s capture selected | ? help | q cancel"
+        ),
+        "采样 Review：h/l 或 ←/→ 切列 | j/k 或 ↑/↓ 移动 | x 选中/排除 | Space 播放/停止 | s 采集已选 | ? 帮助 | q 取消",
+    )
+
+
+def shortcut_help() -> str:
+    """Return localized voiceprint-capture shortcut help."""
+    return tr(
+        """\
 [b]Voiceprint Capture Review Shortcuts[/b]
 
 [b]What This Does[/b]
@@ -46,7 +57,29 @@ a                    Include/exclude all samples for the selected speaker
 s                    Capture checked samples into the global voiceprint store
 ?                    Show this help
 q                    Cancel without writing voiceprints
-"""
+""",
+        """\
+[b]声纹采样 Review 快捷键[/b]
+
+[b]用途[/b]
+这个 review 发生在 WAV 片段写入全局声纹库之前。
+只有勾选的样本会被采集，后续才会生成 embedding。
+
+[b]导航[/b]
+h/l 或 ←/→           切换当前列
+j/k 或 ↑/↓           在当前列内移动
+PageUp/PageDown      上一页/下一页 sample
+[ / ]                上一页/下一页 sample
+
+[b]操作[/b]
+space                从源媒体播放或停止当前 sample
+x                    选中/排除当前 sample
+a                    选中/排除当前 speaker 的全部 sample
+s                    将勾选 sample 采集到全局声纹库
+?                    显示帮助
+q                    取消，不写入声纹
+""",
+    )
 
 
 @dataclass(slots=True)
@@ -126,7 +159,7 @@ class VoiceprintCaptureHelpScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         """Build the help popup."""
-        yield Static(SHORTCUT_HELP, id="voiceprint-capture-help")
+        yield Static(shortcut_help(), id="voiceprint-capture-help")
 
     def action_close_help(self) -> None:
         """Close the shortcut help popup."""
@@ -208,8 +241,7 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
         with Horizontal(id="main"):
             yield Static(id="speakers", classes="pane")
             yield Static(id="samples", classes="pane")
-        yield Static(CAPTURE_REVIEW_STATUS, id="status")
-        yield Footer()
+        yield Static(capture_review_status(), id="status")
 
     def on_mount(self) -> None:
         """Render the initial capture plan."""
@@ -249,7 +281,9 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
         if sample is None:
             return
         sample.included = not sample.included
-        self._set_status("Sample included." if sample.included else "Sample excluded.")
+        self._set_status(
+            tr("Sample included.", "已选中样本。") if sample.included else tr("Sample excluded.", "已排除样本。")
+        )
         self._refresh()
 
     def action_toggle_speaker(self) -> None:
@@ -260,29 +294,34 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
         include = not all(clip.included for clip in speaker.clips)
         for clip in speaker.clips:
             clip.included = include
-        self._set_status(f"{'Included' if include else 'Excluded'} all samples for {speaker.name}.")
+        self._set_status(
+            tr(
+                f"{'Included' if include else 'Excluded'} all samples for {speaker.name}.",
+                f"已{'选中' if include else '排除'} {speaker.name} 的全部样本。",
+            )
+        )
         self._refresh()
 
     def action_play_sample(self) -> None:
         """Play or stop the selected sample."""
         if self._is_playing():
             self._stop_playback()
-            self._set_status("Stopped sample playback.")
+            self._set_status(tr("Stopped sample playback.", "已停止 sample 播放。"))
             return
         sample = self._selected_sample()
         if sample is None:
-            self._set_status("No sample selected.")
+            self._set_status(tr("No sample selected.", "未选择样本。"))
             return
         try:
             self._play_sample(sample)
         except Exception as exc:  # noqa: BLE001
-            self._set_status(f"Playback failed: {exc}")
+            self._set_status(tr(f"Playback failed: {exc}", f"播放失败：{exc}"))
 
     def action_save(self) -> None:
         """Return selected clips for persistence."""
         selected = self._selected_clip_rel_paths()
         if not selected:
-            self._set_status("No samples selected. Toggle at least one sample before capture.")
+            self._set_status(tr("No samples selected. Toggle at least one sample before capture.", "没有选中样本。采集前至少选中一个样本。"))
             return
         self.exit(VoiceprintCaptureDecision(True, frozenset(selected)))
 
@@ -357,36 +396,39 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
         speaker = self._speaker()
         sample = self._selected_sample()
         lines = [
-            f"[b]Project[/b]  {escape(self.session.project_id)}",
-            f"[b]Source[/b]   {escape(str(self.session.source_path))}",
-            f"[b]Store[/b]    {escape(str(self.session.db_path))}",
-            f"[b]Selected[/b] {selected}/{total} sample(s)",
-            f"[b]Focus[/b]    {escape(_selected_speaker_summary(speaker))}",
-            f"[b]Sample[/b]   {escape(_selected_sample_summary(sample))}",
+            f"{tr('[b]Project[/b]', '[b]项目[/b]')}  {escape(self.session.project_id)}",
+            f"{tr('[b]Source[/b]', '[b]来源[/b]')}   {escape(str(self.session.source_path))}",
+            f"{tr('[b]Store[/b]', '[b]库路径[/b]')}    {escape(str(self.session.db_path))}",
+            tr(f"[b]Selected[/b] {selected}/{total} sample(s)", f"[b]已选[/b]     {selected}/{total} 个样本"),
+            tr(f"[b]Focus[/b]    {escape(_selected_speaker_summary(speaker))}", f"[b]当前[/b]     {escape(_selected_speaker_summary(speaker))}"),
+            tr(f"[b]Sample[/b]   {escape(_selected_sample_summary(sample))}", f"[b]样本[/b]     {escape(_selected_sample_summary(sample))}"),
         ]
         return "\n".join(lines)
 
     def _speaker_pane(self) -> str:
         """Render speakers and selected sample counts."""
-        lines = [self._pane_title("Project speakers", "speakers")]
+        lines = [self._pane_title(tr("Project speakers", "项目 speaker"), "speakers")]
         if not self.session.speakers:
-            lines.append("[yellow]No capture candidates.[/]")
+            lines.append(tr("[yellow]No capture candidates.[/]", "[yellow]没有可采集候选样本。[/]"))
             return "\n".join(lines)
         for index, speaker in enumerate(self.session.speakers):
             marker = ">" if index == self.selected_speaker_index else " "
             selected = sum(1 for clip in speaker.clips if clip.included)
             person = "" if speaker.person_public_id is None else f" {speaker.person_public_id}"
-            label = f"{marker} {speaker.name}{person}  selected {selected}/{len(speaker.clips)}"
+            label = tr(
+                f"{marker} {speaker.name}{person}  selected {selected}/{len(speaker.clips)}",
+                f"{marker} {speaker.name}{person}  已选 {selected}/{len(speaker.clips)}",
+            )
             lines.append(escape(label))
         return "\n".join(lines)
 
     def _sample_pane(self) -> str:
         """Render samples for the selected speaker."""
         speaker = self._speaker()
-        title = "Samples" if speaker is None else f"{speaker.name} capture samples"
+        title = tr("Samples", "样本") if speaker is None else tr(f"{speaker.name} capture samples", f"{speaker.name} 采样样本")
         lines = [self._pane_title(title, "samples")]
         if speaker is None:
-            lines.append("[yellow]No speaker selected.[/]")
+            lines.append(tr("[yellow]No speaker selected.[/]", "[yellow]未选择 speaker。[/]"))
             return "\n".join(lines)
         page_start, samples = self._visible_samples(speaker)
         for offset, sample in enumerate(samples):
@@ -396,7 +438,7 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
             line = f"{prefix} [{checked}] #{index + 1} {_sample_line(sample)}"
             lines.append(f"[reverse]{escape(line)}[/]" if prefix == ">" else escape(line))
         if not samples:
-            lines.append("[yellow]No samples for this speaker.[/]")
+            lines.append(tr("[yellow]No samples for this speaker.[/]", "[yellow]当前 speaker 没有样本。[/]"))
         lines.append("")
         lines.append(self._sample_page_footer(speaker, page_start))
         return "\n".join(lines)
@@ -415,7 +457,7 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self._set_status(f"Playing sample {_sample_time_range(sample)}.")
+        self._set_status(tr(f"Playing sample {_sample_time_range(sample)}.", f"正在播放样本 {_sample_time_range(sample)}。"))
 
     def _stop_playback(self) -> None:
         """Stop the current playback child process if it is still running."""
@@ -472,7 +514,10 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
         page_number = page_start // page_size + 1
         start = page_start + 1 if speaker.clips else 0
         end = min(page_start + page_size, len(speaker.clips))
-        return f"Page {page_number}/{page_count}  Samples {start}-{end}/{len(speaker.clips)}"
+        return tr(
+            f"Page {page_number}/{page_count}  Samples {start}-{end}/{len(speaker.clips)}",
+            f"第 {page_number}/{page_count} 页  样本 {start}-{end}/{len(speaker.clips)}",
+        )
 
     def _pane_title(self, title: str, column: str) -> str:
         """Render a pane title with focused-column state."""

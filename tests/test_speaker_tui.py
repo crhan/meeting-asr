@@ -13,6 +13,7 @@ from app import speaker_tui
 from app.correction_types import CorrectionEditSummary
 from app.core.project_models import ProjectListItem
 from app.models import SentenceSegment
+from app.presentation.cli.i18n import configure_cli_language
 from app.project_manager import create_project, project_paths
 from app.speaker_tui import (
     CorrectionQueuedScreen,
@@ -108,6 +109,22 @@ def test_speaker_review_tui_shows_project_workflow_status() -> None:
             assert "score avg 0.875, best 0.950" in overview
 
     asyncio.run(scenario())
+
+
+def test_speaker_review_tui_uses_chinese_language() -> None:
+    """Speaker review overview should localize visible workflow guidance."""
+    try:
+        configure_cli_language("zh")
+        app = SpeakerReviewApp(_session(with_status=True))
+        overview = app._overview_pane()
+
+        assert "p: 切项目" in overview
+        assert "[b]项目[/b]" in overview
+        assert "[b]步骤[/b]" in overview
+        assert "[b]自动[/b]" in overview
+        assert "分数平均" in overview
+    finally:
+        configure_cli_language("en")
 
 
 def test_speaker_review_tui_question_mark_shows_shortcut_help() -> None:

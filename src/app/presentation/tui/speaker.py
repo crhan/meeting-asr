@@ -12,7 +12,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.worker import Worker, WorkerState
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Header, Static
 
 from app.models import SentenceSegment
 from app.speaker_match_status import best_candidate_name
@@ -24,7 +24,8 @@ from app.presentation.tui.speaker_correction import (
     SentenceCorrectionEdit,
     SentenceCorrectionScreen,
 )
-from app.presentation.tui.speaker_help import BROWSE_STATUS, EDIT_STATUS, ShortcutHelpScreen
+from app.presentation.tui.i18n import tr
+from app.presentation.tui.speaker_help import ShortcutHelpScreen, browse_status, edit_status
 from app.presentation.tui.speaker_identity import IdentityEditScreen, IdentitySelection
 from app.presentation.tui.speaker_matches import SpeakerMatchCandidate
 from app.presentation.tui.speaker_models import ReviewSpeaker, SpeakerReviewDecision, SpeakerReviewSession
@@ -185,12 +186,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         with Horizontal(id="main"):
             yield Static(id="speakers", classes="pane")
             yield Static(id="samples", classes="pane")
-        yield Static(BROWSE_STATUS, id="status")
-        yield Footer()
+        yield Static(browse_status(), id="status")
 
     def on_mount(self) -> None:
         """Render the initial review state."""
-        self._enter_browse_mode(BROWSE_STATUS)
+        self._enter_browse_mode(browse_status())
         self._refresh()
 
     def on_unmount(self) -> None:
@@ -234,17 +234,17 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Play or stop the selected sample as audio."""
         if self._is_playing():
             self._stop_playback()
-            self._set_status("Stopped sample playback.")
+            self._set_status(tr("Stopped sample playback.", "已停止 sample 播放。"))
             return
         try:
             self._play_sample(self._selected_sample())
         except Exception as exc:  # noqa: BLE001
-            self._set_status(f"Preview failed: {exc}")
+            self._set_status(tr(f"Preview failed: {exc}", f"预览失败：{exc}"))
 
     def action_edit_name(self) -> None:
         """Open the explicit known-person selection modal."""
         speaker = self._speaker()
-        self._set_status(EDIT_STATUS)
+        self._set_status(edit_status())
         self.push_screen(
             IdentityEditScreen(
                 speaker_label=speaker.label,
@@ -262,7 +262,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         speaker = self._speaker()
         candidate = None if speaker.match is None else best_candidate_name(speaker.match)
         if candidate is None:
-            self._set_status("No usable match for this speaker.")
+            self._set_status(tr("No usable match for this speaker.", "当前 speaker 没有可用匹配。"))
             return
         person_id = None if speaker.match is None else speaker.match.best_person_id
         if person_id is None:
@@ -271,7 +271,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         person_public_id = _known_person_public_id(self.known_people, person_id)
         person_public_id = person_public_id or (None if speaker.match is None else speaker.match.best_person_public_id)
         self._set_speaker_identity(speaker, candidate, person_id, person_public_id)
-        self._set_status(f"Accepted match for {speaker.label}: {candidate}.")
+        self._set_status(tr(f"Accepted match for {speaker.label}: {candidate}.", f"已接受 {speaker.label} 的匹配：{candidate}。"))
         self._refresh()
 
     def action_ignore_speaker(self) -> None:
@@ -281,7 +281,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         speaker.ignored = True
         speaker.person_id = None
         speaker.person_public_id = None
-        self._set_status(f"Ignored {speaker.label}; it will stay anonymous and be skipped by capture.")
+        self._set_status(
+            tr(
+                f"Ignored {speaker.label}; it will stay anonymous and be skipped by capture.",
+                f"已忽略 {speaker.label}；它会保持匿名，并在声纹采样中跳过。",
+            )
+        )
         self._refresh()
 
     def action_show_shortcuts(self) -> None:
@@ -291,32 +296,32 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def action_switch_project(self) -> None:
         """Open the embedded project picker and switch review context."""
         if self._has_unsaved_review_changes():
-            self._set_status("Save current project changes with s before switching projects.")
+            self._set_status(tr("Save current project changes with s before switching projects.", "切换项目之前请先按 s 保存当前项目修改。"))
             return
         try:
             picker_session = load_project_picker_session(self.session.projects_dir)
         except Exception as exc:  # noqa: BLE001
-            self._set_status(f"Project switch unavailable: {exc}")
+            self._set_status(tr(f"Project switch unavailable: {exc}", f"项目切换不可用：{exc}"))
             return
         if not picker_session.projects:
-            self._set_status("No projects found to switch to.")
+            self._set_status(tr("No projects found to switch to.", "没有可切换的项目。"))
             return
         self.push_screen(ProjectPickerScreen(picker_session), self._handle_project_switch)
 
     def action_voiceprint_review(self) -> None:
         """Open the embedded voiceprint review screen from project review."""
         if self._has_unsaved_speaker_names():
-            self._set_status("Save speaker names with s before opening voiceprint review.")
+            self._set_status(tr("Save speaker names with s before opening voiceprint review.", "打开声纹 Review 前请先按 s 保存 speaker 姓名。"))
             return
         try:
             session, planned = load_voiceprint_review_session(
                 project_dir=self.session.project_dir,
                 store_dir=self.session.store_dir,
                 page_size=self.session.page_size,
-                return_hint="return to Project Review",
+                return_hint=tr("return to Project Review", "返回 Project Review"),
             )
         except Exception as exc:  # noqa: BLE001
-            self._set_status(f"Voiceprint review unavailable: {exc}")
+            self._set_status(tr(f"Voiceprint review unavailable: {exc}", f"声纹 Review 不可用：{exc}"))
             return
         self.push_screen(
             VoiceprintReviewScreen(session),
@@ -326,9 +331,14 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def action_embed_voiceprints(self) -> None:
         """Generate embeddings for captured voiceprint samples from Project Review."""
         if not self.session.overview.voiceprint.captured_sample_ids:
-            self._set_status("No captured voiceprint samples yet. Press v to capture voiceprints first.")
+            self._set_status(
+                tr(
+                    "No captured voiceprint samples yet. Press v to capture voiceprints first.",
+                    "还没有已采集的声纹样本。请先按 v 进行声纹采样。",
+                )
+            )
             return
-        self._set_status("Embedding voiceprint samples...")
+        self._set_status(tr("Embedding voiceprint samples...", "正在生成声纹 embedding..."))
         self.run_worker(
             lambda: embed_voiceprint_samples(
                 store_dir=self.session.store_dir,
@@ -355,14 +365,19 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 accept_handler=self._accept_handler_for_current_project(),
                 on_result=self._handle_save_outcome,
                 followup_handler=self.action_voiceprint_review,
-                followup_label="capture voiceprints",
+                followup_label=tr("capture voiceprints", "声纹采样"),
             )
         )
 
     def action_edit_sample_text(self) -> None:
         """Edit the selected transcript sentence inside the TUI."""
         if not self.session.allow_correction:
-            self._set_status("Transcript correction is available from project review, not speaker-only review.")
+            self._set_status(
+                tr(
+                    "Transcript correction is available from project review, not speaker-only review.",
+                    "文字修正只能在 Project Review 中使用，speaker-only review 不支持。",
+                )
+            )
             return
         speaker = self._speaker()
         self.push_screen(
@@ -381,34 +396,39 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _handle_sentence_correction(self, edit: SentenceCorrectionEdit | None) -> None:
         """Record an inline sentence correction returned by the modal."""
         if edit is None:
-            self._set_status("Transcript correction canceled.")
+            self._set_status(tr("Transcript correction canceled.", "已取消文字修正。"))
             return
         self._upsert_correction_edit(edit)
         self._replace_segment_text(edit)
         count = len(self.correction_edits)
-        self._set_status(f"{count} text correction(s) staged. Press s to save and run correction.")
+        self._set_status(
+            tr(
+                f"{count} text correction(s) staged. Press s to save and run correction.",
+                f"已暂存 {count} 条文字修正。按 s 保存并运行修正流程。",
+            )
+        )
         self._refresh()
         self.push_screen(CorrectionQueuedScreen(edit, count=count))
 
     def _handle_identity_selection(self, selection: IdentitySelection | None) -> None:
         """Apply one identity selected in the modal."""
         if selection is None:
-            self._set_status("Identity edit canceled.")
+            self._set_status(tr("Identity edit canceled.", "已取消身份编辑。"))
             return
         speaker = self._speaker()
         self._remember_known_person(selection)
         self._set_speaker_identity(speaker, selection.name, selection.person_id, selection.public_id)
-        action = "Created" if selection.created else "Set"
-        self._set_status(f"{action} {speaker.label} to {selection.name} {selection.public_id}.")
+        action = tr("Created", "已创建") if selection.created else tr("Set", "已设置")
+        self._set_status(f"{action} {speaker.label} -> {selection.name} {selection.public_id}.")
         self._refresh()
 
     def _handle_project_switch(self, project_dir: Path | None) -> None:
         """Replace the current review session with another project."""
         if project_dir is None:
-            self._set_status("Project switch canceled.")
+            self._set_status(tr("Project switch canceled.", "已取消项目切换。"))
             return
         if project_dir.resolve() == self.session.project_dir.resolve():
-            self._set_status("Already reviewing the selected project.")
+            self._set_status(tr("Already reviewing the selected project.", "已经在 review 当前选中的项目。"))
             return
         try:
             session = load_speaker_review_session(
@@ -418,7 +438,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 allow_correction=self.session.allow_correction,
             )
         except Exception as exc:  # noqa: BLE001
-            self._set_status(f"Project switch failed: {exc}")
+            self._set_status(tr(f"Project switch failed: {exc}", f"项目切换失败：{exc}"))
             return
         self._stop_playback()
         self.session = session
@@ -426,7 +446,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.focused_column = "speakers"
         self.known_people = list(session.people)
         self.correction_edits.clear()
-        self._enter_browse_mode(f"Switched to project {session.overview.project_id}.")
+        self._enter_browse_mode(tr(f"Switched to project {session.overview.project_id}.", f"已切换到项目 {session.overview.project_id}。"))
         self._refresh()
 
     def _move_focused_row(self, delta: int) -> None:
@@ -440,7 +460,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Move focus between the speaker and sample columns."""
         index = COLUMNS.index(self.focused_column)
         self.focused_column = COLUMNS[_clamp(index + delta, 0, len(COLUMNS) - 1)]
-        self._enter_browse_mode(BROWSE_STATUS)
+        self._enter_browse_mode(browse_status())
         self._refresh()
 
     def _move_speaker(self, delta: int) -> None:
@@ -487,7 +507,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def _speaker_pane(self) -> str:
         """Render the left speaker list."""
-        lines = [self._pane_title("Speakers", "speakers")]
+        lines = [self._pane_title(tr("Speakers", "Speakers"), "speakers")]
         for index, speaker in enumerate(self.session.speakers):
             marker = ">" if index == self.selected_speaker_index else " "
             style = status_style(speaker_status(speaker))
@@ -498,7 +518,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _sample_pane(self) -> str:
         """Render the selected speaker samples."""
         speaker = self._speaker()
-        lines = [self._pane_title(f"{speaker.label} samples", "samples")]
+        lines = [self._pane_title(tr(f"{speaker.label} samples", f"{speaker.label} samples"), "samples")]
         lines.append(render_selected_speaker_line(speaker))
         page_start, segments = self._visible_segments(speaker)
         for offset, segment in enumerate(segments):
@@ -532,7 +552,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self._set_status(f"Playing selected sample: {_segment_time_range(segment)}.")
+        self._set_status(tr(f"Playing selected sample: {_segment_time_range(segment)}.", f"正在播放当前 sample：{_segment_time_range(segment)}。"))
 
     def _stop_playback(self) -> None:
         """Stop the current playback child process if it is still running."""
@@ -608,10 +628,20 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         summary = outcome.correction_summary
         if summary is not None and summary.accepted:
             self.correction_edits.clear()
-            self._set_status("Saved names and accepted transcript correction. Press v to capture voiceprints.")
+            self._set_status(
+                tr(
+                    "Saved names and accepted transcript correction. Press v to capture voiceprints.",
+                    "已保存姓名并接受文字修正。按 v 继续声纹采样。",
+                )
+            )
             self._refresh()
             return
-        self._set_status("Saved project review. Press v to capture voiceprints, or continue reviewing.")
+        self._set_status(
+            tr(
+                "Saved project review. Press v to capture voiceprints, or continue reviewing.",
+                "已保存 Project Review。按 v 继续声纹采样，或继续 review。",
+            )
+        )
 
     def _mark_speaker_names_saved(self) -> None:
         """Keep in-memory workflow state aligned with the just-written speaker map."""
@@ -645,12 +675,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     ) -> None:
         """Persist samples selected in the embedded voiceprint review."""
         if decision is None or not decision.saved:
-            self._set_status("Voiceprint review closed; no samples were written.")
+            self._set_status(tr("Voiceprint review closed; no samples were written.", "声纹 Review 已关闭；没有写入样本。"))
             return
         if planned is None:
-            self._set_status("No project voiceprint candidates were available.")
+            self._set_status(tr("No project voiceprint candidates were available.", "当前项目没有可用的声纹候选样本。"))
             return
-        self._set_status("Capturing selected voiceprint samples...")
+        self._set_status(tr("Capturing selected voiceprint samples...", "正在采集已选择的声纹样本..."))
         self.run_worker(
             lambda: persist_voiceprint_capture_selection(
                 self.session.project_dir,
@@ -667,7 +697,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         if event.state == WorkerState.SUCCESS:
             self._handle_voiceprint_capture_success(event.worker.result)
         elif event.state == WorkerState.ERROR:
-            self._set_status(f"Voiceprint capture failed: {event.worker.error}")
+            self._set_status(tr(f"Voiceprint capture failed: {event.worker.error}", f"声纹采样失败：{event.worker.error}"))
 
     def _handle_voiceprint_embed_state(self, event: Worker.StateChanged) -> None:
         """Update the TUI after a voiceprint embedding worker state change."""
@@ -675,8 +705,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._handle_voiceprint_embed_success(event.worker.result)
         elif event.state == WorkerState.ERROR:
             self._set_status(
-                f"Voiceprint embedding failed: {event.worker.error}. "
-                "Run meeting-asr doctor --require-voiceprint-embedding."
+                tr(
+                    f"Voiceprint embedding failed: {event.worker.error}. "
+                    "Run meeting-asr doctor --require-voiceprint-embedding.",
+                    f"声纹 embedding 失败：{event.worker.error}。请运行 meeting-asr doctor --require-voiceprint-embedding。",
+                )
             )
 
     def _handle_voiceprint_capture_success(self, summary: VoiceprintCaptureSummary) -> None:
@@ -686,7 +719,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             voiceprint=load_voiceprint_review_progress(self.session.overview.project_id, self.session.store_dir),
         )
         self.session = replace(self.session, overview=overview)
-        self._set_status(f"Captured {summary.sample_count} voiceprint sample(s). Press b to embed voiceprints.")
+        self._set_status(
+            tr(
+                f"Captured {summary.sample_count} voiceprint sample(s). Press b to embed voiceprints.",
+                f"已采集 {summary.sample_count} 个声纹样本。按 b 生成 embedding。",
+            )
+        )
         self._refresh()
 
     def _handle_voiceprint_embed_success(self, summary: VoiceprintEmbedSummary) -> None:
@@ -697,7 +735,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         )
         self.session = replace(self.session, overview=overview)
         self._set_status(
-            f"Voiceprint embedding ready: embedded {summary.embedded_count}, skipped {summary.skipped_count}."
+            tr(
+                f"Voiceprint embedding ready: embedded {summary.embedded_count}, skipped {summary.skipped_count}.",
+                f"声纹 embedding 已完成：生成 {summary.embedded_count} 个，跳过 {summary.skipped_count} 个。",
+            )
         )
         self._refresh()
 
