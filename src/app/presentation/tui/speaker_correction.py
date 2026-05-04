@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import ScrollableContainer, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
 from app.models import SentenceSegment
+from app.presentation.tui.diff_render import styled_before_after
 from app.presentation.tui.inputs import ReadlineInput
 
 
@@ -140,8 +142,9 @@ class CorrectionQueuedScreen(ModalScreen[None]):
         align: center middle;
     }
     #queued-box {
-        width: 82;
+        width: 92%;
         height: auto;
+        max-height: 82%;
         border: thick $success;
         padding: 1 2;
         background: $surface;
@@ -151,7 +154,13 @@ class CorrectionQueuedScreen(ModalScreen[None]):
         color: $success;
     }
     #queued-body {
+        height: auto;
+        max-height: 1fr;
         margin: 1 0;
+    }
+    #queued-actions {
+        height: 2;
+        color: $text-muted;
     }
     """
 
@@ -176,21 +185,26 @@ class CorrectionQueuedScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         """Build staged correction feedback."""
-        body = "\n".join(
-            [
-                "[b]This edit is staged in the TUI.[/b]",
-                f"Total staged edits: {self.count}",
-                "",
-                f"Before: {self.edit.original_text}",
-                f"After:  {self.edit.corrected_text}",
-                "",
-                "Press [b]s[/b] to save and run correction in the TUI.",
-                "Press [b]Enter[/b] to keep reviewing; the sample stays marked as edited.",
-            ]
-        )
         with Vertical(id="queued-box"):
             yield Static("Transcript correction staged", id="queued-title")
-            yield Static(body, id="queued-body")
+            with ScrollableContainer(id="queued-body"):
+                yield Static(self._body(), id="queued-diff")
+            yield Static(self._actions(), id="queued-actions")
+
+    def _body(self) -> Text:
+        """Build the token-level staged correction preview."""
+        body = Text(no_wrap=False)
+        body.append("This edit is staged in the TUI.\n", style="bold")
+        body.append(f"Total staged edits: {self.count}\n\n")
+        body.append_text(styled_before_after(self.edit.original_text, self.edit.corrected_text))
+        return body
+
+    def _actions(self) -> str:
+        """Return available actions for the staged correction modal."""
+        return (
+            "Press [b]s[/b] to save and run correction in the TUI.\n"
+            "Press [b]Enter[/b] to keep reviewing; the sample stays marked as edited."
+        )
 
     def action_close_feedback(self) -> None:
         """Close feedback and continue reviewing."""

@@ -29,11 +29,11 @@ from app.speaker_tui import (
     VoiceprintReviewProgress,
     load_speaker_review_session,
 )
+from app.presentation.tui.diff_render import styled_unified_diff
 from app.presentation.tui.speaker_save import (
     CorrectionProposalDiffScreen,
     SpeakerReviewSaveOutcome,
     SpeakerReviewSaveScreen,
-    _styled_diff_text,
 )
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
@@ -206,9 +206,12 @@ def test_project_review_tui_edits_transcript_text_inline() -> None:
             await pilot.pause()
 
             assert isinstance(app.screen, CorrectionQueuedScreen)
-            feedback = str(app.screen.query_one("#queued-body", Static).render())
-            assert "staged" in feedback
-            assert "Press s" in feedback
+            feedback = app.screen.query_one("#queued-diff", Static).render()
+            assert "staged" in feedback.plain
+            assert "Before: 第一句" in feedback.plain
+            assert "After:  第一句修正" in feedback.plain
+            assert any("green" in str(span.style) and "bold" in str(span.style) for span in feedback.spans)
+            assert any("red" in str(span.style) and "bold" in str(span.style) for span in feedback.spans)
             assert app.return_value is None
             assert app._speaker().segments[0].text == "第一句修正"
             assert "run correction" in str(app.query_one("#status", Static).render())
@@ -338,7 +341,7 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
             diff_render = app.screen.query_one("#diff-content", Static).render()
             assert "+ IaaS" in diff_render.plain
             assert "[x] Change 1/1" in diff_render.plain
-            styled_diff = _styled_diff_text("- AS\n+ IaaS\n")
+            styled_diff = styled_unified_diff("- AS\n+ IaaS\n")
             assert any(str(span.style) == "bold green" for span in styled_diff.spans)
             assert any(str(span.style) == "bold red" for span in styled_diff.spans)
 
@@ -409,7 +412,7 @@ def test_project_review_tui_can_exclude_one_proposed_change(tmp_path: Path) -> N
 
 def test_correction_diff_viewer_highlights_changed_tokens_only() -> None:
     """Diff rendering should highlight changed tokens, not just whole lines."""
-    styled_diff = _styled_diff_text("- 我们看一下IC系统。\n+ 我们看一下isee系统。\n")
+    styled_diff = styled_unified_diff("- 我们看一下IC系统。\n+ 我们看一下isee系统。\n")
 
     assert styled_diff.plain == "- 我们看一下IC系统。\n+ 我们看一下isee系统。\n"
     assert _style_for_text(styled_diff, "IC") == "bold red"
