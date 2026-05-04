@@ -9,6 +9,8 @@ from typing import Optional
 
 import typer
 from rich import box
+from rich.markup import escape
+from rich.panel import Panel
 from rich.table import Table
 
 from app.asr_hotwords import (
@@ -147,9 +149,10 @@ def term_delete_command(
 ) -> None:
     """Deactivate or permanently delete one local vocabulary term."""
     db_path = lexicon_db or default_lexicon_db_path()
+    detail = run_with_cli_errors(lambda: get_lexicon_term(term, db_path=db_path, context_limit=3))
     if not yes:
-        action = "permanently delete" if permanent else "deactivate"
-        confirmed = typer.confirm(f"{action} lexicon term '{term}'?")
+        _echo_delete_preview(db_path, detail, permanent=permanent)
+        confirmed = typer.confirm(_delete_confirmation_text(permanent))
         if not confirmed:
             raise typer.Exit(code=1)
     detail = run_with_cli_errors(lambda: delete_lexicon_term(term, db_path=db_path, permanent=permanent))
@@ -431,6 +434,61 @@ def _echo_term_detail(db_path: Path, detail: LexiconTermDetail) -> None:
         typer.echo(f"Description: {term.description}")
     _echo_aliases(detail)
     _echo_contexts(detail)
+
+
+def _echo_delete_preview(db_path: Path, detail: LexiconTermDetail, *, permanent: bool) -> None:
+    """
+    Print the exact lexicon term that is about to be deleted.
+
+    Args:
+        db_path: Lexicon SQLite path.
+        detail: Term detail loaded before confirmation.
+        permanent: Whether this is a physical delete.
+    """
+    term = detail.term
+    lines = [
+        f"[b]ID[/b]        {escape(term.public_id)}",
+        f"[b]Term[/b]      {escape(term.canonical)}",
+        f"[b]Category[/b]  {escape(term.category)}",
+        f"[b]Status[/b]    {escape(term.status)}",
+        f"[b]Aliases[/b]   {_alias_preview(detail)}",
+        f"[b]Contexts[/b]  {term.context_count} total, showing {len(detail.contexts)}",
+        f"[b]Action[/b]    {_delete_action_text(permanent)}",
+        f"[b]DB[/b]        {escape(str(db_path))}",
+    ]
+    lines.extend(_context_preview_lines(detail))
+    cli_console(width=120).print(Panel("\n".join(lines), title="Lexicon Delete Review", border_style="yellow"))
+
+
+def _delete_confirmation_text(permanent: bool) -> str:
+    """Return the final delete confirmation prompt."""
+    action = "permanently delete this lexicon term" if permanent else "deactivate this lexicon term"
+    return f"Proceed to {action}?"
+
+
+def _delete_action_text(permanent: bool) -> str:
+    """Return a human explanation of the delete mode."""
+    if permanent:
+        return "[red]Permanently delete term, aliases, and contexts[/]"
+    return "[yellow]Deactivate term; keep history; remove from active hotwords[/]"
+
+
+def _alias_preview(detail: LexiconTermDetail) -> str:
+    """Return a compact alias preview for deletion review."""
+    if not detail.aliases:
+        return "-"
+    aliases = [f"{alias.alias} ({alias.alias_type})" for alias in detail.aliases[:5]]
+    suffix = "" if len(detail.aliases) <= 5 else f" ... +{len(detail.aliases) - 5}"
+    return escape(", ".join(aliases) + suffix)
+
+
+def _context_preview_lines(detail: LexiconTermDetail) -> list[str]:
+    """Return short context preview lines for deletion review."""
+    if not detail.contexts:
+        return []
+    lines = ["", "[b]Recent Contexts[/b]"]
+    lines.extend(f"  - {escape(_context_line(context))}" for context in detail.contexts)
+    return lines
 
 
 def _echo_aliases(detail: LexiconTermDetail) -> None:

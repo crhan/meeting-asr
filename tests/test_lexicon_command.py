@@ -195,6 +195,33 @@ def test_lexicon_delete_deactivates_term_and_hotword(tmp_path: Path) -> None:
     assert "Hotwords: 0" in hotwords_result.output
 
 
+def test_lexicon_delete_prompt_shows_term_details(tmp_path: Path) -> None:
+    """Interactive delete should show the resolved object before asking."""
+    db_path = tmp_path / "lexicon.sqlite"
+    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+    public_id = json.loads(
+        runner.invoke(app, ["lexicon", "list", "--lexicon-db", str(db_path), "--json"]).output
+    )["terms"][0]["public_id"]
+
+    result = runner.invoke(
+        app,
+        ["lexicon", "delete", public_id, "--lexicon-db", str(db_path)],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Lexicon Delete Review" in result.output
+    assert public_id in result.output
+    assert "Term" in result.output
+    assert "iSee" in result.output
+    assert "Aliases" in result.output
+    assert "艾赛 (asr_error)" in result.output
+    assert "Contexts" in result.output
+    assert "p-demo#1" in result.output
+    assert "Proceed to deactivate this lexicon term?" in result.output
+    assert "Lexicon term deactivated." in result.output
+
+
 def test_lexicon_export_import_round_trip(tmp_path: Path) -> None:
     """Exported local lexicon JSON should import into another database."""
     db_path = tmp_path / "lexicon.sqlite"
