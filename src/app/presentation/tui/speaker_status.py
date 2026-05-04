@@ -330,7 +330,7 @@ def _next_action_line(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerRe
     if _has_unsaved_names(speakers, overview):
         return "[yellow]Next[/]     press `s` to write the updated speaker map."
     if _capture_todo_count(speakers, overview.voiceprint):
-        return "[green]Done[/]     project outputs ready. Optional voiceprint: `meeting-asr voiceprint capture`."
+        return "[green]Done[/]     project outputs ready. Optional voiceprint: `meeting-asr voiceprint capture --review`."
     embed_todo = _embed_todo_count(overview.voiceprint)
     if embed_todo is None and overview.voiceprint.captured_sample_ids:
         return (

@@ -20,6 +20,7 @@ from app.presentation.cli.plain import echo_plain_table
 from app.presentation.cli.progress import run_with_progress
 from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.completion_helpers import complete_voiceprint_model, complete_voiceprint_provider
+from app.core.project_refs import resolve_project_ref
 from app.utils import format_ms_timestamp
 from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_people import (
@@ -42,8 +43,19 @@ from app.presentation.tui.voiceprint import (
     render_voiceprint_library_summary,
     run_voiceprint_library_tui,
 )
+from app.presentation.tui.voiceprint_capture import (
+    load_voiceprint_capture_review_session,
+    render_voiceprint_capture_review_summary,
+    run_voiceprint_capture_review_tui,
+)
 from app.voiceprint_embedding import embed_voiceprint_samples
-from app.voiceprints import VoiceprintCaptureSummary, capture_voiceprints
+from app.project_manager import load_manifest, project_paths, resolve_project_source_path
+from app.voiceprints import (
+    VoiceprintCaptureSummary,
+    capture_voiceprints,
+    persist_voiceprint_capture_selection,
+    plan_voiceprint_capture,
+)
 
 app = MeetingAsrTyper(
     add_completion=False,
@@ -63,17 +75,56 @@ app.add_typer(people_app, name="people", help="Manage stable voiceprint people."
 @app.command("capture")
 def capture_command(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     sample_count: int = typer.Option(3, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    review: bool = typer.Option(False, "--review", help="Review candidate samples in a TUI before capture."),
+    page_size: Optional[int] = typer.Option(
+        None,
+        "--page-size",
+        min=1,
+        max=50,
+        help="Override samples per page when --review is used.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run"),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Capture this project's named speakers into the global voiceprint store."""
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    if dry_run:
+        summary = run_with_progress(
+            lambda reporter: capture_voiceprints(
+                resolved_project_dir,
+                sample_count=sample_count,
+                max_seconds=max_seconds,
+                padding_seconds=padding_seconds,
+                store_dir=store_dir,
+                dry_run=True,
+                progress=reporter,
+            ),
+            description="Planning voiceprints",
+            enabled=progress,
+        )
+        _echo_capture_summary(summary)
+        return
+    if review:
+        summary = _run_capture_review_workflow(
+            project_dir=resolved_project_dir,
+            sample_count=sample_count,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+            store_dir=store_dir,
+            page_size=page_size,
+            progress=progress,
+        )
+        if summary is not None:
+            _echo_capture_summary(summary)
+        return
     summary = run_with_progress(
         lambda reporter: capture_voiceprints(
-            project_dir,
+            resolved_project_dir,
             sample_count=sample_count,
             max_seconds=max_seconds,
             padding_seconds=padding_seconds,
@@ -85,6 +136,79 @@ def capture_command(
         enabled=progress,
     )
     _echo_capture_summary(summary)
+
+
+def _run_capture_review_workflow(
+    *,
+    project_dir: Path,
+    sample_count: int,
+    max_seconds: float,
+    padding_seconds: float,
+    store_dir: Path | None,
+    page_size: int | None,
+    progress: bool,
+) -> VoiceprintCaptureSummary | None:
+    """
+    Plan voiceprint clips, run human review, and persist selected samples.
+
+    Args:
+        project_dir: Project root.
+        sample_count: Maximum clips per speaker.
+        max_seconds: Maximum seconds per output clip.
+        padding_seconds: Extra context around each sentence.
+        store_dir: Optional voiceprint store directory.
+        page_size: Optional TUI samples per page.
+        progress: Whether to show capture progress after review.
+
+    Returns:
+        Captured summary, or None when the review was cancelled.
+    """
+    planned = run_with_cli_errors(
+        lambda: plan_voiceprint_capture(
+            project_dir,
+            sample_count=sample_count,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+            store_dir=store_dir,
+        )
+    )
+    source_path = run_with_cli_errors(lambda: _voiceprint_capture_source_path(project_dir))
+    session = load_voiceprint_capture_review_session(summary=planned, source_path=source_path, page_size=page_size)
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        typer.echo(render_voiceprint_capture_review_summary(session))
+        raise typer.BadParameter(
+            "Voiceprint capture review TUI requires an interactive terminal. "
+            "Use --dry-run to inspect without writing."
+        )
+    decision = run_voiceprint_capture_review_tui(session)
+    if not decision.saved:
+        typer.echo("Voiceprint capture cancelled; no samples were written.")
+        return None
+    return run_with_progress(
+        lambda reporter: persist_voiceprint_capture_selection(
+            project_dir,
+            planned=planned,
+            selected_clip_rel_paths=decision.selected_clip_rel_paths,
+            progress=reporter,
+        ),
+        description="Capturing selected voiceprints",
+        enabled=progress,
+    )
+
+
+def _voiceprint_capture_source_path(project_dir: Path) -> Path:
+    """
+    Resolve the project source media path used for sample playback.
+
+    Args:
+        project_dir: Project root.
+
+    Returns:
+        Resolved source media path.
+    """
+    paths = project_paths(project_dir)
+    manifest = load_manifest(paths.root)
+    return resolve_project_source_path(paths.root, manifest)
 
 
 @app.command("list")

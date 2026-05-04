@@ -813,7 +813,7 @@ def speakers_apply(
     typer.echo("Next steps:")
     typer.echo("  meeting-asr project speakers preview")
     typer.echo("  meeting-asr project transcript show")
-    typer.echo("  meeting-asr voiceprint capture")
+    typer.echo("  meeting-asr voiceprint capture --review")
     typer.echo(f"  open {_shell_quote_path(transcript_path)}")
 
 
@@ -923,7 +923,7 @@ def _handle_speaker_review_decision(
     typer.echo("Next steps:")
     typer.echo("  meeting-asr project speakers preview")
     typer.echo("  meeting-asr project transcript show")
-    typer.echo("  meeting-asr voiceprint capture")
+    typer.echo("  meeting-asr voiceprint capture --review")
     typer.echo("  meeting-asr voiceprint embed")
 
 
@@ -1418,7 +1418,7 @@ def _echo_unresolved_speaker_next_steps(project_ref: str, *, speaker_only: bool)
     typer.echo(f"  meeting-asr project speakers apply {quoted_ref} --map 0=Name")
     typer.echo("")
     typer.echo("After saving names:")
-    typer.echo(f"  meeting-asr voiceprint capture {quoted_ref}")
+    typer.echo(f"  meeting-asr voiceprint capture {quoted_ref} --review")
     typer.echo("  meeting-asr voiceprint embed")
 
 

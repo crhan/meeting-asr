@@ -182,7 +182,7 @@ def _next_step_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         rows.append(("Advanced/scripted", f"meeting-asr project speakers apply {quoted_ref} --map 0=Name"))
     rows.extend(
         [
-            ("Capture confirmed voices", f"meeting-asr voiceprint capture {quoted_ref}"),
+            ("Review/capture voice samples", f"meeting-asr voiceprint capture {quoted_ref} --review"),
             ("Embed voiceprints", "meeting-asr voiceprint embed"),
             *polish_steps,
             ("Then correct vocabulary samples", f"meeting-asr project correct edit {quoted_ref}"),

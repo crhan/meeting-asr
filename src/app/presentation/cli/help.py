@@ -233,8 +233,8 @@ EXAMPLES = {
         "zh": ("meeting-asr voiceprint list", "meeting-asr voiceprint list --plain"),
     },
     ("voiceprint", "capture"): {
-        "en": ("meeting-asr voiceprint capture <project-id>",),
-        "zh": ("meeting-asr voiceprint capture <project-id>",),
+        "en": ("meeting-asr voiceprint capture <project-id> --review",),
+        "zh": ("meeting-asr voiceprint capture <project-id> --review",),
     },
     ("voiceprint", "embed"): {
         "en": ("meeting-asr voiceprint embed", "meeting-asr voiceprint embed --provider local-speechbrain"),

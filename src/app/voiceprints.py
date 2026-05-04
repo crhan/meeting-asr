@@ -122,6 +122,90 @@ def capture_voiceprints(
     return VoiceprintCaptureSummary(resolved_store_dir, db_path, clip_dir, speakers, dry_run)
 
 
+def plan_voiceprint_capture(
+    project_dir: Path,
+    *,
+    sample_count: int,
+    max_seconds: float,
+    padding_seconds: float,
+    store_dir: Path | None = None,
+) -> VoiceprintCaptureSummary:
+    """
+    Plan voiceprint clips without writing WAV files or SQLite rows.
+
+    Args:
+        project_dir: Project root.
+        sample_count: Maximum clips per speaker.
+        max_seconds: Maximum seconds per output clip.
+        padding_seconds: Extra context around each sentence.
+        store_dir: Optional XDG-style voiceprint store directory.
+
+    Returns:
+        Dry-run capture summary.
+    """
+    return capture_voiceprints(
+        project_dir,
+        sample_count=sample_count,
+        max_seconds=max_seconds,
+        padding_seconds=padding_seconds,
+        store_dir=store_dir,
+        dry_run=True,
+        progress=None,
+    )
+
+
+def persist_voiceprint_capture_selection(
+    project_dir: Path,
+    *,
+    planned: VoiceprintCaptureSummary,
+    selected_clip_rel_paths: set[str] | frozenset[str],
+    progress: CliProgressReporter | None = None,
+) -> VoiceprintCaptureSummary:
+    """
+    Persist only the capture clips accepted by human review.
+
+    Args:
+        project_dir: Project root.
+        planned: Dry-run capture summary.
+        selected_clip_rel_paths: Accepted clip relative paths.
+        progress: Optional progress reporter.
+
+    Returns:
+        Captured summary containing only accepted clips.
+    """
+    if not selected_clip_rel_paths:
+        raise ValueError("No voiceprint clips were selected for capture.")
+    paths = ensure_project_dirs(project_dir)
+    manifest = load_manifest(paths.root)
+    source = resolve_project_source_path(paths.root, manifest)
+    speakers = _filter_voiceprint_speakers(planned.speakers, selected_clip_rel_paths)
+    if not speakers:
+        raise ValueError("No selected voiceprint clips matched the capture plan.")
+    _persist_voiceprint_capture(paths.root, manifest, source, speakers, planned.store_dir, planned.db_path, progress)
+    return VoiceprintCaptureSummary(planned.store_dir, planned.db_path, planned.clip_dir, speakers, False)
+
+
+def _filter_voiceprint_speakers(
+    speakers: list[VoiceprintSpeaker],
+    selected_clip_rel_paths: set[str] | frozenset[str],
+) -> list[VoiceprintSpeaker]:
+    """Return speakers containing only selected clips."""
+    filtered: list[VoiceprintSpeaker] = []
+    for speaker in speakers:
+        clips = [clip for clip in speaker.clips if clip.rel_path in selected_clip_rel_paths]
+        if clips:
+            filtered.append(
+                VoiceprintSpeaker(
+                    speaker_id=speaker.speaker_id,
+                    name=speaker.name,
+                    person_id=speaker.person_id,
+                    person_public_id=speaker.person_public_id,
+                    clips=clips,
+                )
+            )
+    return filtered
+
+
 def _persist_voiceprint_capture(
     project_root: Path,
     manifest,

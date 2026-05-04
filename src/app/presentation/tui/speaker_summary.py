@@ -62,7 +62,7 @@ def render_speaker_review_summary(session: Any, *, speaker_only: bool = False) -
                 f"  meeting-asr project speakers apply {project_ref} --map 0=Name",
                 "",
                 "After saving names:",
-                f"  meeting-asr voiceprint capture {project_ref}",
+                f"  meeting-asr voiceprint capture {project_ref} --review",
                 "  meeting-asr voiceprint embed",
                 "",
                 "Review queue:",
