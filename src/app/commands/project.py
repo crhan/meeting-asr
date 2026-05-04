@@ -838,10 +838,11 @@ def _run_speaker_review(
         run_speaker_review_tui(
             session,
             save_handler=lambda decision: _save_review_from_tui(project_dir, decision, correction_options),
-            accept_handler=lambda proposal_path: _accept_review_correction_from_tui(
+            accept_handler=lambda proposal_path, selected_indices: _accept_review_correction_from_tui(
                 project_dir,
                 proposal_path,
                 correction_options,
+                selected_indices,
             ),
         )
         return
@@ -932,6 +933,7 @@ def _accept_review_correction_from_tui(
     project_dir: Path,
     proposal_path: Path | None,
     correction_options: ProjectReviewCorrectionOptions,
+    selected_change_indices: tuple[int, ...] | None = None,
 ) -> SpeakerReviewSaveOutcome:
     """Accept a pending correction proposal from inside the TUI."""
     paths = project_paths(project_dir)
@@ -943,6 +945,7 @@ def _accept_review_correction_from_tui(
         speaker_mapping=speaker_mapping,
         proposal_path=proposal_path,
         lexicon_db=correction_options.edit_options.lexicon_db,
+        selected_change_indices=selected_change_indices,
     )
     return SpeakerReviewSaveOutcome(None, None, None, summary)
 

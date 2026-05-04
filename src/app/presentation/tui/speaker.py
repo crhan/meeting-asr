@@ -186,7 +186,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         session: SpeakerReviewSession,
         *,
         save_handler: Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
-        accept_handler: Callable[[Path | None], SpeakerReviewSaveOutcome] | None = None,
+        accept_handler: Callable[[Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome] | None = None,
     ) -> None:
         """
         Create the TUI app.
@@ -686,7 +686,7 @@ def run_speaker_review_tui(
     session: SpeakerReviewSession,
     *,
     save_handler: Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
-    accept_handler: Callable[[Path | None], SpeakerReviewSaveOutcome] | None = None,
+    accept_handler: Callable[[Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome] | None = None,
 ) -> SpeakerReviewDecision:
     """
     Run the Textual speaker review app.

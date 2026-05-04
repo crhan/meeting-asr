@@ -152,6 +152,7 @@ def accept_correction_proposal(
     speaker_mapping: dict[int, str],
     proposal_path: Path | None,
     lexicon_db: Path | None = None,
+    selected_change_indices: tuple[int, ...] | None = None,
 ) -> CorrectionEditSummary:
     """
     Accept a generated correction proposal and write final artifacts.
@@ -162,6 +163,7 @@ def accept_correction_proposal(
         speaker_mapping: Speaker id to display name mapping.
         proposal_path: Proposal JSON path, or None for the latest proposal.
         lexicon_db: Optional lexicon database override.
+        selected_change_indices: Optional zero-based proposed change indices to accept.
 
     Returns:
         Correction edit summary.
@@ -170,25 +172,27 @@ def accept_correction_proposal(
     if proposal.project_id != manifest.project_id:
         raise RuntimeError(f"Correction proposal belongs to another project: {proposal.project_id}")
     source = _load_source_path(paths, proposal.source_path)
-    corrected = _apply_changes(source.result, proposal.proposed_changes)
-    outputs = _write_corrected_outputs(paths, corrected, speaker_mapping, proposal.proposed_changes)
-    hotwords_path = _write_accept_hotwords(paths, proposal)
+    accepted_changes = _selected_changes(proposal.proposed_changes, selected_change_indices)
+    understanding = _selected_understanding(proposal.understanding, accepted_changes)
+    corrected = _apply_changes(source.result, accepted_changes)
+    outputs = _write_corrected_outputs(paths, corrected, speaker_mapping, accepted_changes)
+    hotwords_path = _write_accept_hotwords(paths, proposal.category, understanding)
     database_path = lexicon_db or default_lexicon_db_path()
-    contexts = _lexicon_contexts(proposal.proposed_changes, manifest.project_id, proposal.category, proposal.review_path)
+    contexts = _lexicon_contexts(accepted_changes, manifest.project_id, proposal.category, proposal.review_path)
     learned_count = record_lexicon_contexts(contexts, db_path=database_path)
     return CorrectionEditSummary(
         review_path=proposal.review_path,
         proposal_path=proposal.proposal_path,
         proposal_diff_path=proposal.diff_path,
         proposal_json_path=proposal.json_path,
-        change_count=len(proposal.proposed_changes),
+        change_count=len(accepted_changes),
         sample_change_count=len(proposal.sample_changes),
         proposed_change_count=len(proposal.proposed_changes),
         learned_count=learned_count,
         accepted=True,
         model=proposal.model,
         model_error=proposal.model_error,
-        understanding=proposal.understanding,
+        understanding=understanding,
         corrected_sentences_path=outputs["sentences"],
         corrected_transcript_path=outputs["transcript"],
         corrected_named_transcript_path=outputs["named_transcript"],
@@ -215,9 +219,50 @@ def _load_source_path(paths: ProjectPaths, source_path: Path) -> CorrectionSourc
     return CorrectionSource(result, resolved, resolved.name == "sentences.json")
 
 
-def _write_accept_hotwords(paths: ProjectPaths, proposal: CorrectionProposal) -> Path:
+def _selected_changes(
+    changes: list[CorrectionChange],
+    selected_indices: tuple[int, ...] | None,
+) -> list[CorrectionChange]:
+    """Return accepted proposal changes by index."""
+    if selected_indices is None:
+        return changes
+    selected = set(selected_indices)
+    return [change for index, change in enumerate(changes) if index in selected]
+
+
+def _selected_understanding(
+    understanding: list[CorrectionUnderstanding],
+    changes: list[CorrectionChange],
+) -> list[CorrectionUnderstanding]:
+    """Keep only understanding rows represented by accepted changes."""
+    counts = _replacement_counts(changes)
+    selected = []
+    for item in understanding:
+        key = (item.wrong_text, item.corrected_text)
+        count = counts.get(key)
+        if count is None:
+            continue
+        selected.append(replace(item, proposed_count=count))
+    return selected
+
+
+def _replacement_counts(changes: list[CorrectionChange]) -> dict[tuple[str, str], int]:
+    """Count accepted replacement pairs."""
+    counts: dict[tuple[str, str], int] = {}
+    for change in changes:
+        for replacement in change.replacements:
+            key = (replacement.wrong_text, replacement.corrected_text)
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _write_accept_hotwords(
+    paths: ProjectPaths,
+    category: str,
+    understanding: list[CorrectionUnderstanding],
+) -> Path:
     """Write ASR hotwords produced by the accepted correction proposal."""
-    hotwords = hotwords_from_understanding(proposal.understanding, category=proposal.category)
+    hotwords = hotwords_from_understanding(understanding, category=category)
     return write_hotword_artifact(paths.root / "corrections" / "asr_hotwords.json", hotwords)
 
 

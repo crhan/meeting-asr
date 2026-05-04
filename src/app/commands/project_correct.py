@@ -211,6 +211,7 @@ def accept_correction_for_review(
     speaker_mapping: dict[int, str],
     proposal_path: Path | None,
     lexicon_db: Path | None,
+    selected_change_indices: tuple[int, ...] | None = None,
 ) -> CorrectionEditSummary:
     """
     Accept a pending correction proposal without CLI prompting or printing.
@@ -221,6 +222,7 @@ def accept_correction_for_review(
         speaker_mapping: Speaker id to display name mapping.
         proposal_path: Pending proposal JSON path.
         lexicon_db: Optional lexicon database override.
+        selected_change_indices: Optional zero-based proposed change indices to accept.
 
     Returns:
         Accepted correction summary.
@@ -231,6 +233,7 @@ def accept_correction_for_review(
         speaker_mapping=speaker_mapping,
         proposal_path=proposal_path,
         lexicon_db=lexicon_db,
+        selected_change_indices=selected_change_indices,
     )
     record_correction_outputs(paths.root, manifest, accepted)
     save_manifest(paths.root, manifest)

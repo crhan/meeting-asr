@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,6 +32,26 @@ class SpeakerReviewSaveOutcome:
     transcript_path: Path | None
     srt_path: Path | None
     correction_summary: CorrectionEditSummary | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectionProposalSelection:
+    """User selection returned by the proposal review modal."""
+
+    proposal_path: Path
+    selected_indices: tuple[int, ...]
+    accept_now: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ProposalChangeView:
+    """One proposal change shown in the TUI."""
+
+    index: int
+    sentence_id: int | None
+    speaker_name: str
+    original_text: str
+    corrected_text: str
 
 
 class SpeakerReviewSaveScreen(ModalScreen[None]):
@@ -72,7 +93,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         *,
         decision: Any,
         save_handler: Callable[[Any], SpeakerReviewSaveOutcome],
-        accept_handler: Callable[[Path | None], SpeakerReviewSaveOutcome] | None,
+        accept_handler: Callable[[Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome] | None,
         on_result: Callable[[SpeakerReviewSaveOutcome], None],
     ) -> None:
         """
@@ -90,6 +111,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         self.accept_handler = accept_handler
         self.on_result = on_result
         self.outcome: SpeakerReviewSaveOutcome | None = None
+        self.selected_change_indices: tuple[int, ...] | None = None
         self.running = False
         self.error: str | None = None
 
@@ -120,9 +142,12 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         proposal_path = self._pending_proposal_path()
         if proposal_path is None:
             return
+        if self.selected_change_indices is not None and not self.selected_change_indices:
+            self.query_one("#save-actions", Static).update("No changes selected. Press d to select changes.")
+            return
         self._set_running("Accepting correction proposal...")
         self.run_worker(
-            lambda: self.accept_handler(proposal_path),
+            lambda: self.accept_handler(proposal_path, self.selected_change_indices),
             group="speaker-review-save",
             name="accept",
             thread=True,
@@ -133,9 +158,17 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         if self.running:
             return
         diff_path = self._pending_diff_path()
-        if diff_path is None:
+        proposal_path = self._pending_proposal_path()
+        if diff_path is None or proposal_path is None:
             return
-        self.app.push_screen(CorrectionProposalDiffScreen(diff_path))
+        self.app.push_screen(
+            CorrectionProposalDiffScreen(
+                diff_path=diff_path,
+                proposal_path=proposal_path,
+                selected_indices=self.selected_change_indices,
+            ),
+            self._handle_proposal_selection,
+        )
 
     def action_close_feedback(self) -> None:
         """Close the save feedback modal when no worker is running."""
@@ -201,8 +234,18 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
     def _actions(self) -> str:
         """Render available next actions."""
         if self._pending_proposal_path() is not None:
-            return "Press d to review diff | a to accept proposal | Enter to continue reviewing"
+            count = self._selected_count_label()
+            return f"Press d to review/select changes | a to accept {count} | Enter to continue reviewing"
         return "Press Enter to continue reviewing | q quits from the main screen"
+
+    def _handle_proposal_selection(self, selection: CorrectionProposalSelection | None) -> None:
+        """Store selected proposal changes or accept them immediately."""
+        if selection is None:
+            return
+        self.selected_change_indices = selection.selected_indices
+        self.query_one("#save-actions", Static).update(self._actions())
+        if selection.accept_now:
+            self.action_accept_proposal()
 
     def _pending_proposal_path(self) -> Path | None:
         """Return the pending proposal JSON path if one needs confirmation."""
@@ -220,6 +263,14 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
             return None
         return summary.proposal_diff_path
 
+    def _selected_count_label(self) -> str:
+        """Return selected change count text for actions."""
+        summary = None if self.outcome is None else self.outcome.correction_summary
+        total = 0 if summary is None else summary.proposed_change_count
+        if self.selected_change_indices is None:
+            return f"all {total} change(s)"
+        return f"{len(self.selected_change_indices)}/{total} change(s)"
+
     def _merged_outcome(self, outcome: SpeakerReviewSaveOutcome) -> SpeakerReviewSaveOutcome:
         """Preserve speaker output paths when accepting a proposal."""
         if self.outcome is None or outcome.mapping_path is not None:
@@ -232,8 +283,8 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         )
 
 
-class CorrectionProposalDiffScreen(ModalScreen[None]):
-    """Scrollable modal for inspecting a pending correction diff."""
+class CorrectionProposalDiffScreen(ModalScreen[CorrectionProposalSelection | None]):
+    """Scrollable modal for inspecting and selecting pending correction changes."""
 
     CSS = """
     CorrectionProposalDiffScreen {
@@ -277,30 +328,49 @@ class CorrectionProposalDiffScreen(ModalScreen[None]):
         Binding("pageup", "page_up", "Page up"),
         Binding("home", "scroll_home", "Top", show=False),
         Binding("end", "scroll_end", "Bottom", show=False),
+        Binding("n", "next_change", "Next change"),
+        Binding("p", "previous_change", "Previous change"),
+        Binding("x", "toggle_change", "Toggle"),
+        Binding("a", "accept_selected", "Apply selected"),
         Binding("enter", "close_diff", "Back"),
         Binding("escape", "close_diff", "Back", show=False),
         Binding("q", "close_diff", "Back"),
     ]
 
-    def __init__(self, diff_path: Path) -> None:
+    def __init__(
+        self,
+        *,
+        diff_path: Path,
+        proposal_path: Path,
+        selected_indices: tuple[int, ...] | None,
+    ) -> None:
         """
         Create a diff inspection modal.
 
         Args:
             diff_path: Proposal diff path.
+            proposal_path: Proposal JSON path.
+            selected_indices: Existing selected proposed change indices.
         """
         super().__init__()
         self.diff_path = diff_path
+        self.proposal_path = proposal_path
+        self.changes = _load_proposal_changes(proposal_path)
+        self.current_change_index = 0
+        if selected_indices is None:
+            self.selected_indices = {change.index for change in self.changes}
+        else:
+            self.selected_indices = set(selected_indices)
 
     def compose(self) -> ComposeResult:
         """Build diff inspection layout."""
         with Vertical(id="diff-box"):
             yield Static("Correction proposal diff", id="diff-title")
             yield Static(escape(str(self.diff_path)), id="diff-path")
-            yield Static("[red]removed[/]  [green]added[/]  [cyan]hunk[/]  [dim]context[/]", id="diff-legend")
+            yield Static(self._legend(), id="diff-legend")
             with ScrollableContainer(id="diff-scroll"):
                 yield Static(self._diff_renderable(), id="diff-content")
-            yield Static("j/k or arrows scroll | PageUp/PageDown | Enter returns", id="diff-actions")
+            yield Static("n/p choose change | x include/exclude | a apply selected | Enter returns", id="diff-actions")
 
     def action_scroll_down(self) -> None:
         """Scroll the diff down."""
@@ -328,15 +398,71 @@ class CorrectionProposalDiffScreen(ModalScreen[None]):
 
     def action_close_diff(self) -> None:
         """Close the diff modal."""
-        self.dismiss(None)
+        self.dismiss(self._selection(accept_now=False))
+
+    def action_next_change(self) -> None:
+        """Select the next proposed change."""
+        self._move_change(1)
+
+    def action_previous_change(self) -> None:
+        """Select the previous proposed change."""
+        self._move_change(-1)
+
+    def action_toggle_change(self) -> None:
+        """Toggle whether the current proposed change will be accepted."""
+        if not self.changes:
+            return
+        index = self.changes[self.current_change_index].index
+        if index in self.selected_indices:
+            self.selected_indices.remove(index)
+        else:
+            self.selected_indices.add(index)
+        self._refresh_diff()
+
+    def action_accept_selected(self) -> None:
+        """Return selected changes and request immediate acceptance."""
+        self.dismiss(self._selection(accept_now=True))
 
     def _diff_renderable(self) -> Text:
         """Return styled diff text or a readable error."""
+        if self.changes:
+            return _styled_proposal_changes(
+                self.changes,
+                selected_indices=self.selected_indices,
+                current_index=self.current_change_index,
+            )
         try:
             text = self.diff_path.read_text(encoding="utf-8")
         except OSError as exc:
             return Text(f"Unable to read diff: {exc}", style="red")
         return _styled_diff_text(text)
+
+    def _legend(self) -> str:
+        """Return current selection legend."""
+        return (
+            f"[green]selected {len(self.selected_indices)}/{len(self.changes)}[/]  "
+            "[bold]n/p[/] change  [bold]x[/] include/exclude"
+        )
+
+    def _move_change(self, delta: int) -> None:
+        """Move current proposed change selection."""
+        if not self.changes:
+            return
+        self.current_change_index = max(0, min(len(self.changes) - 1, self.current_change_index + delta))
+        self._refresh_diff()
+
+    def _refresh_diff(self) -> None:
+        """Refresh proposal review content after selection changes."""
+        self.query_one("#diff-legend", Static).update(self._legend())
+        self.query_one("#diff-content", Static).update(self._diff_renderable())
+
+    def _selection(self, *, accept_now: bool) -> CorrectionProposalSelection:
+        """Return current selection state."""
+        return CorrectionProposalSelection(
+            proposal_path=self.proposal_path,
+            selected_indices=tuple(sorted(self.selected_indices)),
+            accept_now=accept_now,
+        )
 
 
 def _path_lines(outcome: SpeakerReviewSaveOutcome) -> list[str]:
@@ -400,6 +526,70 @@ def _styled_diff_text(diff_text: str) -> Text:
         rendered.append("\n")
         index += 1
     return rendered
+
+
+def _load_proposal_changes(proposal_path: Path) -> list[ProposalChangeView]:
+    """Load proposed changes for selective TUI review."""
+    try:
+        payload = json.loads(proposal_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    changes = payload.get("proposed_changes") if isinstance(payload, dict) else None
+    if not isinstance(changes, list):
+        return []
+    return [
+        _proposal_change_view(index, item)
+        for index, item in enumerate(changes)
+        if isinstance(item, dict)
+    ]
+
+
+def _proposal_change_view(index: int, payload: dict) -> ProposalChangeView:
+    """Parse one proposal change for TUI review."""
+    sentence_id = payload.get("sentence_id")
+    return ProposalChangeView(
+        index=index,
+        sentence_id=int(sentence_id) if sentence_id not in (None, "") else None,
+        speaker_name=str(payload.get("speaker_name") or ""),
+        original_text=str(payload.get("original_text") or ""),
+        corrected_text=str(payload.get("corrected_text") or ""),
+    )
+
+
+def _styled_proposal_changes(
+    changes: list[ProposalChangeView],
+    *,
+    selected_indices: set[int],
+    current_index: int,
+) -> Text:
+    """Return selectable, token-styled proposal changes."""
+    rendered = Text(no_wrap=False)
+    for position, change in enumerate(changes):
+        current = position == current_index
+        selected = change.index in selected_indices
+        _append_change_header(rendered, change, position, len(changes), selected, current)
+        old_segments, new_segments = _word_diff_segments(change.original_text, change.corrected_text)
+        _append_segmented_line(rendered, "- ", old_segments, removed=True)
+        _append_segmented_line(rendered, "+ ", new_segments, removed=False)
+        rendered.append("\n")
+    return rendered
+
+
+def _append_change_header(
+    rendered: Text,
+    change: ProposalChangeView,
+    position: int,
+    total: int,
+    selected: bool,
+    current: bool,
+) -> None:
+    """Append one selectable proposal change header."""
+    marker = ">" if current else " "
+    checkbox = "[x]" if selected else "[ ]"
+    label = f"{marker} {checkbox} Change {position + 1}/{total}"
+    details = f" sentence_id={change.sentence_id} speaker={change.speaker_name}"
+    style = "bold white on dark_blue" if current else "bold"
+    rendered.append(label + details + "\n", style=style)
 
 
 def _collect_diff_lines(lines: list[str], start: int, predicate: Callable[[str], bool]) -> tuple[list[str], int]:

@@ -288,7 +288,12 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
     """The save modal should handle proposal acceptance without leaving the TUI."""
     accepted_paths: list[Path | None] = []
     diff_path = tmp_path / "proposal.diff"
+    proposal_path = tmp_path / "proposal.json"
     diff_path.write_text("- AS\n+ IaaS\n", encoding="utf-8")
+    proposal_path.write_text(
+        json.dumps({"proposed_changes": [_proposal_change(1, "AS", "IaaS")]}),
+        encoding="utf-8",
+    )
 
     def save_handler(decision: SpeakerReviewDecision) -> SpeakerReviewSaveOutcome:
         assert len(decision.correction_edits) == 1
@@ -296,11 +301,15 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
             Path("speaker_map.json"),
             Path("transcript.txt"),
             Path("subtitle.srt"),
-            _correction_summary(accepted=False, diff_path=diff_path),
+            _correction_summary(accepted=False, diff_path=diff_path, proposal_path=proposal_path),
         )
 
-    def accept_handler(proposal_path: Path | None) -> SpeakerReviewSaveOutcome:
+    def accept_handler(
+        proposal_path: Path | None,
+        selected_indices: tuple[int, ...] | None,
+    ) -> SpeakerReviewSaveOutcome:
         accepted_paths.append(proposal_path)
+        assert selected_indices == (0,)
         return SpeakerReviewSaveOutcome(None, None, None, _correction_summary(accepted=True))
 
     app = SpeakerReviewApp(
@@ -328,6 +337,7 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
             assert isinstance(app.screen, CorrectionProposalDiffScreen)
             diff_render = app.screen.query_one("#diff-content", Static).render()
             assert "+ IaaS" in diff_render.plain
+            assert "[x] Change 1/1" in diff_render.plain
             styled_diff = _styled_diff_text("- AS\n+ IaaS\n")
             assert any(str(span.style) == "bold green" for span in styled_diff.spans)
             assert any(str(span.style) == "bold red" for span in styled_diff.spans)
@@ -339,9 +349,60 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
             await pilot.pause()
             await pilot.pause()
 
-            assert accepted_paths == [Path("proposal.json")]
+            assert accepted_paths == [proposal_path]
             assert not app.correction_edits
             assert "correction accepted" in str(app.screen.query_one("#save-title", Static).render())
+
+    asyncio.run(scenario())
+
+
+def test_project_review_tui_can_exclude_one_proposed_change(tmp_path: Path) -> None:
+    """Proposal review should pass only selected changes to acceptance."""
+    accepted_indices: list[tuple[int, ...] | None] = []
+    diff_path = tmp_path / "proposal.diff"
+    proposal_path = tmp_path / "proposal.json"
+    proposal_path.write_text(json.dumps(_proposal_payload()), encoding="utf-8")
+    diff_path.write_text("- IC\n+ isee\n- AS\n+ IaaS\n", encoding="utf-8")
+
+    def save_handler(decision: SpeakerReviewDecision) -> SpeakerReviewSaveOutcome:
+        return SpeakerReviewSaveOutcome(
+            Path("speaker_map.json"),
+            Path("transcript.txt"),
+            Path("subtitle.srt"),
+            _correction_summary(accepted=False, diff_path=diff_path, proposal_path=proposal_path),
+        )
+
+    def accept_handler(
+        proposal_path: Path | None,
+        selected_indices: tuple[int, ...] | None,
+    ) -> SpeakerReviewSaveOutcome:
+        accepted_indices.append(selected_indices)
+        return SpeakerReviewSaveOutcome(None, None, None, _correction_summary(accepted=True))
+
+    app = SpeakerReviewApp(
+        _session(allow_correction=True),
+        save_handler=save_handler,
+        accept_handler=accept_handler,
+    )
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("e")
+            await pilot.pause()
+            app.screen.query_one("#correction-input", Input).value = "第一句修正"
+            await pilot.press("enter")
+            await pilot.press("s")
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.press("d")
+            await pilot.pause()
+            await pilot.press("n")
+            await pilot.press("x")
+            await pilot.press("a")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert accepted_indices == [(0,)]
 
     asyncio.run(scenario())
 
@@ -870,13 +931,18 @@ def _overview(*, with_status: bool) -> SpeakerReviewOverview:
     )
 
 
-def _correction_summary(*, accepted: bool, diff_path: Path | None = None) -> CorrectionEditSummary:
+def _correction_summary(
+    *,
+    accepted: bool,
+    diff_path: Path | None = None,
+    proposal_path: Path | None = None,
+) -> CorrectionEditSummary:
     """Build a minimal correction summary for save modal tests."""
     return CorrectionEditSummary(
         review_path=Path("review.md"),
         proposal_path=Path("proposal.md"),
         proposal_diff_path=diff_path or Path("proposal.diff"),
-        proposal_json_path=Path("proposal.json"),
+        proposal_json_path=proposal_path or Path("proposal.json"),
         change_count=1 if accepted else 0,
         sample_change_count=1,
         proposed_change_count=1,
@@ -893,6 +959,26 @@ def _correction_summary(*, accepted: bool, diff_path: Path | None = None) -> Cor
         applied_path=Path("applied.json") if accepted else None,
         lexicon_db=Path("lexicon.sqlite"),
     )
+
+
+def _proposal_payload() -> dict:
+    """Build a minimal correction proposal payload with two changes."""
+    return {
+        "proposed_changes": [
+            _proposal_change(1, "我们看一下IC系统。", "我们看一下isee系统。"),
+            _proposal_change(2, "AS服务需要修正。", "IaaS服务需要修正。"),
+        ]
+    }
+
+
+def _proposal_change(sentence_id: int, before: str, after: str) -> dict:
+    """Build one proposed change payload."""
+    return {
+        "sentence_id": sentence_id,
+        "speaker_name": "敬悦",
+        "original_text": before,
+        "corrected_text": after,
+    }
 
 
 def _style_for_text(text: object, needle: str) -> str | None:

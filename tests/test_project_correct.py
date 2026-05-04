@@ -10,11 +10,12 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from app.commands import project as project_commands
+from app.commands import project_correct as project_correct_commands
 from app.cli import app
 from app.config import Settings
 from app.correction_llm import LlmCorrectionResult, LlmReplacementRule
 from app.correction_types import CorrectionEditOptions
-from app.project_manager import create_project
+from app.project_manager import create_project, load_manifest, project_paths
 from app.speaker_tui import SentenceCorrectionEdit, SpeakerReviewDecision
 
 runner = CliRunner()
@@ -362,6 +363,41 @@ def test_project_review_inline_correction_keeps_multiple_tui_edits(tmp_path: Pat
     assert "敬悦: IaaS服务需要修正。" in corrected
     proposal = _latest_proposal(project_dir)
     assert len(proposal["sample_changes"]) == 2
+
+
+def test_project_review_can_accept_selected_correction_changes(tmp_path: Path) -> None:
+    """Accepting a proposal with selected indices should exclude rejected changes."""
+    project_dir = _sample_project_with_sentences(
+        tmp_path,
+        ["我们看一下艾赛系统。", "AS服务需要修正。"],
+    )
+    paths = project_paths(project_dir)
+    manifest = load_manifest(project_dir)
+    options = CorrectionEditOptions(use_ai=False, lexicon_db=tmp_path / "lexicon.sqlite")
+    summary = project_correct_commands.prepare_inline_corrections_for_review(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping={0: "敬悦"},
+        correction_edits=[
+            SentenceCorrectionEdit(1, 0, 1000, 1500, "我们看一下艾赛系统。", "我们看一下iSee系统。"),
+            SentenceCorrectionEdit(2, 0, 2000, 2500, "AS服务需要修正。", "IaaS服务需要修正。"),
+        ],
+        options=options,
+    )
+
+    project_correct_commands.accept_correction_for_review(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping={0: "敬悦"},
+        proposal_path=summary.proposal_json_path,
+        lexicon_db=options.lexicon_db,
+        selected_change_indices=(0,),
+    )
+
+    corrected = (project_dir / "exports" / "transcript_named_corrected.txt").read_text(encoding="utf-8")
+    assert "敬悦: 我们看一下iSee系统。" in corrected
+    assert "敬悦: AS服务需要修正。" in corrected
+    assert "IaaS服务需要修正" not in corrected
 
 
 def _sample_project(tmp_path: Path) -> Path:
