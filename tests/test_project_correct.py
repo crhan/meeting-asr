@@ -11,6 +11,8 @@ from typer.testing import CliRunner
 
 from app.commands import project as project_commands
 from app.cli import app
+from app.config import Settings
+from app.correction_llm import LlmCorrectionResult, LlmReplacementRule
 from app.correction_types import CorrectionEditOptions
 from app.project_manager import create_project
 from app.speaker_tui import SentenceCorrectionEdit, SpeakerReviewDecision
@@ -186,6 +188,46 @@ def test_project_correct_understands_whole_ascii_term_replacement(tmp_path: Path
     assert "c -> see" not in result.output
 
 
+def test_project_correct_uses_ai_understanding_for_chinese_terms(tmp_path: Path, monkeypatch) -> None:
+    """Chinese sample corrections should use model-inferred word boundaries."""
+    project_dir = _sample_project_with_text(tmp_path, "我们要建设云原声平台。")
+    editor_script = _editor_script(tmp_path, "云原声", "云原生")
+
+    monkeypatch.setattr(
+        "app.correction_understanding.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+    monkeypatch.setattr(
+        "app.correction_understanding.infer_vocabulary_replacements",
+        lambda **_: [LlmReplacementRule("云原声", "云原生", "建设", "平台")],
+    )
+    monkeypatch.setattr(
+        "app.transcript_corrections.propose_vocabulary_corrections",
+        lambda **kwargs: LlmCorrectionResult("云原声应为云原生", {}, kwargs["model"]),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "correct",
+            "edit",
+            str(project_dir),
+            "--editor",
+            f"{sys.executable} {editor_script}",
+            "--no-proposal-open",
+        ],
+        input="n\n",
+    )
+
+    assert result.exit_code == 0
+    assert "云原声 -> 云原生" in result.output
+    assert "声 -> 生" not in result.output
+    proposal = _latest_proposal(project_dir)
+    assert proposal["sample_changes"][0]["replacements"][0]["wrong_text"] == "云原声"
+    assert proposal["proposed_changes"][0]["replacements"][0]["wrong_text"] == "云原声"
+
+
 def test_project_transcript_show_can_select_corrected_output(tmp_path: Path) -> None:
     """Corrected transcript artifacts should be viewable through project transcript show."""
     project_dir = _sample_project(tmp_path)
@@ -334,6 +376,12 @@ def _editor_script(tmp_path: Path, old: str, new: str) -> Path:
         encoding="utf-8",
     )
     return script
+
+
+def _latest_proposal(project_dir: Path) -> dict:
+    """Load the latest correction proposal JSON."""
+    proposal_path = sorted((project_dir / "tmp" / "corrections").glob("proposal_*.json"))[-1]
+    return json.loads(proposal_path.read_text(encoding="utf-8"))
 
 
 def _fetch_one(db_path: Path, query: str) -> str:

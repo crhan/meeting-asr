@@ -5,7 +5,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import re
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +22,11 @@ from app.correction_types import (
     CorrectionReplacement,
     CorrectionSource,
     CorrectionUnderstanding,
+)
+from app.correction_understanding import (
+    join_model_errors,
+    matching_correction_replacements,
+    refine_sample_replacements,
 )
 from app.core.project_models import ProjectManifest, ProjectPaths
 from app.lexicon_store import LexiconContext, default_lexicon_db_path, record_lexicon_contexts
@@ -256,6 +261,7 @@ def _build_proposal(
     options: CorrectionEditOptions,
 ) -> CorrectionProposal:
     """Build and persist a full-document correction proposal."""
+    sample_changes, replacement_model_error = refine_sample_replacements(sample_changes, options)
     rules = _unique_replacements(sample_changes)
     proposed_changes, model, model_error = _propose_full_document_changes(
         source.result,
@@ -264,6 +270,7 @@ def _build_proposal(
         speaker_mapping,
         options,
     )
+    model_error = join_model_errors(replacement_model_error, model_error)
     understanding = _build_understanding(rules, sample_changes, proposed_changes)
     proposed = _apply_changes(source.result, proposed_changes)
     return write_correction_proposal_files(
@@ -280,7 +287,6 @@ def _build_proposal(
         model=model,
         model_error=model_error,
     )
-
 
 def _inline_sample_change(
     result: TranscriptResult,
@@ -379,7 +385,7 @@ def _ai_rule_changes(
             model=model,
         )
         corrected_by_id.update(llm_result.corrected_text_by_id)
-    return _changes_from_llm_result(result, sample_changes, candidates, corrected_by_id, speaker_mapping)
+    return _changes_from_llm_result(result, sample_changes, candidates, corrected_by_id, speaker_mapping, rules)
 
 
 def _local_rule_changes(
@@ -396,7 +402,7 @@ def _local_rule_changes(
         proposed_text = text.corrected_text if text is not None else sentence.text
         proposed_text = _apply_rules_to_text(proposed_text, rules)
         if proposed_text != sentence.text.strip():
-            changes.append(_change_from_sentence(sentence, proposed_text, speaker_mapping))
+            changes.append(_change_from_sentence_with_rules(sentence, proposed_text, speaker_mapping, rules))
     return changes
 
 
@@ -506,6 +512,7 @@ def _changes_from_llm_result(
     candidates: list[LlmCorrectionCandidate],
     corrected_by_id: dict[str, str],
     speaker_mapping: dict[int, str],
+    rules: list[CorrectionReplacement],
 ) -> list[CorrectionChange]:
     """Merge sample edits with validated model-suggested corrections."""
     sample_by_key = {_change_key(change): change for change in sample_changes}
@@ -519,7 +526,7 @@ def _changes_from_llm_result(
         if not _valid_model_text(sentence.text, proposed_text):
             proposed_text = sample_change.corrected_text if sample_change else None
         if proposed_text and proposed_text != sentence.text.strip():
-            changes.append(_change_from_sentence(sentence, proposed_text, speaker_mapping))
+            changes.append(_change_from_sentence_with_rules(sentence, proposed_text, speaker_mapping, rules))
     return changes
 
 
@@ -673,6 +680,19 @@ def _change_from_sentence(
         corrected_text=corrected,
         replacements=_infer_replacements(original_text, corrected),
     )
+
+
+def _change_from_sentence_with_rules(
+    sentence: SentenceSegment,
+    corrected_text: str,
+    speaker_mapping: dict[int, str],
+    rules: list[CorrectionReplacement],
+) -> CorrectionChange:
+    """Build a correction change while preserving term-level replacement rules."""
+    change = _change_from_sentence(sentence, corrected_text, speaker_mapping)
+    replacements = matching_correction_replacements(change, rules)
+    return replace(change, replacements=replacements or change.replacements)
+
 
 def _change_key(change: CorrectionChange) -> tuple[int | None, int, int]:
     """Return the sentence identity for a correction change."""
@@ -847,6 +867,7 @@ def _learnable_replacement(wrong_text: str, corrected_text: str) -> bool:
     if not wrong_text or not corrected_text or wrong_text == corrected_text:
         return False
     return bool(WORD_RE.search(wrong_text) and WORD_RE.search(corrected_text))
+
 
 def _speaker_name(speaker_id: int | None, speaker_mapping: dict[int, str]) -> str:
     """Return mapped speaker name or anonymous fallback."""

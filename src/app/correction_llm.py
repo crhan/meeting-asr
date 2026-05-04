@@ -42,6 +42,16 @@ class LlmCorrectionResult:
     model: str
 
 
+@dataclass(frozen=True, slots=True)
+class LlmReplacementRule:
+    """One term-level replacement inferred from edited samples."""
+
+    wrong_text: str
+    corrected_text: str
+    left_context: str = ""
+    right_context: str = ""
+
+
 def propose_vocabulary_corrections(
     *,
     samples: list[LlmCorrectionSample],
@@ -80,6 +90,44 @@ def propose_vocabulary_corrections(
 
     content = _extract_generation_text(retry(_call, attempts=3, delay_seconds=1.0))
     return _parse_result(content, model=model, candidate_ids={item.candidate_id for item in candidates})
+
+
+def infer_vocabulary_replacements(
+    *,
+    samples: list[LlmCorrectionSample],
+    settings: Settings,
+    model: str,
+) -> list[LlmReplacementRule]:
+    """
+    Ask DashScope to infer term-level replacements from edited samples.
+
+    Args:
+        samples: User-edited examples with before/after text and local diff spans.
+        settings: Runtime DashScope settings.
+        model: DashScope text generation model id.
+
+    Returns:
+        Validated term-level replacement rules.
+    """
+    _configure_dashscope(settings)
+    prompt = _build_replacement_prompt(samples)
+
+    def _call() -> Any:
+        response = Generation.call(
+            model=model,
+            api_key=settings.dashscope_api_key,
+            messages=[
+                {"role": "system", "content": _system_prompt()},
+                {"role": "user", "content": prompt},
+            ],
+            result_format="message",
+            temperature=0.1,
+        )
+        _raise_for_generation_error(response)
+        return response
+
+    content = _extract_generation_text(retry(_call, attempts=3, delay_seconds=1.0))
+    return _parse_replacement_rules(content)
 
 
 def _configure_dashscope(settings: Settings) -> None:
@@ -134,6 +182,32 @@ def _build_prompt(samples: list[LlmCorrectionSample], candidates: list[LlmCorrec
         "4. corrected_text 必须保留原句结构，只替换必要词汇。\n"
         "5. 返回 JSON 对象，字段为 understanding 和 corrections。\n"
         "6. corrections 是数组，每项包含 id, corrected_text, reason。\n\n"
+        f"输入：\n{json.dumps(payload, ensure_ascii=False)}"
+    )
+
+
+def _build_replacement_prompt(samples: list[LlmCorrectionSample]) -> str:
+    """
+    Build a prompt for extracting term-level correction rules.
+
+    Args:
+        samples: User-edited correction examples.
+
+    Returns:
+        Prompt text.
+    """
+    payload = {"samples": [_sample_payload(item) for item in samples]}
+    return (
+        "根据用户人工修改过的会议转写样例，抽取真正的词汇级纠错规则。\n"
+        "要求：\n"
+        "1. original_text 和 corrected_text 是最高优先级证据。\n"
+        "2. replacements 只是程序本地 diff 的初步结果，可能把中文词或英文术语切碎，不能盲信。\n"
+        "3. 中文没有空格边界时，必须结合整句语境判断专有词、人名、系统名的完整边界。\n"
+        "4. wrong_text 必须原样出现在 original_text 中，corrected_text 必须原样出现在 corrected_text 中。\n"
+        "5. 只抽取词汇识别错误，不要抽取语气、标点、润色或句式调整。\n"
+        "6. 选择最短的自洽术语边界，不要把整句或无关上下文放进 wrong_text。\n"
+        "7. 返回 JSON 对象，字段为 replacements；replacements 是数组，每项包含 "
+        "wrong_text, corrected_text, left_context, right_context, reason。\n\n"
         f"输入：\n{json.dumps(payload, ensure_ascii=False)}"
     )
 
@@ -212,6 +286,38 @@ def _parse_result(text: str, *, model: str, candidate_ids: set[str]) -> LlmCorre
     understanding = str(payload.get("understanding") or "").strip()
     corrections = _parse_corrections(payload.get("corrections"), candidate_ids)
     return LlmCorrectionResult(understanding, corrections, model)
+
+
+def _parse_replacement_rules(text: str) -> list[LlmReplacementRule]:
+    """
+    Parse model JSON into replacement rules.
+
+    Args:
+        text: Raw model output.
+
+    Returns:
+        Validated replacement rules.
+    """
+    payload = _load_json_object(text)
+    value = payload.get("replacements")
+    if not isinstance(value, list):
+        return []
+    rules = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        wrong_text = str(item.get("wrong_text") or "").strip()
+        corrected_text = str(item.get("corrected_text") or "").strip()
+        if wrong_text and corrected_text and wrong_text != corrected_text:
+            rules.append(
+                LlmReplacementRule(
+                    wrong_text=wrong_text,
+                    corrected_text=corrected_text,
+                    left_context=str(item.get("left_context") or "").strip(),
+                    right_context=str(item.get("right_context") or "").strip(),
+                )
+            )
+    return rules
 
 
 def _load_json_object(text: str) -> dict[str, Any]:
