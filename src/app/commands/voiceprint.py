@@ -45,9 +45,9 @@ from app.presentation.tui.voiceprint import (
 )
 from app.presentation.tui.voiceprint_review import (
     load_voiceprint_review_session,
-    render_voiceprint_review_summary,
     run_voiceprint_review_tui,
 )
+from app.presentation.tui.voiceprint_review_context import render_voiceprint_review_summary
 from app.voiceprint_embedding import embed_voiceprint_samples
 from app.voiceprints import (
     VoiceprintCaptureSummary,

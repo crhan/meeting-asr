@@ -28,7 +28,12 @@ def test_voiceprint_review_tui_switches_project_and_library_views(tmp_path: Path
             assert app.mode == "project"
             assert "VOICEPRINT REVIEW" in app._overview_pane()
             assert "view=[bold cyan]Project candidates" in app._overview_pane()
-            assert "Project candidates" in app._overview_pane()
+            assert "Voiceprint Demo" in app._overview_pane()
+            assert "project-1" in app._overview_pane()
+            assert "status=named" in app._overview_pane()
+            assert "Source" in app._overview_pane()
+            assert "meeting.mp4" in app._overview_pane()
+            assert "verify samples" in app._overview_pane()
             assert "selected 2/2" in app._speaker_pane()
             assert "project sample one" in app._sample_pane()
 
@@ -164,6 +169,10 @@ def _review_session(tmp_path: Path) -> VoiceprintReviewSession:
         summary=_capture_summary(tmp_path),
         source_path=source_path,
         page_size=2,
+        project_title="Voiceprint Demo",
+        project_status="named",
+        source_name="meeting.mp4",
+        meeting_time="2026-05-05T09:00:00+08:00",
     )
     library = load_voiceprint_library_session(store_dir=_store(tmp_path), page_size=1)
     return VoiceprintReviewSession(capture=capture, library=library)

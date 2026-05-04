@@ -267,7 +267,7 @@ def _page_overview_line() -> str:
     """Render the active top-level TUI page."""
     return (
         "[reverse][b] PROJECT REVIEW [/b][/]  "
-        "p: switch project | v: Voiceprint Review | /: identity | e: edit text | s: save | q: quit"
+        "p: switch project | v: capture voiceprints | b: embed | /: identity | e: edit text | s: save | q: quit"
     )
 
 

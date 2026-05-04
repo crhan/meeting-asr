@@ -17,6 +17,7 @@ from textual.widgets import Footer, Header, Static
 from app.models import SentenceSegment
 from app.speaker_match_status import best_candidate_name
 from app.speaker_review import build_audio_preview_command
+from app.voiceprint_embedding import VoiceprintEmbedSummary, embed_voiceprint_samples
 from app.presentation.tui.project import ProjectPickerScreen, load_project_picker_session
 from app.presentation.tui.speaker_correction import (
     CorrectionQueuedScreen,
@@ -136,6 +137,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("c", "edit_sample_text", "Correct text", show=False),
         Binding("p", "switch_project", "Switch project"),
         Binding("v", "voiceprint_review", "Voiceprint"),
+        Binding("b", "embed_voiceprints", "Embed voiceprints"),
         Binding("?", "show_shortcuts", "Help"),
         Binding("s", "save", "Save"),
         Binding("q", "quit_review", "Quit"),
@@ -197,12 +199,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Update project review after an embedded voiceprint capture finishes."""
-        if event.worker.group != "speaker-review-voiceprint":
+        if event.worker.group == "speaker-review-voiceprint":
+            self._handle_voiceprint_capture_state(event)
             return
-        if event.state == WorkerState.SUCCESS:
-            self._handle_voiceprint_capture_success(event.worker.result)
-        elif event.state == WorkerState.ERROR:
-            self._set_status(f"Voiceprint capture failed: {event.worker.error}")
+        if event.worker.group == "speaker-review-voiceprint-embed":
+            self._handle_voiceprint_embed_state(event)
+            return
 
     def action_down(self) -> None:
         """Move down in the focused column."""
@@ -321,6 +323,25 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             lambda decision: self._handle_voiceprint_review_decision(decision, planned),
         )
 
+    def action_embed_voiceprints(self) -> None:
+        """Generate embeddings for captured voiceprint samples from Project Review."""
+        if not self.session.overview.voiceprint.captured_sample_ids:
+            self._set_status("No captured voiceprint samples yet. Press v to capture voiceprints first.")
+            return
+        self._set_status("Embedding voiceprint samples...")
+        self.run_worker(
+            lambda: embed_voiceprint_samples(
+                store_dir=self.session.store_dir,
+                provider=None,
+                endpoint=None,
+                model=None,
+                rebuild=False,
+            ),
+            group="speaker-review-voiceprint-embed",
+            name="embed",
+            thread=True,
+        )
+
     def action_save(self) -> None:
         """Save review state or return the reviewed mapping to the CLI command."""
         decision = self._decision()
@@ -333,6 +354,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 save_handler=self._save_handler_for_current_project(),
                 accept_handler=self._accept_handler_for_current_project(),
                 on_result=self._handle_save_outcome,
+                followup_handler=self.action_voiceprint_review,
+                followup_label="capture voiceprints",
             )
         )
 
@@ -581,13 +604,19 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def _handle_save_outcome(self, outcome: SpeakerReviewSaveOutcome) -> None:
         """Update review state after the in-TUI save workflow completes."""
+        self._mark_speaker_names_saved()
         summary = outcome.correction_summary
         if summary is not None and summary.accepted:
             self.correction_edits.clear()
-            self._set_status("Saved names and accepted transcript correction.")
+            self._set_status("Saved names and accepted transcript correction. Press v to capture voiceprints.")
             self._refresh()
             return
-        self._set_status("Saved project review. Continue reviewing or press q to exit.")
+        self._set_status("Saved project review. Press v to capture voiceprints, or continue reviewing.")
+
+    def _mark_speaker_names_saved(self) -> None:
+        """Keep in-memory workflow state aligned with the just-written speaker map."""
+        overview = replace(self.session.overview, saved_names_by_speaker=self._mapping())
+        self.session = replace(self.session, overview=overview)
 
     def _save_handler_for_current_project(self) -> Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome]:
         """Return a save handler bound to the currently visible project."""
@@ -633,6 +662,23 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             thread=True,
         )
 
+    def _handle_voiceprint_capture_state(self, event: Worker.StateChanged) -> None:
+        """Update the TUI after a voiceprint capture worker state change."""
+        if event.state == WorkerState.SUCCESS:
+            self._handle_voiceprint_capture_success(event.worker.result)
+        elif event.state == WorkerState.ERROR:
+            self._set_status(f"Voiceprint capture failed: {event.worker.error}")
+
+    def _handle_voiceprint_embed_state(self, event: Worker.StateChanged) -> None:
+        """Update the TUI after a voiceprint embedding worker state change."""
+        if event.state == WorkerState.SUCCESS:
+            self._handle_voiceprint_embed_success(event.worker.result)
+        elif event.state == WorkerState.ERROR:
+            self._set_status(
+                f"Voiceprint embedding failed: {event.worker.error}. "
+                "Run meeting-asr doctor --require-voiceprint-embedding."
+            )
+
     def _handle_voiceprint_capture_success(self, summary: VoiceprintCaptureSummary) -> None:
         """Refresh project voiceprint progress after sample capture."""
         overview = replace(
@@ -640,7 +686,19 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             voiceprint=load_voiceprint_review_progress(self.session.overview.project_id, self.session.store_dir),
         )
         self.session = replace(self.session, overview=overview)
-        self._set_status(f"Captured {summary.sample_count} voiceprint sample(s). Run voiceprint embed when ready.")
+        self._set_status(f"Captured {summary.sample_count} voiceprint sample(s). Press b to embed voiceprints.")
+        self._refresh()
+
+    def _handle_voiceprint_embed_success(self, summary: VoiceprintEmbedSummary) -> None:
+        """Refresh project voiceprint progress after embedding finishes."""
+        overview = replace(
+            self.session.overview,
+            voiceprint=load_voiceprint_review_progress(self.session.overview.project_id, self.session.store_dir),
+        )
+        self.session = replace(self.session, overview=overview)
+        self._set_status(
+            f"Voiceprint embedding ready: embedded {summary.embedded_count}, skipped {summary.skipped_count}."
+        )
         self._refresh()
 
     def _has_unsaved_speaker_names(self) -> bool:

@@ -196,7 +196,10 @@ def test_voiceprint_review_command_summarizes_project_and_library(tmp_path: Path
 
     assert result.exit_code == 0
     assert "Voiceprint review" in result.output
-    assert f"Project candidates: {manifest.project_id}" in result.output
+    assert f"Project candidates: {manifest.title}" in result.output
+    assert f"Project ID: {manifest.project_id}" in result.output
+    assert "Status: created" in result.output
+    assert "Source: meeting.mp4" in result.output
     assert "Candidate speakers: 1 | samples: 2" in result.output
     assert "Global library:" in result.output
 

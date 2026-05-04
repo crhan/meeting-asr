@@ -25,7 +25,9 @@ from app.presentation.tui.voiceprint_capture import (
     VoiceprintCaptureSpeakerEntry,
     load_voiceprint_capture_review_session,
 )
-from app.project_manager import load_manifest, project_paths, resolve_project_source_path
+from app.presentation.tui.voiceprint_review_context import (
+    load_project_voiceprint_context,
+)
 from app.speaker_review import build_audio_preview_command
 from app.utils import format_ms_timestamp
 from app.voiceprint_playback import build_voiceprint_play_command
@@ -135,7 +137,7 @@ class _VoiceprintReviewBase:
     }
     #overview {
         border: round $accent;
-        height: 9;
+        height: 10;
         padding: 0 1;
     }
     #main {
@@ -418,11 +420,15 @@ class _VoiceprintReviewBase:
         total = sum(len(speaker.clips) for speaker in capture.speakers)
         speaker = self._project_speaker()
         sample = self._project_selected_sample()
+        title = _trim_text(capture.project_title or capture.project_id, limit=72)
+        source_name = _trim_text(capture.source_name or capture.source_path.name, limit=72)
+        meeting_time = capture.meeting_time or "-"
         lines = [
             self._mode_line(),
-            f"[b]Project[/b]  {escape(capture.project_id)}",
-            f"[b]Source[/b]   {escape(str(capture.source_path))}",
-            f"[b]Store[/b]    {escape(str(capture.db_path))}",
+            f"[b]Project[/b]  {escape(title)} [dim]({escape(capture.project_id)})[/]",
+            f"[b]State[/b]    status={escape(capture.project_status or '-')} | time={escape(meeting_time)}",
+            f"[b]Source[/b]   {escape(source_name)}",
+            "[b]Goal[/b]     verify samples, then press s to capture into the global voiceprint library",
             f"[b]Selected[/b] {selected}/{total} candidate sample(s)",
             f"[b]Focus[/b]    {escape(_project_speaker_summary(speaker))}",
             f"[b]Sample[/b]   {escape(_project_sample_summary(sample))}",
@@ -698,7 +704,7 @@ class _VoiceprintReviewBase:
         next_text = "no alternate project view" if next_view is None else f"Tab -> {next_view}"
         return (
             "[reverse][b] VOICEPRINT REVIEW [/b][/]  "
-            f"view=[bold cyan]{_mode_label(self.mode)}[/] | {next_text} | q: {escape(self.session.return_hint)}"
+            f"view=[bold cyan]{_mode_label(self.mode)}[/] | {next_text} | Esc/q: {escape(self.session.return_hint)}"
         )
 
     def _focused_column(self) -> Column:
@@ -788,6 +794,7 @@ def load_voiceprint_review_session(
     planned = None
     capture_session = None
     if project_dir is not None:
+        context = load_project_voiceprint_context(project_dir)
         planned = plan_voiceprint_capture(
             project_dir,
             sample_count=sample_count,
@@ -797,8 +804,12 @@ def load_voiceprint_review_session(
         )
         capture_session = load_voiceprint_capture_review_session(
             summary=planned,
-            source_path=_voiceprint_capture_source_path(project_dir),
+            source_path=context.source_path,
             page_size=page_size,
+            project_title=context.title,
+            project_status=context.status,
+            source_name=context.source_name,
+            meeting_time=context.meeting_time,
         )
     library_session = load_voiceprint_library_session(store_dir=store_dir, page_size=page_size)
     return VoiceprintReviewSession(capture=capture_session, library=library_session, return_hint=return_hint), planned
@@ -816,57 +827,6 @@ def run_voiceprint_review_tui(session: VoiceprintReviewSession) -> VoiceprintRev
     """
     result = VoiceprintReviewApp(session).run()
     return result or VoiceprintReviewDecision(False, frozenset())
-
-
-def _voiceprint_capture_source_path(project_dir: Path) -> Path:
-    """
-    Resolve the project source media path used for sample playback.
-
-    Args:
-        project_dir: Project root.
-
-    Returns:
-        Resolved source media path.
-    """
-    paths = project_paths(project_dir)
-    manifest = load_manifest(paths.root)
-    return resolve_project_source_path(paths.root, manifest)
-
-
-def render_voiceprint_review_summary(session: VoiceprintReviewSession) -> str:
-    """
-    Render a non-interactive summary for the unified voiceprint review session.
-
-    Args:
-        session: Unified voiceprint review inputs.
-
-    Returns:
-        Plain terminal text.
-    """
-    lines = ["Voiceprint review"]
-    if session.capture is None:
-        lines.append("Project candidates: unavailable")
-    else:
-        sample_total = sum(len(speaker.clips) for speaker in session.capture.speakers)
-        lines.extend(
-            [
-                f"Project candidates: {session.capture.project_id}",
-                f"Candidate speakers: {len(session.capture.speakers)} | samples: {sample_total}",
-            ]
-        )
-        for speaker in session.capture.speakers:
-            lines.append(f"  {speaker.name} speaker={speaker.speaker_id} samples={len(speaker.clips)}")
-    sample_total = sum(speaker.sample_count for speaker in session.library.speakers)
-    embedded_total = sum(speaker.embedded_sample_count for speaker in session.library.speakers)
-    lines.extend(
-        [
-            f"Global library: {session.library.db_path}",
-            f"Library people: {len(session.library.speakers)} | samples: {sample_total} | embedded: {embedded_total}/{sample_total}",
-        ]
-    )
-    for speaker in session.library.speakers:
-        lines.append(f"  {speaker.name} id={speaker.public_id} samples={speaker.sample_count}")
-    return "\n".join(lines)
 
 
 def _start_player(command: list[str]) -> subprocess.Popen:

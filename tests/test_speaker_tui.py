@@ -47,7 +47,7 @@ from app.presentation.tui.voiceprint_review import (
     VoiceprintReviewSession,
 )
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
-from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
+from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL, VoiceprintEmbedSummary
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
@@ -66,7 +66,7 @@ def test_speaker_review_tui_starts_in_browse_mode() -> None:
             main = pilot.app.query_one("#main")
             assert len(list(main.children)) == 2
             assert pilot.app.focused is None
-            assert "v voiceprint" in str(pilot.app.query_one("#status", Static).render())
+            assert "v capture" in str(pilot.app.query_one("#status", Static).render())
 
             await pilot.press("/")
             await pilot.pause()
@@ -92,7 +92,8 @@ def test_speaker_review_tui_shows_project_workflow_status() -> None:
             overview = pilot.app._overview_pane()
 
             assert "PROJECT REVIEW" in overview
-            assert "v: Voiceprint Review" in overview
+            assert "v: capture voiceprints" in overview
+            assert "b: embed" in overview
             assert "[b]Project[/b]  Demo" in overview
             assert "00:00:02.500" in overview
             assert "2 speakers" in overview
@@ -274,9 +275,19 @@ def test_project_review_tui_keeps_multiple_inline_text_edits() -> None:
     assert [edit.corrected_text for edit in app.return_value.correction_edits] == ["第一句修正", "第二句修正"]
 
 
-def test_project_review_tui_save_handler_keeps_tui_open() -> None:
+def test_project_review_tui_save_handler_keeps_tui_open(monkeypatch, tmp_path: Path) -> None:
     """Project review save should run inside a modal instead of exiting the TUI."""
     seen: list[SpeakerReviewDecision] = []
+    library = VoiceprintLibrarySession(db_path=tmp_path / "voiceprints.sqlite", speakers=[])
+
+    monkeypatch.setattr(
+        speaker_tui,
+        "load_voiceprint_review_session",
+        lambda **kwargs: (
+            VoiceprintReviewSession(capture=None, library=library, return_hint=kwargs["return_hint"]),
+            None,
+        ),
+    )
 
     def save_handler(decision: SpeakerReviewDecision) -> SpeakerReviewSaveOutcome:
         seen.append(decision)
@@ -294,10 +305,47 @@ def test_project_review_tui_save_handler_keeps_tui_open() -> None:
             assert app.return_value is None
             assert seen and seen[0].saved is True
             assert "Project review saved" in str(app.screen.query_one("#save-title", Static).render())
+            assert "v capture voiceprints" in str(app.screen.query_one("#save-actions", Static).render())
 
-            await pilot.press("enter")
+            await pilot.press("v")
             await pilot.pause()
-            assert not isinstance(app.screen, SpeakerReviewSaveScreen)
+            await pilot.pause()
+
+            assert isinstance(app.screen, VoiceprintReviewScreen)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, VoiceprintReviewScreen)
+
+    asyncio.run(scenario())
+
+
+def test_project_review_tui_embeds_captured_voiceprints(monkeypatch, tmp_path: Path) -> None:
+    """Project Review should run voiceprint embedding without leaving the TUI."""
+    store_dir = tmp_path / "voiceprints"
+    embedded: list[Path | None] = []
+
+    def fake_embed_voiceprint_samples(**kwargs) -> VoiceprintEmbedSummary:
+        embedded.append(kwargs["store_dir"])
+        return VoiceprintEmbedSummary(
+            db_path=tmp_path / "voiceprints.sqlite",
+            provider="local-speechbrain",
+            model="test-model",
+            embedded_count=2,
+            skipped_count=1,
+        )
+
+    monkeypatch.setattr(speaker_tui, "embed_voiceprint_samples", fake_embed_voiceprint_samples)
+    app = SpeakerReviewApp(_session(with_status=True, store_dir=store_dir))
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("b")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert embedded == [store_dir]
+            assert "embedded 2, skipped 1" in str(app.query_one("#status", Static).render())
 
     asyncio.run(scenario())
 

@@ -84,6 +84,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
     BINDINGS = [
         Binding("d", "view_diff", "View diff"),
         Binding("a", "accept_proposal", "Accept proposal"),
+        Binding("v", "followup", "Follow-up"),
         Binding("enter", "close_feedback", "Continue"),
         Binding("escape", "close_feedback", "Continue", show=False),
         Binding("q", "close_feedback", "Continue"),
@@ -96,6 +97,8 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         save_handler: Callable[[Any], SpeakerReviewSaveOutcome],
         accept_handler: Callable[[Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome] | None,
         on_result: Callable[[SpeakerReviewSaveOutcome], None],
+        followup_handler: Callable[[], None] | None = None,
+        followup_label: str = "continue",
     ) -> None:
         """
         Create save workflow screen.
@@ -105,12 +108,16 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
             save_handler: Function that writes mapping and prepares corrections.
             accept_handler: Function that accepts a pending correction proposal.
             on_result: Callback used to update the parent TUI after success.
+            followup_handler: Optional action to run after closing the save modal.
+            followup_label: Human-readable follow-up action shown in the modal.
         """
         super().__init__()
         self.decision = decision
         self.save_handler = save_handler
         self.accept_handler = accept_handler
         self.on_result = on_result
+        self.followup_handler = followup_handler
+        self.followup_label = followup_label
         self.outcome: SpeakerReviewSaveOutcome | None = None
         self.selected_change_indices: tuple[int, ...] | None = None
         self.running = False
@@ -176,6 +183,13 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         if not self.running:
             self.dismiss(None)
 
+    def action_followup(self) -> None:
+        """Close the modal and run the configured follow-up workflow."""
+        if self.running or self.followup_handler is None or self.outcome is None:
+            return
+        self.dismiss(None)
+        self.app.call_after_refresh(self.followup_handler)
+
     def _start_save(self) -> None:
         """Run the initial save workflow."""
         self._set_running("Saving speaker names and preparing corrections...")
@@ -234,10 +248,11 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
 
     def _actions(self) -> str:
         """Render available next actions."""
+        followup = f" | v {self.followup_label}" if self.followup_handler is not None else ""
         if self._pending_proposal_path() is not None:
             count = self._selected_count_label()
-            return f"Press d to review/select changes | a to accept {count} | Enter to continue reviewing"
-        return "Press Enter to continue reviewing | q quits from the main screen"
+            return f"Press d to review/select changes | a to accept {count}{followup} | Enter to continue reviewing"
+        return f"Press Enter to continue reviewing{followup} | q quits from the main screen"
 
     def _handle_proposal_selection(self, selection: CorrectionProposalSelection | None) -> None:
         """Store selected proposal changes or accept them immediately."""

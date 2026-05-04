@@ -83,6 +83,10 @@ class VoiceprintCaptureReviewSession:
     """Inputs needed by the voiceprint capture review TUI."""
 
     project_id: str
+    project_title: str | None
+    project_status: str | None
+    source_name: str | None
+    meeting_time: str | None
     source_path: Path
     store_dir: Path
     db_path: Path
@@ -496,6 +500,10 @@ def load_voiceprint_capture_review_session(
     summary: VoiceprintCaptureSummary,
     source_path: Path,
     page_size: int | None = None,
+    project_title: str | None = None,
+    project_status: str | None = None,
+    source_name: str | None = None,
+    meeting_time: str | None = None,
 ) -> VoiceprintCaptureReviewSession:
     """
     Build a capture review session from a dry-run capture plan.
@@ -504,12 +512,20 @@ def load_voiceprint_capture_review_session(
         summary: Planned voiceprint capture summary.
         source_path: Source media path used for playback.
         page_size: Optional samples-per-page override.
+        project_title: Optional human-readable project title.
+        project_status: Optional project workflow status.
+        source_name: Optional original source filename.
+        meeting_time: Optional meeting time from project metadata.
 
     Returns:
         Voiceprint capture review session.
     """
     return VoiceprintCaptureReviewSession(
         project_id=_project_id_from_summary(summary),
+        project_title=project_title,
+        project_status=project_status,
+        source_name=source_name,
+        meeting_time=meeting_time,
         source_path=source_path,
         store_dir=summary.store_dir,
         db_path=summary.db_path,
@@ -544,8 +560,11 @@ def render_voiceprint_capture_review_summary(session: VoiceprintCaptureReviewSes
     """
     sample_total = sum(len(speaker.clips) for speaker in session.speakers)
     lines = [
-        f"Voiceprint capture review: {session.project_id}",
-        f"Source: {session.source_path}",
+        f"Voiceprint capture review: {session.project_title or session.project_id}",
+        f"Project ID: {session.project_id}",
+        f"Status: {session.project_status or '-'}",
+        f"Source: {session.source_name or session.source_path.name}",
+        f"Meeting time: {session.meeting_time or '-'}",
         f"Store: {session.store_dir}",
         f"Speakers: {len(session.speakers)} | Candidate samples: {sample_total}",
     ]
