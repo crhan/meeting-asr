@@ -9,7 +9,11 @@ from textual.widgets import Static
 
 from app.presentation.tui.voiceprint import load_voiceprint_library_session
 from app.presentation.tui.voiceprint_capture import load_voiceprint_capture_review_session
-from app.presentation.tui.voiceprint_review import VoiceprintReviewApp, VoiceprintReviewSession
+from app.presentation.tui.voiceprint_review import (
+    VoiceprintReviewApp,
+    VoiceprintReviewHelpScreen,
+    VoiceprintReviewSession,
+)
 from app.voiceprint_store import StoredVoiceprintSample, get_voiceprint_db_path, store_voiceprint_samples
 from app.voiceprints import VoiceprintCaptureSummary, VoiceprintClip, VoiceprintSpeaker
 
@@ -22,6 +26,8 @@ def test_voiceprint_review_tui_switches_project_and_library_views(tmp_path: Path
     async def scenario() -> None:
         async with app.run_test(size=(120, 24)) as pilot:
             assert app.mode == "project"
+            assert "VOICEPRINT REVIEW" in app._overview_pane()
+            assert "view=[bold cyan]Project candidates" in app._overview_pane()
             assert "Project candidates" in app._overview_pane()
             assert "selected 2/2" in app._speaker_pane()
             assert "project sample one" in app._sample_pane()
@@ -30,6 +36,7 @@ def test_voiceprint_review_tui_switches_project_and_library_views(tmp_path: Path
             await pilot.pause()
 
             assert app.mode == "library"
+            assert "view=[bold cyan]Global library" in app._overview_pane()
             assert "Global library" in app._overview_pane()
             assert "Global voiceprint people" in app._speaker_pane()
             assert "library sample one" in app._sample_pane()
@@ -65,6 +72,24 @@ def test_voiceprint_review_tui_saves_only_selected_project_samples(tmp_path: Pat
     assert app.return_value.selected_clip_rel_paths == frozenset({"clips/project-1/speaker_0/clip_002.wav"})
 
 
+def test_voiceprint_review_refuses_save_from_global_library(tmp_path: Path) -> None:
+    """Save should be explicit to project candidates, not whichever view is open."""
+    app = VoiceprintReviewApp(_review_session(tmp_path))
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.press("tab")
+            await pilot.pause()
+            await pilot.press("s")
+            await pilot.pause()
+
+            assert app.return_value is None
+            assert app.mode == "library"
+            assert "Switch to Project candidates" in str(app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
+
+
 def test_voiceprint_review_without_project_starts_in_library_mode(tmp_path: Path) -> None:
     """Without a project, review should behave as the global library browser."""
     session = VoiceprintReviewSession(capture=None, library=load_voiceprint_library_session(store_dir=_store(tmp_path)))
@@ -73,7 +98,7 @@ def test_voiceprint_review_without_project_starts_in_library_mode(tmp_path: Path
     async def scenario() -> None:
         async with app.run_test(size=(120, 24)) as pilot:
             assert app.mode == "library"
-            assert "Project unavailable" in app._overview_pane()
+            assert "no alternate project view" in app._overview_pane()
 
             await pilot.press("p")
             await pilot.pause()
@@ -82,6 +107,39 @@ def test_voiceprint_review_without_project_starts_in_library_mode(tmp_path: Path
             assert "project candidates are unavailable" in status
 
     asyncio.run(scenario())
+
+
+def test_voiceprint_review_question_mark_shows_help(tmp_path: Path) -> None:
+    """The shared voiceprint TUI should show help from the standalone app."""
+    app = VoiceprintReviewApp(_review_session(tmp_path))
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.press("?")
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, VoiceprintReviewHelpScreen)
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert not isinstance(pilot.app.screen, VoiceprintReviewHelpScreen)
+
+    asyncio.run(scenario())
+
+
+def test_voiceprint_review_quit_returns_unsaved_decision(tmp_path: Path) -> None:
+    """Quit should return a non-saving decision from the standalone app."""
+    app = VoiceprintReviewApp(_review_session(tmp_path))
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.press("q")
+
+    asyncio.run(scenario())
+
+    assert app.return_value is not None
+    assert app.return_value.saved is False
 
 
 def _review_session(tmp_path: Path) -> VoiceprintReviewSession:

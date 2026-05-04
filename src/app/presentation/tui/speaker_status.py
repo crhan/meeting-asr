@@ -84,6 +84,7 @@ def render_overview_pane(
         Rich markup for the overview pane.
     """
     lines = [
+        _page_overview_line(),
         _project_overview_line(overview, len(speakers)),
         _workflow_overview_line(speakers, overview),
         _match_overview_line(speakers),
@@ -260,6 +261,11 @@ def render_selected_speaker_line(speaker: ReviewSpeakerLike) -> str:
     """
     status = speaker_status(speaker)
     return f"Name: [b]{escape(speaker.current_name)}[/] | status={status} | {match_badge(speaker)}"
+
+
+def _page_overview_line() -> str:
+    """Render the active top-level TUI page."""
+    return "[reverse][b] PROJECT REVIEW [/b][/]  v: Voiceprint Review | /: identity | e: edit text | s: save | q: quit"
 
 
 def _project_overview_line(overview: SpeakerReviewOverview, speaker_count: int) -> str:

@@ -36,8 +36,13 @@ from app.presentation.tui.speaker_save import (
     SpeakerReviewSaveScreen,
     _summary_lines,
 )
+from app.presentation.tui.voiceprint_capture import load_voiceprint_capture_review_session
 from app.presentation.tui.voiceprint import VoiceprintLibrarySession
-from app.presentation.tui.voiceprint_review import VoiceprintReviewScreen, VoiceprintReviewSession
+from app.presentation.tui.voiceprint_review import (
+    VoiceprintReviewHelpScreen,
+    VoiceprintReviewScreen,
+    VoiceprintReviewSession,
+)
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
@@ -47,6 +52,7 @@ from app.voiceprint_store import (
     store_voiceprint_samples,
     upsert_voiceprint_embedding,
 )
+from app.voiceprints import VoiceprintCaptureSummary, VoiceprintClip, VoiceprintSpeaker
 
 
 def test_speaker_review_tui_starts_in_browse_mode() -> None:
@@ -57,6 +63,7 @@ def test_speaker_review_tui_starts_in_browse_mode() -> None:
             main = pilot.app.query_one("#main")
             assert len(list(main.children)) == 2
             assert pilot.app.focused is None
+            assert "v voiceprint" in str(pilot.app.query_one("#status", Static).render())
 
             await pilot.press("/")
             await pilot.pause()
@@ -81,6 +88,8 @@ def test_speaker_review_tui_shows_project_workflow_status() -> None:
         async with SpeakerReviewApp(_session(with_status=True)).run_test() as pilot:
             overview = pilot.app._overview_pane()
 
+            assert "PROJECT REVIEW" in overview
+            assert "v: Voiceprint Review" in overview
             assert "[b]Project[/b]  Demo" in overview
             assert "00:00:02.500" in overview
             assert "2 speakers" in overview
@@ -525,12 +534,26 @@ def test_project_review_tui_opens_embedded_voiceprint_review(monkeypatch, tmp_pa
     monkeypatch.setattr(
         speaker_tui,
         "load_voiceprint_review_session",
-        lambda **kwargs: (VoiceprintReviewSession(capture=None, library=library), None),
+        lambda **kwargs: (
+            VoiceprintReviewSession(capture=None, library=library, return_hint=kwargs["return_hint"]),
+            None,
+        ),
     )
 
     async def scenario() -> None:
         async with SpeakerReviewApp(_session(with_status=True)).run_test(size=(120, 24)) as pilot:
             await pilot.press("v")
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, VoiceprintReviewScreen)
+            assert "return to Project Review" in pilot.app.screen._overview_pane()
+
+            await pilot.press("?")
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, VoiceprintReviewHelpScreen)
+
+            await pilot.press("escape")
             await pilot.pause()
 
             assert isinstance(pilot.app.screen, VoiceprintReviewScreen)
@@ -540,6 +563,34 @@ def test_project_review_tui_opens_embedded_voiceprint_review(monkeypatch, tmp_pa
 
             assert not isinstance(pilot.app.screen, VoiceprintReviewScreen)
             assert "no samples were written" in str(pilot.app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
+
+
+def test_project_review_tui_voiceprint_tab_shows_current_view(monkeypatch, tmp_path: Path) -> None:
+    """Embedded voiceprint review should clearly show the active sub-view."""
+    session = _voiceprint_review_session(tmp_path, return_hint="return to Project Review")
+
+    monkeypatch.setattr(
+        speaker_tui,
+        "load_voiceprint_review_session",
+        lambda **kwargs: (session, None),
+    )
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session(with_status=True)).run_test(size=(120, 24)) as pilot:
+            await pilot.press("v")
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, VoiceprintReviewScreen)
+            assert "view=[bold cyan]Project candidates" in pilot.app.screen._overview_pane()
+            assert "Tab -> Global library" in pilot.app.screen._overview_pane()
+
+            await pilot.press("tab")
+            await pilot.pause()
+
+            assert "view=[bold cyan]Global library" in pilot.app.screen._overview_pane()
+            assert "Tab -> Project candidates" in pilot.app.screen._overview_pane()
 
     asyncio.run(scenario())
 
@@ -1023,6 +1074,37 @@ def _session(
         allow_correction=allow_correction,
         people=people,
         store_dir=store_dir,
+    )
+
+
+def _voiceprint_review_session(tmp_path: Path, *, return_hint: str) -> VoiceprintReviewSession:
+    """Build a minimal embeddable voiceprint review session."""
+    store_dir = tmp_path / "voiceprints"
+    source_path = tmp_path / "meeting.mp4"
+    source_path.write_bytes(b"source")
+    clip = VoiceprintClip(
+        path=store_dir / "clips" / "project-1" / "speaker_0" / "clip_001.wav",
+        rel_path="clips/project-1/speaker_0/clip_001.wav",
+        source_begin_time_ms=1000,
+        source_end_time_ms=2000,
+        clip_begin_time_ms=1000,
+        clip_end_time_ms=2000,
+        text="voiceprint candidate",
+    )
+    capture = load_voiceprint_capture_review_session(
+        summary=VoiceprintCaptureSummary(
+            store_dir=store_dir,
+            db_path=get_voiceprint_db_path(store_dir),
+            clip_dir=store_dir / "clips",
+            speakers=[VoiceprintSpeaker(0, "欧丁", None, None, [clip])],
+            dry_run=True,
+        ),
+        source_path=source_path,
+    )
+    return VoiceprintReviewSession(
+        capture=capture,
+        library=VoiceprintLibrarySession(db_path=get_voiceprint_db_path(store_dir), speakers=[]),
+        return_hint=return_hint,
     )
 
 

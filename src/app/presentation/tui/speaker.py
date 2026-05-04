@@ -134,7 +134,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     }
     #overview {
         border: round $accent;
-        height: 8;
+        height: 9;
         padding: 0 1;
     }
     #main {
@@ -334,6 +334,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 project_dir=self.session.project_dir,
                 store_dir=self.session.store_dir,
                 page_size=self.session.page_size,
+                return_hint="return to Project Review",
             )
         except Exception as exc:  # noqa: BLE001
             self._set_status(f"Voiceprint review unavailable: {exc}")

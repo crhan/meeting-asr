@@ -44,8 +44,8 @@ PROJECT_MODE = "project"
 LIBRARY_MODE = "library"
 
 STATUS_TEXT = (
-    "tab switch Project/Library | h/l or left/right choose column | "
-    "j/k or up/down move | space play/stop | x include/exclude | s save project samples | ? help | q quit"
+    "Voiceprint: Tab switch Project/Global | p project | g global | h/l columns | "
+    "j/k rows | Space play/stop | x include/exclude | s capture selected | ? help | q back/quit"
 )
 HELP_TEXT = """\
 [b]Voiceprint Review Shortcuts[/b]
@@ -84,6 +84,7 @@ class VoiceprintReviewSession:
     capture: VoiceprintCaptureReviewSession | None
     library: VoiceprintLibrarySession
     initial_mode: Mode = PROJECT_MODE
+    return_hint: str = "quit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +135,7 @@ class _VoiceprintReviewBase:
     }
     #overview {
         border: round $accent;
-        height: 8;
+        height: 9;
         padding: 0 1;
     }
     #main {
@@ -320,7 +321,7 @@ class _VoiceprintReviewBase:
 
     def action_show_shortcuts(self) -> None:
         """Show keyboard shortcut help."""
-        self.push_screen(VoiceprintReviewHelpScreen())
+        self.app.push_screen(VoiceprintReviewHelpScreen())
 
     def action_quit(self) -> None:
         """Exit without writing project samples."""
@@ -692,8 +693,12 @@ class _VoiceprintReviewBase:
 
     def _mode_line(self) -> str:
         """Render active mode and switch affordance."""
-        project_state = "available" if self.session.capture is not None else "unavailable"
-        return f"[b]Mode[/b]     {_mode_label(self.mode)} | Project {project_state} | Tab switches view"
+        next_view = _next_view_label(self.mode, self.session.capture is not None)
+        next_text = "no alternate project view" if next_view is None else f"Tab -> {next_view}"
+        return (
+            "[reverse][b] VOICEPRINT REVIEW [/b][/]  "
+            f"view=[bold cyan]{_mode_label(self.mode)}[/] | {next_text} | q: {escape(self.session.return_hint)}"
+        )
 
     def _focused_column(self) -> Column:
         """Return the focused column for the active view."""
@@ -762,6 +767,7 @@ def load_voiceprint_review_session(
     padding_seconds: float = 0.5,
     store_dir: Path | None = None,
     page_size: int | None = None,
+    return_hint: str = "quit",
 ) -> tuple[VoiceprintReviewSession, VoiceprintCaptureSummary | None]:
     """
     Load project capture candidates and the global voiceprint library.
@@ -773,6 +779,7 @@ def load_voiceprint_review_session(
         padding_seconds: Extra context around each sentence.
         store_dir: Optional voiceprint store directory.
         page_size: Optional TUI samples per page.
+        return_hint: Human-readable q-key destination.
 
     Returns:
         Unified TUI session and the planned capture summary, if a project was loaded.
@@ -793,7 +800,7 @@ def load_voiceprint_review_session(
             page_size=page_size,
         )
     library_session = load_voiceprint_library_session(store_dir=store_dir, page_size=page_size)
-    return VoiceprintReviewSession(capture=capture_session, library=library_session), planned
+    return VoiceprintReviewSession(capture=capture_session, library=library_session, return_hint=return_hint), planned
 
 
 def run_voiceprint_review_tui(session: VoiceprintReviewSession) -> VoiceprintReviewDecision:
@@ -882,6 +889,13 @@ def _start_player(command: list[str]) -> subprocess.Popen:
 def _mode_label(mode: Mode) -> str:
     """Return the human-readable mode label."""
     return "Project candidates" if mode == PROJECT_MODE else "Global library"
+
+
+def _next_view_label(mode: Mode, project_available: bool) -> str | None:
+    """Return the view reached by pressing Tab, if there is one."""
+    if mode == LIBRARY_MODE and not project_available:
+        return None
+    return "Global library" if mode == PROJECT_MODE else "Project candidates"
 
 
 def _project_speaker_summary(speaker: VoiceprintCaptureSpeakerEntry | None) -> str:
