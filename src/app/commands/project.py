@@ -36,7 +36,7 @@ from app.core.project_workflow import (
     project_outputs_text,
     project_workflow_summary,
 )
-from app.correction_types import CorrectionEditOptions
+from app.correction_types import CorrectionEditOptions, CorrectionEditSummary
 from app.completion_helpers import (
     complete_asr_hotwords,
     complete_audio_format,
@@ -101,6 +101,7 @@ from app.presentation.tui.speaker import (
     load_speaker_review_session,
     run_speaker_review_tui,
 )
+from app.presentation.tui.speaker_save import SpeakerReviewSaveOutcome
 from app.presentation.tui.speaker_summary import render_speaker_review_summary
 from app.srt_compare import build_report, parse_srt
 from app.utils import configure_logging, format_ms_timestamp, safe_write_text
@@ -833,6 +834,17 @@ def _run_speaker_review(
         raise typer.BadParameter(
             "Speaker review TUI requires an interactive terminal. Use --summary to inspect."
         )
+    if correction_options is not None:
+        run_speaker_review_tui(
+            session,
+            save_handler=lambda decision: _save_review_from_tui(project_dir, decision, correction_options),
+            accept_handler=lambda proposal_path: _accept_review_correction_from_tui(
+                project_dir,
+                proposal_path,
+                correction_options,
+            ),
+        )
+        return
     decision = run_speaker_review_tui(session)
     _handle_speaker_review_decision(project_dir, decision, correction_options)
 
@@ -871,13 +883,87 @@ def _handle_speaker_review_decision(
     typer.echo("  meeting-asr voiceprint embed")
 
 
+def _save_review_from_tui(
+    project_dir: Path,
+    decision: SpeakerReviewDecision,
+    correction_options: ProjectReviewCorrectionOptions,
+) -> SpeakerReviewSaveOutcome:
+    """Persist project review state from inside the TUI."""
+    mapping_path, transcript_path, srt_path = apply_project_speakers(
+        project_dir,
+        decision.mapping,
+        person_mapping=decision.person_mapping,
+        person_public_mapping=decision.person_public_mapping,
+    )
+    correction_summary = None
+    if decision.action == "correct-inline":
+        correction_summary = _prepare_review_correction_from_tui(project_dir, decision, correction_options)
+        if correction_options.yes and correction_summary.proposal_json_path is not None:
+            correction_summary = _accept_review_correction_from_tui(
+                project_dir,
+                correction_summary.proposal_json_path,
+                correction_options,
+            ).correction_summary
+    return SpeakerReviewSaveOutcome(mapping_path, transcript_path, srt_path, correction_summary)
+
+
+def _prepare_review_correction_from_tui(
+    project_dir: Path,
+    decision: SpeakerReviewDecision,
+    correction_options: ProjectReviewCorrectionOptions,
+) -> CorrectionEditSummary:
+    """Prepare a pending correction proposal from TUI sentence edits."""
+    correction_edits = _decision_correction_edits(decision)
+    if not correction_edits:
+        raise RuntimeError("No transcript correction edits were staged.")
+    paths = project_paths(project_dir)
+    manifest = load_manifest(paths.root)
+    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    return project_correct_commands.prepare_inline_corrections_for_review(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        correction_edits=correction_edits,
+        options=correction_options.edit_options,
+    )
+
+
+def _accept_review_correction_from_tui(
+    project_dir: Path,
+    proposal_path: Path | None,
+    correction_options: ProjectReviewCorrectionOptions,
+) -> SpeakerReviewSaveOutcome:
+    """Accept a pending correction proposal from inside the TUI."""
+    paths = project_paths(project_dir)
+    manifest = load_manifest(paths.root)
+    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    summary = project_correct_commands.accept_correction_for_review(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        proposal_path=proposal_path,
+        lexicon_db=correction_options.edit_options.lexicon_db,
+    )
+    return SpeakerReviewSaveOutcome(None, None, None, summary)
+
+
+def _decision_correction_edits(decision: SpeakerReviewDecision) -> list[object]:
+    """Return all staged correction edits from a review decision."""
+    if decision.correction_edits:
+        return list(decision.correction_edits)
+    if decision.correction_edit is None:
+        return []
+    return [decision.correction_edit]
+
+
 def _run_review_inline_correction(
     project_dir: Path,
     decision: SpeakerReviewDecision,
     correction_options: ProjectReviewCorrectionOptions | None,
 ) -> None:
-    """Run transcript correction from one TUI-edited sentence."""
-    if correction_options is None or decision.correction_edit is None:
+    """Run transcript correction from TUI-edited sentences."""
+    correction_edits = _decision_correction_edits(decision)
+    if correction_options is None or not correction_edits:
         typer.echo("Transcript correction is only available from meeting-asr project review.")
         return
     paths = project_paths(project_dir)
@@ -886,11 +972,11 @@ def _run_review_inline_correction(
     typer.echo("")
     typer.echo("Transcript correction:")
     run_with_cli_errors(
-        lambda: project_correct_commands.finish_inline_correction(
+        lambda: project_correct_commands.finish_inline_corrections(
             paths=paths,
             manifest=manifest,
             speaker_mapping=speaker_mapping,
-            correction_edit=decision.correction_edit,
+            correction_edits=correction_edits,
             options=correction_options.edit_options,
             yes=correction_options.yes,
         )

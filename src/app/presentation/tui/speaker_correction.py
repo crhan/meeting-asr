@@ -162,26 +162,29 @@ class CorrectionQueuedScreen(ModalScreen[None]):
         Binding("s", "save_and_run", "Save and run"),
     ]
 
-    def __init__(self, edit: SentenceCorrectionEdit) -> None:
+    def __init__(self, edit: SentenceCorrectionEdit, *, count: int = 1) -> None:
         """
         Create staged-correction feedback.
 
         Args:
             edit: Staged sentence correction.
+            count: Total staged correction count.
         """
         super().__init__()
         self.edit = edit
+        self.count = count
 
     def compose(self) -> ComposeResult:
         """Build staged correction feedback."""
         body = "\n".join(
             [
                 "[b]This edit is staged in the TUI.[/b]",
+                f"Total staged edits: {self.count}",
                 "",
                 f"Before: {self.edit.original_text}",
                 f"After:  {self.edit.corrected_text}",
                 "",
-                "Press [b]s[/b] to save speaker names and run full-document correction.",
+                "Press [b]s[/b] to save and run correction in the TUI.",
                 "Press [b]Enter[/b] to keep reviewing; the sample stays marked as edited.",
             ]
         )
@@ -194,5 +197,6 @@ class CorrectionQueuedScreen(ModalScreen[None]):
         self.dismiss(None)
 
     def action_save_and_run(self) -> None:
-        """Save review state so the CLI can run correction processing."""
+        """Save review state and run correction processing."""
+        self.dismiss(None)
         self.app.action_save()

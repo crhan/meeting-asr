@@ -99,13 +99,47 @@ def prepare_inline_correction(
     Returns:
         Correction edit summary.
     """
+    return prepare_inline_corrections(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        correction_edits=[correction_edit],
+        options=options,
+    )
+
+
+def prepare_inline_corrections(
+    *,
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    speaker_mapping: dict[int, str],
+    correction_edits: list[object],
+    options: CorrectionEditOptions,
+) -> CorrectionEditSummary:
+    """
+    Prepare a correction proposal from one or more TUI-edited sentences.
+
+    Args:
+        paths: Project paths.
+        manifest: Project manifest.
+        speaker_mapping: Speaker id to display name mapping.
+        correction_edits: TUI sentence edits.
+        options: Correction options.
+
+    Returns:
+        Correction edit summary.
+    """
     source = _load_correction_source(paths, from_original=options.from_original)
-    sample_change = _inline_sample_change(source.result, correction_edit, speaker_mapping)
     lexicon_db = options.lexicon_db or default_lexicon_db_path()
-    if sample_change.corrected_text == sample_change.original_text:
-        return _empty_summary(_write_inline_review_file(paths, manifest, sample_change), lexicon_db)
-    review_path = _write_inline_review_file(paths, manifest, sample_change)
-    proposal = _build_proposal(paths, manifest, source, review_path, [sample_change], speaker_mapping, options)
+    sample_changes = _inline_sample_changes(source.result, correction_edits, speaker_mapping)
+    changed_samples = [
+        change for change in sample_changes
+        if change.corrected_text != change.original_text
+    ]
+    review_path = _write_inline_review_file(paths, manifest, sample_changes)
+    if not changed_samples:
+        return _empty_summary(review_path, lexicon_db)
+    proposal = _build_proposal(paths, manifest, source, review_path, changed_samples, speaker_mapping, options)
     if options.open_proposal:
         open_editor(proposal.proposal_path, options.editor)
     return _proposal_summary(proposal, lexicon_db)
@@ -301,6 +335,20 @@ def _inline_sample_change(
     return _change_from_sentence(sentence, corrected_text, speaker_mapping)
 
 
+def _inline_sample_changes(
+    result: TranscriptResult,
+    correction_edits: list[object],
+    speaker_mapping: dict[int, str],
+) -> list[CorrectionChange]:
+    """Build correction changes from all TUI edit metadata."""
+    if not correction_edits:
+        raise ValueError("At least one inline correction edit is required.")
+    return [
+        _inline_sample_change(result, correction_edit, speaker_mapping)
+        for correction_edit in correction_edits
+    ]
+
+
 def _find_inline_sentence(result: TranscriptResult, correction_edit: object) -> SentenceSegment:
     """Find the source sentence edited by the TUI."""
     sentence_id = _optional_int_from_any(getattr(correction_edit, "sentence_id"))
@@ -321,9 +369,9 @@ def _find_inline_sentence(result: TranscriptResult, correction_edit: object) -> 
 def _write_inline_review_file(
     paths: ProjectPaths,
     manifest: ProjectManifest,
-    sample_change: CorrectionChange,
+    sample_changes: list[CorrectionChange],
 ) -> Path:
-    """Write a compact review file for one TUI correction sample."""
+    """Write a compact review file for TUI correction samples."""
     review_dir = paths.root / "tmp" / REVIEW_DIR
     review_dir.mkdir(parents=True, exist_ok=True)
     review_path = review_dir / f"review_tui_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
@@ -333,12 +381,18 @@ def _write_inline_review_file(
         f"Project ID: {manifest.project_id}",
         f"Title: {manifest.title}",
         "",
-        "## Edited Sample",
-        f"- Speaker: {sample_change.speaker_name}",
-        f"- Before: {sample_change.original_text}",
-        f"- After: {sample_change.corrected_text}",
-        "",
+        "## Edited Samples",
     ]
+    for index, sample_change in enumerate(sample_changes, start=1):
+        lines.extend(
+            [
+                f"### Sample {index}",
+                f"- Speaker: {sample_change.speaker_name}",
+                f"- Before: {sample_change.original_text}",
+                f"- After: {sample_change.corrected_text}",
+                "",
+            ]
+        )
     return safe_write_text(review_path, "\n".join(lines))
 
 

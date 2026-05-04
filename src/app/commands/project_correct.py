@@ -21,7 +21,7 @@ from app.transcript_corrections import (
     CorrectionEditSummary,
     accept_correction_proposal,
     prepare_editor_correction,
-    prepare_inline_correction,
+    prepare_inline_corrections,
 )
 
 app = MeetingAsrTyper(
@@ -122,23 +122,119 @@ def finish_inline_correction(
     Returns:
         Final correction summary.
     """
-    inline_options = replace(options, open_editor=False, open_proposal=False)
-    summary = prepare_inline_correction(
+    return finish_inline_corrections(
         paths=paths,
         manifest=manifest,
         speaker_mapping=speaker_mapping,
-        correction_edit=correction_edit,
-        options=inline_options,
+        correction_edits=[correction_edit],
+        options=options,
+        yes=yes,
+    )
+
+
+def finish_inline_corrections(
+    *,
+    paths,
+    manifest: ProjectManifest,
+    speaker_mapping: dict[int, str],
+    correction_edits: list[object],
+    options: CorrectionEditOptions,
+    yes: bool,
+) -> CorrectionEditSummary:
+    """
+    Run the TUI inline correction flow for multiple edited sentences.
+
+    Args:
+        paths: Project paths.
+        manifest: Loaded project manifest.
+        speaker_mapping: Speaker id to display name mapping.
+        correction_edits: TUI sentence edits.
+        options: Correction options.
+        yes: Whether to accept the generated proposal without prompting.
+
+    Returns:
+        Final correction summary.
+    """
+    summary = prepare_inline_corrections_for_review(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        correction_edits=correction_edits,
+        options=options,
     )
     return _finish_correction_edit(
         paths,
         manifest,
         speaker_mapping,
         summary,
-        inline_options.lexicon_db,
+        options.lexicon_db,
         yes,
         auto_accept=True,
     )
+
+
+def prepare_inline_corrections_for_review(
+    *,
+    paths,
+    manifest: ProjectManifest,
+    speaker_mapping: dict[int, str],
+    correction_edits: list[object],
+    options: CorrectionEditOptions,
+) -> CorrectionEditSummary:
+    """
+    Prepare pending correction proposal from TUI edits without printing or prompting.
+
+    Args:
+        paths: Project paths.
+        manifest: Loaded project manifest.
+        speaker_mapping: Speaker id to display name mapping.
+        correction_edits: TUI sentence edits.
+        options: Correction options.
+
+    Returns:
+        Pending proposal summary.
+    """
+    inline_options = replace(options, open_editor=False, open_proposal=False)
+    return prepare_inline_corrections(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        correction_edits=correction_edits,
+        options=inline_options,
+    )
+
+
+def accept_correction_for_review(
+    *,
+    paths,
+    manifest: ProjectManifest,
+    speaker_mapping: dict[int, str],
+    proposal_path: Path | None,
+    lexicon_db: Path | None,
+) -> CorrectionEditSummary:
+    """
+    Accept a pending correction proposal without CLI prompting or printing.
+
+    Args:
+        paths: Project paths.
+        manifest: Loaded project manifest.
+        speaker_mapping: Speaker id to display name mapping.
+        proposal_path: Pending proposal JSON path.
+        lexicon_db: Optional lexicon database override.
+
+    Returns:
+        Accepted correction summary.
+    """
+    accepted = accept_correction_proposal(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        proposal_path=proposal_path,
+        lexicon_db=lexicon_db,
+    )
+    record_correction_outputs(paths.root, manifest, accepted)
+    save_manifest(paths.root, manifest)
+    return accepted
 
 
 @app.command("accept")
@@ -159,7 +255,7 @@ def accept_command(
             lexicon_db=lexicon_db,
         )
     )
-    _record_correction_outputs(paths.root, manifest, summary)
+    record_correction_outputs(paths.root, manifest, summary)
     run_with_cli_errors(lambda: save_manifest(paths.root, manifest))
     _echo_correction_summary(summary)
 
@@ -247,7 +343,7 @@ def _accept_summary(
             lexicon_db=lexicon_db,
         )
     )
-    _record_correction_outputs(paths.root, manifest, accepted)
+    record_correction_outputs(paths.root, manifest, accepted)
     run_with_cli_errors(lambda: save_manifest(paths.root, manifest))
     _echo_correction_summary(accepted)
     return accepted
@@ -403,7 +499,7 @@ def _echo_output_paths(summary: CorrectionEditSummary) -> None:
     typer.echo(f"  {summary.applied_path}")
 
 
-def _record_correction_outputs(
+def record_correction_outputs(
     project_dir: Path,
     manifest: ProjectManifest,
     summary: CorrectionEditSummary,

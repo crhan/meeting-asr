@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -44,6 +45,7 @@ from app.presentation.tui.speaker_people import (
     load_existing_person_mapping,
     load_people,
 )
+from app.presentation.tui.speaker_save import SpeakerReviewSaveOutcome, SpeakerReviewSaveScreen
 from app.presentation.tui.speaker_status import (
     SpeakerReviewOverview,
     VoiceprintReviewProgress,
@@ -113,6 +115,7 @@ class SpeakerReviewDecision:
     person_mapping: dict[int, int] = field(default_factory=dict)
     person_public_mapping: dict[int, str] = field(default_factory=dict)
     correction_edit: SentenceCorrectionEdit | None = None
+    correction_edits: tuple[SentenceCorrectionEdit, ...] = ()
 
 
 class SpeakerReviewApp(App[SpeakerReviewDecision]):
@@ -178,20 +181,30 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("q", "quit_review", "Quit"),
     ]
 
-    def __init__(self, session: SpeakerReviewSession) -> None:
+    def __init__(
+        self,
+        session: SpeakerReviewSession,
+        *,
+        save_handler: Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
+        accept_handler: Callable[[Path | None], SpeakerReviewSaveOutcome] | None = None,
+    ) -> None:
         """
         Create the TUI app.
 
         Args:
             session: Speaker review inputs.
+            save_handler: Optional in-TUI save workflow callback.
+            accept_handler: Optional in-TUI correction proposal accept callback.
         """
         super().__init__()
         self.session = session
+        self.save_handler = save_handler
+        self.accept_handler = accept_handler
         self.selected_speaker_index = 0
         self.focused_column = "speakers"
         self.playback_process: subprocess.Popen | None = None
         self.known_people = list(session.people)
-        self.correction_edit: SentenceCorrectionEdit | None = None
+        self.correction_edits: list[SentenceCorrectionEdit] = []
 
     def compose(self) -> ComposeResult:
         """Build the TUI layout."""
@@ -295,16 +308,17 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.push_screen(ShortcutHelpScreen())
 
     def action_save(self) -> None:
-        """Return the reviewed mapping to the CLI command."""
-        action = "correct-inline" if self.correction_edit is not None else "save"
-        self.exit(
-            SpeakerReviewDecision(
-                saved=True,
-                mapping=self._mapping(),
-                action=action,
-                person_mapping=self._person_mapping(),
-                person_public_mapping=self._person_public_mapping(),
-                correction_edit=self.correction_edit,
+        """Save review state or return the reviewed mapping to the CLI command."""
+        decision = self._decision()
+        if self.save_handler is None:
+            self.exit(decision)
+            return
+        self.push_screen(
+            SpeakerReviewSaveScreen(
+                decision=decision,
+                save_handler=self.save_handler,
+                accept_handler=self.accept_handler,
+                on_result=self._handle_save_outcome,
             )
         )
 
@@ -332,11 +346,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         if edit is None:
             self._set_status("Transcript correction canceled.")
             return
-        self.correction_edit = edit
+        self._upsert_correction_edit(edit)
         self._replace_segment_text(edit)
-        self._set_status("Text correction staged. Press s to save names and run full-document correction.")
+        count = len(self.correction_edits)
+        self._set_status(f"{count} text correction(s) staged. Press s to save and run correction.")
         self._refresh()
-        self.push_screen(CorrectionQueuedScreen(edit))
+        self.push_screen(CorrectionQueuedScreen(edit, count=count))
 
     def _handle_identity_selection(self, selection: IdentitySelection | None) -> None:
         """Apply one identity selected in the modal."""
@@ -428,7 +443,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             time_range = _segment_time_range(segment)
             text = _trim_sample_text(segment.text)
             sample_line = f"{prefix} [cyan]{time_range}[/] {escape(text)}"
-            if self.correction_edit is not None and _same_sentence(segment, self.correction_edit):
+            if self._has_correction_edit(segment):
                 sample_line += " [yellow]edited[/]"
             if index == speaker.selected_sample_index:
                 sample_line = f"[reverse]{sample_line}[/]"
@@ -494,6 +509,43 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             for speaker in self.session.speakers
             if speaker.person_public_id is not None and not speaker.ignored
         }
+
+    def _decision(self) -> SpeakerReviewDecision:
+        """Build the current save decision."""
+        correction_edits = tuple(self.correction_edits)
+        latest_edit = correction_edits[-1] if correction_edits else None
+        action = "correct-inline" if correction_edits else "save"
+        return SpeakerReviewDecision(
+            saved=True,
+            mapping=self._mapping(),
+            action=action,
+            person_mapping=self._person_mapping(),
+            person_public_mapping=self._person_public_mapping(),
+            correction_edit=latest_edit,
+            correction_edits=correction_edits,
+        )
+
+    def _upsert_correction_edit(self, edit: SentenceCorrectionEdit) -> None:
+        """Insert or replace one staged edit by sentence identity."""
+        for index, staged in enumerate(self.correction_edits):
+            if _same_edit(staged, edit):
+                self.correction_edits[index] = edit
+                return
+        self.correction_edits.append(edit)
+
+    def _has_correction_edit(self, segment: SentenceSegment) -> bool:
+        """Return whether a visible sample has a staged correction."""
+        return any(_same_sentence(segment, edit) for edit in self.correction_edits)
+
+    def _handle_save_outcome(self, outcome: SpeakerReviewSaveOutcome) -> None:
+        """Update review state after the in-TUI save workflow completes."""
+        summary = outcome.correction_summary
+        if summary is not None and summary.accepted:
+            self.correction_edits.clear()
+            self._set_status("Saved names and accepted transcript correction.")
+            self._refresh()
+            return
+        self._set_status("Saved project review. Continue reviewing or press q to exit.")
 
     def _set_speaker_identity(
         self,
@@ -630,17 +682,28 @@ def load_speaker_review_session(
     )
 
 
-def run_speaker_review_tui(session: SpeakerReviewSession) -> SpeakerReviewDecision:
+def run_speaker_review_tui(
+    session: SpeakerReviewSession,
+    *,
+    save_handler: Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
+    accept_handler: Callable[[Path | None], SpeakerReviewSaveOutcome] | None = None,
+) -> SpeakerReviewDecision:
     """
     Run the Textual speaker review app.
 
     Args:
         session: Speaker review inputs.
+        save_handler: Optional in-TUI save callback.
+        accept_handler: Optional in-TUI correction accept callback.
 
     Returns:
         Save decision and mapping.
     """
-    decision = SpeakerReviewApp(session).run()
+    decision = SpeakerReviewApp(
+        session,
+        save_handler=save_handler,
+        accept_handler=accept_handler,
+    ).run()
     return decision or SpeakerReviewDecision(saved=False, mapping={}, action="quit")
 
 
@@ -834,6 +897,16 @@ def _same_sentence(segment: SentenceSegment, edit: SentenceCorrectionEdit) -> bo
         and segment.speaker_id == edit.speaker_id
         and segment.begin_time_ms == edit.begin_time_ms
         and segment.end_time_ms == edit.end_time_ms
+    )
+
+
+def _same_edit(left: SentenceCorrectionEdit, right: SentenceCorrectionEdit) -> bool:
+    """Return whether two inline edits refer to the same transcript sentence."""
+    return (
+        left.sentence_id == right.sentence_id
+        and left.speaker_id == right.speaker_id
+        and left.begin_time_ms == right.begin_time_ms
+        and left.end_time_ms == right.end_time_ms
     )
 
 

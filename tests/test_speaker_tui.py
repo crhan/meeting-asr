@@ -9,6 +9,7 @@ from pathlib import Path
 from textual.widgets import Input, Static
 
 from app import speaker_tui
+from app.correction_types import CorrectionEditSummary
 from app.models import SentenceSegment
 from app.project_manager import create_project, project_paths
 from app.speaker_tui import (
@@ -28,6 +29,7 @@ from app.speaker_tui import (
     VoiceprintReviewProgress,
     load_speaker_review_session,
 )
+from app.presentation.tui.speaker_save import SpeakerReviewSaveOutcome, SpeakerReviewSaveScreen
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
@@ -204,7 +206,7 @@ def test_project_review_tui_edits_transcript_text_inline() -> None:
             assert "Press s" in feedback
             assert app.return_value is None
             assert app._speaker().segments[0].text == "第一句修正"
-            assert "run full-document correction" in str(app.query_one("#status", Static).render())
+            assert "run correction" in str(app.query_one("#status", Static).render())
             assert "edited" in app._sample_pane()
 
             await pilot.press("s")
@@ -218,6 +220,110 @@ def test_project_review_tui_edits_transcript_text_inline() -> None:
     assert app.return_value.correction_edit is not None
     assert app.return_value.correction_edit.original_text == "第一句"
     assert app.return_value.correction_edit.corrected_text == "第一句修正"
+    assert len(app.return_value.correction_edits) == 1
+
+
+def test_project_review_tui_keeps_multiple_inline_text_edits() -> None:
+    """Multiple TUI text edits should be saved together, not overwritten."""
+    app = SpeakerReviewApp(_session(allow_correction=True))
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("e")
+            await pilot.pause()
+            app.screen.query_one("#correction-input", Input).value = "第一句修正"
+            await pilot.press("enter")
+            await pilot.press("enter")
+
+            await pilot.press("right")
+            await pilot.press("down")
+            await pilot.press("e")
+            await pilot.pause()
+            app.screen.query_one("#correction-input", Input).value = "第二句修正"
+            await pilot.press("enter")
+            await pilot.press("s")
+
+    asyncio.run(scenario())
+
+    assert app.return_value is not None
+    assert app.return_value.action == "correct-inline"
+    assert [edit.original_text for edit in app.return_value.correction_edits] == ["第一句", "第二句"]
+    assert [edit.corrected_text for edit in app.return_value.correction_edits] == ["第一句修正", "第二句修正"]
+
+
+def test_project_review_tui_save_handler_keeps_tui_open() -> None:
+    """Project review save should run inside a modal instead of exiting the TUI."""
+    seen: list[SpeakerReviewDecision] = []
+
+    def save_handler(decision: SpeakerReviewDecision) -> SpeakerReviewSaveOutcome:
+        seen.append(decision)
+        return SpeakerReviewSaveOutcome(Path("speaker_map.json"), Path("transcript.txt"), Path("subtitle.srt"))
+
+    app = SpeakerReviewApp(_session(allow_correction=True), save_handler=save_handler)
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("s")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, SpeakerReviewSaveScreen)
+            assert app.return_value is None
+            assert seen and seen[0].saved is True
+            assert "Project review saved" in str(app.screen.query_one("#save-title", Static).render())
+
+            await pilot.press("enter")
+            await pilot.pause()
+            assert not isinstance(app.screen, SpeakerReviewSaveScreen)
+
+    asyncio.run(scenario())
+
+
+def test_project_review_tui_accepts_pending_correction_in_modal() -> None:
+    """The save modal should handle proposal acceptance without leaving the TUI."""
+    accepted_paths: list[Path | None] = []
+
+    def save_handler(decision: SpeakerReviewDecision) -> SpeakerReviewSaveOutcome:
+        assert len(decision.correction_edits) == 1
+        return SpeakerReviewSaveOutcome(
+            Path("speaker_map.json"),
+            Path("transcript.txt"),
+            Path("subtitle.srt"),
+            _correction_summary(accepted=False),
+        )
+
+    def accept_handler(proposal_path: Path | None) -> SpeakerReviewSaveOutcome:
+        accepted_paths.append(proposal_path)
+        return SpeakerReviewSaveOutcome(None, None, None, _correction_summary(accepted=True))
+
+    app = SpeakerReviewApp(
+        _session(allow_correction=True),
+        save_handler=save_handler,
+        accept_handler=accept_handler,
+    )
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("e")
+            await pilot.pause()
+            app.screen.query_one("#correction-input", Input).value = "第一句修正"
+            await pilot.press("enter")
+            await pilot.press("s")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, SpeakerReviewSaveScreen)
+            assert "needs review" in str(app.screen.query_one("#save-title", Static).render())
+
+            await pilot.press("a")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert accepted_paths == [Path("proposal.json")]
+            assert not app.correction_edits
+            assert "correction accepted" in str(app.screen.query_one("#save-title", Static).render())
+
+    asyncio.run(scenario())
 
 
 def test_transcript_correction_input_uses_readline_cursor_keys() -> None:
@@ -731,6 +837,31 @@ def _overview(*, with_status: bool) -> SpeakerReviewOverview:
         match_file_exists=with_status,
         saved_names_by_speaker=saved_names,
         voiceprint=voiceprint,
+    )
+
+
+def _correction_summary(*, accepted: bool) -> CorrectionEditSummary:
+    """Build a minimal correction summary for save modal tests."""
+    return CorrectionEditSummary(
+        review_path=Path("review.md"),
+        proposal_path=Path("proposal.md"),
+        proposal_diff_path=Path("proposal.diff"),
+        proposal_json_path=Path("proposal.json"),
+        change_count=1 if accepted else 0,
+        sample_change_count=1,
+        proposed_change_count=1,
+        learned_count=1 if accepted else 0,
+        accepted=accepted,
+        model="test-model",
+        model_error=None,
+        understanding=[],
+        corrected_sentences_path=Path("sentences_corrected.json") if accepted else None,
+        corrected_transcript_path=Path("transcript_corrected.txt") if accepted else None,
+        corrected_named_transcript_path=Path("transcript_named_corrected.txt") if accepted else None,
+        corrected_srt_path=Path("subtitle_named_corrected.srt") if accepted else None,
+        hotwords_path=Path("asr_hotwords.json") if accepted else None,
+        applied_path=Path("applied.json") if accepted else None,
+        lexicon_db=Path("lexicon.sqlite"),
     )
 
 

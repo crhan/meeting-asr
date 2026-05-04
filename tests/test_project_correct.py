@@ -309,7 +309,7 @@ def test_project_review_inline_correction_does_not_open_editor(tmp_path: Path) -
                 sentence_id=1,
                 speaker_id=0,
                 begin_time_ms=1000,
-                end_time_ms=3000,
+                end_time_ms=1500,
                 original_text="我们看一下艾赛系统。",
                 corrected_text="我们看一下iSee系统。",
             ),
@@ -324,6 +324,46 @@ def test_project_review_inline_correction_does_not_open_editor(tmp_path: Path) -
     assert _fetch_one(lexicon_db, "SELECT canonical FROM terms") == "iSee"
 
 
+def test_project_review_inline_correction_keeps_multiple_tui_edits(tmp_path: Path) -> None:
+    """Project review should process every staged TUI text edit in one proposal."""
+    project_dir = _sample_project_with_sentences(
+        tmp_path,
+        ["我们看一下艾赛系统。", "AS服务需要修正。"],
+    )
+    lexicon_db = tmp_path / "lexicon.sqlite"
+    options = project_commands.ProjectReviewCorrectionOptions(
+        edit_options=CorrectionEditOptions(
+            editor="definitely-missing-editor",
+            open_editor=True,
+            open_proposal=True,
+            category="system",
+            lexicon_db=lexicon_db,
+            use_ai=False,
+        ),
+        yes=True,
+    )
+
+    project_commands._handle_speaker_review_decision(
+        project_dir,
+        SpeakerReviewDecision(
+            saved=True,
+            mapping={0: "敬悦"},
+            action="correct-inline",
+            correction_edits=(
+                SentenceCorrectionEdit(1, 0, 1000, 1500, "我们看一下艾赛系统。", "我们看一下iSee系统。"),
+                SentenceCorrectionEdit(2, 0, 2000, 2500, "AS服务需要修正。", "IaaS服务需要修正。"),
+            ),
+        ),
+        options,
+    )
+
+    corrected = (project_dir / "exports" / "transcript_named_corrected.txt").read_text(encoding="utf-8")
+    assert "敬悦: 我们看一下iSee系统。" in corrected
+    assert "敬悦: IaaS服务需要修正。" in corrected
+    proposal = _latest_proposal(project_dir)
+    assert len(proposal["sample_changes"]) == 2
+
+
 def _sample_project(tmp_path: Path) -> Path:
     """Create a project fixture with one mapped speaker and one ASR error."""
     return _sample_project_with_text(tmp_path, "我们看一下艾赛系统。")
@@ -331,6 +371,11 @@ def _sample_project(tmp_path: Path) -> Path:
 
 def _sample_project_with_text(tmp_path: Path, text: str) -> Path:
     """Create a project fixture with one mapped speaker and custom transcript text."""
+    return _sample_project_with_sentences(tmp_path, [text])
+
+
+def _sample_project_with_sentences(tmp_path: Path, texts: list[str]) -> Path:
+    """Create a project fixture with one mapped speaker and custom transcript sentences."""
     source = tmp_path / "meeting.mp4"
     source.write_bytes(b"fake video")
     project_dir = tmp_path / "projects" / "demo"
@@ -342,22 +387,27 @@ def _sample_project_with_text(tmp_path: Path, text: str) -> Path:
         meeting_time=None,
         hash_source=False,
     )
+    sentence_payloads = [_sentence_payload(index, text) for index, text in enumerate(texts, start=1)]
     sentences = {
-        "full_text": text,
+        "full_text": "\n".join(texts),
         "detected_speakers": [0],
-        "sentences": [
-            {
-                "begin_time_ms": 1000,
-                "end_time_ms": 3000,
-                "text": text,
-                "speaker_id": 0,
-                "sentence_id": 1,
-            }
-        ],
+        "sentences": sentence_payloads,
     }
     (project_dir / "asr" / "sentences.json").write_text(json.dumps(sentences, ensure_ascii=False), encoding="utf-8")
     (project_dir / "speakers" / "speaker_map.json").write_text('{"0": "敬悦"}\n', encoding="utf-8")
     return project_dir
+
+
+def _sentence_payload(index: int, text: str) -> dict:
+    """Build one transcript sentence payload."""
+    begin = index * 1000
+    return {
+        "begin_time_ms": begin,
+        "end_time_ms": begin + 500,
+        "text": text,
+        "speaker_id": 0,
+        "sentence_id": index,
+    }
 
 
 def _editor_script(tmp_path: Path, old: str, new: str) -> Path:
