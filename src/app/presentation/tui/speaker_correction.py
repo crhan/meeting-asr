@@ -9,11 +9,10 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import ScrollableContainer, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Input, Static
+from textual.widgets import Static, TextArea
 
 from app.models import SentenceSegment
 from app.presentation.tui.diff_render import styled_before_after
-from app.presentation.tui.inputs import ReadlineInput
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,10 +27,21 @@ class SentenceCorrectionEdit:
     corrected_text: str
 
 
-class CorrectionInput(ReadlineInput):
-    """Correction input with local cancel handling."""
+class CorrectionTextArea(TextArea):
+    """Large transcript editor with non-destructive cursor shortcuts."""
 
-    BINDINGS = [Binding("escape", "cancel_correction", "Cancel", show=False)]
+    BINDINGS = [
+        Binding("enter", "submit_correction", "Apply", show=False, priority=True),
+        Binding("escape", "cancel_correction", "Cancel", show=False, priority=True),
+        Binding("ctrl+f", "cursor_right", "Forward", show=False, priority=True),
+        Binding("ctrl+b", "cursor_left", "Backward", show=False, priority=True),
+    ]
+
+    def action_submit_correction(self) -> None:
+        """Submit the current editor text to the parent modal."""
+        screen = self.app.screen
+        if hasattr(screen, "submit_correction"):
+            screen.submit_correction(self.text)
 
     def action_cancel_correction(self) -> None:
         """Cancel the correction popup."""
@@ -46,8 +56,9 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
         align: center middle;
     }
     #correction-box {
-        width: 88;
-        height: auto;
+        width: 92%;
+        height: 72%;
+        max-height: 86%;
         border: thick $accent;
         padding: 1 2;
         background: $surface;
@@ -57,13 +68,15 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
     }
     #correction-original {
         color: $text-muted;
+        height: 7;
         margin: 1 0;
     }
     #correction-input {
-        height: 3;
+        height: 1fr;
+        border: tall $primary;
     }
     #correction-status {
-        height: 1;
+        height: 2;
         color: $text-muted;
     }
     """
@@ -98,19 +111,20 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
         title = f"Edit Transcript Text | {self.speaker_label} / {self.speaker_name}"
         with Vertical(id="correction-box"):
             yield Static(title, id="correction-title")
-            yield Static(f"Original: {original}", id="correction-original")
-            yield CorrectionInput(value=original, id="correction-input")
-            yield Static("Enter applies this edit. Esc cancels.", id="correction-status")
+            with ScrollableContainer(id="correction-original"):
+                yield Static(f"[b]Original:[/]\n{original}")
+            yield CorrectionTextArea(original, id="correction-input", soft_wrap=True, show_line_numbers=False)
+            yield Static("Enter applies this edit. Esc cancels. Ctrl-F/Ctrl-B move cursor.", id="correction-status")
 
     def on_mount(self) -> None:
-        """Focus and select the correction input."""
-        field = self.query_one("#correction-input", Input)
+        """Focus the correction editor."""
+        field = self.query_one("#correction-input", TextArea)
         field.focus()
+        field.cursor_location = (0, len(self.segment.text.strip()))
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    def submit_correction(self, value: str) -> None:
         """Return the edited sentence text to the parent TUI."""
-        event.stop()
-        corrected = event.value.strip()
+        corrected = value.strip()
         original = self.segment.text.strip()
         if not corrected:
             self.query_one("#correction-status", Static).update("Corrected text cannot be empty.")

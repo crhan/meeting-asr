@@ -6,7 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from textual.widgets import Input, Static
+from textual.widgets import Input, Static, TextArea
 
 from app import speaker_tui
 from app.correction_types import CorrectionEditSummary
@@ -200,8 +200,8 @@ def test_project_review_tui_edits_transcript_text_inline() -> None:
 
             assert isinstance(app.screen, SentenceCorrectionScreen)
 
-            field = app.screen.query_one("#correction-input", Input)
-            field.value = "第一句修正"
+            field = app.screen.query_one("#correction-input", TextArea)
+            field.text = "第一句修正"
             await pilot.press("enter")
             await pilot.pause()
 
@@ -239,7 +239,7 @@ def test_project_review_tui_keeps_multiple_inline_text_edits() -> None:
         async with app.run_test() as pilot:
             await pilot.press("e")
             await pilot.pause()
-            app.screen.query_one("#correction-input", Input).value = "第一句修正"
+            app.screen.query_one("#correction-input", TextArea).text = "第一句修正"
             await pilot.press("enter")
             await pilot.press("enter")
 
@@ -247,7 +247,7 @@ def test_project_review_tui_keeps_multiple_inline_text_edits() -> None:
             await pilot.press("down")
             await pilot.press("e")
             await pilot.pause()
-            app.screen.query_one("#correction-input", Input).value = "第二句修正"
+            app.screen.query_one("#correction-input", TextArea).text = "第二句修正"
             await pilot.press("enter")
             await pilot.press("s")
 
@@ -325,7 +325,7 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
         async with app.run_test() as pilot:
             await pilot.press("e")
             await pilot.pause()
-            app.screen.query_one("#correction-input", Input).value = "第一句修正"
+            app.screen.query_one("#correction-input", TextArea).text = "第一句修正"
             await pilot.press("enter")
             await pilot.press("s")
             await pilot.pause()
@@ -392,7 +392,7 @@ def test_project_review_tui_can_exclude_one_proposed_change(tmp_path: Path) -> N
         async with app.run_test() as pilot:
             await pilot.press("e")
             await pilot.pause()
-            app.screen.query_one("#correction-input", Input).value = "第一句修正"
+            app.screen.query_one("#correction-input", TextArea).text = "第一句修正"
             await pilot.press("enter")
             await pilot.press("s")
             await pilot.pause()
@@ -429,21 +429,21 @@ def test_transcript_correction_input_uses_readline_cursor_keys() -> None:
             await pilot.press("e")
             await pilot.pause()
 
-            field = app.screen.query_one("#correction-input", Input)
-            field.value = "abcdef"
-            field.cursor_position = 0
+            field = app.screen.query_one("#correction-input", TextArea)
+            field.text = "abcdef"
+            field.cursor_location = (0, 0)
 
             await pilot.press("ctrl+f")
             await pilot.pause()
 
-            assert field.value == "abcdef"
-            assert field.cursor_position == 1
+            assert field.text == "abcdef"
+            assert field.cursor_location == (0, 1)
 
             await pilot.press("ctrl+b")
             await pilot.pause()
 
-            assert field.value == "abcdef"
-            assert field.cursor_position == 0
+            assert field.text == "abcdef"
+            assert field.cursor_location == (0, 0)
 
     asyncio.run(scenario())
 
