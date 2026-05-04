@@ -29,7 +29,11 @@ from app.speaker_tui import (
     VoiceprintReviewProgress,
     load_speaker_review_session,
 )
-from app.presentation.tui.speaker_save import SpeakerReviewSaveOutcome, SpeakerReviewSaveScreen
+from app.presentation.tui.speaker_save import (
+    CorrectionProposalDiffScreen,
+    SpeakerReviewSaveOutcome,
+    SpeakerReviewSaveScreen,
+)
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
@@ -279,9 +283,11 @@ def test_project_review_tui_save_handler_keeps_tui_open() -> None:
     asyncio.run(scenario())
 
 
-def test_project_review_tui_accepts_pending_correction_in_modal() -> None:
+def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) -> None:
     """The save modal should handle proposal acceptance without leaving the TUI."""
     accepted_paths: list[Path | None] = []
+    diff_path = tmp_path / "proposal.diff"
+    diff_path.write_text("- AS\n+ IaaS\n", encoding="utf-8")
 
     def save_handler(decision: SpeakerReviewDecision) -> SpeakerReviewSaveOutcome:
         assert len(decision.correction_edits) == 1
@@ -289,7 +295,7 @@ def test_project_review_tui_accepts_pending_correction_in_modal() -> None:
             Path("speaker_map.json"),
             Path("transcript.txt"),
             Path("subtitle.srt"),
-            _correction_summary(accepted=False),
+            _correction_summary(accepted=False, diff_path=diff_path),
         )
 
     def accept_handler(proposal_path: Path | None) -> SpeakerReviewSaveOutcome:
@@ -314,6 +320,15 @@ def test_project_review_tui_accepts_pending_correction_in_modal() -> None:
 
             assert isinstance(app.screen, SpeakerReviewSaveScreen)
             assert "needs review" in str(app.screen.query_one("#save-title", Static).render())
+
+            await pilot.press("d")
+            await pilot.pause()
+
+            assert isinstance(app.screen, CorrectionProposalDiffScreen)
+            assert "+ IaaS" in str(app.screen.query_one("#diff-content", Static).render())
+
+            await pilot.press("enter")
+            await pilot.pause()
 
             await pilot.press("a")
             await pilot.pause()
@@ -840,12 +855,12 @@ def _overview(*, with_status: bool) -> SpeakerReviewOverview:
     )
 
 
-def _correction_summary(*, accepted: bool) -> CorrectionEditSummary:
+def _correction_summary(*, accepted: bool, diff_path: Path | None = None) -> CorrectionEditSummary:
     """Build a minimal correction summary for save modal tests."""
     return CorrectionEditSummary(
         review_path=Path("review.md"),
         proposal_path=Path("proposal.md"),
-        proposal_diff_path=Path("proposal.diff"),
+        proposal_diff_path=diff_path or Path("proposal.diff"),
         proposal_json_path=Path("proposal.json"),
         change_count=1 if accepted else 0,
         sample_change_count=1,

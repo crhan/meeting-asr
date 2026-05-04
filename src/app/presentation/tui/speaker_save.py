@@ -10,7 +10,7 @@ from typing import Any
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.worker import Worker, WorkerState
 from textual.widgets import Static
@@ -55,6 +55,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
     """
 
     BINDINGS = [
+        Binding("d", "view_diff", "View diff"),
         Binding("a", "accept_proposal", "Accept proposal"),
         Binding("enter", "close_feedback", "Continue"),
         Binding("escape", "close_feedback", "Continue", show=False),
@@ -122,6 +123,15 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
             thread=True,
         )
 
+    def action_view_diff(self) -> None:
+        """Open the proposal diff inside the TUI."""
+        if self.running:
+            return
+        diff_path = self._pending_diff_path()
+        if diff_path is None:
+            return
+        self.app.push_screen(CorrectionProposalDiffScreen(diff_path))
+
     def action_close_feedback(self) -> None:
         """Close the save feedback modal when no worker is running."""
         if not self.running:
@@ -186,7 +196,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
     def _actions(self) -> str:
         """Render available next actions."""
         if self._pending_proposal_path() is not None:
-            return "Press a to accept proposal | Enter to continue reviewing"
+            return "Press d to review diff | a to accept proposal | Enter to continue reviewing"
         return "Press Enter to continue reviewing | q quits from the main screen"
 
     def _pending_proposal_path(self) -> Path | None:
@@ -198,6 +208,13 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
             return None
         return summary.proposal_json_path
 
+    def _pending_diff_path(self) -> Path | None:
+        """Return the pending diff path if it can be inspected."""
+        summary = None if self.outcome is None else self.outcome.correction_summary
+        if summary is None or summary.accepted:
+            return None
+        return summary.proposal_diff_path
+
     def _merged_outcome(self, outcome: SpeakerReviewSaveOutcome) -> SpeakerReviewSaveOutcome:
         """Preserve speaker output paths when accepting a proposal."""
         if self.outcome is None or outcome.mapping_path is not None:
@@ -208,6 +225,103 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
             self.outcome.srt_path,
             outcome.correction_summary,
         )
+
+
+class CorrectionProposalDiffScreen(ModalScreen[None]):
+    """Scrollable modal for inspecting a pending correction diff."""
+
+    CSS = """
+    CorrectionProposalDiffScreen {
+        align: center middle;
+    }
+    #diff-box {
+        width: 96%;
+        height: 90%;
+        border: thick $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    #diff-title {
+        height: 1;
+        text-style: bold;
+    }
+    #diff-scroll {
+        height: 1fr;
+        margin: 1 0;
+    }
+    #diff-actions {
+        height: 1;
+        color: $text-muted;
+    }
+    """
+
+    BINDINGS = [
+        Binding("j", "scroll_down", "Down"),
+        Binding("k", "scroll_up", "Up"),
+        Binding("down", "scroll_down", "Down", show=False),
+        Binding("up", "scroll_up", "Up", show=False),
+        Binding("pagedown", "page_down", "Page down"),
+        Binding("pageup", "page_up", "Page up"),
+        Binding("home", "scroll_home", "Top", show=False),
+        Binding("end", "scroll_end", "Bottom", show=False),
+        Binding("enter", "close_diff", "Back"),
+        Binding("escape", "close_diff", "Back", show=False),
+        Binding("q", "close_diff", "Back"),
+    ]
+
+    def __init__(self, diff_path: Path) -> None:
+        """
+        Create a diff inspection modal.
+
+        Args:
+            diff_path: Proposal diff path.
+        """
+        super().__init__()
+        self.diff_path = diff_path
+
+    def compose(self) -> ComposeResult:
+        """Build diff inspection layout."""
+        with Vertical(id="diff-box"):
+            yield Static(f"Correction proposal diff: {escape(str(self.diff_path))}", id="diff-title")
+            with VerticalScroll(id="diff-scroll"):
+                yield Static(self._diff_text(), id="diff-content")
+            yield Static("j/k or arrows scroll | PageUp/PageDown | Enter returns", id="diff-actions")
+
+    def action_scroll_down(self) -> None:
+        """Scroll the diff down."""
+        self.query_one("#diff-scroll", VerticalScroll).scroll_down()
+
+    def action_scroll_up(self) -> None:
+        """Scroll the diff up."""
+        self.query_one("#diff-scroll", VerticalScroll).scroll_up()
+
+    def action_page_down(self) -> None:
+        """Scroll the diff one page down."""
+        self.query_one("#diff-scroll", VerticalScroll).scroll_page_down()
+
+    def action_page_up(self) -> None:
+        """Scroll the diff one page up."""
+        self.query_one("#diff-scroll", VerticalScroll).scroll_page_up()
+
+    def action_scroll_home(self) -> None:
+        """Scroll the diff to the top."""
+        self.query_one("#diff-scroll", VerticalScroll).scroll_home()
+
+    def action_scroll_end(self) -> None:
+        """Scroll the diff to the bottom."""
+        self.query_one("#diff-scroll", VerticalScroll).scroll_end()
+
+    def action_close_diff(self) -> None:
+        """Close the diff modal."""
+        self.dismiss(None)
+
+    def _diff_text(self) -> str:
+        """Return escaped diff text or a readable error."""
+        try:
+            text = self.diff_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return escape(f"Unable to read diff: {exc}")
+        return escape(text or "(empty diff)")
 
 
 def _path_lines(outcome: SpeakerReviewSaveOutcome) -> list[str]:
