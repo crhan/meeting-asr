@@ -459,7 +459,7 @@ def review(
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
     summary: bool = typer.Option(False, "--summary", help="Print without opening a TUI."),
     editor: Optional[str] = typer.Option(None, "--editor", help="Editor command used by transcript correction."),
-    no_ai: bool = typer.Option(False, "--no-ai", help="Disable DashScope correction proposals when pressing c."),
+    no_ai: bool = typer.Option(False, "--no-ai", help="Disable DashScope correction proposals in TUI text correction."),
     no_proposal_open: bool = typer.Option(False, "--no-proposal-open", help="Do not open the generated correction proposal."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Accept generated correction proposals without prompting."),
     model: Optional[str] = typer.Option(None, "--model", help="DashScope correction model id."),
