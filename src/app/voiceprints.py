@@ -322,7 +322,7 @@ def _identity_for_capture(
     name: str,
     person_map: dict[int, int | str],
     db_path: Path,
-) -> int | None:
+) -> _SpeakerIdentity:
     """
     Resolve a voiceprint person id for one project speaker.
 
@@ -337,6 +337,9 @@ def _identity_for_capture(
     """
     person_ref = person_map.get(speaker_id)
     if person_ref is None:
+        person = get_voiceprint_person(name, db_path)
+        if person is not None:
+            return _SpeakerIdentity(name, person.speaker_id, person.public_id)
         return _SpeakerIdentity(name, None, None)
     person = get_voiceprint_person(person_ref, db_path)
     if person is None:

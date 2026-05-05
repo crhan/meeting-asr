@@ -145,6 +145,77 @@ def match_project_speakers(
         Match summary.
     """
     context = _match_context(project_dir, store_dir, provider, model)
+    summary = _build_match_summary(
+        context,
+        endpoint=endpoint,
+        threshold=threshold,
+        sample_count=sample_count,
+        max_seconds=max_seconds,
+        padding_seconds=padding_seconds,
+        progress=progress,
+    )
+    emit_progress(progress, "Writing speaker match suggestions")
+    safe_write_json(summary.match_path, _matches_payload(context.provider, context.model, threshold, summary.matches))
+    context.manifest.speakers["matches"] = "speakers/speaker_matches.json"
+    save_manifest(context.project_root, context.manifest)
+    emit_progress(progress, "Speaker matching complete")
+    return summary
+
+
+def preview_project_speaker_matches(
+    project_dir: Path,
+    *,
+    store_dir: Path | None,
+    provider: str | None,
+    endpoint: str | None,
+    model: str | None,
+    threshold: float,
+    sample_count: int,
+    max_seconds: float,
+    padding_seconds: float,
+    progress: CliProgressReporter | None = None,
+) -> SpeakerMatchSummary:
+    """
+    Compute speaker matches without writing project metadata.
+
+    Args:
+        project_dir: Project root.
+        store_dir: Optional voiceprint store directory.
+        provider: Embedding provider.
+        endpoint: Optional provider endpoint.
+        model: Embedding model key.
+        threshold: Minimum accepted cosine score.
+        sample_count: Maximum probe clips per speaker.
+        max_seconds: Maximum seconds per probe clip.
+        padding_seconds: Context padding around each segment.
+        progress: Optional progress reporter.
+
+    Returns:
+        Match summary that has not been persisted to ``speaker_matches.json``.
+    """
+    context = _match_context(project_dir, store_dir, provider, model)
+    return _build_match_summary(
+        context,
+        endpoint=endpoint,
+        threshold=threshold,
+        sample_count=sample_count,
+        max_seconds=max_seconds,
+        padding_seconds=padding_seconds,
+        progress=progress,
+    )
+
+
+def _build_match_summary(
+    context: _MatchContext,
+    *,
+    endpoint: str | None,
+    threshold: float,
+    sample_count: int,
+    max_seconds: float,
+    padding_seconds: float,
+    progress: CliProgressReporter | None,
+) -> SpeakerMatchSummary:
+    """Build a match summary from a resolved project context."""
     matches = _match_speaker_groups(
         context.project_root,
         context.source,
@@ -158,12 +229,7 @@ def match_project_speakers(
         padding_seconds,
         progress,
     )
-    emit_progress(progress, "Writing speaker match suggestions")
     match_path = context.project_root / "speakers" / "speaker_matches.json"
-    safe_write_json(match_path, _matches_payload(context.provider, context.model, threshold, matches))
-    context.manifest.speakers["matches"] = "speakers/speaker_matches.json"
-    save_manifest(context.project_root, context.manifest)
-    emit_progress(progress, "Speaker matching complete")
     return SpeakerMatchSummary(match_path, context.provider, context.model, threshold, matches)
 
 
@@ -243,44 +309,85 @@ def _match_speaker_groups(
         return _unknown_speaker_matches(speaker_groups, threshold)
     for speaker_id, speaker_segments in speaker_groups:
         emit_progress(progress, f"Matching {speaker_id_to_label(speaker_id)}")
-        vector = _probe_speaker_vector(
-            project_root,
-            source,
-            speaker_id,
-            speaker_segments,
-            provider,
-            endpoint,
-            sample_count,
-            max_seconds,
-            padding_seconds,
-        )
-        candidates = _ranked_matches(vector, known, limit=3)
-        best = candidates[0] if candidates else None
-        accepted = best is not None and best.score >= threshold
-        accepted_name = best.name if accepted and best is not None else None
-        accepted_person_id = best.person_id if accepted and best is not None else None
-        accepted_person_public_id = best.person_public_id if accepted and best is not None else None
         matches.append(
-            SpeakerMatch(
+            _match_one_speaker_group(
+                project_root,
+                source,
                 speaker_id,
-                speaker_id_to_label(speaker_id),
-                accepted_name,
-                best.score if best is not None else 0.0,
-                accepted,
-                len(speaker_segments),
-                best.name if best is not None else None,
-                best.score if best is not None else None,
-                accepted_name,
+                speaker_segments,
+                known,
+                provider,
+                endpoint,
                 threshold,
-                best.person_id if best is not None else None,
-                best.person_public_id if best is not None else None,
-                accepted_person_id,
-                accepted_person_public_id,
-                tuple(candidates),
+                sample_count,
+                max_seconds,
+                padding_seconds,
             )
         )
         emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)}", advance=1)
     return matches
+
+
+def _match_one_speaker_group(
+    project_root: Path,
+    source: Path,
+    speaker_id: int,
+    speaker_segments: list[SentenceSegment],
+    known: dict[int, _KnownSpeakerVector],
+    provider: str | None,
+    endpoint: str | None,
+    threshold: float,
+    sample_count: int,
+    max_seconds: float,
+    padding_seconds: float,
+) -> SpeakerMatch:
+    """Match one project speaker against known voiceprint vectors."""
+    vector = _probe_speaker_vector(
+        project_root,
+        source,
+        speaker_id,
+        speaker_segments,
+        provider,
+        endpoint,
+        sample_count,
+        max_seconds,
+        padding_seconds,
+    )
+    candidates = _ranked_matches(vector, known, limit=3)
+    best = candidates[0] if candidates else None
+    accepted = best is not None and best.score >= threshold
+    return _speaker_match_from_best(speaker_id, speaker_segments, best, tuple(candidates), accepted, threshold)
+
+
+def _speaker_match_from_best(
+    speaker_id: int,
+    speaker_segments: list[SentenceSegment],
+    best: VoiceprintCandidate | None,
+    candidates: tuple[VoiceprintCandidate, ...],
+    accepted: bool,
+    threshold: float,
+) -> SpeakerMatch:
+    """Build the persisted match row from a best candidate."""
+    accepted_name = best.name if accepted and best is not None else None
+    accepted_person_id = best.person_id if accepted and best is not None else None
+    accepted_person_public_id = best.person_public_id if accepted and best is not None else None
+    return SpeakerMatch(
+        speaker_id,
+        speaker_id_to_label(speaker_id),
+        accepted_name,
+        best.score if best is not None else 0.0,
+        accepted,
+        len(speaker_segments),
+        best.name if best is not None else None,
+        best.score if best is not None else None,
+        accepted_name,
+        threshold,
+        best.person_id if best is not None else None,
+        best.person_public_id if best is not None else None,
+        accepted_person_id,
+        accepted_person_public_id,
+        candidates,
+    )
 
 
 def _unknown_speaker_matches(

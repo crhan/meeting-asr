@@ -48,6 +48,7 @@ from app.presentation.tui.speaker_status import (
 from app.presentation.tui.voiceprint_review import (
     VoiceprintReviewDecision,
     VoiceprintReviewScreen,
+    VoiceprintReviewWorkflowSummary,
     load_voiceprint_review_session,
 )
 from app.utils import format_ms_timestamp
@@ -324,8 +325,13 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._set_status(tr(f"Voiceprint review unavailable: {exc}", f"声纹 Review 不可用：{exc}"))
             return
         self.push_screen(
-            VoiceprintReviewScreen(session),
-            lambda decision: self._handle_voiceprint_review_decision(decision, planned),
+            VoiceprintReviewScreen(
+                session,
+                project_dir=self.session.project_dir,
+                planned=planned,
+                store_dir=self.session.store_dir,
+                on_complete=self._handle_voiceprint_review_workflow,
+            )
         )
 
     def action_embed_voiceprints(self) -> None:
@@ -691,6 +697,24 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             name="capture",
             thread=True,
         )
+
+    def _handle_voiceprint_review_workflow(self, summary: VoiceprintReviewWorkflowSummary) -> None:
+        """Refresh Project Review after embedded Voiceprint Review completes."""
+        overview = replace(
+            self.session.overview,
+            voiceprint=load_voiceprint_review_progress(self.session.overview.project_id, self.session.store_dir),
+            match_file_exists=True,
+        )
+        self.session = replace(self.session, overview=overview)
+        self._set_status(
+            tr(
+                f"Voiceprint ready: captured {summary.capture.sample_count}, embedded {summary.embedding.embedded_count}; "
+                f"historical risks {summary.evaluation.historical_risk_count}.",
+                f"声纹已就绪：采集 {summary.capture.sample_count}，embedding 新增 {summary.embedding.embedded_count}；"
+                f"历史风险 {summary.evaluation.historical_risk_count}。",
+            )
+        )
+        self._refresh()
 
     def _handle_voiceprint_capture_state(self, event: Worker.StateChanged) -> None:
         """Update the TUI after a voiceprint capture worker state change."""

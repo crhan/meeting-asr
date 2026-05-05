@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -12,6 +13,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.screen import ModalScreen
+from textual.worker import Worker, WorkerState
 from textual.widgets import Header, Static
 
 from app.presentation.tui.voiceprint import (
@@ -29,9 +31,32 @@ from app.presentation.tui.i18n import tr
 from app.presentation.tui.voiceprint_review_context import (
     load_project_voiceprint_context,
 )
+from app.presentation.tui.voiceprint_review_render import (
+    clamp,
+    last_sample_page_start,
+    library_sample_line,
+    library_sample_summary,
+    library_speaker_summary,
+    mode_label,
+    next_view_label,
+    page_footer,
+    project_sample_line,
+    project_sample_summary,
+    project_sample_time_range,
+    project_speaker_summary,
+    sample_page_start,
+    trim_text,
+)
 from app.presentation.tui.voiceprint_review_text import help_text, status_text
+from app.presentation.tui.voiceprint_review_workflow import (
+    VoiceprintReviewResultScreen,
+    VoiceprintReviewWorkflowSummary,
+    compact_evaluation_line,
+    compact_workflow_line,
+    run_voiceprint_review_workflow,
+)
 from app.speaker_review import build_audio_preview_command
-from app.utils import format_ms_timestamp
+from app.voiceprint_evaluation import VoiceprintEvaluationSummary, evaluate_voiceprint_embedding
 from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_store import VoiceprintSampleRow
 from app.voiceprints import VoiceprintCaptureSummary, plan_voiceprint_capture
@@ -46,6 +71,7 @@ FOCUSED_PANE_CLASS = "focused-pane"
 UNFOCUSED_PANE_CLASS = "unfocused-pane"
 PROJECT_MODE = "project"
 LIBRARY_MODE = "library"
+
 
 @dataclass(frozen=True, slots=True)
 class VoiceprintReviewSession:
@@ -154,7 +180,8 @@ class _VoiceprintReviewBase:
         Binding("space", "play_sample", "Play/stop sample"),
         Binding("x", "toggle_sample", "Include/exclude"),
         Binding("a", "toggle_speaker", "Toggle speaker"),
-        Binding("s", "save", "Capture selected"),
+        Binding("s", "save", "Save selected"),
+        Binding("e", "evaluate", "Evaluate"),
         Binding("?", "show_shortcuts", "Help"),
         Binding("escape", "quit", "Back", show=False),
         Binding("q", "quit", "Quit"),
@@ -175,6 +202,8 @@ class _VoiceprintReviewBase:
         self.library_selected_speaker_index = 0
         self.library_focused_column: Column = "speakers"
         self.playback_process: subprocess.Popen | None = None
+        self.workflow_summary: VoiceprintReviewWorkflowSummary | None = None
+        self.evaluation_summary: VoiceprintEvaluationSummary | None = None
 
     def compose(self) -> ComposeResult:
         """Build the TUI layout."""
@@ -200,7 +229,7 @@ class _VoiceprintReviewBase:
             return
         self._stop_playback()
         self.mode = LIBRARY_MODE if self.mode == PROJECT_MODE else PROJECT_MODE
-        self._set_status(tr(f"Switched to {_mode_label(self.mode)}.", f"已切换到{_mode_label(self.mode)}。"))
+        self._set_status(tr(f"Switched to {mode_label(self.mode)}.", f"已切换到{mode_label(self.mode)}。"))
         self._refresh()
 
     def action_project_mode(self) -> None:
@@ -283,7 +312,7 @@ class _VoiceprintReviewBase:
             self._set_status(tr(f"Playback failed: {exc}", f"播放失败：{exc}"))
 
     def action_save(self) -> None:
-        """Return selected project clips for persistence."""
+        """Capture and embed selected project clips, or return them to the caller."""
         if self.mode != PROJECT_MODE:
             self._set_status(tr("Switch to Project candidates before saving new samples.", "保存新样本前请先切换到项目候选样本。"))
             return
@@ -294,7 +323,11 @@ class _VoiceprintReviewBase:
         if not selected:
             self._set_status(tr("No samples selected. Toggle at least one sample before capture.", "没有选中样本。采集前至少选中一个样本。"))
             return
-        self._finish(VoiceprintReviewDecision(True, frozenset(selected)))
+        self._save_selected_clip_paths(frozenset(selected))
+
+    def action_evaluate(self) -> None:
+        """Evaluate current voiceprint matching impact."""
+        self._set_status(tr("Evaluation is available after this screen is embedded in Project Review.", "评测能力需要从 Project Review 内进入后使用。"))
 
     def action_show_shortcuts(self) -> None:
         """Show keyboard shortcut help."""
@@ -308,13 +341,17 @@ class _VoiceprintReviewBase:
         """Return the review decision to the active Textual host."""
         raise NotImplementedError
 
+    def _save_selected_clip_paths(self, selected_clip_rel_paths: frozenset[str]) -> None:
+        """Handle selected project clip paths."""
+        self._finish(VoiceprintReviewDecision(True, selected_clip_rel_paths))
+
     def _switch_to(self, mode: Mode) -> None:
         """Switch to a specific mode and refresh the screen."""
         if self.mode == mode:
             return
         self._stop_playback()
         self.mode = mode
-        self._set_status(tr(f"Switched to {_mode_label(mode)}.", f"已切换到{_mode_label(mode)}。"))
+        self._set_status(tr(f"Switched to {mode_label(mode)}.", f"已切换到{mode_label(mode)}。"))
         self._refresh()
 
     def _move_focused_row(self, delta: int) -> None:
@@ -327,7 +364,7 @@ class _VoiceprintReviewBase:
     def _move_column(self, delta: int) -> None:
         """Move focus between speaker and sample panes."""
         index = COLUMNS.index(self._focused_column())
-        self._set_focused_column(COLUMNS[_clamp(index + delta, 0, len(COLUMNS) - 1)])
+        self._set_focused_column(COLUMNS[clamp(index + delta, 0, len(COLUMNS) - 1)])
         self._refresh()
 
     def _move_speaker(self, delta: int) -> None:
@@ -397,8 +434,8 @@ class _VoiceprintReviewBase:
         total = sum(len(speaker.clips) for speaker in capture.speakers)
         speaker = self._project_speaker()
         sample = self._project_selected_sample()
-        title = _trim_text(capture.project_title or capture.project_id, limit=72)
-        source_name = _trim_text(capture.source_name or capture.source_path.name, limit=72)
+        title = trim_text(capture.project_title or capture.project_id, limit=72)
+        source_name = trim_text(capture.source_name or capture.source_path.name, limit=72)
         meeting_time = capture.meeting_time or "-"
         lines = [
             self._mode_line(),
@@ -409,13 +446,17 @@ class _VoiceprintReviewBase:
             ),
             f"{tr('[b]Source[/b]', '[b]来源[/b]')}   {escape(source_name)}",
             tr(
-                "[b]Goal[/b]     verify samples, then press s to capture into the global voiceprint library",
-                "[b]目标[/b]     确认样本，按 s 采集到全局声纹库",
+                "[b]Goal[/b]     verify samples, press s to capture, embed, and evaluate",
+                "[b]目标[/b]     确认样本，按 s 采集、生成 embedding 并评测",
             ),
             tr(f"[b]Selected[/b] {selected}/{total} candidate sample(s)", f"[b]已选[/b]     {selected}/{total} 个候选样本"),
-            tr(f"[b]Focus[/b]    {escape(_project_speaker_summary(speaker))}", f"[b]当前[/b]     {escape(_project_speaker_summary(speaker))}"),
-            tr(f"[b]Sample[/b]   {escape(_project_sample_summary(sample))}", f"[b]样本[/b]     {escape(_project_sample_summary(sample))}"),
+            tr(f"[b]Focus[/b]    {escape(project_speaker_summary(speaker))}", f"[b]当前[/b]     {escape(project_speaker_summary(speaker))}"),
+            tr(f"[b]Sample[/b]   {escape(project_sample_summary(sample))}", f"[b]样本[/b]     {escape(project_sample_summary(sample))}"),
         ]
+        if self.workflow_summary is not None:
+            lines[-1] = compact_workflow_line(self.workflow_summary)
+        elif self.evaluation_summary is not None:
+            lines[-1] = compact_evaluation_line(self.evaluation_summary)
         return "\n".join(lines)
 
     def _library_overview_pane(self) -> str:
@@ -431,8 +472,8 @@ class _VoiceprintReviewBase:
                 f"[b]Library[/b]  speakers {len(self.session.library.speakers)} | samples {sample_count} | embedded {embedded}/{sample_count}",
                 f"[b]声纹库[/b]   speaker {len(self.session.library.speakers)} | 样本 {sample_count} | embedding {embedded}/{sample_count}",
             ),
-            tr(f"[b]Focus[/b]    {escape(_library_speaker_summary(speaker))}", f"[b]当前[/b]     {escape(_library_speaker_summary(speaker))}"),
-            tr(f"[b]Sample[/b]   {escape(_library_sample_summary(sample))}", f"[b]样本[/b]     {escape(_library_sample_summary(sample))}"),
+            tr(f"[b]Focus[/b]    {escape(library_speaker_summary(speaker))}", f"[b]当前[/b]     {escape(library_speaker_summary(speaker))}"),
+            tr(f"[b]Sample[/b]   {escape(library_sample_summary(sample))}", f"[b]样本[/b]     {escape(library_sample_summary(sample))}"),
         ]
         return "\n".join(lines)
 
@@ -483,7 +524,7 @@ class _VoiceprintReviewBase:
             index = page_start + offset
             prefix = ">" if index == speaker.selected_clip_index else " "
             checked = "x" if sample.included else " "
-            line = f"{prefix} [{checked}] #{index + 1} {_project_sample_line(sample)}"
+            line = f"{prefix} [{checked}] #{index + 1} {project_sample_line(sample)}"
             lines.append(f"[reverse]{escape(line)}[/]" if prefix == ">" else escape(line))
         if not samples:
             lines.append(tr("[yellow]No samples for this speaker.[/]", "[yellow]当前 speaker 没有样本。[/]"))
@@ -502,7 +543,7 @@ class _VoiceprintReviewBase:
         for offset, sample in enumerate(samples):
             index = page_start + offset
             prefix = ">" if index == speaker.selected_sample_index else " "
-            line = f"{prefix} #{index + 1} {_library_sample_line(sample)}"
+            line = f"{prefix} #{index + 1} {library_sample_line(sample)}"
             lines.append(f"[reverse]{escape(line)}[/]" if prefix == ">" else escape(line))
         if not samples:
             lines.append(tr("[yellow]No samples for this person.[/]", "[yellow]当前人员没有样本。[/]"))
@@ -536,7 +577,7 @@ class _VoiceprintReviewBase:
             duration_seconds=sample.duration_seconds,
         )
         self.playback_process = _start_player(command)
-        self._set_status(tr(f"Playing project sample {_project_sample_time_range(sample)}.", f"正在播放项目样本 {_project_sample_time_range(sample)}。"))
+        self._set_status(tr(f"Playing project sample {project_sample_time_range(sample)}.", f"正在播放项目样本 {project_sample_time_range(sample)}。"))
 
     def _play_library_sample(self, sample: VoiceprintSampleRow) -> None:
         """Start WAV playback for one stored library sample."""
@@ -583,7 +624,7 @@ class _VoiceprintReviewBase:
         if speaker is None or not speaker.clips:
             return
         target = speaker.selected_clip_index + delta
-        speaker.selected_clip_index = _clamp(target, 0, len(speaker.clips) - 1)
+        speaker.selected_clip_index = clamp(target, 0, len(speaker.clips) - 1)
         self._refresh()
 
     def _move_library_sample(self, delta: int) -> None:
@@ -592,7 +633,7 @@ class _VoiceprintReviewBase:
         if speaker is None or not speaker.samples:
             return
         target = speaker.selected_sample_index + delta
-        speaker.selected_sample_index = _clamp(target, 0, len(speaker.samples) - 1)
+        speaker.selected_sample_index = clamp(target, 0, len(speaker.samples) - 1)
         self._refresh()
 
     def _move_project_sample_page(self, delta: int) -> None:
@@ -601,9 +642,9 @@ class _VoiceprintReviewBase:
         if speaker is None or not speaker.clips:
             return
         page_size = self._sample_page_size()
-        current_start = _sample_page_start(speaker.selected_clip_index, page_size)
-        last_start = _last_sample_page_start(len(speaker.clips), page_size)
-        speaker.selected_clip_index = _clamp(current_start + delta * page_size, 0, last_start)
+        current_start = sample_page_start(speaker.selected_clip_index, page_size)
+        last_start = last_sample_page_start(len(speaker.clips), page_size)
+        speaker.selected_clip_index = clamp(current_start + delta * page_size, 0, last_start)
         self._refresh()
 
     def _move_library_sample_page(self, delta: int) -> None:
@@ -612,9 +653,9 @@ class _VoiceprintReviewBase:
         if speaker is None or not speaker.samples:
             return
         page_size = self._sample_page_size()
-        current_start = _sample_page_start(speaker.selected_sample_index, page_size)
-        last_start = _last_sample_page_start(len(speaker.samples), page_size)
-        speaker.selected_sample_index = _clamp(current_start + delta * page_size, 0, last_start)
+        current_start = sample_page_start(speaker.selected_sample_index, page_size)
+        last_start = last_sample_page_start(len(speaker.samples), page_size)
+        speaker.selected_sample_index = clamp(current_start + delta * page_size, 0, last_start)
         self._refresh()
 
     def _project_speaker(self) -> VoiceprintCaptureSpeakerEntry | None:
@@ -650,13 +691,13 @@ class _VoiceprintReviewBase:
     ) -> tuple[int, list[VoiceprintCaptureClipEntry]]:
         """Return the current project sample page start and rows."""
         page_size = self._sample_page_size()
-        page_start = _sample_page_start(speaker.selected_clip_index, page_size)
+        page_start = sample_page_start(speaker.selected_clip_index, page_size)
         return page_start, speaker.clips[page_start : page_start + page_size]
 
     def _visible_library_samples(self, speaker: VoiceprintSpeakerEntry) -> tuple[int, list[VoiceprintSampleRow]]:
         """Return the current library sample page start and rows."""
         page_size = self._sample_page_size()
-        page_start = _sample_page_start(speaker.selected_sample_index, page_size)
+        page_start = sample_page_start(speaker.selected_sample_index, page_size)
         return page_start, speaker.samples[page_start : page_start + page_size]
 
     def _sample_page_size(self) -> int:
@@ -677,11 +718,11 @@ class _VoiceprintReviewBase:
 
     def _project_sample_page_footer(self, speaker: VoiceprintCaptureSpeakerEntry, page_start: int) -> str:
         """Render project sample pagination status."""
-        return _page_footer("Samples", len(speaker.clips), page_start, self._sample_page_size())
+        return page_footer("Samples", len(speaker.clips), page_start, self._sample_page_size())
 
     def _library_sample_page_footer(self, speaker: VoiceprintSpeakerEntry, page_start: int) -> str:
         """Render library sample pagination status."""
-        return _page_footer("Samples", len(speaker.samples), page_start, self._sample_page_size())
+        return page_footer("Samples", len(speaker.samples), page_start, self._sample_page_size())
 
     def _pane_title(self, title: str, column: Column) -> str:
         """Render a pane title with focused-column state."""
@@ -692,12 +733,12 @@ class _VoiceprintReviewBase:
 
     def _mode_line(self) -> str:
         """Render active mode and switch affordance."""
-        next_view = _next_view_label(self.mode, self.session.capture is not None)
+        next_view = next_view_label(self.mode, self.session.capture is not None)
         next_text = tr("no alternate project view", "没有可切换的项目视图") if next_view is None else f"Tab -> {next_view}"
         return (
             "[reverse][b] VOICEPRINT REVIEW [/b][/]  "
             + tr("view=", "视图=")
-            + f"[bold cyan]{_mode_label(self.mode)}[/] | {next_text} | Esc/q: {escape(self.session.return_hint)}"
+            + f"[bold cyan]{mode_label(self.mode)}[/] | {next_text} | Esc/q: {escape(self.session.return_hint)}"
         )
 
     def _focused_column(self) -> Column:
@@ -754,9 +795,120 @@ class VoiceprintReviewScreen(_VoiceprintReviewBase, ModalScreen[VoiceprintReview
     CSS = _VoiceprintReviewBase.CSS
     BINDINGS = _VoiceprintReviewBase.BINDINGS
 
+    def __init__(
+        self,
+        session: VoiceprintReviewSession,
+        *,
+        project_dir: Path | None = None,
+        planned: VoiceprintCaptureSummary | None = None,
+        store_dir: Path | None = None,
+        on_complete: Callable[[VoiceprintReviewWorkflowSummary], None] | None = None,
+    ) -> None:
+        """
+        Create an embeddable voiceprint review screen.
+
+        Args:
+            session: Unified voiceprint review inputs.
+            project_dir: Project root when capture should run inside this screen.
+            planned: Dry-run capture plan to persist on save.
+            store_dir: Optional voiceprint store directory.
+            on_complete: Callback after capture, embedding, and evaluation finish.
+        """
+        super().__init__(session)
+        self.project_dir = project_dir
+        self.planned = planned
+        self.store_dir = store_dir
+        self.on_complete = on_complete
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Handle embedded capture, embedding, and evaluation workers."""
+        if event.worker.group == "voiceprint-review-workflow":
+            self._handle_workflow_state(event)
+            return
+        if event.worker.group == "voiceprint-review-evaluate":
+            self._handle_evaluation_state(event)
+            return
+
     def _finish(self, decision: VoiceprintReviewDecision) -> None:
         """Dismiss the screen with a review decision."""
         self.dismiss(decision)
+
+    def _save_selected_clip_paths(self, selected_clip_rel_paths: frozenset[str]) -> None:
+        """Run capture, embedding, and evaluation inside Voiceprint Review."""
+        if self.project_dir is None or self.planned is None:
+            self._finish(VoiceprintReviewDecision(True, selected_clip_rel_paths))
+            return
+        self._set_status(tr("Capturing samples, embedding voiceprints, then evaluating scores...", "正在采集样本、生成 embedding，并评测匹配分数..."))
+        self.run_worker(
+            lambda: run_voiceprint_review_workflow(
+                project_dir=self.project_dir,
+                planned=self.planned,
+                selected_clip_rel_paths=selected_clip_rel_paths,
+                store_dir=self.store_dir,
+            ),
+            group="voiceprint-review-workflow",
+            name="capture-embed-evaluate",
+            thread=True,
+        )
+
+    def action_evaluate(self) -> None:
+        """Evaluate current project and historical speaker scores."""
+        if self.project_dir is None:
+            self._set_status(tr("No project is attached to this Voiceprint Review.", "当前 Voiceprint Review 没有关联项目。"))
+            return
+        self._set_status(tr("Evaluating voiceprint matching impact...", "正在评测声纹匹配效果..."))
+        self.run_worker(
+            lambda: evaluate_voiceprint_embedding(
+                self.project_dir,
+                store_dir=self.store_dir,
+                provider=None,
+                endpoint=None,
+                model=None,
+            ),
+            group="voiceprint-review-evaluate",
+            name="evaluate",
+            thread=True,
+        )
+
+    def _handle_workflow_state(self, event: Worker.StateChanged) -> None:
+        """Update screen after the capture/embed/evaluate workflow finishes."""
+        if event.state == WorkerState.SUCCESS:
+            self._handle_workflow_success(event.worker.result)
+            return
+        if event.state == WorkerState.ERROR:
+            self._set_status(
+                tr(
+                    f"Voiceprint capture/embed failed: {event.worker.error}. Run meeting-asr doctor --require-voiceprint-embedding.",
+                    f"声纹采集或 embedding 失败：{event.worker.error}。请运行 meeting-asr doctor --require-voiceprint-embedding。",
+                )
+            )
+
+    def _handle_evaluation_state(self, event: Worker.StateChanged) -> None:
+        """Update screen after a standalone evaluation finishes."""
+        if event.state == WorkerState.SUCCESS:
+            self.evaluation_summary = event.worker.result
+            self._set_status(compact_evaluation_line(self.evaluation_summary))
+            self._refresh()
+            return
+        if event.state == WorkerState.ERROR:
+            self._set_status(tr(f"Voiceprint evaluation failed: {event.worker.error}", f"声纹评测失败：{event.worker.error}"))
+
+    def _handle_workflow_success(self, summary: VoiceprintReviewWorkflowSummary) -> None:
+        """Refresh library state and show the workflow result."""
+        self.workflow_summary = summary
+        self.evaluation_summary = summary.evaluation
+        self.session = replace(
+            self.session,
+            library=load_voiceprint_library_session(
+                store_dir=self.store_dir or summary.capture.store_dir,
+                page_size=self.session.library.page_size,
+            ),
+        )
+        if self.on_complete is not None:
+            self.on_complete(summary)
+        self._set_status(compact_workflow_line(summary))
+        self._refresh()
+        self.app.push_screen(VoiceprintReviewResultScreen(summary))
 
 
 def load_voiceprint_review_session(
@@ -838,115 +990,3 @@ def _start_player(command: list[str]) -> subprocess.Popen:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-
-
-def _mode_label(mode: Mode) -> str:
-    """Return the human-readable mode label."""
-    return tr("Project candidates", "项目候选样本") if mode == PROJECT_MODE else tr("Global library", "全局声纹库")
-
-
-def _next_view_label(mode: Mode, project_available: bool) -> str | None:
-    """Return the view reached by pressing Tab, if there is one."""
-    if mode == LIBRARY_MODE and not project_available:
-        return None
-    return _mode_label(LIBRARY_MODE) if mode == PROJECT_MODE else _mode_label(PROJECT_MODE)
-
-
-def _project_speaker_summary(speaker: VoiceprintCaptureSpeakerEntry | None) -> str:
-    """Render selected project speaker summary."""
-    if speaker is None:
-        return "-"
-    selected = sum(1 for clip in speaker.clips if clip.included)
-    person = "" if speaker.person_public_id is None else f" | person {speaker.person_public_id}"
-    return tr(
-        f"{speaker.name} speaker {speaker.speaker_id}{person} | selected {selected}/{len(speaker.clips)}",
-        f"{speaker.name} speaker {speaker.speaker_id}{person} | 已选 {selected}/{len(speaker.clips)}",
-    )
-
-
-def _library_speaker_summary(speaker: VoiceprintSpeakerEntry | None) -> str:
-    """Render selected library speaker summary."""
-    if speaker is None:
-        return "-"
-    return (
-        tr(
-            f"{speaker.name} id={speaker.public_id} | samples {speaker.sample_count} | "
-            f"projects {speaker.project_count} | models {speaker.embedding_model_count}",
-            f"{speaker.name} id={speaker.public_id} | 样本 {speaker.sample_count} | "
-            f"项目 {speaker.project_count} | 模型 {speaker.embedding_model_count}",
-        )
-    )
-
-
-def _project_sample_summary(sample: VoiceprintCaptureClipEntry | None) -> str:
-    """Render selected project sample summary."""
-    if sample is None:
-        return "-"
-    state = tr("included", "已选中") if sample.included else tr("excluded", "已排除")
-    return f"{_project_sample_time_range(sample)} | {state}"
-
-
-def _library_sample_summary(sample: VoiceprintSampleRow | None) -> str:
-    """Render selected library sample summary."""
-    if sample is None:
-        return "-"
-    return tr(f"sample_id {sample.public_id} | clip {sample.clip_path}", f"样本ID {sample.public_id} | 文件 {sample.clip_path}")
-
-
-def _project_sample_line(sample: VoiceprintCaptureClipEntry) -> str:
-    """Render one project capture sample row."""
-    return f"{_project_sample_time_range(sample)} {_trim_text(sample.text)}"
-
-
-def _library_sample_line(sample: VoiceprintSampleRow) -> str:
-    """Render one stored library sample row."""
-    start = format_ms_timestamp(sample.source_begin_time_ms)
-    end = format_ms_timestamp(sample.source_end_time_ms)
-    return f"{sample.project_id} speaker {sample.project_speaker_id} {start}-{end} {_trim_text(sample.transcript_text)}"
-
-
-def _project_sample_time_range(sample: VoiceprintCaptureClipEntry) -> str:
-    """Render one project sample time range."""
-    start = format_ms_timestamp(sample.source_begin_time_ms)
-    end = format_ms_timestamp(sample.source_end_time_ms)
-    return f"{start}-{end}"
-
-
-def _page_footer(label: str, item_count: int, page_start: int, page_size: int) -> str:
-    """Render pagination status for the active sample pane."""
-    page_count = _sample_page_count(item_count, page_size)
-    page_number = page_start // page_size + 1
-    start = page_start + 1 if item_count else 0
-    end = min(page_start + page_size, item_count)
-    return tr(
-        f"Page {page_number}/{page_count}  {label} {start}-{end}/{item_count}",
-        f"第 {page_number}/{page_count} 页  {label} {start}-{end}/{item_count}",
-    )
-
-
-def _sample_page_start(selected_index: int, page_size: int) -> int:
-    """Return the first sample index for the selected sample's page."""
-    return selected_index // page_size * page_size
-
-
-def _last_sample_page_start(sample_count: int, page_size: int) -> int:
-    """Return the first sample index of the last page."""
-    return max(0, (sample_count - 1) // page_size * page_size)
-
-
-def _sample_page_count(sample_count: int, page_size: int) -> int:
-    """Return the number of sample pages."""
-    return max(1, (sample_count + page_size - 1) // page_size)
-
-
-def _clamp(value: int, minimum: int, maximum: int) -> int:
-    """Clamp an integer into an inclusive range."""
-    return min(max(value, minimum), maximum)
-
-
-def _trim_text(text: str, *, limit: int = 90) -> str:
-    """Trim transcript text for terminal display."""
-    preview = text.strip().replace("\n", " ")
-    if len(preview) <= limit:
-        return preview
-    return preview[: limit - 3] + "..."

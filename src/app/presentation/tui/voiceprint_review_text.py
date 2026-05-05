@@ -10,11 +10,11 @@ def status_text() -> str:
     return tr(
         (
             "Voiceprint: Tab switch Project/Global | p project | g global | h/l columns | "
-            "j/k rows | Space play/stop | x include/exclude | s capture selected | ? help | q back/quit"
+            "j/k rows | Space play/stop | x include/exclude | s save selected | e evaluate | ? help | q back/quit"
         ),
         (
             "声纹：Tab 切项目/全局 | p 项目 | g 全局 | h/l 切列 | j/k 移动 | "
-            "Space 播放/停止 | x 选中/排除 | s 采集已选 | ? 帮助 | q 返回/退出"
+            "Space 播放/停止 | x 选中/排除 | s 保存已选 | e 评测 | ? 帮助 | q 返回/退出"
         ),
     )
 
@@ -41,7 +41,8 @@ PageUp/PageDown      Previous/next sample page
 space                Play or stop selected source-media sample
 x                    Include/exclude selected planned sample
 a                    Include/exclude all planned samples for the selected speaker
-s                    Capture checked project samples into the global voiceprint store
+s                    Save checked samples; from Project Review it also embeds and evaluates score impact
+e                    Re-run voiceprint evaluation without adding new samples when opened from Project Review
 
 [b]Library Actions[/b]
 space                Play or stop selected stored WAV sample
@@ -69,7 +70,8 @@ PageUp/PageDown      上一页/下一页 sample
 space                播放或停止当前源媒体 sample
 x                    选中/排除当前计划样本
 a                    选中/排除当前 speaker 的全部计划样本
-s                    将勾选的项目样本采集到全局声纹库
+s                    保存勾选样本；从 Project Review 进入时会同时生成 embedding 并评测分数影响
+e                    从 Project Review 进入时，不新增样本，只重新运行声纹评测
 
 [b]全局声纹库操作[/b]
 space                播放或停止当前已保存 WAV 样本

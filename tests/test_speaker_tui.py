@@ -10,6 +10,7 @@ from pathlib import Path
 from textual.widgets import Input, Static, TextArea
 
 from app import speaker_tui
+from app.presentation.tui import voiceprint_review_workflow
 from app.correction_types import CorrectionEditSummary
 from app.core.project_models import ProjectListItem
 from app.models import SentenceSegment
@@ -44,10 +45,12 @@ from app.presentation.tui.voiceprint_capture import load_voiceprint_capture_revi
 from app.presentation.tui.voiceprint import VoiceprintLibrarySession
 from app.presentation.tui.voiceprint_review import (
     VoiceprintReviewHelpScreen,
+    VoiceprintReviewResultScreen,
     VoiceprintReviewScreen,
     VoiceprintReviewSession,
 )
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
+from app.voiceprint_evaluation import VoiceprintEvaluationSummary, VoiceprintProjectEvaluation, VoiceprintScoreChange
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL, VoiceprintEmbedSummary
 from app.voiceprint_store import (
     StoredVoiceprintSample,
@@ -630,9 +633,69 @@ def test_project_review_tui_opens_embedded_voiceprint_review(monkeypatch, tmp_pa
             await pilot.pause()
 
             assert not isinstance(pilot.app.screen, VoiceprintReviewScreen)
-            assert "no samples were written" in str(pilot.app.query_one("#status", Static).render())
 
     asyncio.run(scenario())
+
+
+def test_project_review_voiceprint_screen_saves_embeds_and_evaluates(monkeypatch, tmp_path: Path) -> None:
+    """Saving in embedded Voiceprint Review should keep capture, embed, and eval in that screen."""
+    store_dir = tmp_path / "voiceprints"
+    session = _voiceprint_review_session(tmp_path, return_hint="return to Project Review")
+    planned = _voiceprint_capture_plan(store_dir)
+    completed: list[int] = []
+    calls: list[str] = []
+
+    def fake_capture(project_dir, **kwargs) -> VoiceprintCaptureSummary:
+        calls.append("capture")
+        assert kwargs["planned"] is planned
+        return VoiceprintCaptureSummary(
+            store_dir=store_dir,
+            db_path=get_voiceprint_db_path(store_dir),
+            clip_dir=store_dir / "clips",
+            speakers=planned.speakers if planned is not None else [],
+            dry_run=False,
+        )
+
+    def fake_embed(**kwargs) -> VoiceprintEmbedSummary:
+        calls.append("embed")
+        return VoiceprintEmbedSummary(get_voiceprint_db_path(store_dir), "local-speechbrain", "test-model", 2, 1)
+
+    def fake_evaluate(project_dir, **kwargs) -> VoiceprintEvaluationSummary:
+        calls.append("evaluate")
+        return _evaluation_summary(tmp_path)
+
+    monkeypatch.setattr(
+        speaker_tui,
+        "load_voiceprint_review_session",
+        lambda **kwargs: (session, planned),
+    )
+    monkeypatch.setattr(voiceprint_review_workflow, "persist_voiceprint_capture_selection", fake_capture)
+    monkeypatch.setattr(voiceprint_review_workflow, "embed_voiceprint_samples", fake_embed)
+    monkeypatch.setattr(voiceprint_review_workflow, "evaluate_voiceprint_embedding", fake_evaluate)
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_session(with_status=True, store_dir=store_dir)).run_test(size=(120, 24)) as pilot:
+            await pilot.press("v")
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, VoiceprintReviewScreen)
+
+            await pilot.press("s")
+            for _ in range(5):
+                await pilot.pause()
+
+            assert calls == ["capture", "embed", "evaluate"]
+            assert isinstance(pilot.app.screen, VoiceprintReviewResultScreen)
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, VoiceprintReviewScreen)
+            assert "historical risks 0" in str(pilot.app.screen.query_one("#status", Static).render())
+            completed.append(1)
+
+    asyncio.run(scenario())
+    assert completed == [1]
 
 
 def test_project_review_tui_voiceprint_tab_shows_current_view(monkeypatch, tmp_path: Path) -> None:
@@ -1246,6 +1309,19 @@ def _voiceprint_review_session(tmp_path: Path, *, return_hint: str) -> Voiceprin
     store_dir = tmp_path / "voiceprints"
     source_path = tmp_path / "meeting.mp4"
     source_path.write_bytes(b"source")
+    capture = load_voiceprint_capture_review_session(
+        summary=_voiceprint_capture_plan(store_dir),
+        source_path=source_path,
+    )
+    return VoiceprintReviewSession(
+        capture=capture,
+        library=VoiceprintLibrarySession(db_path=get_voiceprint_db_path(store_dir), speakers=[]),
+        return_hint=return_hint,
+    )
+
+
+def _voiceprint_capture_plan(store_dir: Path) -> VoiceprintCaptureSummary:
+    """Build a planned voiceprint capture summary."""
     clip = VoiceprintClip(
         path=store_dir / "clips" / "project-1" / "speaker_0" / "clip_001.wav",
         rel_path="clips/project-1/speaker_0/clip_001.wav",
@@ -1255,21 +1331,27 @@ def _voiceprint_review_session(tmp_path: Path, *, return_hint: str) -> Voiceprin
         clip_end_time_ms=2000,
         text="voiceprint candidate",
     )
-    capture = load_voiceprint_capture_review_session(
-        summary=VoiceprintCaptureSummary(
-            store_dir=store_dir,
-            db_path=get_voiceprint_db_path(store_dir),
-            clip_dir=store_dir / "clips",
-            speakers=[VoiceprintSpeaker(0, "欧丁", None, None, [clip])],
-            dry_run=True,
+    return VoiceprintCaptureSummary(
+        store_dir=store_dir,
+        db_path=get_voiceprint_db_path(store_dir),
+        clip_dir=store_dir / "clips",
+        speakers=[VoiceprintSpeaker(0, "欧丁", None, None, [clip])],
+        dry_run=True,
+    )
+
+
+def _evaluation_summary(tmp_path: Path) -> VoiceprintEvaluationSummary:
+    """Build a small voiceprint evaluation fixture."""
+    current = VoiceprintProjectEvaluation(
+        tmp_path / "projects" / "project-1",
+        "project-1",
+        "Demo",
+        True,
+        (
+            VoiceprintScoreChange(0, "Speaker A", "欧丁", 0.61, "欧丁", 0.78, 0.17, "improved"),
         ),
-        source_path=source_path,
     )
-    return VoiceprintReviewSession(
-        capture=capture,
-        library=VoiceprintLibrarySession(db_path=get_voiceprint_db_path(store_dir), speakers=[]),
-        return_hint=return_hint,
-    )
+    return VoiceprintEvaluationSummary(current, ())
 
 
 def _overview(*, with_status: bool) -> SpeakerReviewOverview:

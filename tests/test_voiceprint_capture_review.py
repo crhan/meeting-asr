@@ -19,6 +19,7 @@ from app.presentation.tui.voiceprint_capture import (
     render_voiceprint_capture_review_summary,
 )
 from app.project_manager import create_project, load_manifest
+from app.voiceprint_people import create_voiceprint_person
 from app.voiceprint_store import get_voiceprint_db_path, list_all_voiceprint_samples
 from app.voiceprints import (
     VoiceprintCaptureSummary,
@@ -148,6 +149,24 @@ def test_persist_voiceprint_capture_selection_writes_only_accepted_samples(monke
     assert samples[0].clip_path.exists()
     assert manifest.status == "voiceprinted"
     assert manifest.speakers["voiceprints"]["sample_count"] == 1
+
+
+def test_plan_voiceprint_capture_resolves_existing_person_by_name(tmp_path: Path) -> None:
+    """Capture planning should show a stable VPP id when a named person already exists."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    person = create_voiceprint_person("Alice", get_voiceprint_db_path(store_dir))
+
+    planned = plan_voiceprint_capture(
+        project_dir,
+        sample_count=2,
+        max_seconds=10.0,
+        padding_seconds=0.0,
+        store_dir=store_dir,
+    )
+
+    assert planned.speakers[0].person_id == person.speaker_id
+    assert planned.speakers[0].person_public_id == person.public_id
 
 
 def test_voiceprint_capture_command_accepts_project_id_for_dry_run(tmp_path: Path) -> None:
