@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -644,10 +645,14 @@ def test_project_review_voiceprint_screen_saves_embeds_and_evaluates(monkeypatch
     planned = _voiceprint_capture_plan(store_dir)
     completed: list[int] = []
     calls: list[str] = []
+    started = threading.Event()
+    release = threading.Event()
 
     def fake_capture(project_dir, **kwargs) -> VoiceprintCaptureSummary:
         calls.append("capture")
         assert kwargs["planned"] is planned
+        started.set()
+        release.wait(timeout=2)
         return VoiceprintCaptureSummary(
             store_dir=store_dir,
             db_path=get_voiceprint_db_path(store_dir),
@@ -681,13 +686,23 @@ def test_project_review_voiceprint_screen_saves_embeds_and_evaluates(monkeypatch
             assert isinstance(pilot.app.screen, VoiceprintReviewScreen)
 
             await pilot.press("s")
-            for _ in range(5):
+            for _ in range(10):
                 await pilot.pause()
+                if started.is_set():
+                    break
+
+            assert isinstance(pilot.app.screen, voiceprint_review_workflow.VoiceprintReviewProcessingScreen)
+            release.set()
+
+            for _ in range(10):
+                await pilot.pause()
+                if isinstance(pilot.app.screen, VoiceprintReviewResultScreen):
+                    break
 
             assert calls == ["capture", "embed", "evaluate"]
             assert isinstance(pilot.app.screen, VoiceprintReviewResultScreen)
 
-            await pilot.press("enter")
+            await pilot.press("a")
             await pilot.pause()
 
             assert isinstance(pilot.app.screen, VoiceprintReviewScreen)

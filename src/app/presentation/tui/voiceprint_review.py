@@ -49,6 +49,7 @@ from app.presentation.tui.voiceprint_review_render import (
 )
 from app.presentation.tui.voiceprint_review_text import help_text, status_text
 from app.presentation.tui.voiceprint_review_workflow import (
+    VoiceprintReviewProcessingScreen,
     VoiceprintReviewResultScreen,
     VoiceprintReviewWorkflowSummary,
     compact_evaluation_line,
@@ -819,6 +820,7 @@ class VoiceprintReviewScreen(_VoiceprintReviewBase, ModalScreen[VoiceprintReview
         self.planned = planned
         self.store_dir = store_dir
         self.on_complete = on_complete
+        self.processing_screen: VoiceprintReviewProcessingScreen | None = None
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Handle embedded capture, embedding, and evaluation workers."""
@@ -838,7 +840,7 @@ class VoiceprintReviewScreen(_VoiceprintReviewBase, ModalScreen[VoiceprintReview
         if self.project_dir is None or self.planned is None:
             self._finish(VoiceprintReviewDecision(True, selected_clip_rel_paths))
             return
-        self._set_status(tr("Capturing samples, embedding voiceprints, then evaluating scores...", "正在采集样本、生成 embedding，并评测匹配分数..."))
+        self._show_processing()
         self.run_worker(
             lambda: run_voiceprint_review_workflow(
                 project_dir=self.project_dir,
@@ -856,7 +858,7 @@ class VoiceprintReviewScreen(_VoiceprintReviewBase, ModalScreen[VoiceprintReview
         if self.project_dir is None:
             self._set_status(tr("No project is attached to this Voiceprint Review.", "当前 Voiceprint Review 没有关联项目。"))
             return
-        self._set_status(tr("Evaluating voiceprint matching impact...", "正在评测声纹匹配效果..."))
+        self._show_processing()
         self.run_worker(
             lambda: evaluate_voiceprint_embedding(
                 self.project_dir,
@@ -873,9 +875,11 @@ class VoiceprintReviewScreen(_VoiceprintReviewBase, ModalScreen[VoiceprintReview
     def _handle_workflow_state(self, event: Worker.StateChanged) -> None:
         """Update screen after the capture/embed/evaluate workflow finishes."""
         if event.state == WorkerState.SUCCESS:
+            self._hide_processing()
             self._handle_workflow_success(event.worker.result)
             return
         if event.state == WorkerState.ERROR:
+            self._hide_processing()
             self._set_status(
                 tr(
                     f"Voiceprint capture/embed failed: {event.worker.error}. Run meeting-asr doctor --require-voiceprint-embedding.",
@@ -886,29 +890,71 @@ class VoiceprintReviewScreen(_VoiceprintReviewBase, ModalScreen[VoiceprintReview
     def _handle_evaluation_state(self, event: Worker.StateChanged) -> None:
         """Update screen after a standalone evaluation finishes."""
         if event.state == WorkerState.SUCCESS:
+            self._hide_processing()
             self.evaluation_summary = event.worker.result
             self._set_status(compact_evaluation_line(self.evaluation_summary))
             self._refresh()
             return
         if event.state == WorkerState.ERROR:
+            self._hide_processing()
             self._set_status(tr(f"Voiceprint evaluation failed: {event.worker.error}", f"声纹评测失败：{event.worker.error}"))
 
     def _handle_workflow_success(self, summary: VoiceprintReviewWorkflowSummary) -> None:
-        """Refresh library state and show the workflow result."""
+        """Ask the user whether to accept or roll back pending voiceprint changes."""
+        self.app.push_screen(VoiceprintReviewResultScreen(summary), lambda accepted: self._handle_workflow_decision(summary, accepted))
+
+    def _handle_workflow_decision(self, summary: VoiceprintReviewWorkflowSummary, accepted: bool | None) -> None:
+        """Apply the TUI state for an accepted or rolled-back workflow."""
+        if accepted:
+            self._accept_workflow(summary)
+            return
+        self._reject_workflow(summary)
+
+    def _accept_workflow(self, summary: VoiceprintReviewWorkflowSummary) -> None:
+        """Refresh library state after the pending workflow is accepted."""
         self.workflow_summary = summary
         self.evaluation_summary = summary.evaluation
-        self.session = replace(
-            self.session,
-            library=load_voiceprint_library_session(
-                store_dir=self.store_dir or summary.capture.store_dir,
-                page_size=self.session.library.page_size,
-            ),
-        )
+        self._reload_library(summary.capture.store_dir)
         if self.on_complete is not None:
             self.on_complete(summary)
         self._set_status(compact_workflow_line(summary))
         self._refresh()
-        self.app.push_screen(VoiceprintReviewResultScreen(summary))
+
+    def _reject_workflow(self, summary: VoiceprintReviewWorkflowSummary) -> None:
+        """Refresh library state after the pending workflow is rolled back."""
+        self.workflow_summary = None
+        self.evaluation_summary = None
+        self._reload_library(summary.capture.store_dir)
+        self._set_status(tr("Voiceprint changes rolled back; no new embeddings were kept.", "声纹变更已回滚；没有保留新的 embedding。"))
+        self._refresh()
+
+    def _reload_library(self, store_dir: Path) -> None:
+        """Reload the global voiceprint library after accept or rollback."""
+        self.session = replace(
+            self.session,
+            library=load_voiceprint_library_session(
+                store_dir=self.store_dir or store_dir,
+                page_size=self.session.library.page_size,
+            ),
+        )
+
+    def _show_processing(self) -> None:
+        """Show a modal processing indicator for long-running work."""
+        if self.processing_screen is not None:
+            return
+        self.processing_screen = VoiceprintReviewProcessingScreen()
+        self.app.push_screen(self.processing_screen)
+
+    def _hide_processing(self) -> None:
+        """Dismiss the modal processing indicator if it is visible."""
+        screen = self.processing_screen
+        self.processing_screen = None
+        if screen is None:
+            return
+        try:
+            screen.dismiss(None)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def load_voiceprint_review_session(

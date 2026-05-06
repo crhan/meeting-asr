@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
+import tempfile
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -18,15 +20,74 @@ from app.voiceprints import VoiceprintCaptureSummary, persist_voiceprint_capture
 
 
 @dataclass(frozen=True, slots=True)
+class VoiceprintReviewTransaction:
+    """Filesystem snapshot used to accept or roll back a voiceprint workflow."""
+
+    backup_dir: Path
+    db_path: Path
+    db_backup_path: Path
+    db_existed: bool
+    project_manifest_path: Path
+    project_manifest_backup_path: Path
+    project_manifest_existed: bool
+    match_path: Path
+    match_backup_path: Path
+    match_existed: bool
+    clip_backups: tuple[tuple[Path, Path, bool], ...]
+
+    def accept(self) -> None:
+        """Accept pending changes by removing the rollback snapshot."""
+        shutil.rmtree(self.backup_dir, ignore_errors=True)
+
+    def rollback(self) -> None:
+        """Restore database, project metadata, match file, and captured clips."""
+        _restore_file(self.db_path, self.db_backup_path, self.db_existed)
+        _restore_file(self.project_manifest_path, self.project_manifest_backup_path, self.project_manifest_existed)
+        _restore_file(self.match_path, self.match_backup_path, self.match_existed)
+        for clip_path, backup_path, existed in self.clip_backups:
+            _restore_file(clip_path, backup_path, existed)
+            _remove_empty_parents(clip_path.parent, stop_at=self.db_path.parent)
+        shutil.rmtree(self.backup_dir, ignore_errors=True)
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceprintReviewWorkflowSummary:
     """Result of saving project samples from embedded Voiceprint Review."""
 
     capture: VoiceprintCaptureSummary
     embedding: VoiceprintEmbedSummary
     evaluation: VoiceprintEvaluationSummary
+    transaction: VoiceprintReviewTransaction
 
 
-class VoiceprintReviewResultScreen(ModalScreen[None]):
+class VoiceprintReviewProcessingScreen(ModalScreen[None]):
+    """Modal screen shown while voiceprint capture and embedding are running."""
+
+    CSS = """
+    VoiceprintReviewProcessingScreen {
+        align: center middle;
+    }
+    #voiceprint-review-processing {
+        width: 84;
+        height: auto;
+        border: thick $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        """Build the processing popup."""
+        yield Static(
+            tr(
+                "[b]Processing voiceprints[/b]\n\nCapturing samples, generating embeddings, and evaluating score impact.\nThis can take a while.",
+                "[b]正在处理声纹[/b]\n\n正在采集样本、生成 embedding，并评测分数影响。\n这个过程可能需要一些时间。",
+            ),
+            id="voiceprint-review-processing",
+        )
+
+
+class VoiceprintReviewResultScreen(ModalScreen[bool]):
     """Modal result view for capture, embedding, and evaluation."""
 
     CSS = """
@@ -43,9 +104,10 @@ class VoiceprintReviewResultScreen(ModalScreen[None]):
     """
 
     BINDINGS = [
-        Binding("escape", "close_result", "Close", show=False),
-        Binding("enter", "close_result", "Close"),
-        Binding("q", "close_result", "Close", show=False),
+        Binding("a", "accept_result", "Accept"),
+        Binding("r", "rollback_result", "Rollback"),
+        Binding("escape", "rollback_result", "Rollback", show=False),
+        Binding("q", "rollback_result", "Rollback", show=False),
     ]
 
     def __init__(self, summary: VoiceprintReviewWorkflowSummary) -> None:
@@ -57,14 +119,28 @@ class VoiceprintReviewResultScreen(ModalScreen[None]):
         """
         super().__init__()
         self.summary = summary
+        self.decided = False
 
     def compose(self) -> ComposeResult:
         """Build the result popup."""
         yield Static(_workflow_summary_text(self.summary), id="voiceprint-review-result")
 
-    def action_close_result(self) -> None:
-        """Close the result popup."""
-        self.dismiss(None)
+    def on_unmount(self) -> None:
+        """Roll back if the modal is closed without an explicit choice."""
+        if not self.decided:
+            self.summary.transaction.rollback()
+
+    def action_accept_result(self) -> None:
+        """Accept the pending voiceprint changes."""
+        self.decided = True
+        self.summary.transaction.accept()
+        self.dismiss(True)
+
+    def action_rollback_result(self) -> None:
+        """Reject and roll back the pending voiceprint changes."""
+        self.decided = True
+        self.summary.transaction.rollback()
+        self.dismiss(False)
 
 
 def run_voiceprint_review_workflow(
@@ -86,26 +162,31 @@ def run_voiceprint_review_workflow(
     Returns:
         Completed workflow summary.
     """
-    capture = persist_voiceprint_capture_selection(
-        project_dir,
-        planned=planned,
-        selected_clip_rel_paths=selected_clip_rel_paths,
-    )
-    embedding = embed_voiceprint_samples(
-        store_dir=store_dir or capture.store_dir,
-        provider=None,
-        endpoint=None,
-        model=None,
-        rebuild=False,
-    )
-    evaluation = evaluate_voiceprint_embedding(
-        project_dir,
-        store_dir=store_dir or capture.store_dir,
-        provider=None,
-        endpoint=None,
-        model=embedding.model,
-    )
-    return VoiceprintReviewWorkflowSummary(capture, embedding, evaluation)
+    transaction = _begin_transaction(project_dir, planned, selected_clip_rel_paths)
+    try:
+        capture = persist_voiceprint_capture_selection(
+            project_dir,
+            planned=planned,
+            selected_clip_rel_paths=selected_clip_rel_paths,
+        )
+        embedding = embed_voiceprint_samples(
+            store_dir=store_dir or capture.store_dir,
+            provider=None,
+            endpoint=None,
+            model=None,
+            rebuild=False,
+        )
+        evaluation = evaluate_voiceprint_embedding(
+            project_dir,
+            store_dir=store_dir or capture.store_dir,
+            provider=None,
+            endpoint=None,
+            model=embedding.model,
+        )
+    except Exception:
+        transaction.rollback()
+        raise
+    return VoiceprintReviewWorkflowSummary(capture, embedding, evaluation, transaction)
 
 
 def compact_workflow_line(summary: VoiceprintReviewWorkflowSummary) -> str:
@@ -151,10 +232,7 @@ def _workflow_summary_text(summary: VoiceprintReviewWorkflowSummary) -> str:
         "",
         _historical_evaluation_text(summary.evaluation),
         "",
-        tr(
-            "Press Enter/Esc/q to close this result; use Esc/q again to return to Project Review.",
-            "按 Enter/Esc/q 关闭结果；再按 Esc/q 返回 Project Review。",
-        ),
+        tr("Press a to accept these embeddings. Press r/Esc/q to roll back.", "按 a 接受这些 embedding。按 r/Esc/q 回滚。"),
     ]
     return "\n".join(lines)
 
@@ -219,3 +297,71 @@ def _trim_text(text: str, *, limit: int) -> str:
     if len(preview) <= limit:
         return preview
     return preview[: limit - 3] + "..."
+
+
+def _begin_transaction(
+    project_dir: Path,
+    planned: VoiceprintCaptureSummary,
+    selected_clip_rel_paths: frozenset[str],
+) -> VoiceprintReviewTransaction:
+    """Create rollback snapshots before mutating the voiceprint store."""
+    backup_dir = Path(tempfile.mkdtemp(prefix="meeting-asr-voiceprint-review-"))
+    project_root = project_dir.expanduser().resolve()
+    return VoiceprintReviewTransaction(
+        backup_dir=backup_dir,
+        db_path=planned.db_path,
+        db_backup_path=backup_dir / "voiceprints.sqlite",
+        db_existed=_backup_file(planned.db_path, backup_dir / "voiceprints.sqlite"),
+        project_manifest_path=project_root / "project.json",
+        project_manifest_backup_path=backup_dir / "project.json",
+        project_manifest_existed=_backup_file(project_root / "project.json", backup_dir / "project.json"),
+        match_path=project_root / "speakers" / "speaker_matches.json",
+        match_backup_path=backup_dir / "speaker_matches.json",
+        match_existed=_backup_file(project_root / "speakers" / "speaker_matches.json", backup_dir / "speaker_matches.json"),
+        clip_backups=_backup_clips(backup_dir, planned, selected_clip_rel_paths),
+    )
+
+
+def _backup_clips(
+    backup_dir: Path,
+    planned: VoiceprintCaptureSummary,
+    selected_clip_rel_paths: frozenset[str],
+) -> tuple[tuple[Path, Path, bool], ...]:
+    """Back up planned clip targets that may be overwritten."""
+    backups: list[tuple[Path, Path, bool]] = []
+    for speaker in planned.speakers:
+        for clip in speaker.clips:
+            if clip.rel_path in selected_clip_rel_paths:
+                backup_path = backup_dir / "clips" / clip.rel_path
+                backups.append((clip.path, backup_path, _backup_file(clip.path, backup_path)))
+    return tuple(backups)
+
+
+def _backup_file(path: Path, backup_path: Path) -> bool:
+    """Copy an existing file to its backup path."""
+    if not path.exists():
+        return False
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, backup_path)
+    return True
+
+
+def _restore_file(path: Path, backup_path: Path, existed: bool) -> None:
+    """Restore a file to its previous state."""
+    if existed:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(backup_path, path)
+        return
+    path.unlink(missing_ok=True)
+
+
+def _remove_empty_parents(path: Path, *, stop_at: Path) -> None:
+    """Remove empty clip directories created by a rolled-back workflow."""
+    current = path
+    stop = stop_at.expanduser().resolve()
+    while current.exists() and current.resolve() != stop:
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
