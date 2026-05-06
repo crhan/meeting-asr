@@ -57,6 +57,7 @@ class SpeakerReviewDecision:
     action: str = "save"
     person_mapping: dict[int, int] = field(default_factory=dict)
     person_public_mapping: dict[int, str] = field(default_factory=dict)
+    ignored_speaker_ids: tuple[int, ...] = ()
     correction_edit: SentenceCorrectionEdit | None = None
     correction_edits: tuple[SentenceCorrectionEdit, ...] = ()
     project_dir: Path | None = field(default=None, compare=False)

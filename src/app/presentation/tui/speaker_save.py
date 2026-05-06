@@ -46,6 +46,15 @@ class SpeakerReviewNameChange:
 
 
 @dataclass(frozen=True, slots=True)
+class SpeakerReviewIgnoreChange:
+    """One speaker ignore-state change written by project review save."""
+
+    label: str
+    before: bool
+    after: bool
+
+
+@dataclass(frozen=True, slots=True)
 class CorrectionProposalSelection:
     """User selection returned by the proposal review modal."""
 
@@ -110,6 +119,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         followup_handler: Callable[[], None] | None = None,
         followup_label: str = "continue",
         speaker_changes: Sequence[SpeakerReviewNameChange] = (),
+        ignore_changes: Sequence[SpeakerReviewIgnoreChange] = (),
     ) -> None:
         """
         Create save workflow screen.
@@ -122,6 +132,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
             followup_handler: Optional action to run after closing the save modal.
             followup_label: Human-readable follow-up action shown in the modal.
             speaker_changes: Human-readable speaker name diff for this save.
+            ignore_changes: Human-readable speaker ignore diff for this save.
         """
         super().__init__()
         self.decision = decision
@@ -131,6 +142,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         self.followup_handler = followup_handler
         self.followup_label = followup_label
         self.speaker_changes = tuple(speaker_changes)
+        self.ignore_changes = tuple(ignore_changes)
         self.outcome: SpeakerReviewSaveOutcome | None = None
         self.selected_change_indices: tuple[int, ...] | None = None
         self.running = False
@@ -254,6 +266,8 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
             return ""
         lines = [tr("[b]Speaker name changes[/b]", "[b]Speaker 姓名变更[/b]")]
         lines.extend(_speaker_change_lines(self.speaker_changes))
+        lines.extend(["", tr("[b]Speaker ignore changes[/b]", "[b]Speaker 忽略变更[/b]")])
+        lines.extend(_speaker_ignore_change_lines(self.ignore_changes))
         lines.extend(["", tr("[b]Speaker outputs[/b]", "[b]Speaker 产物[/b]")])
         lines.extend(_path_lines(self.outcome))
         if self.outcome.correction_summary is not None:
@@ -526,11 +540,40 @@ def speaker_name_changes(
     """
     changes = []
     for speaker in speakers:
+        if bool(getattr(speaker, "ignored", False)):
+            continue
         speaker_id = int(getattr(speaker, "speaker_id"))
         before = saved_names_by_speaker.get(speaker_id)
         after = str(getattr(speaker, "current_name")).strip() or str(getattr(speaker, "label"))
         if before != after:
             changes.append(SpeakerReviewNameChange(str(getattr(speaker, "label")), before, after))
+    return tuple(changes)
+
+
+def speaker_ignore_changes(
+    speakers: Sequence[object],
+    saved_ignored_speaker_ids: frozenset[int],
+) -> tuple[SpeakerReviewIgnoreChange, ...]:
+    """
+    Build speaker ignore changes against the saved ignore metadata.
+
+    Args:
+        speakers: Current TUI speaker rows.
+        saved_ignored_speaker_ids: Speaker ids already persisted as ignored.
+
+    Returns:
+        Speaker ignore-state changes that will be written by save.
+    """
+    changes = []
+    for speaker in speakers:
+        speaker_id = int(getattr(speaker, "speaker_id"))
+        before = speaker_id in saved_ignored_speaker_ids
+        after = (
+            bool(getattr(speaker, "ignored", False))
+            and str(getattr(speaker, "current_name")) == str(getattr(speaker, "label"))
+        )
+        if before != after:
+            changes.append(SpeakerReviewIgnoreChange(str(getattr(speaker, "label")), before, after))
     return tuple(changes)
 
 
@@ -545,6 +588,24 @@ def _speaker_change_lines(changes: Sequence[SpeakerReviewNameChange]) -> list[st
         )
         for item in changes
     ]
+
+
+def _speaker_ignore_change_lines(changes: Sequence[SpeakerReviewIgnoreChange]) -> list[str]:
+    """Render speaker ignore-state changes."""
+    if not changes:
+        return [tr("- No speaker ignore changes.", "- 无 speaker 忽略变更。")]
+    return [
+        tr(
+            f"- {escape(item.label)}: {_ignore_state_label(item.before)} -> {_ignore_state_label(item.after)}",
+            f"- {escape(item.label)}：{_ignore_state_label(item.before)} -> {_ignore_state_label(item.after)}",
+        )
+        for item in changes
+    ]
+
+
+def _ignore_state_label(value: bool) -> str:
+    """Return a compact ignore-state label."""
+    return tr("ignored", "已忽略") if value else tr("active", "未忽略")
 
 
 def _summary_lines(summary: CorrectionEditSummary) -> list[str]:

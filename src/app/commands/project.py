@@ -1063,6 +1063,7 @@ def _handle_speaker_review_decision(
             decision.mapping,
             person_mapping=decision.person_mapping,
             person_public_mapping=decision.person_public_mapping,
+            ignored_speaker_ids=decision.ignored_speaker_ids,
         )
     )
     typer.echo(f"Mapping written to: {mapping_path}")
@@ -1093,6 +1094,7 @@ def _save_review_from_tui(
         decision.mapping,
         person_mapping=decision.person_mapping,
         person_public_mapping=decision.person_public_mapping,
+        ignored_speaker_ids=decision.ignored_speaker_ids,
     )
     correction_summary = None
     if decision.action == "correct-inline":

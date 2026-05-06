@@ -9,7 +9,7 @@ from pathlib import Path
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
 from app.project_manager import ProjectManifest, load_manifest, project_paths, resolve_project_source_path
-from app.speaker_labeling import load_transcript_result
+from app.speaker_labeling import load_ignored_speakers, load_transcript_result
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
     voiceprint_match_status,
@@ -59,15 +59,24 @@ def load_speaker_review_session(
     manifest = load_manifest(paths.root)
     source_media = resolve_project_source_path(paths.root, manifest)
     mapping_path = paths.speakers_dir / "speaker_map.json"
+    ignore_path = paths.speakers_dir / "speaker_ignore.json"
     match_path = paths.speakers_dir / "speaker_matches.json"
     mapping = _load_existing_mapping(mapping_path)
+    ignored_speaker_ids = load_ignored_speakers(ignore_path)
     matches = load_match_candidates(match_path)
     people = load_people(store_dir)
     person_mapping, person_public_mapping = load_existing_person_mapping(
         paths.speakers_dir / "speaker_person_map.json",
         people,
     )
-    speakers = _build_review_speakers(segments_by_speaker, mapping, person_mapping, person_public_mapping, matches)
+    speakers = _build_review_speakers(
+        segments_by_speaker,
+        mapping,
+        ignored_speaker_ids,
+        person_mapping,
+        person_public_mapping,
+        matches,
+    )
     return SpeakerReviewSession(
         project_dir=paths.root,
         source_media=source_media,
@@ -77,6 +86,7 @@ def load_speaker_review_session(
             sentences=result.sentences,
             match_file_exists=match_path.exists(),
             saved_names_by_speaker=mapping,
+            saved_ignored_speaker_ids=ignored_speaker_ids,
             store_dir=store_dir,
         ),
         speakers=speakers,
@@ -125,6 +135,7 @@ def _build_review_overview(
     sentences: list[SentenceSegment],
     match_file_exists: bool,
     saved_names_by_speaker: dict[int, str],
+    saved_ignored_speaker_ids: set[int],
     store_dir: Path | None,
 ) -> SpeakerReviewOverview:
     """Build the immutable project state shown by the TUI."""
@@ -137,6 +148,7 @@ def _build_review_overview(
         match_file_exists=match_file_exists,
         saved_names_by_speaker=dict(saved_names_by_speaker),
         voiceprint=load_voiceprint_review_progress(manifest.project_id, store_dir),
+        saved_ignored_speaker_ids=frozenset(saved_ignored_speaker_ids),
     )
 
 
@@ -182,13 +194,22 @@ def _load_existing_mapping(path: Path) -> dict[int, str]:
 def _build_review_speakers(
     segments_by_speaker: dict[int, list[SentenceSegment]],
     mapping: dict[int, str],
+    ignored_speaker_ids: set[int],
     person_mapping: dict[int, int],
     person_public_mapping: dict[int, str],
     matches: dict[int, SpeakerMatchCandidate],
 ) -> list[ReviewSpeaker]:
     """Build mutable speaker review rows."""
     return [
-        _review_speaker(speaker_id, segments, mapping, person_mapping, person_public_mapping, matches)
+        _review_speaker(
+            speaker_id,
+            segments,
+            mapping,
+            ignored_speaker_ids,
+            person_mapping,
+            person_public_mapping,
+            matches,
+        )
         for speaker_id, segments in sorted(segments_by_speaker.items())
     ]
 
@@ -197,6 +218,7 @@ def _review_speaker(
     speaker_id: int,
     segments: list[SentenceSegment],
     mapping: dict[int, str],
+    ignored_speaker_ids: set[int],
     person_mapping: dict[int, int],
     person_public_mapping: dict[int, str],
     matches: dict[int, SpeakerMatchCandidate],
@@ -207,11 +229,16 @@ def _review_speaker(
     current_name = mapping.get(speaker_id) or accepted_review_name(match) or label
     person_id = person_mapping.get(speaker_id) or accepted_review_person_id(match)
     person_public_id = person_public_mapping.get(speaker_id) or accepted_review_person_public_id(match)
-    ignored = (
+    legacy_ignored = (
         speaker_id in mapping
         and current_name == label
         and (match is None or voiceprint_match_status(match) != MATCH_STATUS_BELOW_THRESHOLD)
     )
+    ignored = speaker_id in ignored_speaker_ids or legacy_ignored
+    if ignored:
+        current_name = label
+        person_id = None
+        person_public_id = None
     return ReviewSpeaker(
         speaker_id,
         label,

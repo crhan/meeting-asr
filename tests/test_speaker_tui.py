@@ -43,6 +43,8 @@ from app.presentation.tui.speaker_save import (
     SpeakerReviewSaveOutcome,
     SpeakerReviewSaveScreen,
     _summary_lines,
+    speaker_ignore_changes,
+    speaker_name_changes,
 )
 from app.presentation.tui.voiceprint_capture import load_voiceprint_capture_review_session
 from app.presentation.tui.voiceprint import VoiceprintLibrarySession
@@ -226,7 +228,21 @@ def test_speaker_review_tui_can_ignore_anonymous_speaker() -> None:
     assert app.return_value == SpeakerReviewDecision(
         saved=True,
         mapping={0: "Speaker A"},
+        ignored_speaker_ids=(0,),
     )
+
+
+def test_speaker_review_save_diff_separates_ignore_from_name_change() -> None:
+    """Ignoring a speaker is a review-state change, not a speaker rename."""
+    speaker = ReviewSpeaker(0, "Speaker A", [], "Speaker A", None, ignored=True)
+
+    assert speaker_name_changes([speaker], {}) == ()
+    ignore_changes = speaker_ignore_changes([speaker], frozenset())
+
+    assert len(ignore_changes) == 1
+    assert ignore_changes[0].label == "Speaker A"
+    assert ignore_changes[0].before is False
+    assert ignore_changes[0].after is True
 
 
 def test_project_review_tui_edits_transcript_text_inline() -> None:

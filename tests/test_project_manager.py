@@ -1419,6 +1419,23 @@ def test_apply_project_speakers_ignores_low_information_speaker(tmp_path: Path) 
     assert "大家看供应商闭环" in transcript
 
 
+def test_apply_project_speakers_persists_explicit_ignored_speakers(tmp_path: Path) -> None:
+    """Explicit ignore state should not be encoded as a fake speaker name."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+
+    apply_project_speakers(project_dir, {0: "欧丁", 1: "Speaker B"}, ignored_speaker_ids=(1,))
+
+    manifest = load_manifest(project_dir)
+    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    ignored = json.loads((project_dir / "speakers" / "speaker_ignore.json").read_text(encoding="utf-8"))
+
+    assert mapping == {"0": "欧丁"}
+    assert ignored == {"ignored_speakers": [1]}
+    assert manifest.speakers["mapped"] == {"0": "欧丁"}
+    assert manifest.speakers["ignored"] == [1]
+
+
 def test_project_speakers_inspect_shows_mapped_names(tmp_path: Path) -> None:
     """Speaker inspect should show human names after speaker apply."""
     project_dir = _sample_project(tmp_path)

@@ -116,6 +116,39 @@ def write_speaker_person_mapping(path: Path, speaker_person_mapping: dict[int, i
     return safe_write_json(path, payload)
 
 
+def write_ignored_speakers(path: Path, speaker_ids: set[int]) -> Path:
+    """
+    Write explicitly ignored project speaker ids.
+
+    Args:
+        path: Output path.
+        speaker_ids: Project speaker ids deliberately kept anonymous.
+
+    Returns:
+        Written path.
+    """
+    payload = {"ignored_speakers": sorted(speaker_ids)}
+    return safe_write_json(path, payload)
+
+
+def load_ignored_speakers(path: Path) -> set[int]:
+    """
+    Load explicitly ignored project speaker ids.
+
+    Args:
+        path: Ignore metadata JSON path.
+
+    Returns:
+        Set of project speaker ids deliberately kept anonymous.
+    """
+    if not path.exists():
+        return set()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        return {int(value) for value in payload}
+    return {int(value) for value in payload.get("ignored_speakers", [])}
+
+
 def load_speaker_person_mapping(path: Path) -> dict[int, int | str]:
     """
     Load project speaker to voiceprint person id mapping.

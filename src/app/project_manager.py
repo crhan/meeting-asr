@@ -9,7 +9,7 @@ import re
 import shutil
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -66,6 +66,7 @@ from app.speaker_labeling import (
     load_transcript_result,
     render_named_speaker_text,
     render_named_srt,
+    write_ignored_speakers,
     write_speaker_person_mapping,
     write_speaker_mapping,
 )
@@ -789,6 +790,7 @@ def apply_project_speakers(
     *,
     person_mapping: dict[int, int] | None = None,
     person_public_mapping: dict[int, str] | None = None,
+    ignored_speaker_ids: Collection[int] | None = None,
 ) -> tuple[Path, Path, Path]:
     """
     Apply speaker names to project outputs.
@@ -798,6 +800,7 @@ def apply_project_speakers(
         mappings: Explicit speaker display-name mappings.
         person_mapping: Optional project speaker to internal voiceprint person id mapping.
         person_public_mapping: Optional project speaker to voiceprint person public id mapping.
+        ignored_speaker_ids: Optional explicit speaker ids to keep anonymous.
 
     Returns:
         Paths for map, transcript, and SRT.
@@ -807,6 +810,8 @@ def apply_project_speakers(
     result = load_transcript_result(paths.asr_dir / "sentences.json")
     resolved_mapping = _merge_speaker_mapping(result, mappings)
     mapping_path = write_speaker_mapping(paths.speakers_dir / "speaker_map.json", resolved_mapping)
+    if ignored_speaker_ids is not None:
+        _write_project_ignored_speakers(paths, manifest, result, ignored_speaker_ids)
     resolved_person_mapping = _merge_speaker_person_mapping(resolved_mapping, person_mapping or {})
     resolved_public_mapping = _merge_speaker_person_public_mapping(resolved_mapping, person_public_mapping or {})
     stored_person_mapping = resolved_public_mapping or resolved_person_mapping
@@ -842,6 +847,25 @@ def apply_project_speakers(
     manifest.status = "corrected" if corrected_result is not None else "named"
     save_manifest(paths.root, manifest)
     return mapping_path, transcript_path, srt_path
+
+
+def _write_project_ignored_speakers(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    result: TranscriptResult,
+    speaker_ids: Collection[int],
+) -> None:
+    """Persist explicit ignored-speaker state for project review."""
+    active_speakers = set(result.detected_speakers)
+    ignored = {int(speaker_id) for speaker_id in speaker_ids if int(speaker_id) in active_speakers}
+    ignore_path = paths.speakers_dir / "speaker_ignore.json"
+    if ignored:
+        write_ignored_speakers(ignore_path, ignored)
+        manifest.speakers["ignored"] = sorted(ignored)
+        return
+    if ignore_path.exists():
+        ignore_path.unlink()
+    manifest.speakers.pop("ignored", None)
 
 
 def _load_corrected_result(paths: ProjectPaths) -> TranscriptResult | None:

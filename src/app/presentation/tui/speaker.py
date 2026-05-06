@@ -39,11 +39,17 @@ from app.presentation.tui.speaker_rematch import (
     compact_rematch_line,
     run_speaker_rematch,
 )
-from app.presentation.tui.speaker_save import SpeakerReviewSaveOutcome, SpeakerReviewSaveScreen, speaker_name_changes
+from app.presentation.tui.speaker_save import (
+    SpeakerReviewSaveOutcome,
+    SpeakerReviewSaveScreen,
+    speaker_ignore_changes,
+    speaker_name_changes,
+)
 from app.presentation.tui.speaker_session import load_speaker_review_session, load_voiceprint_review_progress
 from app.presentation.tui.speaker_status import (
     SpeakerReviewOverview,
     VoiceprintReviewProgress,
+    is_ignored,
     match_badge,
     render_overview_pane,
     render_selected_speaker_line,
@@ -403,6 +409,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                     self.session.speakers,
                     self.session.overview.saved_names_by_speaker,
                 ),
+                ignore_changes=speaker_ignore_changes(
+                    self.session.speakers,
+                    self.session.overview.saved_ignored_speaker_ids,
+                ),
             )
         )
 
@@ -632,6 +642,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             if speaker.person_public_id is not None and not speaker.ignored
         }
 
+    def _ignored_speaker_ids(self) -> tuple[int, ...]:
+        """Return project speaker ids deliberately kept anonymous."""
+        return tuple(sorted(speaker.speaker_id for speaker in self.session.speakers if is_ignored(speaker)))
+
     def _decision(self) -> SpeakerReviewDecision:
         """Build the current save decision."""
         correction_edits = tuple(self.correction_edits)
@@ -643,6 +657,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             action=action,
             person_mapping=self._person_mapping(),
             person_public_mapping=self._person_public_mapping(),
+            ignored_speaker_ids=self._ignored_speaker_ids(),
             correction_edit=latest_edit,
             correction_edits=correction_edits,
             project_dir=self.session.project_dir,
@@ -683,7 +698,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def _mark_speaker_names_saved(self) -> None:
         """Keep in-memory workflow state aligned with the just-written speaker map."""
-        overview = replace(self.session.overview, saved_names_by_speaker=self._mapping())
+        overview = replace(
+            self.session.overview,
+            saved_names_by_speaker=self._mapping(),
+            saved_ignored_speaker_ids=frozenset(self._ignored_speaker_ids()),
+        )
         self.session = replace(self.session, overview=overview)
         self.identity_baseline = _identity_snapshot(self.session.speakers)
 
@@ -785,9 +804,18 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self._refresh()
 
     def _has_unsaved_speaker_names(self) -> bool:
-        """Return whether speaker names differ from the saved project map."""
+        """Return whether speaker names or ignore state differ from saved project state."""
         saved = self.session.overview.saved_names_by_speaker
-        return any((speaker.current_name.strip() or speaker.label) != saved.get(speaker.speaker_id) for speaker in self.session.speakers)
+        ignored = self.session.overview.saved_ignored_speaker_ids
+        for speaker in self.session.speakers:
+            current_ignored = is_ignored(speaker)
+            if current_ignored != (speaker.speaker_id in ignored):
+                return True
+            if current_ignored:
+                continue
+            if (speaker.current_name.strip() or speaker.label) != saved.get(speaker.speaker_id):
+                return True
+        return False
 
     def _has_unsaved_review_changes(self) -> bool:
         """Return whether switching projects would discard visible TUI edits."""

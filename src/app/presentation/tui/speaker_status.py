@@ -66,6 +66,7 @@ class SpeakerReviewOverview:
     match_file_exists: bool
     saved_names_by_speaker: dict[int, str]
     voiceprint: VoiceprintReviewProgress
+    saved_ignored_speaker_ids: frozenset[int] = frozenset()
 
 
 def render_overview_pane(
@@ -413,9 +414,10 @@ def _manual_state(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReview
 
 
 def _manual_saved_count(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReviewOverview) -> int:
-    """Return how many project speakers have been saved in speaker_map.json."""
+    """Return how many project speakers have a saved name or ignore decision."""
     speaker_ids = {speaker.speaker_id for speaker in speakers}
-    return len(speaker_ids & set(overview.saved_names_by_speaker))
+    saved_ids = set(overview.saved_names_by_speaker) | set(overview.saved_ignored_speaker_ids)
+    return len(speaker_ids & saved_ids)
 
 
 def _capture_todo_count(speakers: Sequence[ReviewSpeakerLike], progress: VoiceprintReviewProgress) -> int:
@@ -453,9 +455,18 @@ def _embed_todo_count(progress: VoiceprintReviewProgress) -> int | None:
 
 
 def _has_unsaved_names(speakers: Sequence[ReviewSpeakerLike], overview: SpeakerReviewOverview) -> bool:
-    """Return whether the current TUI names differ from saved names."""
+    """Return whether current TUI name or ignore state differs from saved state."""
     saved_names = overview.saved_names_by_speaker
-    return any(saved_names.get(speaker.speaker_id) != speaker.current_name for speaker in speakers)
+    saved_ignored = overview.saved_ignored_speaker_ids
+    for speaker in speakers:
+        current_ignored = is_ignored(speaker)
+        if current_ignored != (speaker.speaker_id in saved_ignored):
+            return True
+        if current_ignored:
+            continue
+        if saved_names.get(speaker.speaker_id) != speaker.current_name:
+            return True
+    return False
 
 
 def _score_summary(scores: list[float]) -> str:
