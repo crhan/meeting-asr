@@ -33,6 +33,12 @@ from app.presentation.tui.speaker_people import (
     KnownPerson,
     find_person_by_name,
 )
+from app.presentation.tui.speaker_rematch import (
+    SpeakerRematchProcessingScreen,
+    SpeakerRematchResult,
+    compact_rematch_line,
+    run_speaker_rematch,
+)
 from app.presentation.tui.speaker_save import SpeakerReviewSaveOutcome, SpeakerReviewSaveScreen
 from app.presentation.tui.speaker_session import load_speaker_review_session, load_voiceprint_review_progress
 from app.presentation.tui.speaker_status import (
@@ -46,13 +52,11 @@ from app.presentation.tui.speaker_status import (
     status_style,
 )
 from app.presentation.tui.voiceprint_review import (
-    VoiceprintReviewDecision,
     VoiceprintReviewScreen,
     VoiceprintReviewWorkflowSummary,
     load_voiceprint_review_session,
 )
 from app.utils import format_ms_timestamp
-from app.voiceprints import VoiceprintCaptureSummary, persist_voiceprint_capture_selection
 
 DEFAULT_SAMPLE_PAGE_SIZE = 6
 SAMPLE_PANE_RESERVED_ROWS = 5
@@ -68,6 +72,8 @@ __all__ = [
     "SentenceCorrectionScreen",
     "ShortcutHelpScreen",
     "SpeakerMatchCandidate",
+    "SpeakerRematchProcessingScreen",
+    "SpeakerRematchResult",
     "SpeakerReviewApp",
     "SpeakerReviewDecision",
     "SpeakerReviewOverview",
@@ -139,6 +145,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("c", "edit_sample_text", "Correct text", show=False),
         Binding("p", "switch_project", "Switch project"),
         Binding("v", "voiceprint_review", "Voiceprint"),
+        Binding("m", "rematch_speakers", "Rematch"),
         Binding("b", "embed_voiceprints", "Embed voiceprints"),
         Binding("?", "show_shortcuts", "Help"),
         Binding("s", "save", "Save"),
@@ -200,11 +207,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Update project review after an embedded voiceprint capture finishes."""
-        if event.worker.group == "speaker-review-voiceprint":
-            self._handle_voiceprint_capture_state(event)
-            return
         if event.worker.group == "speaker-review-voiceprint-embed":
             self._handle_voiceprint_embed_state(event)
+            return
+        if event.worker.group == "speaker-review-rematch":
+            self._handle_speaker_rematch_state(event)
             return
 
     def action_down(self) -> None:
@@ -332,6 +339,25 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 store_dir=self.session.store_dir,
                 on_complete=self._handle_voiceprint_review_workflow,
             )
+        )
+
+    def action_rematch_speakers(self) -> None:
+        """Rerun speaker matching against the current global voiceprint library."""
+        if self._has_unsaved_review_changes():
+            self._set_status(tr("Save current review changes with s before rematching speakers.", "重新匹配前请先按 s 保存当前 review 修改。"))
+            return
+        self._stop_playback()
+        self.push_screen(SpeakerRematchProcessingScreen())
+        self.run_worker(
+            lambda: run_speaker_rematch(
+                self.session.project_dir,
+                store_dir=self.session.store_dir,
+                page_size=self.session.page_size,
+                allow_correction=self.session.allow_correction,
+            ),
+            group="speaker-review-rematch",
+            name="rematch",
+            thread=True,
         )
 
     def action_embed_voiceprints(self) -> None:
@@ -674,30 +700,6 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             )
         return self.accept_handler
 
-    def _handle_voiceprint_review_decision(
-        self,
-        decision: VoiceprintReviewDecision | None,
-        planned: VoiceprintCaptureSummary | None,
-    ) -> None:
-        """Persist samples selected in the embedded voiceprint review."""
-        if decision is None or not decision.saved:
-            self._set_status(tr("Voiceprint review closed; no samples were written.", "声纹 Review 已关闭；没有写入样本。"))
-            return
-        if planned is None:
-            self._set_status(tr("No project voiceprint candidates were available.", "当前项目没有可用的声纹候选样本。"))
-            return
-        self._set_status(tr("Capturing selected voiceprint samples...", "正在采集已选择的声纹样本..."))
-        self.run_worker(
-            lambda: persist_voiceprint_capture_selection(
-                self.session.project_dir,
-                planned=planned,
-                selected_clip_rel_paths=decision.selected_clip_rel_paths,
-            ),
-            group="speaker-review-voiceprint",
-            name="capture",
-            thread=True,
-        )
-
     def _handle_voiceprint_review_workflow(self, summary: VoiceprintReviewWorkflowSummary) -> None:
         """Refresh Project Review after embedded Voiceprint Review completes."""
         overview = replace(
@@ -716,13 +718,6 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         )
         self._refresh()
 
-    def _handle_voiceprint_capture_state(self, event: Worker.StateChanged) -> None:
-        """Update the TUI after a voiceprint capture worker state change."""
-        if event.state == WorkerState.SUCCESS:
-            self._handle_voiceprint_capture_success(event.worker.result)
-        elif event.state == WorkerState.ERROR:
-            self._set_status(tr(f"Voiceprint capture failed: {event.worker.error}", f"声纹采样失败：{event.worker.error}"))
-
     def _handle_voiceprint_embed_state(self, event: Worker.StateChanged) -> None:
         """Update the TUI after a voiceprint embedding worker state change."""
         if event.state == WorkerState.SUCCESS:
@@ -736,20 +731,35 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 )
             )
 
-    def _handle_voiceprint_capture_success(self, summary: VoiceprintCaptureSummary) -> None:
-        """Refresh project voiceprint progress after sample capture."""
-        overview = replace(
-            self.session.overview,
-            voiceprint=load_voiceprint_review_progress(self.session.overview.project_id, self.session.store_dir),
-        )
-        self.session = replace(self.session, overview=overview)
-        self._set_status(
-            tr(
-                f"Captured {summary.sample_count} voiceprint sample(s). Press b to embed voiceprints.",
-                f"已采集 {summary.sample_count} 个声纹样本。按 b 生成 embedding。",
+    def _handle_speaker_rematch_state(self, event: Worker.StateChanged) -> None:
+        """Update Project Review after voiceprint rematch finishes."""
+        if event.state == WorkerState.SUCCESS:
+            self._handle_speaker_rematch_success(event.worker.result)
+            return
+        if event.state == WorkerState.ERROR:
+            self._dismiss_rematch_processing()
+            self._set_status(
+                tr(
+                    f"Speaker rematch failed: {event.worker.error}. Run meeting-asr doctor --require-voiceprint-embedding.",
+                    f"Speaker 重新匹配失败：{event.worker.error}。请运行 meeting-asr doctor --require-voiceprint-embedding。",
+                )
             )
-        )
+
+    def _handle_speaker_rematch_success(self, result: SpeakerRematchResult) -> None:
+        """Replace current review data with the newly matched project state."""
+        selected_speaker_id = self._speaker().speaker_id
+        self._dismiss_rematch_processing()
+        self.session = result.session
+        self.known_people = list(result.session.people)
+        self.selected_speaker_index = _speaker_index_by_id(result.session.speakers, selected_speaker_id)
+        self.focused_column = "speakers"
+        self._enter_browse_mode(compact_rematch_line(result))
         self._refresh()
+
+    def _dismiss_rematch_processing(self) -> None:
+        """Close the rematch processing modal if it is currently visible."""
+        if isinstance(self.screen, SpeakerRematchProcessingScreen):
+            self.screen.dismiss(None)
 
     def _handle_voiceprint_embed_success(self, summary: VoiceprintEmbedSummary) -> None:
         """Refresh project voiceprint progress after embedding finishes."""
@@ -944,6 +954,14 @@ def _known_person_public_id(people: list[KnownPerson], person_id: int | None) ->
         if person.person_id == person_id:
             return person.public_id
     return None
+
+
+def _speaker_index_by_id(speakers: list[ReviewSpeaker], speaker_id: int) -> int:
+    """Return the index for a speaker id, falling back to the first row."""
+    for index, speaker in enumerate(speakers):
+        if speaker.speaker_id == speaker_id:
+            return index
+    return 0
 
 
 def _trim_sample_text(text: str, *, limit: int = 90) -> str:

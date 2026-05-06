@@ -14,11 +14,11 @@ def browse_status() -> str:
         (
             "Browse: h/l or left/right choose column | j/k or up/down move | "
             "PgUp/PgDn page samples | Space play/stop | p project | / name | e edit text | "
-            "v capture | b embed | ? help | s save"
+            "v capture | m rematch | b embed | ? help | s save"
         ),
         (
             "浏览：h/l 或 ←/→ 切列 | j/k 或 ↑/↓ 移动 | PgUp/PgDn 翻页 | "
-            "Space 播放/停止 | p 切项目 | / 改人名 | e 改文字 | v 声纹采样 | b 生成 embedding | ? 帮助 | s 保存"
+            "Space 播放/停止 | p 切项目 | / 改人名 | e 改文字 | v 声纹采样 | m 重新匹配 | b 生成 embedding | ? 帮助 | s 保存"
         ),
     )
 
@@ -61,6 +61,7 @@ i                    Ignore this speaker: keep anonymous and skip capture
 e                    Edit selected transcript text inside this TUI
 c                    Same as e
 v                    Open voiceprint review: project candidates and global library
+m                    Rematch speakers against the current global voiceprint library
 b                    Embed captured voiceprint samples
 p                    Switch to another project from project history
 s                    Save speaker mapping, then run staged text correction if present
@@ -107,6 +108,7 @@ i                    忽略当前 speaker：保持匿名，并跳过声纹采样
 e                    在 TUI 内编辑当前转写句子
 c                    等同于 e
 v                    打开声纹 Review：项目候选样本和全局声纹库
+m                    使用当前全局声纹库重新匹配 speaker
 b                    为已采集声纹样本生成 embedding
 p                    从历史项目中切换项目
 s                    保存 speaker 映射；如有文字修正则继续生成全篇修正建议

@@ -29,6 +29,8 @@ from app.speaker_tui import (
     SpeakerReviewDecision,
     SpeakerReviewOverview,
     SpeakerReviewSession,
+    SpeakerRematchProcessingScreen,
+    SpeakerRematchResult,
     ShortcutHelpScreen,
     UNFOCUSED_PANE_CLASS,
     VoiceprintReviewProgress,
@@ -53,6 +55,7 @@ from app.presentation.tui.voiceprint_review import (
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
 from app.voiceprint_evaluation import VoiceprintEvaluationSummary, VoiceprintProjectEvaluation, VoiceprintScoreChange
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL, VoiceprintEmbedSummary
+from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
@@ -823,6 +826,93 @@ def test_project_review_tui_blocks_project_switch_with_unsaved_changes() -> None
 
             assert not isinstance(app.screen, ProjectPickerScreen)
             assert "Save current project changes" in str(app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
+
+
+def test_project_review_tui_rematches_speakers_and_refreshes(monkeypatch, tmp_path: Path) -> None:
+    """Project Review should rerun voiceprint matching and reload visible matches."""
+    current_dir = (tmp_path / "projects" / "p-current").resolve()
+    current_dir.mkdir(parents=True)
+    current_session = _session_for_project(current_dir, project_id="p-current", title="Current")
+    target_session = replace(
+        current_session,
+        speakers=[
+            ReviewSpeaker(
+                0,
+                "Speaker A",
+                current_session.speakers[0].segments,
+                "墨泪",
+                SpeakerMatchCandidate("墨泪", 0.91, True, best_name="墨泪", best_score=0.91),
+            ),
+            current_session.speakers[1],
+        ],
+        overview=replace(current_session.overview, match_file_exists=True),
+    )
+    summary = SpeakerMatchSummary(
+        current_dir / "speakers" / "speaker_matches.json",
+        "local-speechbrain",
+        "test-model",
+        0.75,
+        [
+            SpeakerMatch(0, "Speaker A", "墨泪", 0.91, True, 2, best_name="墨泪", best_score=0.91, accepted_name="墨泪", threshold=0.75),
+            SpeakerMatch(1, "Speaker B", None, 0.64, False, 2, best_name="欧丁", best_score=0.64, threshold=0.75),
+        ],
+    )
+    unblock = threading.Event()
+    calls: list[tuple[Path, dict[str, object]]] = []
+
+    def fake_rematch(project_dir: Path, **kwargs) -> SpeakerRematchResult:
+        calls.append((project_dir, kwargs))
+        assert unblock.wait(timeout=5)
+        return SpeakerRematchResult(summary, target_session)
+
+    monkeypatch.setattr(speaker_tui, "run_speaker_rematch", fake_rematch)
+    app = SpeakerReviewApp(current_session)
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+
+            assert isinstance(app.screen, SpeakerRematchProcessingScreen)
+
+            unblock.set()
+            for _ in range(20):
+                await pilot.pause()
+                if not isinstance(app.screen, SpeakerRematchProcessingScreen):
+                    break
+
+            assert app.session == target_session
+            assert app._speaker().current_name == "墨泪"
+            assert "Rematch complete: matched 1/2" in str(app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
+
+    assert calls == [
+        (
+            current_dir,
+            {
+                "store_dir": current_session.store_dir,
+                "page_size": current_session.page_size,
+                "allow_correction": current_session.allow_correction,
+            },
+        )
+    ]
+
+
+def test_project_review_tui_blocks_rematch_with_unsaved_changes(monkeypatch) -> None:
+    """Voiceprint rematch should not discard unsaved human review edits."""
+    monkeypatch.setattr(speaker_tui, "run_speaker_rematch", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected rematch")))
+    app = SpeakerReviewApp(_session())
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+
+            assert not isinstance(app.screen, SpeakerRematchProcessingScreen)
+            assert "Save current review changes" in str(app.query_one("#status", Static).render())
 
     asyncio.run(scenario())
 
