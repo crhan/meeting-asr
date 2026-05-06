@@ -70,6 +70,7 @@ from app.project_manager import (
     project_paths,
     record_project_stage,
     resolve_project_source_path,
+    save_manifest,
     summarize_project,
     transcribe_project,
     update_project_metadata,
@@ -587,6 +588,7 @@ def _run_project_workflow(
             step_total=step_total,
         )
         correction_summary = _prepare_run_transcript_polish(project.project_dir, correction_model, progress=progress)
+        _record_polish_runtime(project.project_dir, correction_summary)
     meeting_summary = None
     if summarize:
         summary_step = 8 + int(polish)
@@ -734,6 +736,41 @@ def _now_local_iso() -> str:
     from datetime import datetime
 
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _record_polish_runtime(project_dir: Path, summary: CorrectionEditSummary) -> None:
+    """Persist the transcript polish business state for project show."""
+    manifest = load_manifest(project_dir)
+    runtime = dict(manifest.runtime)
+    runtime["polish"] = _polish_runtime_payload(project_dir, summary)
+    manifest.runtime = runtime
+    save_manifest(project_dir, manifest)
+
+
+def _polish_runtime_payload(project_dir: Path, summary: CorrectionEditSummary) -> dict[str, object]:
+    """Build JSON-safe transcript polish state."""
+    status = "failed" if summary.model_error else "no_changes"
+    if summary.proposed_change_count:
+        status = "proposal_ready"
+    return {
+        "status": status,
+        "updated_at": _now_local_iso(),
+        "model": summary.model,
+        "error": summary.model_error,
+        "proposed_changes": summary.proposed_change_count,
+        "proposal_json": _relative_optional_path(project_dir, summary.proposal_json_path),
+        "proposal_diff": _relative_optional_path(project_dir, summary.proposal_diff_path),
+    }
+
+
+def _relative_optional_path(project_dir: Path, path: Path | None) -> str | None:
+    """Return a project-relative path when possible."""
+    if path is None:
+        return None
+    try:
+        return str(path.relative_to(project_dir))
+    except ValueError:
+        return str(path)
 
 
 def _prepare_run_transcript_polish(

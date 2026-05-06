@@ -425,6 +425,9 @@ def test_project_run_generates_default_transcript_polish_proposal(
 
     assert result.exit_code == 0
     assert calls["model"] == "qwen-test"
+    assert manifest.runtime["polish"]["status"] == "proposal_ready"
+    assert manifest.runtime["polish"]["proposed_changes"] == 1
+    assert manifest.runtime["polish"]["proposal_diff"] == "tmp/corrections/proposal_test.diff"
     assert "Transcript polish" in result.output
     assert "proposal ready (1 change(s))" in result.output
     assert "Transcript polish proposal" in result.output
@@ -1149,6 +1152,14 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
         "stage_started_at": "2026-05-06T10:00:00+08:00",
         "last_heartbeat_at": "2026-05-06T10:00:30+08:00",
         "external_ids": {"dashscope_task_id": "task-1"},
+        "polish": {
+            "status": "proposal_ready",
+            "updated_at": "2026-05-06T10:01:00+08:00",
+            "model": "qwen-test",
+            "proposed_changes": 2,
+            "proposal_json": "tmp/corrections/proposal_test.json",
+            "proposal_diff": "tmp/corrections/proposal_test.diff",
+        },
     }
     save_manifest(project_dir, manifest)
 
@@ -1165,6 +1176,10 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     assert "Current stage" in result.output
     assert "ASR polling" in result.output
     assert "dashscope_task_id=task-1" in result.output
+    assert "Transcript polish" in result.output
+    assert "proposal ready (2 change(s)); review before accepting" in result.output
+    assert f"meeting-asr project correct diff {manifest.project_id}" in result.output
+    assert f"meeting-asr project correct accept {manifest.project_id}" in result.output
     assert "Final transcript" in result.output
     assert "Location" not in result.output
     assert "How to view" not in result.output

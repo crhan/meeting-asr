@@ -102,6 +102,9 @@ def _detail_rows(view: ProjectShowView) -> list[tuple[str, str]]:
             ("ASR cost", _cost_label(manifest.asr.get("cost"))),
         ]
     )
+    polish_label = _polish_label(view)
+    if polish_label:
+        rows.append(("Transcript polish", polish_label))
     rows.extend(_runtime_rows(manifest))
     if view.workflow.missing:
         rows.append(("Missing", ", ".join(view.workflow.missing)))
@@ -220,6 +223,7 @@ def _command_rows(view: ProjectShowView) -> list[tuple[str, str]]:
     next_command = f"meeting-asr project review {quoted_ref}" if _has_unresolved_matches(view) else view.workflow.next_command
     rows = [
         ("Next", next_command),
+        *_polish_command_rows(view, quoted_ref),
         ("Show transcript", f"meeting-asr project transcript show {quoted_ref}"),
         ("List outputs", f"meeting-asr project transcript list {quoted_ref}"),
         ("Review speakers", f"meeting-asr project review {quoted_ref}"),
@@ -231,6 +235,86 @@ def _command_rows(view: ProjectShowView) -> list[tuple[str, str]]:
 def _has_unresolved_matches(view: ProjectShowView) -> bool:
     """Return whether voiceprint results still need human review."""
     return any(row.status != MATCH_STATUS_MATCHED for row in _speaker_match_rows(view))
+
+
+def _polish_label(view: ProjectShowView) -> str | None:
+    """Return the user-facing transcript polish state."""
+    state = _polish_state(view)
+    if state is None:
+        return None
+    status = str(state.get("status") or "unknown")
+    count = _safe_int(state.get("proposed_changes"))
+    if status == "accepted":
+        accepted = _safe_int(state.get("accepted_changes"))
+        return f"accepted ({accepted}/{count} change(s)); corrected transcript ready"
+    if status == "proposal_ready":
+        return f"proposal ready ({count} change(s)); review before accepting"
+    if status == "no_changes":
+        return "done; no changes proposed"
+    if status == "failed":
+        error = str(state.get("error") or "unknown error")
+        return f"failed; {error}"
+    return status.replace("_", " ")
+
+
+def _polish_command_rows(view: ProjectShowView, quoted_ref: str) -> list[tuple[str, str]]:
+    """Return transcript-polish follow-up commands for project show."""
+    state = _polish_state(view)
+    if state is None:
+        return []
+    status = str(state.get("status") or "")
+    if status == "proposal_ready":
+        proposal = _proposal_option(view, state)
+        return [
+            ("Review transcript polish", f"meeting-asr project correct diff {quoted_ref}{proposal}"),
+            ("Accept transcript polish", f"meeting-asr project correct accept {quoted_ref}{proposal}"),
+        ]
+    if status == "failed":
+        model = str(state.get("model") or "").strip()
+        suffix = f" --model {shlex.quote(model)}" if model else ""
+        return [("Retry transcript polish", f"meeting-asr project correct polish {quoted_ref}{suffix}")]
+    return []
+
+
+def _proposal_option(view: ProjectShowView, state: dict) -> str:
+    """Return a specific proposal option so polish commands do not pick a newer correction."""
+    value = state.get("proposal_json")
+    if not value:
+        return ""
+    path = Path(str(value)).expanduser()
+    if not path.is_absolute():
+        path = view.project_dir / path
+    return f" --proposal {shlex.quote(str(path))}"
+
+
+def _polish_state(view: ProjectShowView) -> dict | None:
+    """Return persisted or inferred transcript polish state."""
+    runtime_state = view.manifest.runtime.get("polish")
+    if isinstance(runtime_state, dict):
+        return runtime_state
+    return _latest_polish_proposal_state(view.project_dir)
+
+
+def _latest_polish_proposal_state(project_dir: Path) -> dict | None:
+    """Infer pending polish state from old proposal artifacts."""
+    proposal_dir = project_dir / "tmp" / "corrections"
+    proposals = sorted(proposal_dir.glob("proposal_*.json"))
+    for path in reversed(proposals):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("category") != "polish":
+            continue
+        return {
+            "status": "proposal_ready",
+            "model": payload.get("model"),
+            "error": payload.get("model_error"),
+            "proposed_changes": len(payload.get("proposed_changes") or []),
+            "proposal_json": str(path.relative_to(project_dir)),
+            "proposal_diff": payload.get("diff_path"),
+        }
+    return None
 
 
 def _manifest_output(root: Path, manifest: ProjectManifest, label: str, kind: str, keys: tuple[str, ...]) -> _OutputRow:
@@ -356,6 +440,14 @@ def _safe_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _safe_int(value: object) -> int:
+    """Return a non-negative integer display value."""
+    try:
+        return max(0, int(str(value)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _ignored_speaker_count(detected: object, active_ids: set[int] | None) -> int:

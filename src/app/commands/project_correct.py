@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shlex
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -608,6 +609,8 @@ def record_correction_outputs(
         None.
     """
     manifest.status = "corrected"
+    if summary.review_path.name.startswith("review_polish_"):
+        _record_accepted_polish_runtime(project_dir, manifest, summary)
     for key, path in {
         "corrected_sentences": summary.corrected_sentences_path,
         "corrected_transcript": summary.corrected_transcript_path,
@@ -618,3 +621,33 @@ def record_correction_outputs(
     }.items():
         if path is not None:
             manifest.outputs[key] = str(path.relative_to(project_dir))
+
+
+def _record_accepted_polish_runtime(
+    project_dir: Path,
+    manifest: ProjectManifest,
+    summary: CorrectionEditSummary,
+) -> None:
+    """Record accepted transcript polish state in project runtime metadata."""
+    runtime = dict(manifest.runtime)
+    runtime["polish"] = {
+        "status": "accepted",
+        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "model": summary.model,
+        "error": summary.model_error,
+        "proposed_changes": summary.proposed_change_count,
+        "accepted_changes": summary.change_count,
+        "proposal_json": _relative_optional_path(project_dir, summary.proposal_json_path),
+        "proposal_diff": _relative_optional_path(project_dir, summary.proposal_diff_path),
+    }
+    manifest.runtime = runtime
+
+
+def _relative_optional_path(project_dir: Path, path: Path | None) -> str | None:
+    """Return a project-relative path when possible."""
+    if path is None:
+        return None
+    try:
+        return str(path.relative_to(project_dir))
+    except ValueError:
+        return str(path)
