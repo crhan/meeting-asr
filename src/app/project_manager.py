@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -72,6 +74,7 @@ from app.uploader import SIGNED_URL_EXPIRES_SECONDS, upload_file_to_oss
 from app.utils import ensure_directory, safe_write_json, safe_write_text
 
 PROJECT_DIRS = ("source", "audio", "asr", "speakers", "exports", "logs", "tmp")
+PROJECT_HEARTBEAT_INTERVAL_SECONDS = 30.0
 PROJECT_GITIGNORE = """source/
 audio/
 logs/
@@ -243,6 +246,200 @@ def save_manifest(project_dir: Path, manifest: ProjectManifest) -> Path:
     manifest.updated_at = _now_iso()
     return safe_write_json(project_paths(project_dir).manifest, manifest.to_dict())
 
+
+def record_project_stage(
+    project_dir: Path,
+    *,
+    stage: str,
+    input_file: str | Path | None = None,
+    external_ids: dict[str, object] | None = None,
+    last_success: str | None = None,
+    last_error: str | None = None,
+    heartbeat: bool = False,
+) -> ProjectManifest:
+    """
+    Persist the current long-running project stage.
+
+    Args:
+        project_dir: Project root.
+        stage: Stable stage name.
+        input_file: Optional source input path.
+        external_ids: Non-secret external task identifiers.
+        last_success: Last successful operation in this stage.
+        last_error: Last recoverable or fatal error.
+        heartbeat: Whether this update is a heartbeat instead of a stage transition.
+
+    Returns:
+        Updated manifest.
+    """
+    manifest = load_manifest(project_dir)
+    _update_runtime_stage(
+        manifest,
+        stage=stage,
+        input_file=input_file,
+        external_ids=external_ids,
+        last_success=last_success,
+        last_error=last_error,
+        heartbeat=heartbeat,
+    )
+    save_manifest(project_dir, manifest)
+    return manifest
+
+
+def _update_runtime_stage(
+    manifest: ProjectManifest,
+    *,
+    stage: str,
+    input_file: str | Path | None,
+    external_ids: dict[str, object] | None,
+    last_success: str | None,
+    last_error: str | None,
+    heartbeat: bool,
+) -> None:
+    """Mutate manifest runtime metadata for one stage or heartbeat."""
+    now = _now_iso()
+    runtime = dict(manifest.runtime)
+    if not heartbeat or runtime.get("current_stage") != stage:
+        runtime["current_stage"] = stage
+        runtime["stage_started_at"] = now
+        runtime.pop("last_error", None)
+    runtime["last_heartbeat_at"] = now
+    if input_file is not None:
+        runtime["input_file"] = str(input_file)
+    if last_success:
+        runtime["last_success"] = last_success
+    if last_error:
+        runtime["last_error"] = {"at": now, "stage": stage, "message": last_error}
+    if external_ids:
+        merged = dict(runtime.get("external_ids") or {})
+        merged.update(_safe_external_ids(external_ids))
+        runtime["external_ids"] = merged
+    manifest.runtime = runtime
+
+
+def _safe_external_ids(values: dict[str, object]) -> dict[str, object]:
+    """Return external identifiers with URL query strings redacted."""
+    safe: dict[str, object] = {}
+    for key, value in values.items():
+        text = str(value)
+        if "url" in key.lower() and "?" in text:
+            safe[key] = text.split("?", 1)[0] + "?<redacted>"
+        else:
+            safe[key] = value
+    return safe
+
+
+def _emit_stage_event(
+    progress: CliProgressReporter | None,
+    *,
+    manifest: ProjectManifest,
+    project_dir: Path,
+    stage: str,
+    input_file: str | Path | None,
+    external_ids: dict[str, object] | None = None,
+    last_success: str | None = None,
+    description: str | None = None,
+    step_index: int | None = None,
+    step_total: int | None = None,
+    reset_total: bool = False,
+    total: int | None = None,
+    completed: int | None = None,
+) -> None:
+    """Emit one human-facing stage log and optional progress update."""
+    emit_progress(
+        progress,
+        description or stage,
+        step_index=step_index,
+        step_total=step_total,
+        reset_total=reset_total,
+        total=total,
+        completed=completed,
+        log_kind="stage",
+        stage=stage,
+        project_id=manifest.project_id,
+        project_path=str(project_dir),
+        input_file=str(input_file) if input_file is not None else None,
+        timestamp=_now_iso(),
+        last_success=last_success,
+        log_fields=tuple((external_ids or {}).items()),
+    )
+
+
+def _emit_heartbeat_event(
+    progress: CliProgressReporter | None,
+    *,
+    manifest: ProjectManifest,
+    project_dir: Path,
+    stage: str,
+    input_file: str | Path | None,
+    elapsed_seconds: float,
+    last_success: str,
+    next_action: str,
+    external_ids: dict[str, object] | None = None,
+) -> None:
+    """Emit one structured heartbeat without changing the Rich step row."""
+    emit_progress(
+        progress,
+        None,
+        log_kind="heartbeat",
+        stage=stage,
+        project_id=manifest.project_id,
+        project_path=str(project_dir),
+        input_file=str(input_file) if input_file is not None else None,
+        timestamp=_now_iso(),
+        elapsed_seconds=elapsed_seconds,
+        last_success=last_success,
+        next_action=next_action,
+        log_fields=tuple((external_ids or {}).items()),
+    )
+
+
+def _run_with_stage_heartbeat(
+    operation: Callable[[], Any],
+    *,
+    progress: CliProgressReporter | None,
+    manifest: ProjectManifest,
+    project_dir: Path,
+    stage: str,
+    input_file: str | Path | None,
+    last_success: str,
+    next_action: Callable[[int], str],
+    external_ids: dict[str, object] | None = None,
+    interval_seconds: float = PROJECT_HEARTBEAT_INTERVAL_SECONDS,
+) -> Any:
+    """Run a blocking operation while emitting periodic heartbeats."""
+    if progress is None:
+        return operation()
+    started_at = time.monotonic()
+    heartbeat_index = 0
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(operation)
+        while True:
+            try:
+                return future.result(timeout=interval_seconds)
+            except FutureTimeoutError:
+                heartbeat_index += 1
+                elapsed = time.monotonic() - started_at
+                record_project_stage(
+                    project_dir,
+                    stage=stage,
+                    input_file=input_file,
+                    external_ids=external_ids,
+                    last_success=last_success,
+                    heartbeat=True,
+                )
+                _emit_heartbeat_event(
+                    progress,
+                    manifest=manifest,
+                    project_dir=project_dir,
+                    stage=stage,
+                    input_file=input_file,
+                    elapsed_seconds=elapsed,
+                    last_success=last_success,
+                    next_action=next_action(heartbeat_index),
+                    external_ids=external_ids,
+                )
+
 def update_project_metadata(
     project_dir: Path,
     *,
@@ -371,10 +568,16 @@ def transcribe_project(
     """
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
+    input_file = _project_input_file(paths.root, manifest)
     transcribe_steps = step_total or 6
-    emit_progress(
+    manifest = record_project_stage(paths.root, stage="audio extraction", input_file=input_file)
+    _emit_stage_event(
         progress,
-        "Preparing audio",
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="audio extraction",
+        input_file=input_file,
+        description="Preparing audio",
         step_index=step_offset + 1,
         step_total=transcribe_steps,
         reset_total=True,
@@ -382,9 +585,21 @@ def transcribe_project(
     audio_path = _ensure_project_audio(paths, manifest, options.audio_format, progress)
     should_upload = _parse_project_oss_upload(options.oss_upload, options.file_url)
     settings = load_settings(require_oss=should_upload)
-    emit_progress(
+    oss_external = _oss_stage_external_ids(manifest, audio_path, should_upload)
+    manifest = record_project_stage(
+        paths.root,
+        stage="OSS upload/sign",
+        input_file=input_file,
+        external_ids=oss_external,
+    )
+    _emit_stage_event(
         progress,
-        "Resolving audio URL",
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="OSS upload/sign",
+        input_file=input_file,
+        external_ids=oss_external,
+        description="Resolving audio URL",
         step_index=step_offset + 2,
         step_total=transcribe_steps,
         reset_total=True,
@@ -398,9 +613,35 @@ def transcribe_project(
         settings,
         progress,
     )
-    emit_progress(
+    manifest = load_manifest(paths.root)
+    signed_external = _signed_url_external_ids(manifest, file_url_source)
+    record_project_stage(
+        paths.root,
+        stage="OSS upload/sign",
+        input_file=input_file,
+        external_ids=signed_external,
+        last_success="signed URL ready" if file_url_source == "oss_signed_url" else "file URL ready",
+        heartbeat=True,
+    )
+    _emit_heartbeat_event(
         progress,
-        "Submitting DashScope task",
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="OSS upload/sign",
+        input_file=input_file,
+        elapsed_seconds=0.0,
+        last_success="signed URL ready" if file_url_source == "oss_signed_url" else "file URL ready",
+        next_action="submit ASR task",
+        external_ids=signed_external,
+    )
+    manifest = record_project_stage(paths.root, stage="ASR submit", input_file=input_file)
+    _emit_stage_event(
+        progress,
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="ASR submit",
+        input_file=input_file,
+        description="Submitting DashScope task",
         step_index=step_offset + 3,
         step_total=transcribe_steps,
         reset_total=True,
@@ -408,6 +649,14 @@ def transcribe_project(
     hotwords = _resolve_project_asr_hotwords(settings, options)
     task_response = _submit_project_task(settings, file_url, options, hotwords)
     task_id = _extract_task_id(task_response)
+    record_project_stage(
+        paths.root,
+        stage="ASR submit",
+        input_file=input_file,
+        external_ids={"dashscope_task_id": task_id, "model": options.model},
+        last_success="DashScope task submitted",
+        heartbeat=True,
+    )
     emit_progress(progress, f"DashScope task submitted: {task_id}", completed=1, total=1)
     audio_duration_seconds = _audio_duration_seconds(paths.root, manifest, audio_path)
     cost = estimate_asr_cost(
@@ -416,9 +665,21 @@ def transcribe_project(
         audio_duration_seconds=audio_duration_seconds,
     )
     wait_estimate = estimate_dashscope_wait(settings, model=options.model, audio_duration_seconds=audio_duration_seconds)
-    emit_progress(
+    manifest = load_manifest(paths.root)
+    manifest = record_project_stage(
+        paths.root,
+        stage="ASR polling",
+        input_file=input_file,
+        external_ids={"dashscope_task_id": task_id, "model": options.model},
+    )
+    _emit_stage_event(
         progress,
-        asr_wait_description(task_id, wait_estimate, status=None),
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="ASR polling",
+        input_file=input_file,
+        external_ids={"dashscope_task_id": task_id, "model": options.model},
+        description=asr_wait_description(task_id, wait_estimate, status=None),
         step_index=step_offset + 4,
         step_total=transcribe_steps,
         total=asr_wait_total(wait_estimate),
@@ -426,18 +687,35 @@ def transcribe_project(
     )
     wait_started_at = time.monotonic()
     wait_status = "failed"
+    heartbeat = _HeartbeatThrottle(PROJECT_HEARTBEAT_INTERVAL_SECONDS)
     try:
         wait_response = wait_transcription(
             settings=settings,
             task=task_response,
-            poll_callback=lambda event: emit_dashscope_wait_poll(
-                progress,
+            poll_callback=lambda event: _handle_asr_poll_event(
+                progress=progress,
+                paths=paths,
+                manifest=manifest,
+                input_file=input_file,
                 task_id=task_id,
+                model=options.model,
                 estimate=wait_estimate,
                 event=event,
+                heartbeat=heartbeat,
             ),
         )
         wait_status = "succeeded"
+    except Exception as exc:
+        message = _asr_recovery_message(manifest.project_id, task_id, exc)
+        record_project_stage(
+            paths.root,
+            stage="ASR polling",
+            input_file=input_file,
+            external_ids={"dashscope_task_id": task_id, "model": options.model},
+            last_error=message,
+            heartbeat=True,
+        )
+        raise RuntimeError(message) from exc
     finally:
         wait_seconds = time.monotonic() - wait_started_at
         record_dashscope_wait(
@@ -449,9 +727,22 @@ def transcribe_project(
             wait_seconds=wait_seconds,
             status=wait_status,
         )
-    emit_progress(
+    manifest = record_project_stage(
+        paths.root,
+        stage="transcript materialized",
+        input_file=input_file,
+        external_ids={"dashscope_task_id": task_id},
+        last_success="ASR task succeeded",
+    )
+    _emit_stage_event(
         progress,
-        "Downloading transcription result",
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="transcript materialized",
+        input_file=input_file,
+        external_ids={"dashscope_task_id": task_id},
+        last_success="ASR task succeeded",
+        description="Downloading transcription result",
         step_index=step_offset + 5,
         step_total=transcribe_steps,
         reset_total=True,
@@ -459,9 +750,20 @@ def transcribe_project(
     raw_result = download_transcription_json(wait_response)
     emit_progress(progress, "Normalizing transcript")
     parsed_result = parse_transcription_result(raw_result)
-    emit_progress(
+    manifest = record_project_stage(
+        paths.root,
+        stage="final artifact write",
+        input_file=input_file,
+        last_success="transcript normalized",
+    )
+    _emit_stage_event(
         progress,
-        "Writing transcript artifacts",
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="final artifact write",
+        input_file=input_file,
+        last_success="transcript normalized",
+        description="Writing transcript artifacts",
         step_index=step_offset + 6,
         step_total=transcribe_steps,
         reset_total=True,
@@ -571,10 +873,41 @@ def summarize_project(
     """
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
+    input_file = _project_input_file(paths.root, manifest)
     result = load_transcript_result(paths.asr_dir / "sentences.json")
     settings = load_settings(require_oss=False)
-    emit_progress(progress, "Generating meeting summary")
-    summary = generate_meeting_summary(result, settings=settings, model=model)
+    model_label = model or getattr(settings, "dashscope_summary_model", "configured-default")
+    manifest = record_project_stage(
+        paths.root,
+        stage="summary",
+        input_file=input_file,
+        external_ids={"model": model_label},
+    )
+    _emit_stage_event(
+        progress,
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="summary",
+        input_file=input_file,
+        external_ids={"model": model_label},
+        description="Generating meeting summary",
+    )
+    try:
+        summary = _run_with_stage_heartbeat(
+            lambda: generate_meeting_summary(result, settings=settings, model=model),
+            progress=progress,
+            manifest=manifest,
+            project_dir=paths.root,
+            stage="summary",
+            input_file=input_file,
+            last_success="summary request submitted",
+            next_action=lambda index: f"waiting for summary response heartbeat {index}",
+            external_ids={"model": model_label},
+        )
+    except Exception as exc:
+        message = _project_stage_recovery_message(manifest.project_id, "summary", exc)
+        record_project_stage(paths.root, stage="summary", input_file=input_file, last_error=message, heartbeat=True)
+        raise RuntimeError(message) from exc
     json_path = safe_write_json(paths.exports_dir / "meeting_summary.json", summary.to_dict())
     summary_path = safe_write_text(paths.exports_dir / "meeting_summary.md", render_meeting_summary_markdown(summary))
     title_updated = bool(update_title and _can_replace_title(manifest, summary))
@@ -816,6 +1149,123 @@ def _ensure_project_audio(
         return existing_path
     return prepare_project_audio(paths.root, audio_format=normalized_format, progress=progress)
 
+
+class _HeartbeatThrottle:
+    """Decide when a long-running polling loop should emit a heartbeat."""
+
+    def __init__(self, interval_seconds: float) -> None:
+        """
+        Create a throttle.
+
+        Args:
+            interval_seconds: Minimum elapsed seconds between heartbeats.
+        """
+        self._interval_seconds = interval_seconds
+        self._last_elapsed = 0.0
+
+    def should_emit(self, elapsed_seconds: float) -> bool:
+        """
+        Return whether a heartbeat is due.
+
+        Args:
+            elapsed_seconds: Elapsed seconds reported by the poll loop.
+
+        Returns:
+            True when at least one interval has passed since the last heartbeat.
+        """
+        if elapsed_seconds < self._interval_seconds:
+            return False
+        if elapsed_seconds - self._last_elapsed < self._interval_seconds:
+            return False
+        self._last_elapsed = elapsed_seconds
+        return True
+
+
+def _handle_asr_poll_event(
+    *,
+    progress: CliProgressReporter | None,
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    input_file: str,
+    task_id: str,
+    model: str,
+    estimate,
+    event,
+    heartbeat: _HeartbeatThrottle,
+) -> None:
+    """Update ASR progress and emit durable heartbeat lines when due."""
+    emit_dashscope_wait_poll(progress, task_id=task_id, estimate=estimate, event=event)
+    if not heartbeat.should_emit(event.elapsed_seconds):
+        return
+    external_ids = {"dashscope_task_id": task_id, "model": model, "status": event.status or "unknown"}
+    record_project_stage(
+        paths.root,
+        stage="ASR polling",
+        input_file=input_file,
+        external_ids=external_ids,
+        last_success=f"status={event.status or 'unknown'}",
+        heartbeat=True,
+    )
+    _emit_heartbeat_event(
+        progress,
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="ASR polling",
+        input_file=input_file,
+        elapsed_seconds=event.elapsed_seconds,
+        last_success=f"status={event.status or 'unknown'}",
+        next_action=f"next poll in {event.wait_seconds:.0f}s",
+        external_ids=external_ids,
+    )
+
+
+def _project_input_file(root: Path, manifest: ProjectManifest) -> str:
+    """Return the best source input path for progress logs."""
+    return manifest.source.original_path or str(resolve_project_source_path(root, manifest))
+
+
+def _oss_stage_external_ids(manifest: ProjectManifest, audio_path: Path, should_upload: bool) -> dict[str, object]:
+    """Return non-secret OSS stage identifiers."""
+    if not should_upload:
+        return {"file_url_source": "provided_url"}
+    return {"oss_object_key": _project_oss_object_key(manifest, audio_path)}
+
+
+def _signed_url_external_ids(manifest: ProjectManifest, file_url_source: str) -> dict[str, object]:
+    """Return non-secret signed URL status fields."""
+    if file_url_source != "oss_signed_url":
+        return {"file_url_source": file_url_source}
+    return {
+        "oss_object_key": manifest.oss.get("object_key", "-"),
+        "signed_url_ready": "true",
+        "signed_url_expires_at": manifest.oss.get("signed_url_expires_at", "-"),
+    }
+
+
+def _project_oss_object_key(manifest: ProjectManifest, audio_path: Path) -> str:
+    """Return the stable OSS object key for one project audio object."""
+    return f"meeting-asr/projects/{manifest.project_id}/{audio_path.name}"
+
+
+def _asr_recovery_message(project_id: str, task_id: str, error: Exception) -> str:
+    """Return an ASR failure message with actionable recovery commands."""
+    return (
+        f"Project run failed: project_id={project_id} stage=ASR polling "
+        f"dashscope_task_id={task_id} error={error}. "
+        f"Inspect: meeting-asr project show {project_id}. "
+        f"Review: meeting-asr project review {project_id}. "
+        f"Retry ASR: meeting-asr project transcribe {project_id}."
+    )
+
+
+def _project_stage_recovery_message(project_id: str, stage: str, error: Exception) -> str:
+    """Return a generic project stage failure with recovery commands."""
+    return (
+        f"Project run failed: project_id={project_id} stage={stage} error={error}. "
+        f"Show: meeting-asr project show {project_id}. "
+        f"Review: meeting-asr project review {project_id}."
+    )
+
 def _manifest_audio_path(root: Path, manifest: ProjectManifest, audio_format: str) -> Path | None:
     """Resolve audio path from manifest metadata."""
     audio_path = manifest.audio.get("path")
@@ -852,7 +1302,7 @@ def _resolve_project_file_url(
         manifest.oss = {"mode": "provided_url"}
         emit_progress(progress, "Using provided file URL", advance=1)
         return options.file_url, "provided_url"
-    object_key = f"meeting-asr/projects/{manifest.project_id}/{audio_path.name}"
+    object_key = _project_oss_object_key(manifest, audio_path)
     size_bytes = audio_path.stat().st_size
     upload_estimate = estimate_oss_upload(settings, size_bytes=size_bytes)
     emit_oss_upload_start(progress, estimate=upload_estimate, size_bytes=size_bytes)

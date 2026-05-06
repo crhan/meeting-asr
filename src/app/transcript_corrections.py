@@ -5,6 +5,9 @@ from __future__ import annotations
 import difflib
 import hashlib
 import re
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
@@ -13,11 +16,13 @@ from app.config import Settings, load_settings
 from app.correction_editor import open_editor
 from app.correction_hotwords import hotwords_from_understanding, write_hotword_artifact
 from app.correction_llm import (
+    DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
     LlmCorrectionCandidate,
     LlmCorrectionSample,
     propose_transcript_polish,
     propose_vocabulary_corrections,
 )
+from app.core.progress import CliProgressReporter, emit_progress
 from app.correction_proposals import load_correction_proposal, write_correction_proposal_files
 from app.correction_types import (
     CorrectionChange,
@@ -157,6 +162,7 @@ def prepare_transcript_polish(
     manifest: ProjectManifest,
     speaker_mapping: dict[int, str],
     options: CorrectionEditOptions,
+    progress: CliProgressReporter | None = None,
 ) -> CorrectionEditSummary:
     """
     Prepare a full-transcript readability polish proposal.
@@ -173,7 +179,14 @@ def prepare_transcript_polish(
     source = _load_correction_source(paths, from_original=options.from_original)
     review_path = options.review_file or _write_polish_review_file(paths, manifest, source.result, speaker_mapping)
     lexicon_db = options.lexicon_db or default_lexicon_db_path()
-    proposed_changes, model, model_error = _propose_polish_changes(source.result, speaker_mapping, options)
+    proposed_changes, model, model_error = _propose_polish_changes(
+        paths,
+        manifest,
+        source.result,
+        speaker_mapping,
+        options,
+        progress,
+    )
     if not proposed_changes:
         return _empty_summary(review_path, lexicon_db, model=model, model_error=model_error)
     proposal = _build_polish_proposal(
@@ -597,9 +610,12 @@ def _ai_rule_changes(
 
 
 def _propose_polish_changes(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
     result: TranscriptResult,
     speaker_mapping: dict[int, str],
     options: CorrectionEditOptions,
+    progress: CliProgressReporter | None,
 ) -> tuple[list[CorrectionChange], str, str | None]:
     """Propose sentence-level polish changes with DashScope."""
     if not options.use_ai:
@@ -607,25 +623,187 @@ def _propose_polish_changes(
     try:
         settings = load_settings(require_oss=False, require_dashscope=True)
         model = options.model or settings.dashscope_correction_model
-        changes = _ai_polish_changes(result, speaker_mapping, settings, model)
+        changes = _ai_polish_changes(paths, manifest, result, speaker_mapping, settings, model, progress)
         return changes, model, None
     except Exception as exc:
         return [], options.model or "dashscope-correction", str(exc)
 
 
 def _ai_polish_changes(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
     result: TranscriptResult,
     speaker_mapping: dict[int, str],
     settings: Settings,
     model: str,
+    progress: CliProgressReporter | None,
 ) -> list[CorrectionChange]:
     """Use DashScope to propose transcript polish changes for all sentences."""
     candidates = _all_llm_candidates(result, speaker_mapping)
     corrected_by_id: dict[str, str] = {}
-    for batch in _batches(candidates, MAX_LLM_BATCH_SIZE):
-        llm_result = propose_transcript_polish(candidates=batch, settings=settings, model=model)
+    batches = list(_batches(candidates, POLISH_LLM_BATCH_SIZE))
+    for index, batch in enumerate(batches, start=1):
+        llm_result = _run_polish_batch(
+            lambda batch=batch: propose_transcript_polish(candidates=batch, settings=settings, model=model),
+            paths=paths,
+            manifest=manifest,
+            model=model,
+            batch_index=index,
+            batch_total=len(batches),
+            progress=progress,
+        )
         corrected_by_id.update(llm_result.corrected_text_by_id)
     return _changes_from_polish_result(result, candidates, corrected_by_id, speaker_mapping)
+
+
+def _run_polish_batch(
+    operation: Callable[[], object],
+    *,
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    model: str,
+    batch_index: int,
+    batch_total: int,
+    progress: CliProgressReporter | None,
+) -> object:
+    """Run one polish LLM batch with heartbeat and recovery context."""
+    stage = "polish"
+    input_file = manifest.source.original_path or manifest.source.path
+    fields = {"model": model, "batch": f"{batch_index}/{batch_total}"}
+    _record_polish_runtime(paths, manifest, stage, input_file, fields, f"starting batch {batch_index}/{batch_total}")
+    _emit_polish_heartbeat(
+        progress,
+        manifest,
+        paths,
+        input_file,
+        elapsed_seconds=0.0,
+        last_success=f"starting batch {batch_index}/{batch_total}",
+        next_action="waiting for DashScope correction model",
+        fields=fields,
+    )
+    try:
+        return _run_blocking_polish_batch(
+            operation,
+            paths=paths,
+            manifest=manifest,
+            input_file=input_file,
+            fields=fields,
+            progress=progress,
+        )
+    except Exception as exc:
+        message = _polish_failure_message(manifest.project_id, model, batch_index, batch_total, exc)
+        _record_polish_runtime(paths, manifest, stage, input_file, fields, None, last_error=message)
+        raise RuntimeError(message) from exc
+
+
+def _run_blocking_polish_batch(
+    operation: Callable[[], object],
+    *,
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    input_file: str,
+    fields: dict[str, object],
+    progress: CliProgressReporter | None,
+) -> object:
+    """Emit 30-second heartbeats while one blocking LLM request is in flight."""
+    if progress is None:
+        return operation()
+    started_at = time.monotonic()
+    heartbeat_index = 0
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(operation)
+        while True:
+            try:
+                return future.result(timeout=30.0)
+            except FutureTimeoutError:
+                heartbeat_index += 1
+                elapsed = time.monotonic() - started_at
+                last_success = f"batch request submitted; heartbeat {heartbeat_index}"
+                _record_polish_runtime(paths, manifest, "polish", input_file, fields, last_success)
+                _emit_polish_heartbeat(
+                    progress,
+                    manifest,
+                    paths,
+                    input_file,
+                    elapsed_seconds=elapsed,
+                    last_success=last_success,
+                    next_action="waiting for current polish batch",
+                    fields=fields,
+                )
+
+
+def _record_polish_runtime(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    stage: str,
+    input_file: str,
+    fields: dict[str, object],
+    last_success: str | None,
+    *,
+    last_error: str | None = None,
+) -> None:
+    """Persist polish runtime state without importing project_manager."""
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    runtime = dict(manifest.runtime)
+    if runtime.get("current_stage") != stage:
+        runtime["stage_started_at"] = now
+    runtime["current_stage"] = stage
+    runtime["last_heartbeat_at"] = now
+    runtime["input_file"] = input_file
+    runtime["external_ids"] = {**dict(runtime.get("external_ids") or {}), **fields}
+    if last_success:
+        runtime["last_success"] = last_success
+    if last_error:
+        runtime["last_error"] = {"at": now, "stage": stage, "message": last_error}
+    manifest.runtime = runtime
+    safe_write_json(paths.manifest, manifest.to_dict())
+
+
+def _emit_polish_heartbeat(
+    progress: CliProgressReporter | None,
+    manifest: ProjectManifest,
+    paths: ProjectPaths,
+    input_file: str,
+    *,
+    elapsed_seconds: float,
+    last_success: str,
+    next_action: str,
+    fields: dict[str, object],
+) -> None:
+    """Emit a structured polish heartbeat."""
+    emit_progress(
+        progress,
+        None,
+        log_kind="heartbeat",
+        stage="polish",
+        project_id=manifest.project_id,
+        project_path=str(paths.root),
+        input_file=input_file,
+        timestamp=datetime.now().astimezone().isoformat(timespec="seconds"),
+        elapsed_seconds=elapsed_seconds,
+        last_success=last_success,
+        next_action=next_action,
+        log_fields=tuple(fields.items()),
+    )
+
+
+def _polish_failure_message(
+    project_id: str,
+    model: str,
+    batch_index: int,
+    batch_total: int,
+    error: Exception,
+) -> str:
+    """Return a transcript polish failure message with recovery commands."""
+    return (
+        f"Transcript polish failed: project_id={project_id} stage=polish "
+        f"batch={batch_index}/{batch_total} model={model} "
+        f"timeout={DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS}s error={error}. "
+        f"Show: meeting-asr project show {project_id}. "
+        f"Review: meeting-asr project review {project_id}. "
+        f"Retry polish: meeting-asr project correct polish {project_id} --model {model}. "
+        "Skip polish: rerun project run with --no-polish, or continue with project review."
+    )
 
 
 def _local_rule_changes(

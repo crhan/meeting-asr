@@ -139,6 +139,8 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
     polish_label = _polish_label(view.correction_summary)
     if polish_label:
         rows.append(("Transcript polish", polish_label))
+    if view.correction_summary and view.correction_summary.model_error:
+        rows.append(("Polish recovery", view.correction_summary.model_error))
     return rows
 
 
@@ -195,9 +197,16 @@ def _next_step_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
 def _polish_next_steps(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
     """Return follow-up commands for a pending transcript polish proposal."""
     summary = view.correction_summary
-    if summary is None or summary.proposal_json_path is None or summary.proposed_change_count == 0:
+    if summary is None:
         return []
     quoted_ref = shlex.quote(view.project_ref)
+    if summary.model_error:
+        return [
+            ("Retry transcript polish", f"meeting-asr project correct polish {quoted_ref}"),
+            ("Skip polish and review", f"meeting-asr project review {quoted_ref}"),
+        ]
+    if summary.proposal_json_path is None or summary.proposed_change_count == 0:
+        return []
     return [
         ("Review transcript polish diff", f"meeting-asr project correct diff {quoted_ref}"),
         ("Accept transcript polish", f"meeting-asr project correct accept {quoted_ref}"),
@@ -240,7 +249,7 @@ def _polish_label(summary: CorrectionEditSummary | None) -> str | None:
     if summary.proposed_change_count:
         return f"proposal ready ({summary.proposed_change_count} change(s))"
     if summary.model_error:
-        return "skipped; run doctor if this was unexpected"
+        return "failed; retry or continue without polish"
     return "no changes proposed"
 
 

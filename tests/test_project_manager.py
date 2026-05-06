@@ -12,11 +12,17 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from app import project_manager
 from app.cli import app
 from app.commands import project as project_commands
+from app.asr_hotwords import AsrHotwordResolution
+from app.config import Settings
+from app.core.progress import emit_progress
 from app.core.project_refs import list_projects, resolve_project_ref
+from app.core.project_models import ProjectTranscribeOptions
 from app.correction_types import CorrectionEditSummary
-from app.models import SentenceSegment
+from app.infra.dashscope_asr import TranscriptionPollEvent
+from app.models import SentenceSegment, TranscriptResult
 from app.project_manager import (
     _invalidate_downstream_artifacts,
     _parse_project_oss_upload,
@@ -220,6 +226,120 @@ def test_project_run_applies_accepted_voiceprint_matches(
     assert "敬悦" in transcript.read_text(encoding="utf-8")
 
 
+def test_project_run_progress_prints_project_id_before_polling(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project run progress should expose project identity before long ASR polling."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    projects_dir = tmp_path / "projects"
+
+    def fake_transcribe_project(project_dir, options, progress=None, **kwargs):
+        manifest = load_manifest(project_dir)
+        emit_progress(
+            progress,
+            "Waiting for DashScope ASR",
+            log_kind="stage",
+            stage="ASR polling",
+            project_id=manifest.project_id,
+            project_path=str(project_dir),
+            input_file=str(source),
+            timestamp="2026-05-06T10:00:00+08:00",
+        )
+        _write_sample_sentences(project_dir / "asr" / "sentences.json")
+        return ProjectTranscribeSummary(project_dir, "task-1", "test", 1, 3)
+
+    def fake_match_project_speakers(project_dir, **kwargs):
+        return SpeakerMatchSummary(
+            project_dir / "speakers" / "speaker_matches.json",
+            "fake-provider",
+            "fake-model",
+            0.75,
+            [SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2)],
+        )
+
+    monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+
+    result = runner.invoke(
+        app,
+        ["project", "run", str(source), "--projects-dir", str(projects_dir), "--no-polish", "--no-summarize", "--progress"],
+    )
+
+    project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
+    manifest = load_manifest(project_dir)
+    assert result.exit_code == 0
+    assert f"project_id={manifest.project_id}" in result.output
+    assert "stage=project created" in result.output
+    assert "stage=ASR polling" in result.output
+    assert str(project_dir) in result.output
+
+
+def test_asr_polling_heartbeat_redacts_signed_url_query_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """ASR polling heartbeats must not leak signed URL query tokens."""
+    project_dir = _sample_project(tmp_path)
+    audio_path = project_dir / "audio" / "audio.wav"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_path.write_bytes(b"audio")
+    manifest = load_manifest(project_dir)
+    manifest.audio = {"path": "audio/audio.wav", "format": "wav", "duration_seconds": 10}
+    save_manifest(project_dir, manifest)
+    events = []
+
+    class FakeTask:
+        """Minimal DashScope task response."""
+
+        output = {"task_id": "task-1234567890"}
+
+    def fake_wait_transcription(*, settings, task, poll_callback=None):
+        if poll_callback is not None:
+            poll_callback(TranscriptionPollEvent(status="RUNNING", elapsed_seconds=31.0, wait_seconds=5.0))
+        return object()
+
+    monkeypatch.setattr(project_manager, "load_settings", lambda **_: _settings())
+    monkeypatch.setattr(
+        project_manager,
+        "upload_file_to_oss",
+        lambda *_, **__: "https://oss.example.com/audio.wav?Signature=secret-token&Expires=1",
+    )
+    monkeypatch.setattr(project_manager, "record_oss_upload", lambda *_, **__: None)
+    monkeypatch.setattr(project_manager, "submit_transcription", lambda **_: FakeTask())
+    monkeypatch.setattr(project_manager, "wait_transcription", fake_wait_transcription)
+    monkeypatch.setattr(project_manager, "download_transcription_json", lambda _: {"raw": True})
+    monkeypatch.setattr(
+        project_manager,
+        "parse_transcription_result",
+        lambda _: TranscriptResult(
+            "大家好。",
+            [SentenceSegment(0, 1000, "大家好。", 0, 1)],
+            [0],
+        ),
+    )
+    monkeypatch.setattr(
+        project_manager,
+        "_resolve_project_asr_hotwords",
+        lambda settings, options: AsrHotwordResolution(None, "disabled"),
+    )
+    monkeypatch.setattr(project_manager, "record_dashscope_wait", lambda **_: None)
+
+    project_manager.transcribe_project(project_dir, _transcribe_options(), progress=events.append)
+
+    heartbeat_events = [event for event in events if event.log_kind == "heartbeat" and event.stage == "ASR polling"]
+    assert heartbeat_events
+    rendered = "\n".join(
+        " ".join(f"{key}={value}" for key, value in event.log_fields)
+        for event in events
+        if event.log_kind
+    )
+    assert "secret-token" not in rendered
+    assert "Signature=" not in rendered
+    assert "dashscope_task_id=task-1234567890" in rendered
+
+
 def test_project_run_generates_default_transcript_polish_proposal(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -251,7 +371,7 @@ def test_project_run_generates_default_transcript_polish_proposal(
             [SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2)],
         )
 
-    def fake_prepare_polish(project_dir, correction_model):
+    def fake_prepare_polish(project_dir, correction_model, progress=None):
         calls["model"] = correction_model
         proposal_dir = project_dir / "tmp" / "corrections"
         proposal_dir.mkdir(parents=True, exist_ok=True)
@@ -310,6 +430,68 @@ def test_project_run_generates_default_transcript_polish_proposal(
     assert "Transcript polish proposal" in result.output
     assert f"meeting-asr project correct diff {manifest.project_id}" in result.output
     assert f"meeting-asr project correct accept {manifest.project_id}" in result.output
+
+
+def test_project_run_polish_failure_prints_recovery_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project run should explain polish batch failures without aborting the run."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    projects_dir = tmp_path / "projects"
+
+    def fake_transcribe_project(project_dir, options, progress=None, **kwargs):
+        _write_sample_sentences(project_dir / "asr" / "sentences.json")
+        return ProjectTranscribeSummary(project_dir, "task-1", "test", 1, 3)
+
+    def fake_match_project_speakers(project_dir, **kwargs):
+        return SpeakerMatchSummary(
+            project_dir / "speakers" / "speaker_matches.json",
+            "fake-provider",
+            "fake-model",
+            0.75,
+            [SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2)],
+        )
+
+    monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+    monkeypatch.setattr(
+        "app.transcript_corrections.propose_transcript_polish",
+        lambda **_: (_ for _ in ()).throw(TimeoutError("read timeout")),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "run",
+            str(source),
+            "--projects-dir",
+            str(projects_dir),
+            "--no-summarize",
+            "--correction-model",
+            "qwen-test",
+            "--no-progress",
+        ],
+    )
+    project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
+    manifest = load_manifest(project_dir)
+
+    assert result.exit_code == 0
+    assert "Transcript polish" in result.output
+    assert f"project_id={manifest.project_id}" in result.output
+    assert "stage=polish" in result.output
+    assert "batch=1/1" in result.output
+    assert "model=qwen-test" in result.output
+    assert "timeout=120s" in result.output
+    assert f"meeting-asr project show {manifest.project_id}" in result.output
+    assert f"meeting-asr project review {manifest.project_id}" in result.output
+    assert f"meeting-asr project correct polish {manifest.project_id}" in result.output
 
 
 def test_project_run_reports_review_when_matches_are_incomplete(
@@ -962,6 +1144,12 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     manifest.asr.update({"provider": "dashscope", "model": "fun-asr", "task_id": "task-1"})
     manifest.audio["duration_seconds"] = 125
     manifest.speakers.update({"detected_ids": [0], "mapped": {"0": "欧丁"}})
+    manifest.runtime = {
+        "current_stage": "ASR polling",
+        "stage_started_at": "2026-05-06T10:00:00+08:00",
+        "last_heartbeat_at": "2026-05-06T10:00:30+08:00",
+        "external_ids": {"dashscope_task_id": "task-1"},
+    }
     save_manifest(project_dir, manifest)
 
     result = runner.invoke(app, ["project", "show", str(project_dir)])
@@ -974,6 +1162,9 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     assert "Commands" in result.output
     assert "Meeting Summary" in result.output
     assert "关键结论" in result.output
+    assert "Current stage" in result.output
+    assert "ASR polling" in result.output
+    assert "dashscope_task_id=task-1" in result.output
     assert "Final transcript" in result.output
     assert "Location" not in result.output
     assert "How to view" not in result.output
@@ -1838,6 +2029,34 @@ def _write_test_wav(path: Path) -> None:
         writer.setsampwidth(2)
         writer.setframerate(16_000)
         writer.writeframes(b"\x00\x00" * 160)
+
+
+def _transcribe_options() -> ProjectTranscribeOptions:
+    """Build minimal transcription options for workflow tests."""
+    return ProjectTranscribeOptions(
+        speaker_count=None,
+        language=None,
+        model="fun-asr",
+        oss_upload=True,
+        file_url=None,
+        generate_srt=True,
+        timestamp_alignment=True,
+        disfluency_removal=False,
+        audio_format="wav",
+    )
+
+
+def _settings() -> Settings:
+    """Build runtime settings for isolated project workflow tests."""
+    return Settings(
+        dashscope_api_key="dashscope-key",
+        dashscope_base_url="https://dashscope.example.com",
+        oss_access_key_id="oss-id",
+        oss_access_key_secret="oss-secret",
+        oss_bucket_name="meeting-bucket",
+        oss_region="cn-test",
+        oss_endpoint="https://oss.example.com",
+    )
 
 
 class _FakePreviewStdin:

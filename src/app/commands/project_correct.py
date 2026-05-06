@@ -138,6 +138,7 @@ def prepare_transcript_polish_for_review(
     manifest: ProjectManifest,
     speaker_mapping: dict[int, str],
     options: CorrectionEditOptions,
+    progress=None,
 ) -> CorrectionEditSummary:
     """
     Prepare a pending transcript polish proposal without printing or prompting.
@@ -163,6 +164,7 @@ def prepare_transcript_polish_for_review(
         manifest=manifest,
         speaker_mapping=speaker_mapping,
         options=polish_options,
+        progress=progress,
     )
 
 

@@ -68,6 +68,7 @@ from app.project_manager import (
     parse_mapping_items,
     prepare_project_audio,
     project_paths,
+    record_project_stage,
     resolve_project_source_path,
     summarize_project,
     transcribe_project,
@@ -560,16 +561,46 @@ def _run_project_workflow(
         hash_source=False,
         progress=progress,
     )
+    _record_and_emit_run_stage(
+        project.project_dir,
+        input_path,
+        "project created",
+        progress,
+        external_ids={"source": "created" if project.created else "reused"},
+        last_success="project ready",
+        description="Creating or reusing project",
+        step_index=1,
+        step_total=step_total,
+    )
     transcription = transcribe_project(project.project_dir, options, progress=progress, step_offset=1, step_total=step_total)
     correction_summary = None
     if polish:
         polish_step = 8
-        emit_progress(progress, "Generating transcript polish proposal", step_index=polish_step, step_total=step_total)
-        correction_summary = _prepare_run_transcript_polish(project.project_dir, correction_model)
+        _record_and_emit_run_stage(
+            project.project_dir,
+            input_path,
+            "polish",
+            progress,
+            external_ids={"model": correction_model or "configured-default"},
+            description="Generating transcript polish proposal",
+            step_index=polish_step,
+            step_total=step_total,
+        )
+        correction_summary = _prepare_run_transcript_polish(project.project_dir, correction_model, progress=progress)
     meeting_summary = None
     if summarize:
         summary_step = 8 + int(polish)
-        emit_progress(progress, "Summarizing meeting", step_index=summary_step, step_total=step_total, reset_total=True)
+        _record_and_emit_run_stage(
+            project.project_dir,
+            input_path,
+            "summary",
+            progress,
+            external_ids={"model": summary_model or "configured-default"},
+            description="Summarizing meeting",
+            step_index=summary_step,
+            step_total=step_total,
+            reset_total=True,
+        )
         meeting_summary = summarize_project(
             project.project_dir,
             model=summary_model,
@@ -578,9 +609,13 @@ def _run_project_workflow(
         )
     match_step = 8 + int(polish) + int(summarize)
     apply_step = match_step + 1
-    emit_progress(
+    _record_and_emit_run_stage(
+        project.project_dir,
+        input_path,
+        "speaker match",
         progress,
-        "Matching speakers with voiceprints",
+        external_ids={"provider": voiceprint_provider or "configured-default"},
+        description="Matching speakers with voiceprints",
         step_index=match_step,
         step_total=step_total,
         reset_total=True,
@@ -597,9 +632,13 @@ def _run_project_workflow(
         padding_seconds=0.5,
         progress=progress,
     )
-    emit_progress(
+    _record_and_emit_run_stage(
+        project.project_dir,
+        input_path,
+        "final artifact write",
         progress,
-        "Applying accepted speaker matches",
+        last_success="speaker matching complete",
+        description="Applying accepted speaker matches",
         step_index=apply_step,
         step_total=step_total,
         reset_total=True,
@@ -612,6 +651,12 @@ def _run_project_workflow(
             person_mapping=matches.accepted_person_mapping,
             person_public_mapping=matches.accepted_person_public_mapping,
         )
+    record_project_stage(
+        project.project_dir,
+        stage="complete",
+        input_file=input_path,
+        last_success="project run complete",
+    )
     emit_progress(progress, "Project run complete", completed=1, total=1)
     return ProjectRunSummary(project, transcription, meeting_summary, correction_summary, matches, applied_mapping)
 
@@ -645,9 +690,57 @@ def _project_run_step_descriptions(summarize: bool, polish: bool) -> tuple[str, 
     return tuple(steps)
 
 
+def _record_and_emit_run_stage(
+    project_dir: Path,
+    input_path: Path,
+    stage: str,
+    progress: CliProgressReporter | None,
+    *,
+    external_ids: dict[str, object] | None = None,
+    last_success: str | None = None,
+    description: str | None = None,
+    step_index: int | None = None,
+    step_total: int | None = None,
+    reset_total: bool = False,
+) -> ProjectManifest:
+    """Persist and emit one project-run stage transition."""
+    manifest = record_project_stage(
+        project_dir,
+        stage=stage,
+        input_file=input_path,
+        external_ids=external_ids,
+        last_success=last_success,
+    )
+    emit_progress(
+        progress,
+        description or stage,
+        step_index=step_index,
+        step_total=step_total,
+        reset_total=reset_total,
+        log_kind="stage",
+        stage=stage,
+        project_id=manifest.project_id,
+        project_path=str(project_dir),
+        input_file=str(input_path),
+        timestamp=_now_local_iso(),
+        last_success=last_success,
+        log_fields=tuple((external_ids or {}).items()),
+    )
+    return manifest
+
+
+def _now_local_iso() -> str:
+    """Return a local timestamp for CLI progress logs."""
+    from datetime import datetime
+
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
 def _prepare_run_transcript_polish(
     project_dir: Path,
     correction_model: str | None,
+    *,
+    progress: CliProgressReporter | None = None,
 ) -> CorrectionEditSummary:
     """
     Prepare the default transcript polish proposal used by ``project run``.
@@ -674,6 +767,7 @@ def _prepare_run_transcript_polish(
         manifest=manifest,
         speaker_mapping=speaker_mapping,
         options=options,
+        progress=progress,
     )
 
 
@@ -710,6 +804,14 @@ def status(
         typer.echo(f"Original source: {manifest.source.original_path}")
     typer.echo(f"Audio: {manifest.audio.get('path', '-')}")
     typer.echo(f"Task ID: {manifest.asr.get('task_id', '-')}")
+    runtime = manifest.runtime
+    if runtime:
+        typer.echo(f"Current stage: {runtime.get('current_stage', '-')}")
+        typer.echo(f"Stage updated: {runtime.get('last_heartbeat_at') or runtime.get('stage_started_at') or '-'}")
+        if runtime.get("external_ids"):
+            typer.echo(f"External IDs: {runtime.get('external_ids')}")
+        if runtime.get("last_error"):
+            typer.echo(f"Last error: {runtime.get('last_error')}")
     typer.echo(f"Detected speakers: {manifest.speakers.get('detected_ids', [])}")
 
 

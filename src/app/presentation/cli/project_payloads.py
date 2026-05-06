@@ -50,6 +50,7 @@ def project_status_payload(paths: ProjectPaths, manifest: ProjectManifest) -> di
         "original_source": manifest.source.original_path,
         "audio": manifest.audio.get("path"),
         "task_id": manifest.asr.get("task_id"),
+        "runtime": manifest.runtime,
         "detected_speakers": manifest.speakers.get("detected_ids", []),
         "outputs": manifest.outputs,
     }

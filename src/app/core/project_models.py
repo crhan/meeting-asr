@@ -40,6 +40,7 @@ class ProjectManifest:
     oss: dict[str, Any] = field(default_factory=dict)
     outputs: dict[str, Any] = field(default_factory=dict)
     speakers: dict[str, Any] = field(default_factory=dict)
+    runtime: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the manifest to a JSON-ready dictionary."""
@@ -62,6 +63,7 @@ class ProjectManifest:
             oss=dict(payload.get("oss", {})),
             outputs=dict(payload.get("outputs", {})),
             speakers=dict(payload.get("speakers", {})),
+            runtime=dict(payload.get("runtime", {})),
         )
 
 

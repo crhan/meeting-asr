@@ -102,9 +102,38 @@ def _detail_rows(view: ProjectShowView) -> list[tuple[str, str]]:
             ("ASR cost", _cost_label(manifest.asr.get("cost"))),
         ]
     )
+    rows.extend(_runtime_rows(manifest))
     if view.workflow.missing:
         rows.append(("Missing", ", ".join(view.workflow.missing)))
     return rows
+
+
+def _runtime_rows(manifest: ProjectManifest) -> list[tuple[str, str]]:
+    """Return current long-task stage rows from project runtime metadata."""
+    runtime = manifest.runtime
+    if not runtime:
+        return []
+    rows = [
+        ("Current stage", str(runtime.get("current_stage") or "-")),
+        ("Stage updated", str(runtime.get("last_heartbeat_at") or runtime.get("stage_started_at") or "-")),
+    ]
+    external = runtime.get("external_ids")
+    if isinstance(external, dict) and external:
+        rows.append(("External IDs", _external_ids_label(external)))
+    last_error = runtime.get("last_error")
+    if isinstance(last_error, dict) and last_error.get("message"):
+        rows.append(("Last error", str(last_error["message"])))
+    elif last_error:
+        rows.append(("Last error", str(last_error)))
+    return rows
+
+
+def _external_ids_label(external: dict) -> str:
+    """Render compact non-secret external identifiers."""
+    parts = []
+    for key in sorted(external):
+        parts.append(f"{key}={external[key]}")
+    return ", ".join(parts)
 
 
 def _outputs_table(view: ProjectShowView) -> Table:

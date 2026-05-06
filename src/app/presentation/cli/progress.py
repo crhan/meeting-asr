@@ -57,8 +57,10 @@ def run_with_progress(
         Operation result.
     """
     console = _console()
-    if not _should_render_progress(console, enabled):
+    if not enabled:
         return run_with_cli_errors(lambda: operation(None))
+    if not _should_render_progress(console, enabled):
+        return run_with_cli_errors(lambda: operation(_LineProgressReporter(console)))
     return run_with_cli_errors(lambda: _run_with_rich_progress(operation, console, description, total))
 
 
@@ -119,6 +121,27 @@ class _ProgressLayout:
     elapsed_width: int = PROGRESS_ELAPSED_WIDTH
 
 
+@dataclass(frozen=True, slots=True)
+class _LineProgressReporter:
+    """Print structured progress lines when Rich live rendering is unavailable."""
+
+    console: Console
+
+    def __call__(self, event: CliProgressEvent) -> None:
+        """
+        Render one structured log event.
+
+        Args:
+            event: Progress event emitted by workflow code.
+
+        Returns:
+            None.
+        """
+        line = _progress_log_line(event)
+        if line:
+            self.console.print(line, soft_wrap=True)
+
+
 @dataclass(slots=True)
 class _RichProgressRenderer:
     """Stateful Rich renderer for single-step and workflow progress."""
@@ -142,6 +165,7 @@ class _RichProgressRenderer:
         Returns:
             None.
         """
+        self._emit_log(event)
         if _is_workflow_event(event):
             self._apply_workflow_event(event)
             return
@@ -149,6 +173,12 @@ class _RichProgressRenderer:
             _apply_progress_event(self.progress, self.step_task_ids[self.current_step_index], event)
             return
         _apply_progress_event(self.progress, self.fallback_task_id, event)
+
+    def _emit_log(self, event: CliProgressEvent) -> None:
+        """Print structured observability lines above the live progress UI."""
+        line = _progress_log_line(event)
+        if line:
+            self.progress.console.print(line, soft_wrap=True)
 
     def finish(self) -> None:
         """
@@ -627,6 +657,56 @@ def _is_workflow_event(event: CliProgressEvent) -> bool:
         True for numbered multi-step workflow events.
     """
     return event.step_index is not None and event.step_total is not None and event.step_total > 1
+
+
+def _progress_log_line(event: CliProgressEvent) -> str:
+    """
+    Format a structured progress line for durable logs.
+
+    Args:
+        event: Progress event to format.
+
+    Returns:
+        Human-readable single line, or empty string when the event is not a log event.
+    """
+    if not event.log_kind:
+        return ""
+    parts = [f"[{event.timestamp or '-'}]", f"{event.log_kind}={event.stage or '-'}"]
+    if event.project_id:
+        parts.append(f"project_id={event.project_id}")
+    if event.project_path:
+        parts.append(f"project={event.project_path}")
+    if event.input_file:
+        parts.append(f"input={event.input_file}")
+    if event.elapsed_seconds is not None:
+        parts.append(f"elapsed={_format_elapsed_seconds(event.elapsed_seconds)}")
+    if event.last_success:
+        parts.append(f"last={_safe_log_value('last_success', event.last_success)}")
+    if event.next_action:
+        parts.append(f"next={_safe_log_value('next_action', event.next_action)}")
+    for key, value in event.log_fields:
+        parts.append(f"{key}={_safe_log_value(key, value)}")
+    return " ".join(parts)
+
+
+def _safe_log_value(key: str, value: object) -> str:
+    """
+    Redact URL query strings and token-like values in progress logs.
+
+    Args:
+        key: Field name.
+        value: Field value.
+
+    Returns:
+        Safe display string.
+    """
+    text = str(value)
+    lowered = key.lower()
+    if any(secret in lowered for secret in ("token", "secret", "signature", "access_key")):
+        return "<redacted>"
+    if "url" in lowered and "?" in text:
+        return text.split("?", 1)[0] + "?<redacted>"
+    return text
 
 
 def _format_elapsed_seconds(seconds: float) -> str:
