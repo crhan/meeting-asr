@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,6 +34,15 @@ class SpeakerReviewSaveOutcome:
     transcript_path: Path | None
     srt_path: Path | None
     correction_summary: CorrectionEditSummary | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerReviewNameChange:
+    """One speaker name change written by project review save."""
+
+    label: str
+    before: str | None
+    after: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +109,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         on_result: Callable[[SpeakerReviewSaveOutcome], None],
         followup_handler: Callable[[], None] | None = None,
         followup_label: str = "continue",
+        speaker_changes: Sequence[SpeakerReviewNameChange] = (),
     ) -> None:
         """
         Create save workflow screen.
@@ -111,6 +121,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
             on_result: Callback used to update the parent TUI after success.
             followup_handler: Optional action to run after closing the save modal.
             followup_label: Human-readable follow-up action shown in the modal.
+            speaker_changes: Human-readable speaker name diff for this save.
         """
         super().__init__()
         self.decision = decision
@@ -119,6 +130,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         self.on_result = on_result
         self.followup_handler = followup_handler
         self.followup_label = followup_label
+        self.speaker_changes = tuple(speaker_changes)
         self.outcome: SpeakerReviewSaveOutcome | None = None
         self.selected_change_indices: tuple[int, ...] | None = None
         self.running = False
@@ -240,7 +252,9 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         """Render save result details."""
         if self.outcome is None:
             return ""
-        lines = [tr("[b]Speaker outputs[/b]", "[b]Speaker 产物[/b]")]
+        lines = [tr("[b]Speaker name changes[/b]", "[b]Speaker 姓名变更[/b]")]
+        lines.extend(_speaker_change_lines(self.speaker_changes))
+        lines.extend(["", tr("[b]Speaker outputs[/b]", "[b]Speaker 产物[/b]")])
         lines.extend(_path_lines(self.outcome))
         if self.outcome.correction_summary is not None:
             lines.extend(["", tr("[b]Transcript correction[/b]", "[b]文字修正[/b]")])
@@ -493,6 +507,43 @@ def _path_lines(outcome: SpeakerReviewSaveOutcome) -> list[str]:
         tr(f"- Mapping: {escape(str(outcome.mapping_path))}", f"- 映射：{escape(str(outcome.mapping_path))}"),
         tr(f"- Transcript: {escape(str(outcome.transcript_path))}", f"- 转写：{escape(str(outcome.transcript_path))}"),
         tr(f"- Subtitle: {escape(str(outcome.srt_path))}", f"- 字幕：{escape(str(outcome.srt_path))}"),
+    ]
+
+
+def speaker_name_changes(
+    speakers: Sequence[object],
+    saved_names_by_speaker: dict[int, str],
+) -> tuple[SpeakerReviewNameChange, ...]:
+    """
+    Build speaker name changes against the saved speaker map.
+
+    Args:
+        speakers: Current TUI speaker rows.
+        saved_names_by_speaker: Speaker names already persisted in speaker_map.
+
+    Returns:
+        Speaker name changes that will be written by save.
+    """
+    changes = []
+    for speaker in speakers:
+        speaker_id = int(getattr(speaker, "speaker_id"))
+        before = saved_names_by_speaker.get(speaker_id)
+        after = str(getattr(speaker, "current_name")).strip() or str(getattr(speaker, "label"))
+        if before != after:
+            changes.append(SpeakerReviewNameChange(str(getattr(speaker, "label")), before, after))
+    return tuple(changes)
+
+
+def _speaker_change_lines(changes: Sequence[SpeakerReviewNameChange]) -> list[str]:
+    """Render speaker name changes."""
+    if not changes:
+        return [tr("- No speaker name changes; outputs were regenerated.", "- 无 speaker 姓名变更；仅重新生成产物。")]
+    return [
+        tr(
+            f"- {escape(item.label)}: {escape(item.before or '<not saved>')} -> {escape(item.after)}",
+            f"- {escape(item.label)}：{escape(item.before or '<未保存>')} -> {escape(item.after)}",
+        )
+        for item in changes
     ]
 
 

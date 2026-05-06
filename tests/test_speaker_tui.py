@@ -329,6 +329,8 @@ def test_project_review_tui_save_handler_keeps_tui_open(monkeypatch, tmp_path: P
             assert app.return_value is None
             assert seen and seen[0].saved is True
             assert "Project review saved" in str(app.screen.query_one("#save-title", Static).render())
+            assert "Speaker A" in str(app.screen.query_one("#save-body", Static).render())
+            assert "<not saved> -> Speaker A" in str(app.screen.query_one("#save-body", Static).render())
             assert "v capture voiceprints" in str(app.screen.query_one("#save-actions", Static).render())
 
             await pilot.press("v")
@@ -821,6 +823,7 @@ def test_project_review_tui_blocks_project_switch_with_unsaved_changes() -> None
 
     async def scenario() -> None:
         async with app.run_test(size=(120, 24)) as pilot:
+            app.session.speakers[0].current_name = "欧丁"
             await pilot.press("p")
             await pilot.pause()
 
@@ -901,6 +904,35 @@ def test_project_review_tui_rematches_speakers_and_refreshes(monkeypatch, tmp_pa
     ]
 
 
+def test_project_review_tui_rematch_allows_unpersisted_initial_matches(monkeypatch, tmp_path: Path) -> None:
+    """Derived accepted matches should not be treated as unsaved human edits."""
+    project_dir = (tmp_path / "projects" / "p-current").resolve()
+    project_dir.mkdir(parents=True)
+    session = _session_for_project(project_dir, project_id="p-current", title="Current")
+    session.speakers[0].current_name = "墨泪"
+    session.speakers[0].match = SpeakerMatchCandidate("墨泪", 0.91, True, best_name="墨泪", best_score=0.91)
+    session = replace(session, overview=replace(session.overview, saved_names_by_speaker={}))
+    summary = SpeakerMatchSummary(
+        project_dir / "speakers" / "speaker_matches.json",
+        "local-speechbrain",
+        "test-model",
+        0.75,
+        [SpeakerMatch(0, "Speaker A", "墨泪", 0.91, True, 2, best_name="墨泪", best_score=0.91, accepted_name="墨泪", threshold=0.75)],
+    )
+    monkeypatch.setattr(speaker_tui, "run_speaker_rematch", lambda *args, **kwargs: SpeakerRematchResult(summary, session))
+    app = SpeakerReviewApp(session)
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert "Rematch complete" in str(app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
+
+
 def test_project_review_tui_blocks_rematch_with_unsaved_changes(monkeypatch) -> None:
     """Voiceprint rematch should not discard unsaved human review edits."""
     monkeypatch.setattr(speaker_tui, "run_speaker_rematch", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected rematch")))
@@ -908,6 +940,7 @@ def test_project_review_tui_blocks_rematch_with_unsaved_changes(monkeypatch) -> 
 
     async def scenario() -> None:
         async with app.run_test(size=(120, 24)) as pilot:
+            app.session.speakers[0].current_name = "欧丁"
             await pilot.press("m")
             await pilot.pause()
 

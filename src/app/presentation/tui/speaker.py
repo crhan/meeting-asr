@@ -39,7 +39,7 @@ from app.presentation.tui.speaker_rematch import (
     compact_rematch_line,
     run_speaker_rematch,
 )
-from app.presentation.tui.speaker_save import SpeakerReviewSaveOutcome, SpeakerReviewSaveScreen
+from app.presentation.tui.speaker_save import SpeakerReviewSaveOutcome, SpeakerReviewSaveScreen, speaker_name_changes
 from app.presentation.tui.speaker_session import load_speaker_review_session, load_voiceprint_review_progress
 from app.presentation.tui.speaker_status import (
     SpeakerReviewOverview,
@@ -186,6 +186,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.playback_process: subprocess.Popen | None = None
         self.known_people = list(session.people)
         self.correction_edits: list[SentenceCorrectionEdit] = []
+        self.identity_baseline = _identity_snapshot(session.speakers)
 
     def compose(self) -> ComposeResult:
         """Build the TUI layout."""
@@ -398,6 +399,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 on_result=self._handle_save_outcome,
                 followup_handler=self.action_voiceprint_review,
                 followup_label=tr("capture voiceprints", "声纹采样"),
+                speaker_changes=speaker_name_changes(
+                    self.session.speakers,
+                    self.session.overview.saved_names_by_speaker,
+                ),
             )
         )
 
@@ -478,6 +483,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.focused_column = "speakers"
         self.known_people = list(session.people)
         self.correction_edits.clear()
+        self.identity_baseline = _identity_snapshot(session.speakers)
         self._enter_browse_mode(tr(f"Switched to project {session.overview.project_id}.", f"已切换到项目 {session.overview.project_id}。"))
         self._refresh()
 
@@ -679,6 +685,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Keep in-memory workflow state aligned with the just-written speaker map."""
         overview = replace(self.session.overview, saved_names_by_speaker=self._mapping())
         self.session = replace(self.session, overview=overview)
+        self.identity_baseline = _identity_snapshot(self.session.speakers)
 
     def _save_handler_for_current_project(self) -> Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome]:
         """Return a save handler bound to the currently visible project."""
@@ -753,6 +760,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.known_people = list(result.session.people)
         self.selected_speaker_index = _speaker_index_by_id(result.session.speakers, selected_speaker_id)
         self.focused_column = "speakers"
+        self.identity_baseline = _identity_snapshot(result.session.speakers)
         self._enter_browse_mode(compact_rematch_line(result))
         self._refresh()
 
@@ -783,7 +791,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def _has_unsaved_review_changes(self) -> bool:
         """Return whether switching projects would discard visible TUI edits."""
-        return self._has_unsaved_speaker_names() or bool(self.correction_edits)
+        return _identity_snapshot(self.session.speakers) != self.identity_baseline or bool(self.correction_edits)
 
     def _set_speaker_identity(
         self,
@@ -962,6 +970,19 @@ def _speaker_index_by_id(speakers: list[ReviewSpeaker], speaker_id: int) -> int:
         if speaker.speaker_id == speaker_id:
             return index
     return 0
+
+
+def _identity_snapshot(speakers: list[ReviewSpeaker]) -> dict[int, tuple[str, bool, int | None, str | None]]:
+    """Return the current in-TUI speaker identity state."""
+    return {
+        speaker.speaker_id: (
+            speaker.current_name.strip() or speaker.label,
+            speaker.ignored,
+            speaker.person_id,
+            speaker.person_public_id,
+        )
+        for speaker in speakers
+    }
 
 
 def _trim_sample_text(text: str, *, limit: int = 90) -> str:
