@@ -252,10 +252,11 @@ def _current_evaluation_text(summary: VoiceprintEvaluationSummary) -> str:
 def _historical_evaluation_text(summary: VoiceprintEvaluationSummary) -> str:
     """Render historical regression summary."""
     lines = [tr("[b]Historical reverse check[/b]", "[b]历史项目反向评测[/b]")]
+    risk_style = "bold red" if summary.historical_risk_count else "green"
     lines.append(
         tr(
-            f"Checked {summary.historical_project_count} project(s); risky changes {summary.historical_risk_count}.",
-            f"检查 {summary.historical_project_count} 个历史项目；风险变化 {summary.historical_risk_count} 个。",
+            f"Checked {summary.historical_project_count} project(s); [{risk_style}]risky changes {summary.historical_risk_count}[/].",
+            f"检查 {summary.historical_project_count} 个历史项目；[{risk_style}]风险变化 {summary.historical_risk_count} 个[/]。",
         )
     )
     lines.extend(_historical_risk_lines(summary))
@@ -269,17 +270,27 @@ def _historical_risk_lines(summary: VoiceprintEvaluationSummary) -> list[str]:
         if project.risk_count == 0:
             continue
         title = _trim_text(project.title or project.project_id, limit=40)
-        lines.append(f"  [yellow]{escape(title)}[/] risk={project.risk_count}")
-        lines.extend("    " + _score_change_line(change) for change in project.changes if change.status in {"declined", "changed-best"})
+        project_id = escape(project.project_id)
+        lines.append(f"  [bold red]RISK[/] {project_id} | [red]{escape(title)}[/] | [bold red]risk={project.risk_count}[/]")
+        lines.append(f"    [red]review: meeting-asr project review {project_id}[/]")
+        lines.extend(
+            "    " + _score_change_line(change, risk=True)
+            for change in project.changes
+            if change.status in {"declined", "changed-best"}
+        )
     return lines
 
 
-def _score_change_line(change) -> str:
+def _score_change_line(change, *, risk: bool = False) -> str:
     """Render one before/after score line."""
     before = _candidate_score_text(change.before_name, change.before_score)
     after = _candidate_score_text(change.after_name, change.after_score)
     delta_text = "" if change.delta is None else f" ({change.delta:+.3f})"
-    return f"{escape(change.label)}: {before} -> {after}{delta_text}"
+    status_text = "" if not risk else f" [bold red]{escape(change.status)}[/]"
+    line = f"{escape(change.label)}: {before} -> {after}{delta_text}{status_text}"
+    if risk:
+        return f"[red]{line}[/]"
+    return line
 
 
 def _candidate_score_text(name: str | None, score: float | None) -> str:

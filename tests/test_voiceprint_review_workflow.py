@@ -56,6 +56,41 @@ def test_voiceprint_review_workflow_can_roll_back_pending_files(monkeypatch, tmp
     assert not summary.transaction.backup_dir.exists()
 
 
+def test_historical_risks_show_red_project_id_and_review_command() -> None:
+    """Historical voiceprint regressions should be actionable in the result modal."""
+    evaluation = VoiceprintEvaluationSummary(
+        _fake_evaluation().current,
+        (
+            VoiceprintProjectEvaluation(
+                Path("/projects/p-risk"),
+                "p-risk",
+                "历史风险项目",
+                False,
+                (
+                    VoiceprintScoreChange(
+                        3,
+                        "Speaker D",
+                        "敬悦",
+                        0.734,
+                        "武一",
+                        0.802,
+                        0.068,
+                        "changed-best",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    rendered = voiceprint_review_workflow._historical_evaluation_text(evaluation)
+
+    assert "[bold red]risky changes 1[/]" in rendered
+    assert "[bold red]RISK[/] p-risk" in rendered
+    assert "review: meeting-asr project review p-risk" in rendered
+    assert "Speaker D: 敬悦 0.734 -> 武一 0.802 (+0.068)" in rendered
+    assert "changed-best" in rendered
+
+
 def _planned_capture(store_dir: Path, db_path: Path, clip_path: Path) -> VoiceprintCaptureSummary:
     """Build a planned capture summary for one clip."""
     clip = VoiceprintClip(
