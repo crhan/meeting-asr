@@ -47,6 +47,7 @@ WORD_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
 ASCII_TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_+.#-]*")
 REVIEW_DIR = "corrections"
 MAX_LLM_BATCH_SIZE = 80
+POLISH_LLM_BATCH_SIZE = 30
 
 
 def prepare_editor_correction(
@@ -584,7 +585,7 @@ def _ai_rule_changes(
     if not candidates:
         return sample_changes
     corrected_by_id: dict[str, str] = {}
-    for batch in _batches(candidates, MAX_LLM_BATCH_SIZE):
+    for batch in _batches(candidates, POLISH_LLM_BATCH_SIZE):
         llm_result = propose_vocabulary_corrections(
             samples=_llm_samples(sample_changes),
             candidates=batch,

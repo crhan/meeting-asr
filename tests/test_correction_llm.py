@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+import requests
+
 from app.config import Settings
 from app.correction_llm import (
     DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
@@ -114,3 +117,25 @@ def test_propose_transcript_polish_parses_dashscope_json(monkeypatch) -> None:
     assert "不要总结、扩写" in prompt
     assert result.understanding == "修复入参/出参语序"
     assert result.corrected_text_by_id == {"c1": "入参和出参需要记录起来。"}
+
+
+def test_propose_transcript_polish_does_not_retry_read_timeout(monkeypatch) -> None:
+    """Transcript polish should fail fast because project run can continue without it."""
+    calls = 0
+
+    def fake_call(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise requests.Timeout("read timeout")
+
+    monkeypatch.setattr("app.correction_llm.Generation.call", fake_call)
+    settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
+
+    with pytest.raises(RuntimeError, match="Operation failed after 1 retryable attempts"):
+        propose_transcript_polish(
+            candidates=[LlmCorrectionCandidate("c1", 1, "米汤", "需要记录入参和出参。")],
+            settings=settings,
+            model="qwen-test",
+        )
+
+    assert calls == 1

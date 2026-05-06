@@ -130,7 +130,7 @@ def propose_transcript_polish(
         _raise_for_generation_error(response)
         return response
 
-    content = _extract_generation_text(retry(_call, attempts=3, delay_seconds=1.0))
+    content = _extract_generation_text(retry(_call, attempts=1, delay_seconds=1.0))
     return _parse_result(content, model=model, candidate_ids={item.candidate_id for item in candidates})
 
 
