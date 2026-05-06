@@ -129,7 +129,11 @@ def test_localized_help_leads_with_examples_and_translated_options() -> None:
     assert "示例" in run_result.output
     assert "meeting-asr project run ~/Downloads/meeting.mp4" in run_result.output
     assert "指定会议总结使用的" in run_result.output
+    assert "ASR 后生成转写润色建议" in run_result.output
+    assert "指定转写润色使用的" in run_result.output
     assert "Generate title and summary after ASR." not in run_result.output
+    assert "Generate transcript polish proposal after ASR." not in run_result.output
+    assert "DashScope model for transcript polish." not in run_result.output
     assert create_result.exit_code == 0
     assert "meeting-asr project create ~/Downloads/meeting.mp4 --meeting-time" in create_result.output
     assert "2026-05-02T10:00:00+08:00" in create_result.output

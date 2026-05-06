@@ -13,6 +13,8 @@ from dashscope import Generation
 from app.config import Settings
 from app.utils import retry
 
+DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS = 120
+
 
 @dataclass(frozen=True, slots=True)
 class LlmCorrectionCandidate:
@@ -83,6 +85,7 @@ def propose_vocabulary_corrections(
                 {"role": "user", "content": prompt},
             ],
             result_format="message",
+            request_timeout=DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
             temperature=0.1,
         )
         _raise_for_generation_error(response)
@@ -121,6 +124,7 @@ def propose_transcript_polish(
                 {"role": "user", "content": prompt},
             ],
             result_format="message",
+            request_timeout=DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
             temperature=0.1,
         )
         _raise_for_generation_error(response)
@@ -159,6 +163,7 @@ def infer_vocabulary_replacements(
                 {"role": "user", "content": prompt},
             ],
             result_format="message",
+            request_timeout=DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
             temperature=0.1,
         )
         _raise_for_generation_error(response)

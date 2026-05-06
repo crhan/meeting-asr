@@ -314,6 +314,8 @@ OPTION_ZH = {
     "--match-threshold": "设置声纹自动接受阈值。",
     "--summarize": "ASR 后生成会议标题和摘要；可用 --no-summarize 关闭。",
     "--summary-model": "指定会议总结使用的 DashScope 模型。",
+    "--polish": "ASR 后生成转写润色建议；可用 --no-polish 关闭。",
+    "--correction-model": "指定转写润色使用的 DashScope 模型。",
     "--progress": "在终端显示交互式进度；可用 --no-progress 关闭。",
     "--identity-mode": "兼容旧参数；项目身份始终基于内容 hash。",
     "--yes": "跳过确认提示。",

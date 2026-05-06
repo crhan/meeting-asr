@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from app.config import Settings
 from app.correction_llm import (
+    DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
     LlmCorrectionCandidate,
     LlmCorrectionSample,
     infer_vocabulary_replacements,
@@ -40,6 +41,7 @@ def test_propose_vocabulary_corrections_parses_dashscope_json(monkeypatch) -> No
     )
 
     assert calls["model"] == "qwen-test"
+    assert calls["request_timeout"] == DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS
     assert result.understanding == "艾赛应为 iSee"
     assert result.corrected_text_by_id == {"c1": "我们看 iSee 系统。"}
 
@@ -47,7 +49,10 @@ def test_propose_vocabulary_corrections_parses_dashscope_json(monkeypatch) -> No
 def test_infer_vocabulary_replacements_parses_term_level_rules(monkeypatch) -> None:
     """DashScope replacement inference should parse corrected Chinese term boundaries."""
 
+    calls = {}
+
     def fake_call(**kwargs):
+        calls.update(kwargs)
         content = (
             '{"replacements":[{"wrong_text":"云原声","corrected_text":"云原生",'
             '"left_context":"建设","right_context":"平台","reason":"系统术语"}]}'
@@ -70,6 +75,7 @@ def test_infer_vocabulary_replacements_parses_term_level_rules(monkeypatch) -> N
     )
 
     assert len(rules) == 1
+    assert calls["request_timeout"] == DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS
     assert rules[0].wrong_text == "云原声"
     assert rules[0].corrected_text == "云原生"
 
@@ -103,6 +109,7 @@ def test_propose_transcript_polish_parses_dashscope_json(monkeypatch) -> None:
     )
 
     prompt = calls["messages"][1]["content"]
+    assert calls["request_timeout"] == DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS
     assert "语序断裂" in prompt
     assert "不要总结、扩写" in prompt
     assert result.understanding == "修复入参/出参语序"
