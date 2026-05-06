@@ -92,33 +92,13 @@ meeting-asr config set ui.editor "code --wait"
 meeting-asr doctor --full
 ```
 
-声纹 embedding 支持多个 provider：
+README 只记录当前已验证的声纹 embedding 路径：
 
 ```bash
 meeting-asr config set voiceprint.embedding_provider "local-speechbrain"
-meeting-asr config set voiceprint.embedding_provider "bailian"
 ```
 
 `local-speechbrain` 是默认值，使用本地 SpeechBrain ECAPA speaker embedding 模型，不依赖阿里云声纹服务。
-`bailian` 保留为阿里云 AnalyticDB 声纹检索 provider，申请开通后再配置 endpoint：
-
-```bash
-meeting-asr config set voiceprint.embedding_provider "bailian"
-meeting-asr config set voiceprint.embedding_endpoint "http://<adb-ai-app-host>:8100/audio/embedding"
-meeting-asr doctor --full
-```
-
-`voiceprint.embedding_endpoint` 不是本机要安装的东西，也不是
-`tongyi-embedding-vision-*` 这类视觉多模态模型名。它是 AnalyticDB MySQL
-声纹检索服务暴露的音频 embedding API 地址，官方 API 形状是
-`http://addr:8100/audio/embedding`。
-
-这个地址从 AnalyticDB 来：
-
-1. 声纹检索当前是邀测能力；如果你的 AnalyticDB 集群没有开通，先提交阿里云工单联系技术支持。
-2. 开通或部署完成后，进入 AnalyticDB MySQL 控制台，选择目标地域和集群。
-3. 在左侧进入 `AI 应用`，打开 `应用管理`，查看目标应用服务的 `调用信息`。
-4. 从调用信息里拿到调用地址或 host，配置成 `http://<addr>:8100/audio/embedding`。
 
 `doctor` 遇到 fail/warn 会输出 `Repair prompts`，这段可以直接交给大模型继续修复。
 
@@ -354,13 +334,6 @@ meeting-asr voiceprint embed
 meeting-asr project speakers match
 meeting-asr project review PROJECT_ID
 meeting-asr project speakers inspect   # diagnostic/read-only
-```
-
-如果要临时对比阿里云 provider，不改全局配置也可以传参数：
-
-```bash
-meeting-asr voiceprint embed --provider bailian --rebuild
-meeting-asr project speakers match --provider bailian
 ```
 
 ## 输出结构
