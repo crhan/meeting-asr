@@ -151,7 +151,7 @@ Meeting-ASR 不会自动清理 trash；只有 `purge`、`cleanup` 或 `delete --
 全自动入口优先用：
 
 ```bash
-meeting-asr project run "/path/to/meeting.mp4"
+meeting-asr project run "/path/to/meeting.mp4" --progress
 ```
 
 它会创建或复用项目、转写、声纹匹配，并自动应用 accepted 的 speaker 匹配。
@@ -175,6 +175,22 @@ meeting-asr project transcribe
 交互式终端默认显示进度 UI；输出重定向或非 TTY 环境不会污染 stdout。所有耗时命令都可用
 `--no-progress` 关闭。
 
+`--progress` 不只是 spinner。交互式终端会在 stderr 显示 Rich 多步骤进度；非 TTY、管道和
+日志环境会在 stderr 输出结构化 `stage`/`heartbeat` 文本。阶段至少覆盖 project created、
+audio extraction、OSS upload/sign、ASR submit、ASR polling、transcript materialized、summary、
+speaker match、polish 和 final artifact write。长轮询会定期输出 elapsed、
+last successful operation、next poll 或 batch index。日志只包含可追踪的非敏感字段，例如
+`dashscope_task_id`、`oss_object_key`、
+`signed_url_ready`；签名 URL query、token、secret 和 access key 会被隐藏。
+
+长任务状态会写入 `project.json` 的 `runtime` 字段。命令中断或怀疑卡住时，优先运行：
+
+```bash
+meeting-asr project show PROJECT_ID
+```
+
+它会显示 `Current stage`、`Stage updated`、`External IDs`、`Last error`、缺失产物和可恢复命令。
+
 如果终端或日志系统不适合彩色输出，根命令加 `--no-color`；设置 `NO_COLOR` 或 `TERM=dumb`
 时也会自动禁用 Rich 颜色。
 需要看依赖库和内部诊断日志时，根命令加 `--verbose` 或 `-v`；默认只显示 warning 及以上日志。
@@ -184,6 +200,16 @@ meeting-asr project transcribe
 记录一条耗时样本；下一次会按音频时长估算等待 ETA。默认数据库：
 `~/.local/share/meeting-asr/metrics/runtime.sqlite`。没有历史样本时会显示
 `baseline: collecting`。
+
+`project run` 默认还会生成 transcript polish proposal。它只生成 proposal，不会直接覆盖原始
+转写。`project show PROJECT_ID` 会在 `Transcript polish` 行显示 `proposal ready`、
+`done; no changes proposed`、`failed` 或 `accepted`。当状态是 `proposal ready` 时，`project show`
+会给出带具体 `--proposal` 文件的后续命令，避免误接受其他 correction proposal：
+
+```bash
+meeting-asr project correct diff PROJECT_ID --proposal /path/to/proposal.json
+meeting-asr project correct accept PROJECT_ID --proposal /path/to/proposal.json
+```
 
 如果你已经有公网可访问音频 URL：
 

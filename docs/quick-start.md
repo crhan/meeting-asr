@@ -11,14 +11,24 @@
 meeting-asr project run "/path/to/meeting.mp4"
 ```
 
+长音视频建议保留默认的 `--progress`。等待 DashScope ASR、summary 或 polish 时，CLI 会持续输出
+阶段和 heartbeat。中断或怀疑卡住时，先复制输出里的 Project ID，再运行：
+
+```bash
+meeting-asr project show PROJECT_ID
+```
+
+它会显示当前或最近阶段、外部 task id、缺失产物、失败恢复命令和 transcript polish 状态。
+
 `project run` 会自动执行：
 
 1. 创建或复用项目。同一个源视频不会重复创建新项目。
 2. 抽取音频并提交 DashScope 转写。
 3. 下载并写出匿名转写结果。
-4. 用 DashScope 文本模型生成会议标题和摘要。
-5. 用声纹库匹配 speaker。
-6. 自动应用 accepted 的 speaker 匹配。
+4. 生成 transcript polish proposal，用于安全修复明显转写问题。
+5. 用 DashScope 文本模型生成会议标题和摘要。
+6. 用声纹库匹配 speaker。
+7. 自动应用 accepted 的 speaker 匹配。
 
 看项目 ID：
 
@@ -40,6 +50,13 @@ meeting-asr project speakers preview PROJECT_ID
 - `exports/transcript_named.txt`
 - `exports/subtitle_named.srt`
 - `exports/meeting_summary.md`
+
+如果 `project show PROJECT_ID` 里看到 `Transcript polish: proposal ready`，先看 diff，再决定是否接受：
+
+```bash
+meeting-asr project correct diff PROJECT_ID
+meeting-asr project correct accept PROJECT_ID
+```
 
 如果输出是 `Project automation needs review.`，说明至少有一个 speaker 没有自动确认，
 进入 TUI 路径。
