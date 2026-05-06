@@ -44,6 +44,8 @@ def test_evaluate_voiceprint_embedding_updates_current_and_flags_history(monkeyp
     assert summary.historical_project_count == 1
     assert summary.historical[0].project_dir == historical
     assert summary.historical_risk_count == 1
+    assert summary.historical_critical_count == 1
+    assert summary.historical_warning_count == 0
 
 
 def _project(projects_dir: Path, source: Path, title: str) -> Path:

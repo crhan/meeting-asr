@@ -9,7 +9,7 @@ from typing import Any
 
 from app.core.project_refs import list_projects
 from app.project_manager import load_manifest
-from app.speaker_match_status import best_candidate_name, best_candidate_score
+from app.speaker_match_status import best_candidate_name, best_candidate_score, match_threshold
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers, preview_project_speaker_matches
 
 DEFAULT_DECLINE_THRESHOLD = 0.05
@@ -28,6 +28,26 @@ class VoiceprintScoreChange:
     after_score: float | None
     delta: float | None
     status: str
+    threshold: float | None = None
+
+    @property
+    def is_critical(self) -> bool:
+        """Return whether this change can indicate a wrong identity."""
+        return self.status in {"changed-best", "lost-candidate"} or self.is_below_threshold
+
+    @property
+    def is_warning(self) -> bool:
+        """Return whether this change is a non-critical score decline."""
+        return self.status == "declined" and not self.is_critical
+
+    @property
+    def is_below_threshold(self) -> bool:
+        """Return whether the new score fell below the acceptance threshold."""
+        if self.threshold is None:
+            return False
+        if self.after_score is None:
+            return self.status in {"declined", "lost-candidate"}
+        return self.after_score < self.threshold
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,9 +76,19 @@ class VoiceprintProjectEvaluation:
         return sum(1 for item in self.changes if item.status == "changed-best")
 
     @property
+    def warning_count(self) -> int:
+        """Return the number of score declines that stayed above threshold."""
+        return sum(1 for item in self.changes if item.is_warning)
+
+    @property
+    def critical_count(self) -> int:
+        """Return the number of identity-changing or below-threshold changes."""
+        return sum(1 for item in self.changes if item.is_critical)
+
+    @property
     def risk_count(self) -> int:
-        """Return the number of risky regressions."""
-        return self.declined_count + self.changed_best_count
+        """Return the number of actionable warning or critical regressions."""
+        return self.warning_count + self.critical_count
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +107,16 @@ class VoiceprintEvaluationSummary:
     def historical_risk_count(self) -> int:
         """Return total risky historical speaker changes."""
         return sum(project.risk_count for project in self.historical)
+
+    @property
+    def historical_warning_count(self) -> int:
+        """Return total historical warning changes."""
+        return sum(project.warning_count for project in self.historical)
+
+    @property
+    def historical_critical_count(self) -> int:
+        """Return total historical critical changes."""
+        return sum(project.critical_count for project in self.historical)
 
 
 def evaluate_voiceprint_embedding(
@@ -245,6 +285,7 @@ def _score_change(match: object, before: dict[str, Any] | None, decline_threshol
         after_score,
         delta,
         status,
+        match_threshold(match),
     )
 
 
@@ -257,6 +298,8 @@ def _change_status(
     """Classify one score change for human review."""
     if before_name and after_name and before_name != after_name:
         return "changed-best"
+    if before_name and not after_name:
+        return "lost-candidate"
     if delta is None:
         return "new" if after_name and not before_name else "unchanged"
     if delta <= -decline_threshold:

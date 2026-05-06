@@ -56,8 +56,8 @@ def test_voiceprint_review_workflow_can_roll_back_pending_files(monkeypatch, tmp
     assert not summary.transaction.backup_dir.exists()
 
 
-def test_historical_risks_show_red_project_id_and_review_command() -> None:
-    """Historical voiceprint regressions should be actionable in the result modal."""
+def test_historical_risks_show_severity_project_id_and_review_command() -> None:
+    """Historical voiceprint regressions should show warning and critical severity."""
     evaluation = VoiceprintEvaluationSummary(
         _fake_evaluation().current,
         (
@@ -76,6 +76,37 @@ def test_historical_risks_show_red_project_id_and_review_command() -> None:
                         0.802,
                         0.068,
                         "changed-best",
+                        0.75,
+                    ),
+                    VoiceprintScoreChange(
+                        4,
+                        "Speaker E",
+                        "米汤",
+                        0.801,
+                        "米汤",
+                        0.700,
+                        -0.101,
+                        "declined",
+                        0.75,
+                    ),
+                ),
+            ),
+            VoiceprintProjectEvaluation(
+                Path("/projects/p-warn"),
+                "p-warn",
+                "轻微下降项目",
+                False,
+                (
+                    VoiceprintScoreChange(
+                        1,
+                        "Speaker B",
+                        "墨泪",
+                        0.900,
+                        "墨泪",
+                        0.820,
+                        -0.080,
+                        "declined",
+                        0.75,
                     ),
                 ),
             ),
@@ -84,11 +115,17 @@ def test_historical_risks_show_red_project_id_and_review_command() -> None:
 
     rendered = voiceprint_review_workflow._historical_evaluation_text(evaluation)
 
-    assert "[bold red]risky changes 1[/]" in rendered
-    assert "[bold red]RISK[/] p-risk" in rendered
+    assert "[bold red]critical 2[/]" in rendered
+    assert "[yellow]warnings 1[/]" in rendered
+    assert "[bold red]CRITICAL[/] p-risk" in rendered
+    assert "[yellow]WARNING[/] p-warn" in rendered
     assert "review: meeting-asr project review p-risk" in rendered
+    assert "review: meeting-asr project review p-warn" in rendered
     assert "Speaker D: 敬悦 0.734 -> 武一 0.802 (+0.068)" in rendered
+    assert "Speaker E: 米汤 0.801 -> 米汤 0.700 (-0.101)" in rendered
+    assert "Speaker B: 墨泪 0.900 -> 墨泪 0.820 (-0.080)" in rendered
     assert "changed-best" in rendered
+    assert "threshold=0.750" in rendered
 
 
 def _planned_capture(store_dir: Path, db_path: Path, clip_path: Path) -> VoiceprintCaptureSummary:

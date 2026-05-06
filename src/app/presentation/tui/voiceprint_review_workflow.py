@@ -252,15 +252,26 @@ def _current_evaluation_text(summary: VoiceprintEvaluationSummary) -> str:
 def _historical_evaluation_text(summary: VoiceprintEvaluationSummary) -> str:
     """Render historical regression summary."""
     lines = [tr("[b]Historical reverse check[/b]", "[b]历史项目反向评测[/b]")]
-    risk_style = "bold red" if summary.historical_risk_count else "green"
-    lines.append(
-        tr(
-            f"Checked {summary.historical_project_count} project(s); [{risk_style}]risky changes {summary.historical_risk_count}[/].",
-            f"检查 {summary.historical_project_count} 个历史项目；[{risk_style}]风险变化 {summary.historical_risk_count} 个[/]。",
-        )
-    )
+    lines.append(_historical_severity_summary_line(summary))
     lines.extend(_historical_risk_lines(summary))
     return "\n".join(lines)
+
+
+def _historical_severity_summary_line(summary: VoiceprintEvaluationSummary) -> str:
+    """Render historical severity counts."""
+    if summary.historical_risk_count == 0:
+        return tr(
+            f"Checked {summary.historical_project_count} project(s); [green]no risky changes[/].",
+            f"检查 {summary.historical_project_count} 个历史项目；[green]无风险变化[/]。",
+        )
+    return tr(
+        f"Checked {summary.historical_project_count} project(s); "
+        f"[bold red]critical {summary.historical_critical_count}[/] | "
+        f"[yellow]warnings {summary.historical_warning_count}[/].",
+        f"检查 {summary.historical_project_count} 个历史项目；"
+        f"[bold red]严重 {summary.historical_critical_count} 个[/] | "
+        f"[yellow]警告 {summary.historical_warning_count} 个[/]。",
+    )
 
 
 def _historical_risk_lines(summary: VoiceprintEvaluationSummary) -> list[str]:
@@ -269,27 +280,43 @@ def _historical_risk_lines(summary: VoiceprintEvaluationSummary) -> list[str]:
     for project in summary.historical:
         if project.risk_count == 0:
             continue
+        style = "bold red" if project.critical_count else "yellow"
+        label = "CRITICAL" if project.critical_count else "WARNING"
         title = _trim_text(project.title or project.project_id, limit=40)
         project_id = escape(project.project_id)
-        lines.append(f"  [bold red]RISK[/] {project_id} | [red]{escape(title)}[/] | [bold red]risk={project.risk_count}[/]")
-        lines.append(f"    [red]review: meeting-asr project review {project_id}[/]")
+        lines.append(
+            f"  [{style}]{label}[/] {project_id} | [{style}]{escape(title)}[/] | "
+            f"{_count_badge('critical', project.critical_count, 'bold red')} "
+            f"{_count_badge('warning', project.warning_count, 'yellow')}"
+        )
+        lines.append(f"    [{style}]review: meeting-asr project review {project_id}[/]")
         lines.extend(
-            "    " + _score_change_line(change, risk=True)
+            "    " + _score_change_line(change)
             for change in project.changes
-            if change.status in {"declined", "changed-best"}
+            if change.is_warning or change.is_critical
         )
     return lines
 
 
-def _score_change_line(change, *, risk: bool = False) -> str:
+def _count_badge(label: str, count: int, style: str) -> str:
+    """Render one severity count without highlighting zero values."""
+    if count == 0:
+        return f"[dim]{label}=0[/]"
+    return f"[{style}]{label}={count}[/]"
+
+
+def _score_change_line(change) -> str:
     """Render one before/after score line."""
     before = _candidate_score_text(change.before_name, change.before_score)
     after = _candidate_score_text(change.after_name, change.after_score)
     delta_text = "" if change.delta is None else f" ({change.delta:+.3f})"
-    status_text = "" if not risk else f" [bold red]{escape(change.status)}[/]"
+    status_text = f" {escape(change.status)}" if change.is_warning or change.is_critical else ""
+    threshold_text = "" if change.threshold is None else f" threshold={change.threshold:.3f}"
     line = f"{escape(change.label)}: {before} -> {after}{delta_text}{status_text}"
-    if risk:
-        return f"[red]{line}[/]"
+    if change.is_critical:
+        return f"[red]{line}{threshold_text}[/]"
+    if change.is_warning:
+        return f"[yellow]{line}{threshold_text}[/]"
     return line
 
 
