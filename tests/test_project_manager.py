@@ -642,6 +642,7 @@ def test_project_list_command_reads_default_projects_dir(
     assert "meeting-asr project show PROJECT_ID" in result.output
     assert "Times shown in local timezone." in result.output
     assert "Project ID" in result.output
+    assert "Meeting (Local)" in result.output
     assert "Updated (Local)" in result.output
     assert project_id in result.output
     assert "No." not in result.output
@@ -649,6 +650,28 @@ def test_project_list_command_reads_default_projects_dir(
     assert "Demo" in result.output
     assert "Created" in result.output
     assert "transcribe 1" not in result.output
+
+
+def test_project_list_command_shows_meeting_time(tmp_path: Path) -> None:
+    """Human project list should expose the meeting time when present."""
+    projects_dir = tmp_path / "projects"
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    create_project(
+        source,
+        title="Timed Demo",
+        projects_dir=projects_dir,
+        project_dir=projects_dir / "timed-demo",
+        meeting_time="2026-05-02T10:00:00+08:00",
+        hash_source=False,
+    )
+
+    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
+
+    assert result.exit_code == 0
+    assert "Meeting (Local)" in result.output
+    assert "2026-05-02 10:00" in result.output
+    assert "Timed Demo" in result.output
 
 
 def test_project_list_command_prints_json(tmp_path: Path) -> None:
