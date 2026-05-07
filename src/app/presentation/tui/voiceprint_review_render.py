@@ -74,6 +74,28 @@ def project_match_score_text(score: float | None) -> str:
     return "-" if score is None else f"{score:.3f}"
 
 
+def project_match_score_markup(score: float | None, *, label: str) -> str:
+    """Render project match score with risk-oriented color."""
+    text = f"{label}={project_match_score_text(score)}"
+    if score is None:
+        return f"[dim]{text}[/]"
+    if score > 0.75:
+        return f"[green]{text}[/]"
+    if score >= 0.60:
+        return f"[yellow]{text}[/]"
+    return f"[red]{text}[/]"
+
+
+def capture_count_markup(selected: int, total: int, *, label: str) -> str:
+    """Render selected sample count with a clear capture state color."""
+    text = f"{label} {selected}/{total}"
+    if selected == 0:
+        return f"[dim]{text}[/]"
+    if selected == total:
+        return f"[green]{text}[/]"
+    return f"[yellow]{text}[/]"
+
+
 def library_sample_line(sample: VoiceprintSampleRow) -> str:
     """Render one stored library sample row."""
     start = format_ms_timestamp(sample.source_begin_time_ms)

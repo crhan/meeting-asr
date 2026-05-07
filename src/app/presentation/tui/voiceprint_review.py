@@ -32,6 +32,7 @@ from app.presentation.tui.voiceprint_review_context import (
     load_project_voiceprint_context,
 )
 from app.presentation.tui.voiceprint_review_render import (
+    capture_count_markup,
     clamp,
     last_sample_page_start,
     library_sample_line,
@@ -40,10 +41,10 @@ from app.presentation.tui.voiceprint_review_render import (
     mode_label,
     next_view_label,
     page_footer,
+    project_match_score_markup,
     project_sample_line,
     project_sample_summary,
     project_sample_time_range,
-    project_match_score_text,
     project_speaker_summary,
     sample_page_start,
     trim_text,
@@ -131,9 +132,13 @@ class _VoiceprintReviewBase:
     CSS = """
     Screen {
         layout: vertical;
+        background: #0f1117;
+        color: #d9e2ec;
     }
     #overview {
-        border: round $accent;
+        border: heavy #ffb000;
+        background: #151922;
+        color: #d9e2ec;
         height: 10;
         padding: 0 1;
     }
@@ -141,16 +146,18 @@ class _VoiceprintReviewBase:
         height: 1fr;
     }
     .pane {
-        border: round $accent;
+        border: round #3d4758;
+        background: #10151e;
         height: 100%;
         padding: 0 1;
     }
     .pane.focused-pane {
-        border: heavy $accent;
-        background: $boost;
+        border: heavy #00d1ff;
+        background: #18202b;
     }
     .pane.unfocused-pane {
-        border: round #555555;
+        border: round #3d4758;
+        color: #9aa7b8;
     }
     #speakers {
         width: 34%;
@@ -160,7 +167,8 @@ class _VoiceprintReviewBase:
     }
     #status {
         height: 2;
-        color: $text-muted;
+        background: #0b0f14;
+        color: #8fb3ff;
     }
     """
 
@@ -504,13 +512,18 @@ class _VoiceprintReviewBase:
         for index, speaker in enumerate(capture.speakers):
             marker = ">" if index == self.project_selected_speaker_index else " "
             selected = sum(1 for clip in speaker.clips if clip.included)
-            person = "" if speaker.person_public_id is None else f" {speaker.person_public_id}"
-            score = project_match_score_text(speaker.match_score)
+            person = "" if speaker.person_public_id is None else f" [dim]{escape(speaker.person_public_id)}[/]"
+            name = f"[bold]{escape(speaker.name)}[/]"
+            marker_text = "[bold yellow]>[/]" if marker == ">" else "[dim] [/]"
             label = tr(
-                f"{marker} {speaker.name}{person}  score={score}  selected {selected}/{len(speaker.clips)}",
-                f"{marker} {speaker.name}{person}  分数={score}  已选 {selected}/{len(speaker.clips)}",
+                f"{marker_text} {name}{person}  "
+                f"{project_match_score_markup(speaker.match_score, label='score')}  "
+                f"{capture_count_markup(selected, len(speaker.clips), label='selected')}",
+                f"{marker_text} {name}{person}  "
+                f"{project_match_score_markup(speaker.match_score, label='分数')}  "
+                f"{capture_count_markup(selected, len(speaker.clips), label='已选')}",
             )
-            lines.append(escape(label))
+            lines.append(self._current_row(label) if marker == ">" else label)
         return "\n".join(lines)
 
     def _library_speaker_pane(self) -> str:
@@ -520,13 +533,15 @@ class _VoiceprintReviewBase:
             lines.append(tr("[yellow]No voiceprints recorded.[/]", "[yellow]尚未录入声纹。[/]"))
             return "\n".join(lines)
         for index, speaker in enumerate(self.session.library.speakers):
-            marker = ">" if index == self.library_selected_speaker_index else " "
+            marker = "[bold yellow]>[/]" if index == self.library_selected_speaker_index else "[dim] [/]"
             embedded = f"{speaker.embedded_sample_count}/{speaker.sample_count}"
             label = tr(
-                f"{marker} {speaker.name} {speaker.public_id}  samples {speaker.sample_count}  embedded {embedded}",
-                f"{marker} {speaker.name} {speaker.public_id}  样本 {speaker.sample_count}  embedding {embedded}",
+                f"{marker} [bold]{escape(speaker.name)}[/] [dim]{escape(speaker.public_id)}[/]  "
+                f"[cyan]samples {speaker.sample_count}[/]  [green]embedded {embedded}[/]",
+                f"{marker} [bold]{escape(speaker.name)}[/] [dim]{escape(speaker.public_id)}[/]  "
+                f"[cyan]样本 {speaker.sample_count}[/]  [green]embedding {embedded}[/]",
             )
-            lines.append(escape(label))
+            lines.append(self._current_row(label) if index == self.library_selected_speaker_index else label)
         return "\n".join(lines)
 
     def _project_sample_pane(self) -> str:
@@ -541,9 +556,10 @@ class _VoiceprintReviewBase:
         for offset, sample in enumerate(samples):
             index = page_start + offset
             prefix = ">" if index == speaker.selected_clip_index else " "
-            checked = "x" if sample.included else " "
-            line = f"{prefix} [{checked}] #{index + 1} {project_sample_line(sample)}"
-            lines.append(f"[reverse]{escape(line)}[/]" if prefix == ">" else escape(line))
+            checked = "[green]x[/]" if sample.included else "[dim] [/]"
+            marker = "[bold yellow]>[/]" if prefix == ">" else "[dim] [/]"
+            line = f"{marker} {checked} [cyan]#{index + 1}[/] {escape(project_sample_line(sample))}"
+            lines.append(self._current_row(line) if prefix == ">" else line)
         if not samples:
             lines.append(tr("[yellow]No samples for this speaker.[/]", "[yellow]当前 speaker 没有样本。[/]"))
         lines.extend(["", self._project_sample_page_footer(speaker, page_start)])
@@ -561,8 +577,9 @@ class _VoiceprintReviewBase:
         for offset, sample in enumerate(samples):
             index = page_start + offset
             prefix = ">" if index == speaker.selected_sample_index else " "
-            line = f"{prefix} #{index + 1} {library_sample_line(sample)}"
-            lines.append(f"[reverse]{escape(line)}[/]" if prefix == ">" else escape(line))
+            marker = "[bold yellow]>[/]" if prefix == ">" else "[dim] [/]"
+            line = f"{marker} [cyan]#{index + 1}[/] {escape(library_sample_line(sample))}"
+            lines.append(self._current_row(line) if prefix == ">" else line)
         if not samples:
             lines.append(tr("[yellow]No samples for this person.[/]", "[yellow]当前人员没有样本。[/]"))
         lines.extend(["", self._library_sample_page_footer(speaker, page_start)])
@@ -746,8 +763,12 @@ class _VoiceprintReviewBase:
         """Render a pane title with focused-column state."""
         escaped = escape(title)
         if self._focused_column() == column:
-            return f"[reverse][b] FOCUS [/b][/] [b]{escaped}[/b]"
-        return f"[dim]{escaped}[/dim]"
+            return f"[reverse][b] FOCUS [/b][/] [bold cyan]{escaped}[/]"
+        return f"[dim]  {escaped}[/dim]"
+
+    def _current_row(self, line: str) -> str:
+        """Render the active row with a stable, visible background."""
+        return f"[reverse]{line}[/]"
 
     def _mode_line(self) -> str:
         """Render active mode and switch affordance."""

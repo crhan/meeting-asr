@@ -128,8 +128,23 @@ def test_voiceprint_review_defaults_high_score_matches_unchecked_and_shows_score
 
     assert "score=0.760" in app._speaker_pane()
     assert "selected 0/2" in app._speaker_pane()
+    assert "[green]score=0.760" in app._speaker_pane()
+    assert "[dim]selected 0/2" in app._speaker_pane()
     assert "score 0.760" in app._overview_pane()
     assert app._selected_clip_rel_paths() == set()
+
+
+def test_voiceprint_review_tui_uses_colored_rows_and_checkmarks(tmp_path: Path) -> None:
+    """Project rows should expose color markup for focus and sample state."""
+    app = VoiceprintReviewApp(_review_session(tmp_path))
+
+    speaker_pane = app._speaker_pane()
+    sample_pane = app._sample_pane()
+
+    assert "[reverse]" in speaker_pane
+    assert "[bold yellow]>" in speaker_pane
+    assert "[green]selected 2/2" in speaker_pane
+    assert "[green]x[/]" in sample_pane
 
 
 def test_voiceprint_review_refuses_save_from_global_library(tmp_path: Path) -> None:
