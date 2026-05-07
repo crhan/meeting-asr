@@ -8,7 +8,7 @@ from pathlib import Path
 from app import voiceprint_evaluation
 from app.project_manager import create_project
 from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
-from app.voiceprint_evaluation import evaluate_voiceprint_embedding
+from app.voiceprint_evaluation import VoiceprintScoreChange, evaluate_voiceprint_embedding
 
 
 def test_evaluate_voiceprint_embedding_updates_current_and_flags_history(monkeypatch, tmp_path: Path) -> None:
@@ -46,6 +46,55 @@ def test_evaluate_voiceprint_embedding_updates_current_and_flags_history(monkeyp
     assert summary.historical_risk_count == 1
     assert summary.historical_critical_count == 1
     assert summary.historical_warning_count == 0
+
+
+def test_evaluate_voiceprint_embedding_skips_ignored_speakers(monkeypatch, tmp_path: Path) -> None:
+    """Ignored project speakers should not appear in voiceprint risk checks."""
+    projects_dir = tmp_path / "projects"
+    current = _project(projects_dir, tmp_path / "current.mp4", "Current")
+    historical = _project(projects_dir, tmp_path / "historical.mp4", "Historical")
+    _write_matches(current, best_name="Alice", score=0.30)
+    _write_matches(historical, best_name="Alice", score=0.90)
+    _write_ignore(current, 0)
+    _write_ignore(historical, 0)
+
+    def fake_match_project_speakers(project_dir: Path, **kwargs) -> SpeakerMatchSummary:
+        return _summary(project_dir, best_name="Bob", score=0.20)
+
+    def fake_preview_project_speaker_matches(project_dir: Path, **kwargs) -> SpeakerMatchSummary:
+        return _summary(project_dir, best_name="Bob", score=0.20)
+
+    monkeypatch.setattr(voiceprint_evaluation, "match_project_speakers", fake_match_project_speakers)
+    monkeypatch.setattr(voiceprint_evaluation, "preview_project_speaker_matches", fake_preview_project_speaker_matches)
+
+    summary = evaluate_voiceprint_embedding(
+        current,
+        store_dir=None,
+        provider=None,
+        endpoint=None,
+        model="test-model",
+    )
+
+    assert summary.current.changes == ()
+    assert summary.historical_risk_count == 0
+
+
+def test_unchanged_below_threshold_score_is_not_critical() -> None:
+    """A persistently low but unchanged score is not a new embedding risk."""
+    change = VoiceprintScoreChange(
+        0,
+        "Speaker A",
+        "Alice",
+        0.30,
+        "Alice",
+        0.30,
+        0.0,
+        "unchanged",
+        0.75,
+    )
+
+    assert change.is_critical is False
+    assert change.is_warning is False
 
 
 def _project(projects_dir: Path, source: Path, title: str) -> Path:
@@ -86,6 +135,13 @@ def _write_matches(project_dir: Path, *, best_name: str, score: float) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _write_ignore(project_dir: Path, speaker_id: int) -> None:
+    """Write ignored speaker metadata."""
+    path = project_dir / "speakers" / "speaker_ignore.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"ignored_speakers": [speaker_id]}), encoding="utf-8")
 
 
 def _summary(project_dir: Path, *, best_name: str, score: float) -> SpeakerMatchSummary:

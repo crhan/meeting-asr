@@ -9,6 +9,7 @@ from typing import Any
 
 from app.core.project_refs import list_projects
 from app.project_manager import load_manifest
+from app.speaker_labeling import load_ignored_speakers
 from app.speaker_match_status import best_candidate_name, best_candidate_score, match_threshold
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers, preview_project_speaker_matches
 
@@ -43,10 +44,12 @@ class VoiceprintScoreChange:
     @property
     def is_below_threshold(self) -> bool:
         """Return whether the new score fell below the acceptance threshold."""
+        if self.status not in {"declined", "lost-candidate"}:
+            return False
         if self.threshold is None:
             return False
         if self.after_score is None:
-            return self.status in {"declined", "lost-candidate"}
+            return True
         return self.after_score < self.threshold
 
 
@@ -264,7 +267,12 @@ def _project_evaluation(
 ) -> VoiceprintProjectEvaluation:
     """Build one project comparison."""
     manifest = load_manifest(project_dir)
-    changes = tuple(_score_change(item, before.get(item.speaker_id), decline_threshold) for item in after.matches)
+    ignored_speaker_ids = _ignored_speaker_ids(project_dir, manifest)
+    changes = tuple(
+        _score_change(item, before.get(item.speaker_id), decline_threshold)
+        for item in after.matches
+        if item.speaker_id not in ignored_speaker_ids
+    )
     return VoiceprintProjectEvaluation(project_dir, manifest.project_id, manifest.title, current, changes)
 
 
@@ -324,6 +332,14 @@ def _load_match_rows(project_dir: Path) -> dict[int, dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     rows = payload.get("matches", []) if isinstance(payload, dict) else []
     return {int(row["speaker_id"]): dict(row) for row in rows if isinstance(row, dict) and "speaker_id" in row}
+
+
+def _ignored_speaker_ids(project_dir: Path, manifest: Any) -> set[int]:
+    """Return speaker ids that should not participate in voiceprint risk checks."""
+    ignored = load_ignored_speakers(project_dir / "speakers" / "speaker_ignore.json")
+    for value in manifest.speakers.get("ignored", []):
+        ignored.add(int(value))
+    return ignored
 
 
 def _match_path(project_dir: Path) -> Path:

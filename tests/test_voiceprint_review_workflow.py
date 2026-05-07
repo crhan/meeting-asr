@@ -68,6 +68,17 @@ def test_historical_risks_show_severity_project_id_and_review_command() -> None:
                 False,
                 (
                     VoiceprintScoreChange(
+                        0,
+                        "Speaker A",
+                        "骁程",
+                        0.334,
+                        "骁程",
+                        0.334,
+                        0.0,
+                        "unchanged",
+                        0.75,
+                    ),
+                    VoiceprintScoreChange(
                         3,
                         "Speaker D",
                         "敬悦",
@@ -124,8 +135,47 @@ def test_historical_risks_show_severity_project_id_and_review_command() -> None:
     assert "Speaker D: 敬悦 0.734 -> 武一 0.802 (+0.068)" in rendered
     assert "Speaker E: 米汤 0.801 -> 米汤 0.700 (-0.101)" in rendered
     assert "Speaker B: 墨泪 0.900 -> 墨泪 0.820 (-0.080)" in rendered
+    assert "Speaker A" not in rendered
     assert "changed-best" in rendered
     assert "threshold=0.750" in rendered
+
+
+def test_historical_risk_details_are_capped_to_keep_actions_visible() -> None:
+    """The result modal should summarize overflowing risk details."""
+    evaluation = VoiceprintEvaluationSummary(
+        _fake_evaluation().current,
+        tuple(
+            VoiceprintProjectEvaluation(
+                Path(f"/projects/p-risk-{project_index}"),
+                f"p-risk-{project_index}",
+                f"风险项目 {project_index}",
+                False,
+                tuple(
+                    VoiceprintScoreChange(
+                        change_index,
+                        f"Speaker {change_index}",
+                        "Alice",
+                        0.90,
+                        "Bob",
+                        0.90,
+                        0.0,
+                        "changed-best",
+                        0.75,
+                    )
+                    for change_index in range(5)
+                ),
+            )
+            for project_index in range(5)
+        ),
+    )
+
+    rendered = voiceprint_review_workflow._historical_evaluation_text(evaluation)
+
+    assert "p-risk-0" in rendered
+    assert "p-risk-2" in rendered
+    assert "p-risk-3" not in rendered
+    assert "... 2 more risky project(s) omitted" in rendered
+    assert "... 2 more risky change(s) omitted" in rendered
 
 
 def _planned_capture(store_dir: Path, db_path: Path, clip_path: Path) -> VoiceprintCaptureSummary:

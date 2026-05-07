@@ -18,6 +18,10 @@ from app.voiceprint_embedding import VoiceprintEmbedSummary, embed_voiceprint_sa
 from app.voiceprint_evaluation import VoiceprintEvaluationSummary, evaluate_voiceprint_embedding
 from app.voiceprints import VoiceprintCaptureSummary, persist_voiceprint_capture_selection
 
+CURRENT_CHANGE_DISPLAY_LIMIT = 6
+HISTORICAL_PROJECT_DISPLAY_LIMIT = 3
+HISTORICAL_CHANGE_DISPLAY_LIMIT = 3
+
 
 @dataclass(frozen=True, slots=True)
 class VoiceprintReviewTransaction:
@@ -241,11 +245,15 @@ def _current_evaluation_text(summary: VoiceprintEvaluationSummary) -> str:
     """Render current-project score changes."""
     current = summary.current
     lines = [tr("[b]Current project score check[/b]", "[b]当前项目分数检查[/b]")]
-    if not current.changes:
-        lines.append(tr("No speaker matches were available.", "没有可用的 speaker 匹配结果。"))
+    visible_changes = tuple(change for change in current.changes if change.status != "unchanged")
+    if not visible_changes:
+        lines.append(tr("No material score changes.", "没有实质分数变化。"))
         return "\n".join(lines)
-    for change in current.changes[:6]:
+    for change in visible_changes[:CURRENT_CHANGE_DISPLAY_LIMIT]:
         lines.append("  " + _score_change_line(change))
+    hidden_count = len(visible_changes) - CURRENT_CHANGE_DISPLAY_LIMIT
+    if hidden_count > 0:
+        lines.append(tr(f"  [dim]... {hidden_count} more current change(s) omitted.[/]", f"  [dim]... 省略 {hidden_count} 个当前项目变化。[/]"))
     return "\n".join(lines)
 
 
@@ -277,9 +285,8 @@ def _historical_severity_summary_line(summary: VoiceprintEvaluationSummary) -> s
 def _historical_risk_lines(summary: VoiceprintEvaluationSummary) -> list[str]:
     """Render risky historical project lines."""
     lines: list[str] = []
-    for project in summary.historical:
-        if project.risk_count == 0:
-            continue
+    risky_projects = tuple(project for project in summary.historical if project.risk_count > 0)
+    for project in risky_projects[:HISTORICAL_PROJECT_DISPLAY_LIMIT]:
         style = "bold red" if project.critical_count else "yellow"
         label = "CRITICAL" if project.critical_count else "WARNING"
         title = _trim_text(project.title or project.project_id, limit=40)
@@ -290,10 +297,18 @@ def _historical_risk_lines(summary: VoiceprintEvaluationSummary) -> list[str]:
             f"{_count_badge('warning', project.warning_count, 'yellow')}"
         )
         lines.append(f"    [{style}]review: meeting-asr project review {project_id}[/]")
-        lines.extend(
-            "    " + _score_change_line(change)
-            for change in project.changes
-            if change.is_warning or change.is_critical
+        risky_changes = tuple(change for change in project.changes if change.is_warning or change.is_critical)
+        lines.extend("    " + _score_change_line(change) for change in risky_changes[:HISTORICAL_CHANGE_DISPLAY_LIMIT])
+        hidden_change_count = len(risky_changes) - HISTORICAL_CHANGE_DISPLAY_LIMIT
+        if hidden_change_count > 0:
+            lines.append(tr(f"    [dim]... {hidden_change_count} more risky change(s) omitted.[/]", f"    [dim]... 省略 {hidden_change_count} 个风险变化。[/]"))
+    hidden_project_count = len(risky_projects) - HISTORICAL_PROJECT_DISPLAY_LIMIT
+    if hidden_project_count > 0:
+        lines.append(
+            tr(
+                f"  [dim]... {hidden_project_count} more risky project(s) omitted; open Project Review from project list.[/]",
+                f"  [dim]... 省略 {hidden_project_count} 个风险项目；可从 project list 进入对应 Project Review。[/]",
+            )
         )
     return lines
 
