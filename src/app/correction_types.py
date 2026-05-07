@@ -21,6 +21,7 @@ class CorrectionEditOptions:
     from_original: bool = False
     use_ai: bool = True
     model: str | None = None
+    polish_concurrency: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

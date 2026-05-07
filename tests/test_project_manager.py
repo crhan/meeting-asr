@@ -371,8 +371,9 @@ def test_project_run_generates_default_transcript_polish_proposal(
             [SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2)],
         )
 
-    def fake_prepare_polish(project_dir, correction_model, progress=None):
+    def fake_prepare_polish(project_dir, correction_model, polish_concurrency=None, progress=None):
         calls["model"] = correction_model
+        calls["polish_concurrency"] = polish_concurrency
         proposal_dir = project_dir / "tmp" / "corrections"
         proposal_dir.mkdir(parents=True, exist_ok=True)
         review_path = proposal_dir / "review_polish_test.md"
@@ -418,6 +419,8 @@ def test_project_run_generates_default_transcript_polish_proposal(
             str(projects_dir),
             "--correction-model",
             "qwen-test",
+            "--polish-concurrency",
+            "3",
         ],
     )
     project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
@@ -425,6 +428,7 @@ def test_project_run_generates_default_transcript_polish_proposal(
 
     assert result.exit_code == 0
     assert calls["model"] == "qwen-test"
+    assert calls["polish_concurrency"] == 3
     assert manifest.runtime["polish"]["status"] == "proposal_ready"
     assert manifest.runtime["polish"]["proposed_changes"] == 1
     assert manifest.runtime["polish"]["proposal_diff"] == "tmp/corrections/proposal_test.diff"

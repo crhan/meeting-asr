@@ -7,7 +7,7 @@ import hashlib
 import re
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, TimeoutError as FutureTimeoutError, wait
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
@@ -623,7 +623,17 @@ def _propose_polish_changes(
     try:
         settings = load_settings(require_oss=False, require_dashscope=True)
         model = options.model or settings.dashscope_correction_model
-        changes = _ai_polish_changes(paths, manifest, result, speaker_mapping, settings, model, progress)
+        concurrency = _polish_concurrency(options.polish_concurrency, settings.dashscope_correction_concurrency)
+        changes = _ai_polish_changes(
+            paths,
+            manifest,
+            result,
+            speaker_mapping,
+            settings,
+            model,
+            progress,
+            concurrency=concurrency,
+        )
         return changes, model, None
     except Exception as exc:
         return [], options.model or "dashscope-correction", str(exc)
@@ -637,11 +647,26 @@ def _ai_polish_changes(
     settings: Settings,
     model: str,
     progress: CliProgressReporter | None,
+    *,
+    concurrency: int,
 ) -> list[CorrectionChange]:
     """Use DashScope to propose transcript polish changes for all sentences."""
     candidates = _all_llm_candidates(result, speaker_mapping)
     corrected_by_id: dict[str, str] = {}
     batches = list(_batches(candidates, POLISH_LLM_BATCH_SIZE))
+    if concurrency > 1 and len(batches) > 1:
+        corrected_by_id.update(
+            _run_polish_batches_parallel(
+                batches,
+                paths=paths,
+                manifest=manifest,
+                settings=settings,
+                model=model,
+                progress=progress,
+                concurrency=concurrency,
+            )
+        )
+        return _changes_from_polish_result(result, candidates, corrected_by_id, speaker_mapping)
     for index, batch in enumerate(batches, start=1):
         llm_result = _run_polish_batch(
             lambda batch=batch: propose_transcript_polish(candidates=batch, settings=settings, model=model),
@@ -654,6 +679,96 @@ def _ai_polish_changes(
         )
         corrected_by_id.update(llm_result.corrected_text_by_id)
     return _changes_from_polish_result(result, candidates, corrected_by_id, speaker_mapping)
+
+
+def _polish_concurrency(option_value: int | None, configured_value: int) -> int:
+    """Return the validated transcript polish concurrency."""
+    value = option_value if option_value is not None else configured_value
+    if value < 1 or value > 8:
+        raise ValueError(f"Transcript polish concurrency must be between 1 and 8, got {value}")
+    return value
+
+
+def _run_polish_batches_parallel(
+    batches: list[list[LlmCorrectionCandidate]],
+    *,
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    settings: Settings,
+    model: str,
+    progress: CliProgressReporter | None,
+    concurrency: int,
+) -> dict[str, str]:
+    """Run independent polish batches concurrently and merge model results."""
+    max_workers = min(concurrency, len(batches))
+    input_file = manifest.source.original_path or manifest.source.path
+    fields = {"model": model, "batch": f"0/{len(batches)}", "concurrency": max_workers}
+    _record_polish_runtime(
+        paths,
+        manifest,
+        "polish",
+        input_file,
+        fields,
+        f"starting {len(batches)} polish batches with concurrency {max_workers}",
+    )
+    _emit_polish_heartbeat(
+        progress,
+        manifest,
+        paths,
+        input_file,
+        elapsed_seconds=0.0,
+        last_success=f"submitted 0/{len(batches)} polish batches",
+        next_action="waiting for parallel polish batches",
+        fields=fields,
+    )
+    started_at = time.monotonic()
+    corrected_by_id: dict[str, str] = {}
+    completed = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_by_index = {
+            executor.submit(propose_transcript_polish, candidates=batch, settings=settings, model=model): index
+            for index, batch in enumerate(batches, start=1)
+        }
+        pending = set(future_by_index)
+        while pending:
+            done, pending = wait(pending, timeout=30.0, return_when=FIRST_COMPLETED)
+            if not done:
+                elapsed = time.monotonic() - started_at
+                last_success = f"{completed}/{len(batches)} polish batches complete"
+                heartbeat_fields = {"model": model, "batch": f"{completed}/{len(batches)}", "concurrency": max_workers}
+                _record_polish_runtime(paths, manifest, "polish", input_file, heartbeat_fields, last_success)
+                _emit_polish_heartbeat(
+                    progress,
+                    manifest,
+                    paths,
+                    input_file,
+                    elapsed_seconds=elapsed,
+                    last_success=last_success,
+                    next_action="waiting for parallel polish batches",
+                    fields=heartbeat_fields,
+                )
+                continue
+            for future in done:
+                batch_index = future_by_index[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    message = _polish_failure_message(manifest.project_id, model, batch_index, len(batches), exc)
+                    error_fields = {"model": model, "batch": f"{batch_index}/{len(batches)}", "concurrency": max_workers}
+                    _record_polish_runtime(paths, manifest, "polish", input_file, error_fields, None, last_error=message)
+                    raise RuntimeError(message) from exc
+                completed += 1
+                corrected_by_id.update(result.corrected_text_by_id)
+                done_fields = {"model": model, "batch": f"{completed}/{len(batches)}", "concurrency": max_workers}
+                _record_polish_runtime(
+                    paths,
+                    manifest,
+                    "polish",
+                    input_file,
+                    done_fields,
+                    f"completed polish batch {batch_index}/{len(batches)}",
+                )
+    return corrected_by_id
 
 
 def _run_polish_batch(

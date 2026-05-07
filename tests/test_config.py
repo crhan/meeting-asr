@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from app.cli import app
 from app.config import (
+    DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY,
     DEFAULT_DASHSCOPE_CORRECTION_MODEL,
     DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER,
     DEFAULT_DASHSCOPE_SUMMARY_MODEL,
@@ -64,6 +65,7 @@ def test_load_settings_reads_global_config(monkeypatch: pytest.MonkeyPatch, tmp_
     assert settings.dashscope_base_url == "https://dashscope.aliyuncs.com/api/v1"
     assert settings.dashscope_summary_model == DEFAULT_DASHSCOPE_SUMMARY_MODEL
     assert settings.dashscope_correction_model == DEFAULT_DASHSCOPE_CORRECTION_MODEL
+    assert settings.dashscope_correction_concurrency == DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY
     assert settings.dashscope_asr_vocabulary_id is None
     assert settings.voiceprint_embedding_provider == DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER
 
@@ -159,6 +161,7 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "DASHSCOPE_API_KEY",
         "DASHSCOPE_BASE_URL",
         "DASHSCOPE_CORRECTION_MODEL",
+        "DASHSCOPE_CORRECTION_CONCURRENCY",
         "DASHSCOPE_ASR_VOCABULARY_ID",
         "OSS_ACCESS_KEY_ID",
         "OSS_ACCESS_KEY_SECRET",

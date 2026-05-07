@@ -344,6 +344,13 @@ def run(
     summary_model: Optional[str] = typer.Option(None, "--summary-model", help="DashScope model for meeting summary."),
     polish: bool = typer.Option(True, "--polish/--no-polish", help="Generate transcript polish proposal after ASR."),
     correction_model: Optional[str] = typer.Option(None, "--correction-model", help="DashScope model for transcript polish."),
+    polish_concurrency: Optional[int] = typer.Option(
+        None,
+        "--polish-concurrency",
+        min=1,
+        max=8,
+        help="Parallel DashScope batch requests for transcript polish.",
+    ),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
     """Create a project, transcribe, summarize, and match speakers automatically."""
@@ -377,6 +384,7 @@ def run(
             summary_model=summary_model,
             polish=polish,
             correction_model=correction_model,
+            polish_concurrency=polish_concurrency,
             progress=reporter,
         ),
         description="Running project workflow",
@@ -519,6 +527,7 @@ def _run_project_workflow(
     summary_model: str | None,
     polish: bool,
     correction_model: str | None,
+    polish_concurrency: int | None,
     progress: CliProgressReporter | None,
 ) -> ProjectRunSummary:
     """
@@ -538,6 +547,7 @@ def _run_project_workflow(
         match_threshold: Voiceprint match acceptance threshold.
         summarize: Generate meeting summary when true.
         summary_model: Optional DashScope text model override.
+        polish_concurrency: Optional transcript polish request concurrency override.
         progress: Optional progress reporter.
 
     Returns:
@@ -582,12 +592,20 @@ def _run_project_workflow(
             input_path,
             "polish",
             progress,
-            external_ids={"model": correction_model or "configured-default"},
+            external_ids={
+                "model": correction_model or "configured-default",
+                "concurrency": polish_concurrency or "configured-default",
+            },
             description="Generating transcript polish proposal",
             step_index=polish_step,
             step_total=step_total,
         )
-        correction_summary = _prepare_run_transcript_polish(project.project_dir, correction_model, progress=progress)
+        correction_summary = _prepare_run_transcript_polish(
+            project.project_dir,
+            correction_model,
+            polish_concurrency=polish_concurrency,
+            progress=progress,
+        )
         _record_polish_runtime(project.project_dir, correction_summary)
     meeting_summary = None
     if summarize:
@@ -777,6 +795,7 @@ def _prepare_run_transcript_polish(
     project_dir: Path,
     correction_model: str | None,
     *,
+    polish_concurrency: int | None = None,
     progress: CliProgressReporter | None = None,
 ) -> CorrectionEditSummary:
     """
@@ -798,6 +817,7 @@ def _prepare_run_transcript_polish(
         category="polish",
         use_ai=True,
         model=correction_model,
+        polish_concurrency=polish_concurrency,
     )
     return project_correct_commands.prepare_transcript_polish_for_review(
         paths=paths,

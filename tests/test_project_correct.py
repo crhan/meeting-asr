@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import threading
+import time
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -258,6 +260,47 @@ def test_project_correct_polish_creates_non_lexicon_proposal(tmp_path: Path, mon
     diff_result = runner.invoke(app, ["project", "correct", "diff", str(project_dir)])
     assert diff_result.exit_code == 0
     assert good_text in diff_result.output
+
+
+def test_project_correct_polish_runs_batches_in_parallel(tmp_path: Path, monkeypatch) -> None:
+    """Transcript polish should run independent LLM batches concurrently."""
+    texts = [f"第 {index} 句话需要轻量修复。" for index in range(1, 91)]
+    project_dir = _sample_project_with_sentences(tmp_path, texts)
+    lock = threading.Lock()
+    active_calls = 0
+    max_active_calls = 0
+
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(
+            dashscope_api_key="key",
+            dashscope_base_url=None,
+            dashscope_correction_model="qwen-test",
+            dashscope_correction_concurrency=3,
+        ),
+    )
+
+    def fake_propose_transcript_polish(**kwargs):
+        nonlocal active_calls, max_active_calls
+        candidates = kwargs["candidates"]
+        with lock:
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+        time.sleep(0.05)
+        with lock:
+            active_calls -= 1
+        first = candidates[0]
+        return LlmCorrectionResult("并发修复", {first.candidate_id: first.text + " 已修复。"}, kwargs["model"])
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish", fake_propose_transcript_polish)
+
+    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir), "--concurrency", "3"], input="n\n")
+
+    assert result.exit_code == 0
+    assert max_active_calls == 3
+    proposal = _latest_proposal(project_dir)
+    assert proposal["category"] == "polish"
+    assert len(proposal["proposed_changes"]) == 3
 
 
 def test_project_transcript_show_can_select_corrected_output(tmp_path: Path) -> None:

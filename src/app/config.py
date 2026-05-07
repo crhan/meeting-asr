@@ -13,6 +13,7 @@ CONFIG_FILENAME = "config.json"
 DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
 DEFAULT_DASHSCOPE_SUMMARY_MODEL = "qwen-plus"
 DEFAULT_DASHSCOPE_CORRECTION_MODEL = DEFAULT_DASHSCOPE_SUMMARY_MODEL
+DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY = 3
 DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER = "local-speechbrain"
 
 
@@ -35,6 +36,7 @@ class Settings:
     dashscope_base_url: str
     dashscope_summary_model: str = DEFAULT_DASHSCOPE_SUMMARY_MODEL
     dashscope_correction_model: str = DEFAULT_DASHSCOPE_CORRECTION_MODEL
+    dashscope_correction_concurrency: int = DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY
     dashscope_asr_vocabulary_id: str | None = None
     oss_access_key_id: str | None = None
     oss_access_key_secret: str | None = None
@@ -61,6 +63,12 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "dashscope_correction_model",
         "DASHSCOPE_CORRECTION_MODEL",
         default=DEFAULT_DASHSCOPE_CORRECTION_MODEL,
+    ),
+    ConfigKey(
+        "dashscope.correction_concurrency",
+        "dashscope_correction_concurrency",
+        "DASHSCOPE_CORRECTION_CONCURRENCY",
+        default=str(DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY),
     ),
     ConfigKey("dashscope.asr_vocabulary_id", "dashscope_asr_vocabulary_id", "DASHSCOPE_ASR_VOCABULARY_ID"),
     ConfigKey("oss.access_key_id", "oss_access_key_id", "OSS_ACCESS_KEY_ID", secret=True),
@@ -240,6 +248,12 @@ def load_settings(*, require_oss: bool = False, require_dashscope: bool = True) 
         dashscope_correction_model=(
             _read_value(values, "dashscope.correction_model", required=False) or DEFAULT_DASHSCOPE_CORRECTION_MODEL
         ),
+        dashscope_correction_concurrency=_read_int_value(
+            values,
+            "dashscope.correction_concurrency",
+            minimum=1,
+            maximum=8,
+        ),
         dashscope_asr_vocabulary_id=_read_value(values, "dashscope.asr_vocabulary_id", required=False),
         oss_access_key_id=_read_value(values, "oss.access_key_id", required=require_oss),
         oss_access_key_secret=_read_value(values, "oss.access_key_secret", required=require_oss),
@@ -332,6 +346,20 @@ def _read_value(config_values: dict[str, str], key: str, *, required: bool) -> s
     if required and not value:
         raise ValueError(_missing_config_message(config_key))
     return value or None
+
+
+def _read_int_value(config_values: dict[str, str], key: str, *, minimum: int, maximum: int) -> int:
+    """Read and validate one integer config value."""
+    value = _read_value(config_values, key, required=False)
+    if value is None:
+        raise ValueError(f"Missing integer config value: {key}")
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(f"Config value {key} must be an integer, got {value!r}") from exc
+    if parsed < minimum or parsed > maximum:
+        raise ValueError(f"Config value {key} must be between {minimum} and {maximum}, got {parsed}")
+    return parsed
 
 
 def _xdg_base_dir(env_name: str, fallback: Path) -> Path:

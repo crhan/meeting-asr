@@ -75,6 +75,13 @@ def polish_command(
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     yes: bool = typer.Option(False, "--yes", "-y", help="Accept the generated polish proposal without prompting."),
     model: Optional[str] = typer.Option(None, "--model", help="DashScope correction model id."),
+    concurrency: Optional[int] = typer.Option(
+        None,
+        "--concurrency",
+        min=1,
+        max=8,
+        help="Parallel DashScope batch requests for transcript polish.",
+    ),
     lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
     from_original: bool = typer.Option(False, "--from-original", help="Polish from the original ASR transcript."),
 ) -> None:
@@ -88,6 +95,7 @@ def polish_command(
         from_original=from_original,
         use_ai=True,
         model=model,
+        polish_concurrency=concurrency,
     )
     summary = run_with_cli_errors(
         lambda: prepare_transcript_polish(
