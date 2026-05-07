@@ -13,7 +13,8 @@ CONFIG_FILENAME = "config.json"
 DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
 DEFAULT_DASHSCOPE_SUMMARY_MODEL = "qwen-plus"
 DEFAULT_DASHSCOPE_CORRECTION_MODEL = DEFAULT_DASHSCOPE_SUMMARY_MODEL
-DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY = 3
+DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY = 24
+MAX_DASHSCOPE_CORRECTION_CONCURRENCY = 64
 DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER = "local-speechbrain"
 
 
@@ -252,7 +253,7 @@ def load_settings(*, require_oss: bool = False, require_dashscope: bool = True) 
             values,
             "dashscope.correction_concurrency",
             minimum=1,
-            maximum=8,
+            maximum=MAX_DASHSCOPE_CORRECTION_CONCURRENCY,
         ),
         dashscope_asr_vocabulary_id=_read_value(values, "dashscope.asr_vocabulary_id", required=False),
         oss_access_key_id=_read_value(values, "oss.access_key_id", required=require_oss),

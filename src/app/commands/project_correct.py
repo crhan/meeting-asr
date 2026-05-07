@@ -79,7 +79,7 @@ def polish_command(
         None,
         "--concurrency",
         min=1,
-        max=8,
+        max=64,
         help="Parallel DashScope batch requests for transcript polish.",
     ),
     lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),

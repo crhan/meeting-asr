@@ -12,7 +12,7 @@ from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 
-from app.config import Settings, load_settings
+from app.config import MAX_DASHSCOPE_CORRECTION_CONCURRENCY, Settings, load_settings
 from app.correction_editor import open_editor
 from app.correction_hotwords import hotwords_from_understanding, write_hotword_artifact
 from app.correction_llm import (
@@ -684,8 +684,11 @@ def _ai_polish_changes(
 def _polish_concurrency(option_value: int | None, configured_value: int) -> int:
     """Return the validated transcript polish concurrency."""
     value = option_value if option_value is not None else configured_value
-    if value < 1 or value > 8:
-        raise ValueError(f"Transcript polish concurrency must be between 1 and 8, got {value}")
+    if value < 1 or value > MAX_DASHSCOPE_CORRECTION_CONCURRENCY:
+        raise ValueError(
+            "Transcript polish concurrency must be between "
+            f"1 and {MAX_DASHSCOPE_CORRECTION_CONCURRENCY}, got {value}"
+        )
     return value
 
 

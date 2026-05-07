@@ -348,7 +348,7 @@ def run(
         None,
         "--polish-concurrency",
         min=1,
-        max=8,
+        max=64,
         help="Parallel DashScope batch requests for transcript polish.",
     ),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
