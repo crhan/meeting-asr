@@ -760,43 +760,55 @@ def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(tmp_path: 
     assert resolve_project_ref("Ref Demo", projects_dir) == project_dir.resolve()
 
 
-def test_project_list_order_does_not_follow_updated_at(tmp_path: Path) -> None:
-    """Project list order should reflect project identity chronology, not later edits."""
+def test_project_list_order_follows_meeting_time_desc(tmp_path: Path) -> None:
+    """Project list should show later meetings first and untimed projects last."""
     projects_dir = tmp_path / "projects"
-    older_source = tmp_path / "older.mp4"
-    newer_source = tmp_path / "newer.mp4"
-    older_source.write_bytes(b"older video")
-    newer_source.write_bytes(b"newer video")
-    older = projects_dir / "older"
-    newer = projects_dir / "newer"
+    early_source = tmp_path / "early.mp4"
+    late_source = tmp_path / "late.mp4"
+    untimed_source = tmp_path / "untimed.mp4"
+    early_source.write_bytes(b"early video")
+    late_source.write_bytes(b"late video")
+    untimed_source.write_bytes(b"untimed video")
+    early = projects_dir / "early"
+    late = projects_dir / "late"
+    untimed = projects_dir / "untimed"
     create_project(
-        older_source,
-        title="Older Project",
+        early_source,
+        title="Early Meeting",
         projects_dir=projects_dir,
-        project_dir=older,
-        meeting_time=None,
+        project_dir=early,
+        meeting_time="2026-05-02T10:00:00+08:00",
         hash_source=False,
     )
     create_project(
-        newer_source,
-        title="Newer Project",
+        late_source,
+        title="Late Meeting",
         projects_dir=projects_dir,
-        project_dir=newer,
+        project_dir=late,
+        meeting_time="2026-05-03T10:00:00+08:00",
+        hash_source=False,
+    )
+    create_project(
+        untimed_source,
+        title="Untimed Project",
+        projects_dir=projects_dir,
+        project_dir=untimed,
         meeting_time=None,
         hash_source=False,
     )
-    older_manifest = load_manifest(older)
-    newer_manifest = load_manifest(newer)
-    older_manifest.created_at = "2026-05-01T10:00:00+08:00"
-    older_manifest.updated_at = "2026-05-03T10:00:00+08:00"
-    newer_manifest.created_at = "2026-05-02T10:00:00+08:00"
-    newer_manifest.updated_at = "2026-05-02T10:00:00+08:00"
-    save_manifest(older, older_manifest)
-    save_manifest(newer, newer_manifest)
+    early_manifest = load_manifest(early)
+    late_manifest = load_manifest(late)
+    untimed_manifest = load_manifest(untimed)
+    early_manifest.created_at = "2026-05-03T10:00:00+08:00"
+    late_manifest.created_at = "2026-05-01T10:00:00+08:00"
+    untimed_manifest.created_at = "2026-05-04T10:00:00+08:00"
+    save_manifest(early, early_manifest)
+    save_manifest(late, late_manifest)
+    save_manifest(untimed, untimed_manifest)
 
     projects = list_projects(projects_dir).projects
 
-    assert [project.title for project in projects] == ["Newer Project", "Older Project"]
+    assert [project.title for project in projects] == ["Late Meeting", "Early Meeting", "Untimed Project"]
 
 
 def test_project_list_command_reads_default_projects_dir(

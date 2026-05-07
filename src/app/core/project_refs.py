@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 from app.config import get_default_projects_dir
@@ -42,8 +43,46 @@ def list_projects(projects_dir: Path | None) -> ProjectListResult:
                 manifest.updated_at,
             )
         )
-    projects.sort(key=lambda project: (project.created_at, project.project_id), reverse=True)
+    projects.sort(key=_project_list_sort_key, reverse=True)
     return ProjectListResult(parent, projects)
+
+
+def _project_list_sort_key(project: ProjectListItem) -> tuple[int, float, str, str]:
+    """
+    Return the project list sort key.
+
+    Args:
+        project: Project list row.
+
+    Returns:
+        Sort key that puts newer meeting time first, then creation time.
+    """
+    meeting_timestamp = _timestamp_or_none(project.meeting_time)
+    has_meeting_time = 1 if meeting_timestamp is not None else 0
+    return (
+        has_meeting_time,
+        meeting_timestamp if meeting_timestamp is not None else float("-inf"),
+        project.created_at,
+        project.project_id,
+    )
+
+
+def _timestamp_or_none(value: str | None) -> float | None:
+    """
+    Parse an ISO-like timestamp into a comparable epoch value.
+
+    Args:
+        value: Timestamp string.
+
+    Returns:
+        Unix timestamp, or None when missing or invalid.
+    """
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def resolve_project_ref(project_ref: Path | str, projects_dir: Path | None = None) -> Path:
