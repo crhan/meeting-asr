@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from rich.markup import escape
 from textual.app import App, ComposeResult
@@ -14,15 +16,24 @@ from textual.screen import ModalScreen
 from textual.widgets import Header, Static
 
 from app.presentation.tui.i18n import tr
+from app.speaker_match_status import (
+    MATCH_STATUS_MATCHED,
+    best_candidate_score,
+    match_threshold,
+    voiceprint_match_status,
+)
 from app.speaker_review import build_audio_preview_command
 from app.utils import format_ms_timestamp
 from app.voiceprints import VoiceprintCaptureSummary
 
 DEFAULT_SAMPLE_PAGE_SIZE = 6
+DEFAULT_CAPTURE_SKIP_SCORE = 0.75
 SAMPLE_PANE_RESERVED_ROWS = 5
 COLUMNS = ("speakers", "samples")
 FOCUSED_PANE_CLASS = "focused-pane"
 UNFOCUSED_PANE_CLASS = "unfocused-pane"
+
+
 def capture_review_status() -> str:
     """Return localized voiceprint-capture review status text."""
     return tr(
@@ -108,6 +119,9 @@ class VoiceprintCaptureSpeakerEntry:
     name: str
     person_public_id: str | None
     clips: list[VoiceprintCaptureClipEntry]
+    match_score: float | None = None
+    match_threshold: float | None = None
+    match_status: str | None = None
     selected_clip_index: int = 0
 
 
@@ -544,6 +558,7 @@ def load_voiceprint_capture_review_session(
     *,
     summary: VoiceprintCaptureSummary,
     source_path: Path,
+    match_candidates: Mapping[int, Any] | None = None,
     page_size: int | None = None,
     project_title: str | None = None,
     project_status: str | None = None,
@@ -556,6 +571,7 @@ def load_voiceprint_capture_review_session(
     Args:
         summary: Planned voiceprint capture summary.
         source_path: Source media path used for playback.
+        match_candidates: Optional project speaker voiceprint match rows.
         page_size: Optional samples-per-page override.
         project_title: Optional human-readable project title.
         project_status: Optional project workflow status.
@@ -574,7 +590,9 @@ def load_voiceprint_capture_review_session(
         source_path=source_path,
         store_dir=summary.store_dir,
         db_path=summary.db_path,
-        speakers=[_speaker_entry(speaker) for speaker in summary.speakers],
+        speakers=[
+            _speaker_entry(speaker, _speaker_match(match_candidates, speaker.speaker_id)) for speaker in summary.speakers
+        ],
         page_size=page_size,
     )
 
@@ -614,12 +632,19 @@ def render_voiceprint_capture_review_summary(session: VoiceprintCaptureReviewSes
         f"Speakers: {len(session.speakers)} | Candidate samples: {sample_total}",
     ]
     for speaker in session.speakers:
-        lines.append(f"{speaker.name} speaker={speaker.speaker_id} samples={len(speaker.clips)}")
+        lines.append(
+            f"{speaker.name} speaker={speaker.speaker_id} "
+            f"score={_score_text(speaker.match_score)} samples={len(speaker.clips)}"
+        )
     return "\n".join(lines)
 
 
-def _speaker_entry(speaker) -> VoiceprintCaptureSpeakerEntry:
+def _speaker_entry(speaker, match: Any | None = None) -> VoiceprintCaptureSpeakerEntry:
     """Build a mutable capture speaker entry."""
+    score = best_candidate_score(match) if match is not None else None
+    threshold = match_threshold(match) if match is not None else None
+    status = voiceprint_match_status(match) if match is not None else None
+    included = not _default_skip_capture(score, status)
     return VoiceprintCaptureSpeakerEntry(
         speaker_id=speaker.speaker_id,
         name=speaker.name,
@@ -632,10 +657,33 @@ def _speaker_entry(speaker) -> VoiceprintCaptureSpeakerEntry:
                 clip_begin_time_ms=clip.clip_begin_time_ms,
                 clip_end_time_ms=clip.clip_end_time_ms,
                 text=clip.text,
+                included=included,
             )
             for clip in speaker.clips
         ],
+        match_score=score,
+        match_threshold=threshold,
+        match_status=status,
     )
+
+
+def _speaker_match(match_candidates: Mapping[int, Any] | None, speaker_id: int) -> Any | None:
+    """Return the project match row for a speaker id."""
+    if match_candidates is None:
+        return None
+    return match_candidates.get(speaker_id)
+
+
+def _default_skip_capture(score: float | None, status: str | None) -> bool:
+    """Return whether a matched project speaker should start unchecked."""
+    if status == MATCH_STATUS_MATCHED:
+        return True
+    return score is not None and score > DEFAULT_CAPTURE_SKIP_SCORE
+
+
+def _score_text(score: float | None) -> str:
+    """Render a compact optional match score."""
+    return "-" if score is None else f"{score:.3f}"
 
 
 def _project_id_from_summary(summary: VoiceprintCaptureSummary) -> str:
@@ -653,7 +701,10 @@ def _selected_speaker_summary(speaker: VoiceprintCaptureSpeakerEntry | None) -> 
     if speaker is None:
         return "-"
     selected = sum(1 for clip in speaker.clips if clip.included)
-    return f"{speaker.name} speaker {speaker.speaker_id} | selected {selected}/{len(speaker.clips)}"
+    return (
+        f"{speaker.name} speaker {speaker.speaker_id} | "
+        f"score {_score_text(speaker.match_score)} | selected {selected}/{len(speaker.clips)}"
+    )
 
 
 def _selected_sample_summary(sample: VoiceprintCaptureClipEntry | None) -> str:

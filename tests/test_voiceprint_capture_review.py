@@ -45,7 +45,7 @@ def test_voiceprint_capture_review_session_renders_candidates(tmp_path: Path) ->
     assert len(session.speakers) == 1
     assert len(session.speakers[0].clips) == 2
     assert "Candidate samples: 2" in rendered
-    assert "Alice speaker=0 samples=2" in rendered
+    assert "Alice speaker=0 score=- samples=2" in rendered
 
 
 def test_voiceprint_capture_review_tui_toggles_selection_and_saves(tmp_path: Path) -> None:

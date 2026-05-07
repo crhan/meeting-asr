@@ -43,10 +43,12 @@ from app.presentation.tui.voiceprint_review_render import (
     project_sample_line,
     project_sample_summary,
     project_sample_time_range,
+    project_match_score_text,
     project_speaker_summary,
     sample_page_start,
     trim_text,
 )
+from app.presentation.tui.speaker_matches import load_match_candidates
 from app.presentation.tui.voiceprint_review_text import help_text, status_text
 from app.presentation.tui.voiceprint_review_workflow import (
     VoiceprintReviewProcessingScreen,
@@ -181,6 +183,7 @@ class _VoiceprintReviewBase:
         Binding("space", "play_sample", "Play/stop sample"),
         Binding("x", "toggle_sample", "Include/exclude"),
         Binding("a", "toggle_speaker", "Toggle speaker"),
+        Binding("d", "exclude_speaker", "Exclude speaker"),
         Binding("s", "save", "Save selected"),
         Binding("e", "evaluate", "Evaluate"),
         Binding("?", "show_shortcuts", "Help"),
@@ -299,6 +302,19 @@ class _VoiceprintReviewBase:
                 f"已{'选中' if include else '排除'} {speaker.name} 的全部样本。",
             )
         )
+        self._refresh()
+
+    def action_exclude_speaker(self) -> None:
+        """Exclude all samples for the selected project speaker."""
+        if self.mode != PROJECT_MODE:
+            self._set_status(tr("Speaker exclusion only applies to project candidates.", "取消 speaker 只适用于项目候选样本。"))
+            return
+        speaker = self._project_speaker()
+        if speaker is None or not speaker.clips:
+            return
+        for clip in speaker.clips:
+            clip.included = False
+        self._set_status(tr(f"Excluded all samples for {speaker.name}.", f"已取消 {speaker.name} 的全部样本。"))
         self._refresh()
 
     def action_play_sample(self) -> None:
@@ -489,9 +505,10 @@ class _VoiceprintReviewBase:
             marker = ">" if index == self.project_selected_speaker_index else " "
             selected = sum(1 for clip in speaker.clips if clip.included)
             person = "" if speaker.person_public_id is None else f" {speaker.person_public_id}"
+            score = project_match_score_text(speaker.match_score)
             label = tr(
-                f"{marker} {speaker.name}{person}  selected {selected}/{len(speaker.clips)}",
-                f"{marker} {speaker.name}{person}  已选 {selected}/{len(speaker.clips)}",
+                f"{marker} {speaker.name}{person}  score={score}  selected {selected}/{len(speaker.clips)}",
+                f"{marker} {speaker.name}{person}  分数={score}  已选 {selected}/{len(speaker.clips)}",
             )
             lines.append(escape(label))
         return "\n".join(lines)
@@ -986,6 +1003,7 @@ def load_voiceprint_review_session(
     capture_session = None
     if project_dir is not None:
         context = load_project_voiceprint_context(project_dir)
+        project_root = project_dir.expanduser().resolve()
         planned = plan_voiceprint_capture(
             project_dir,
             sample_count=sample_count,
@@ -993,9 +1011,11 @@ def load_voiceprint_review_session(
             padding_seconds=padding_seconds,
             store_dir=store_dir,
         )
+        match_candidates = load_match_candidates(project_root / "speakers" / "speaker_matches.json")
         capture_session = load_voiceprint_capture_review_session(
             summary=planned,
             source_path=context.source_path,
+            match_candidates=match_candidates,
             page_size=page_size,
             project_title=context.title,
             project_status=context.status,

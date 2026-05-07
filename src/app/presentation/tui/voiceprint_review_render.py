@@ -30,9 +30,10 @@ def project_speaker_summary(speaker: VoiceprintCaptureSpeakerEntry | None) -> st
         return "-"
     selected = sum(1 for clip in speaker.clips if clip.included)
     person = "" if speaker.person_public_id is None else f" | person {speaker.person_public_id}"
+    score = project_match_score_text(speaker.match_score)
     return tr(
-        f"{speaker.name} speaker {speaker.speaker_id}{person} | selected {selected}/{len(speaker.clips)}",
-        f"{speaker.name} speaker {speaker.speaker_id}{person} | 已选 {selected}/{len(speaker.clips)}",
+        f"{speaker.name} speaker {speaker.speaker_id}{person} | score {score} | selected {selected}/{len(speaker.clips)}",
+        f"{speaker.name} speaker {speaker.speaker_id}{person} | 分数 {score} | 已选 {selected}/{len(speaker.clips)}",
     )
 
 
@@ -66,6 +67,11 @@ def library_sample_summary(sample: VoiceprintSampleRow | None) -> str:
 def project_sample_line(sample: VoiceprintCaptureClipEntry) -> str:
     """Render one project capture sample row."""
     return f"{project_sample_time_range(sample)} {trim_text(sample.text)}"
+
+
+def project_match_score_text(score: float | None) -> str:
+    """Render a compact optional project speaker match score."""
+    return "-" if score is None else f"{score:.3f}"
 
 
 def library_sample_line(sample: VoiceprintSampleRow) -> str:

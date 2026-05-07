@@ -92,6 +92,46 @@ def test_voiceprint_review_tui_saves_only_selected_project_samples(tmp_path: Pat
     assert app.return_value.selected_clip_rel_paths == frozenset({"clips/project-1/speaker_0/clip_002.wav"})
 
 
+def test_voiceprint_review_tui_excludes_current_speaker_samples(tmp_path: Path) -> None:
+    """The dedicated exclude shortcut should clear all samples for the current speaker."""
+    app = VoiceprintReviewApp(_review_session(tmp_path))
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            assert "selected 2/2" in app._speaker_pane()
+
+            await pilot.press("d")
+            await pilot.pause()
+
+            assert "selected 0/2" in app._speaker_pane()
+            assert app._selected_clip_rel_paths() == set()
+
+    asyncio.run(scenario())
+
+
+def test_voiceprint_review_defaults_high_score_matches_unchecked_and_shows_score(tmp_path: Path) -> None:
+    """High-score project matches should not be captured again by default."""
+    app = VoiceprintReviewApp(
+        _review_session(
+            tmp_path,
+            match_candidates={
+                0: {
+                    "accepted": False,
+                    "name": None,
+                    "best_name": "Alice",
+                    "best_score": 0.76,
+                    "threshold": 0.85,
+                }
+            },
+        )
+    )
+
+    assert "score=0.760" in app._speaker_pane()
+    assert "selected 0/2" in app._speaker_pane()
+    assert "score 0.760" in app._overview_pane()
+    assert app._selected_clip_rel_paths() == set()
+
+
 def test_voiceprint_review_refuses_save_from_global_library(tmp_path: Path) -> None:
     """Save should be explicit to project candidates, not whichever view is open."""
     app = VoiceprintReviewApp(_review_session(tmp_path))
@@ -176,7 +216,11 @@ def test_voiceprint_review_escape_returns_unsaved_decision(tmp_path: Path) -> No
     assert app.return_value.saved is False
 
 
-def _review_session(tmp_path: Path) -> VoiceprintReviewSession:
+def _review_session(
+    tmp_path: Path,
+    *,
+    match_candidates: dict[int, object] | None = None,
+) -> VoiceprintReviewSession:
     """Build a unified review session fixture."""
     source_path = tmp_path / "meeting.mp4"
     source_path.write_bytes(b"source")
@@ -188,6 +232,7 @@ def _review_session(tmp_path: Path) -> VoiceprintReviewSession:
         project_status="named",
         source_name="meeting.mp4",
         meeting_time="2026-05-05T09:00:00+08:00",
+        match_candidates=match_candidates,
     )
     library = load_voiceprint_library_session(store_dir=_store(tmp_path), page_size=1)
     return VoiceprintReviewSession(capture=capture, library=library)
