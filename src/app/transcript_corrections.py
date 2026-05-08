@@ -724,6 +724,14 @@ def _run_polish_batches_parallel(
         next_action="waiting for parallel polish batches",
         fields=fields,
     )
+    _emit_polish_progress(
+        progress,
+        completed=0,
+        total=len(batches),
+        concurrency=max_workers,
+        active=min(max_workers, len(batches)),
+        model=model,
+    )
     started_at = time.monotonic()
     corrected_by_id: dict[str, str] = {}
     completed = 0
@@ -750,6 +758,14 @@ def _run_polish_batches_parallel(
                     next_action="waiting for parallel polish batches",
                     fields=heartbeat_fields,
                 )
+                _emit_polish_progress(
+                    progress,
+                    completed=completed,
+                    total=len(batches),
+                    concurrency=max_workers,
+                    active=min(max_workers, len(pending)),
+                    model=model,
+                )
                 continue
             for future in done:
                 batch_index = future_by_index[future]
@@ -771,6 +787,14 @@ def _run_polish_batches_parallel(
                     done_fields,
                     f"completed polish batch {batch_index}/{len(batches)}",
                 )
+                _emit_polish_progress(
+                    progress,
+                    completed=completed,
+                    total=len(batches),
+                    concurrency=max_workers,
+                    active=min(max_workers, len(pending)),
+                    model=model,
+                )
     return corrected_by_id
 
 
@@ -789,6 +813,14 @@ def _run_polish_batch(
     input_file = manifest.source.original_path or manifest.source.path
     fields = {"model": model, "batch": f"{batch_index}/{batch_total}"}
     _record_polish_runtime(paths, manifest, stage, input_file, fields, f"starting batch {batch_index}/{batch_total}")
+    _emit_polish_progress(
+        progress,
+        completed=batch_index - 1,
+        total=batch_total,
+        concurrency=1,
+        active=1,
+        model=model,
+    )
     _emit_polish_heartbeat(
         progress,
         manifest,
@@ -800,7 +832,7 @@ def _run_polish_batch(
         fields=fields,
     )
     try:
-        return _run_blocking_polish_batch(
+        result = _run_blocking_polish_batch(
             operation,
             paths=paths,
             manifest=manifest,
@@ -808,6 +840,15 @@ def _run_polish_batch(
             fields=fields,
             progress=progress,
         )
+        _emit_polish_progress(
+            progress,
+            completed=batch_index,
+            total=batch_total,
+            concurrency=1,
+            active=0,
+            model=model,
+        )
+        return result
     except Exception as exc:
         message = _polish_failure_message(manifest.project_id, model, batch_index, batch_total, exc)
         _record_polish_runtime(paths, manifest, stage, input_file, fields, None, last_error=message)
@@ -848,6 +889,7 @@ def _run_blocking_polish_batch(
                     next_action="waiting for current polish batch",
                     fields=fields,
                 )
+                _emit_polish_progress_from_fields(progress, fields)
 
 
 def _record_polish_runtime(
@@ -903,6 +945,91 @@ def _emit_polish_heartbeat(
         next_action=next_action,
         log_fields=tuple(fields.items()),
     )
+
+
+def _emit_polish_progress_from_fields(progress: CliProgressReporter | None, fields: dict[str, object]) -> None:
+    """Emit human progress from persisted polish runtime fields."""
+    batch = str(fields.get("batch") or "")
+    current, total = _parse_batch_progress(batch)
+    if total <= 0:
+        return
+    concurrency = _positive_int(fields.get("concurrency"), default=1)
+    model = str(fields.get("model") or "configured-model")
+    _emit_polish_progress(
+        progress,
+        completed=max(0, current - 1),
+        total=total,
+        concurrency=concurrency,
+        active=1,
+        model=model,
+    )
+
+
+def _emit_polish_progress(
+    progress: CliProgressReporter | None,
+    *,
+    completed: int,
+    total: int,
+    concurrency: int,
+    active: int,
+    model: str,
+) -> None:
+    """Emit human-readable transcript polish batch progress."""
+    if total <= 0:
+        return
+    safe_completed = max(0, min(completed, total))
+    safe_concurrency = max(1, concurrency)
+    safe_active = max(0, min(active, safe_concurrency, total - safe_completed))
+    emit_progress(
+        progress,
+        _polish_progress_description(
+            completed=safe_completed,
+            total=total,
+            concurrency=safe_concurrency,
+            active=safe_active,
+            model=model,
+        ),
+        total=total,
+        completed=safe_completed,
+    )
+
+
+def _polish_progress_description(
+    *,
+    completed: int,
+    total: int,
+    concurrency: int,
+    active: int,
+    model: str,
+) -> str:
+    """Return the progress row description for transcript polish batches."""
+    return (
+        "Generating transcript polish proposal"
+        f" | batches {completed}/{total}"
+        f" | parallel {concurrency}"
+        f" | active {active}"
+        f" | model {model}"
+    )
+
+
+def _parse_batch_progress(value: str) -> tuple[int, int]:
+    """Parse a ``current/total`` batch marker."""
+    if "/" not in value:
+        return 0, 0
+    current_text, total_text = value.split("/", 1)
+    try:
+        return int(current_text), int(total_text)
+    except ValueError:
+        return 0, 0
+
+
+def _positive_int(value: object, *, default: int) -> int:
+    """Return a positive integer value or a default."""
+    try:
+        parsed = int(str(value))
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
 def _polish_failure_message(

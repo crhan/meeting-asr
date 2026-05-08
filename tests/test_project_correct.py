@@ -303,6 +303,60 @@ def test_project_correct_polish_runs_batches_in_parallel(tmp_path: Path, monkeyp
     assert len(proposal["proposed_changes"]) == 3
 
 
+def test_project_correct_polish_reports_batch_progress(tmp_path: Path, monkeypatch) -> None:
+    """Transcript polish progress should expose batches, parallelism, and completion."""
+    texts = [f"第 {index} 句话需要轻量修复。" for index in range(1, 91)]
+    project_dir = _sample_project_with_sentences(tmp_path, texts)
+    events = []
+
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(
+            dashscope_api_key="key",
+            dashscope_base_url=None,
+            dashscope_correction_model="qwen-test",
+            dashscope_correction_concurrency=3,
+        ),
+    )
+
+    def fake_propose_transcript_polish(**kwargs):
+        first = kwargs["candidates"][0]
+        return LlmCorrectionResult("并发修复", {first.candidate_id: first.text + " 已修复。"}, kwargs["model"])
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish", fake_propose_transcript_polish)
+
+    summary = project_correct_commands.prepare_transcript_polish_for_review(
+        paths=project_paths(project_dir),
+        manifest=load_manifest(project_dir),
+        speaker_mapping={0: "敬悦"},
+        options=CorrectionEditOptions(
+            open_editor=False,
+            open_proposal=False,
+            category="polish",
+            model="qwen-test",
+            polish_concurrency=3,
+        ),
+        progress=events.append,
+    )
+
+    polish_events = [
+        event
+        for event in events
+        if event.description and "Generating transcript polish proposal" in event.description
+    ]
+    assert summary.proposed_change_count == 3
+    assert polish_events
+    assert polish_events[0].total == 3
+    assert polish_events[0].completed == 0
+    assert "batches 0/3" in polish_events[0].description
+    assert "parallel 3" in polish_events[0].description
+    assert "active 3" in polish_events[0].description
+    assert polish_events[-1].total == 3
+    assert polish_events[-1].completed == 3
+    assert "batches 3/3" in polish_events[-1].description
+    assert "active 0" in polish_events[-1].description
+
+
 def test_project_transcript_show_can_select_corrected_output(tmp_path: Path) -> None:
     """Corrected transcript artifacts should be viewable through project transcript show."""
     project_dir = _sample_project(tmp_path)
