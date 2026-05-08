@@ -116,6 +116,7 @@ meeting-asr project trash purge TRASH_REF --yes
 ## 文档地图
 
 - [快速开始](docs/quick-start.md)：只讲全自动路径和 TUI 兜底路径。
+- [项目介绍](docs/project-introduction.md)：面向推广的短文，说明核心功能和解决的痛点。
 - [CLI 用户手册](docs/cli-user-guide.md)：命令、参数、产物、故障排查。
 - [架构说明](docs/architecture.md)：分层结构和新代码放置规则。
 - [开发者指南](docs/developer-guide.md)：安装、测试、completion 验证。
