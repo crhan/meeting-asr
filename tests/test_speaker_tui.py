@@ -345,8 +345,12 @@ def test_project_review_tui_save_handler_keeps_tui_open(monkeypatch, tmp_path: P
             assert app.return_value is None
             assert seen and seen[0].saved is True
             assert "Project review saved" in str(app.screen.query_one("#save-title", Static).render())
-            assert "Speaker A" in str(app.screen.query_one("#save-body", Static).render())
-            assert "<not saved> -> Speaker A" in str(app.screen.query_one("#save-body", Static).render())
+            save_body = str(app.screen.query_one("#save-body", Static).render())
+            assert "Speaker A" in save_body
+            assert "<not saved> -> Speaker A" in save_body
+            assert "Speaker outputs" not in save_body
+            assert "Speaker 产物" not in save_body
+            assert "speaker_map.json" not in save_body
             assert "v capture voiceprints" in str(app.screen.query_one("#save-actions", Static).render())
 
             await pilot.press("v")

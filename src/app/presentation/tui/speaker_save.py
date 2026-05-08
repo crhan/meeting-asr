@@ -268,8 +268,6 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         lines.extend(_speaker_change_lines(self.speaker_changes))
         lines.extend(["", tr("[b]Speaker ignore changes[/b]", "[b]Speaker 忽略变更[/b]")])
         lines.extend(_speaker_ignore_change_lines(self.ignore_changes))
-        lines.extend(["", tr("[b]Speaker outputs[/b]", "[b]Speaker 产物[/b]")])
-        lines.extend(_path_lines(self.outcome))
         if self.outcome.correction_summary is not None:
             lines.extend(["", tr("[b]Transcript correction[/b]", "[b]文字修正[/b]")])
             lines.extend(_summary_lines(self.outcome.correction_summary))
@@ -513,15 +511,6 @@ class CorrectionProposalDiffScreen(ModalScreen[CorrectionProposalSelection | Non
             selected_indices=tuple(sorted(self.selected_indices)),
             accept_now=accept_now,
         )
-
-
-def _path_lines(outcome: SpeakerReviewSaveOutcome) -> list[str]:
-    """Render saved speaker artifact paths."""
-    return [
-        tr(f"- Mapping: {escape(str(outcome.mapping_path))}", f"- 映射：{escape(str(outcome.mapping_path))}"),
-        tr(f"- Transcript: {escape(str(outcome.transcript_path))}", f"- 转写：{escape(str(outcome.transcript_path))}"),
-        tr(f"- Subtitle: {escape(str(outcome.srt_path))}", f"- 字幕：{escape(str(outcome.srt_path))}"),
-    ]
 
 
 def speaker_name_changes(
