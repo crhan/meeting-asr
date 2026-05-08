@@ -315,7 +315,9 @@ OPTION_ZH = {
     "--summarize": "ASR 后生成会议标题和回忆索引；可用 --no-summarize 关闭。",
     "--summary-model": "指定回忆索引使用的 DashScope 模型。",
     "--polish": "ASR 后生成转写润色建议；可用 --no-polish 关闭。",
+    "--local-correction": "ASR 后应用已接受的本地词库订正规则；可用 --no-local-correction 关闭。",
     "--correction-model": "指定转写润色使用的 DashScope 模型。",
+    "--polish-concurrency": "指定转写润色并发批次数。",
     "--progress": "在终端显示交互式进度；可用 --no-progress 关闭。",
     "--agent-log": "输出给 Agent/日志系统使用的 stage/heartbeat 结构化文本；可与 --no-progress 搭配。",
     "--identity-mode": "兼容旧参数；项目身份始终基于内容 hash。",
@@ -393,7 +395,7 @@ def render_help(command: click.Command, command_path: tuple[str, ...]) -> None:
     """
     lang = current_cli_language()
     ctx = click.Context(command, info_name=" ".join(("meeting-asr", *command_path)))
-    console = cli_console()
+    console = cli_console(width=120)
     console.print(Padding(_usage_text(command, ctx, lang), 1))
     body = _help_body(command, command_path, lang)
     if body:

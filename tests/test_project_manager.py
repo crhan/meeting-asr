@@ -22,6 +22,8 @@ from app.core.project_refs import list_projects, resolve_project_ref
 from app.core.project_models import ProjectTranscribeOptions
 from app.correction_types import CorrectionEditSummary
 from app.infra.dashscope_asr import TranscriptionPollEvent
+from app.lexicon_models import LexiconContext
+from app.lexicon_store import record_lexicon_contexts
 from app.models import SentenceSegment, TranscriptResult
 from app.project_manager import (
     _invalidate_downstream_artifacts,
@@ -43,6 +45,14 @@ from app.meeting_summary import MeetingSummary
 from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_default_lexicon_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep project-run tests away from the developer's real lexicon DB."""
+    isolated_db = tmp_path / "lexicon" / "lexicon.sqlite"
+    monkeypatch.setattr("app.transcript_corrections.default_lexicon_db_path", lambda: isolated_db)
+    monkeypatch.setattr("app.lexicon_store.default_lexicon_db_path", lambda: isolated_db)
 
 
 def test_create_project_writes_manifest_and_copies_source(tmp_path: Path) -> None:
@@ -333,6 +343,78 @@ def test_project_run_human_output_suppresses_structured_agent_logs(
     assert "stage=project created" not in result.output
     assert "stage=ASR polling" not in result.output
     assert "heartbeat=" not in result.output
+
+
+def test_project_run_applies_local_lexicon_corrections(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project run should apply accepted local lexicon rules before final outputs."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    projects_dir = tmp_path / "projects"
+    lexicon_db = tmp_path / "lexicon.sqlite"
+    record_lexicon_contexts(
+        [
+            LexiconContext(
+                canonical="iSee",
+                wrong_text="IC",
+                corrected_text="iSee",
+                left_context="今天聊",
+                right_context="产品",
+                category="system",
+                speaker_name="欧丁",
+                project_id="p-test",
+                sentence_id=1,
+                source="test",
+            )
+        ],
+        db_path=lexicon_db,
+    )
+    monkeypatch.setattr("app.transcript_corrections.default_lexicon_db_path", lambda: lexicon_db)
+
+    def fake_transcribe_project(project_dir, options, progress=None, **kwargs):
+        _write_sentences(
+            project_dir / "asr" / "sentences.json",
+            [
+                {"begin_time_ms": 0, "end_time_ms": 1000, "text": "今天聊IC产品。", "speaker_id": 0, "sentence_id": 1},
+                {"begin_time_ms": 1100, "end_time_ms": 2000, "text": "PIC保持不变。", "speaker_id": 0, "sentence_id": 2},
+            ],
+        )
+        return ProjectTranscribeSummary(project_dir, "task-1", "test", 1, 2)
+
+    def fake_match_project_speakers(project_dir, **kwargs):
+        return SpeakerMatchSummary(
+            project_dir / "speakers" / "speaker_matches.json",
+            "fake-provider",
+            "fake-model",
+            0.75,
+            [SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2)],
+        )
+
+    monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+
+    result = runner.invoke(
+        app,
+        ["project", "run", str(source), "--projects-dir", str(projects_dir), "--no-polish", "--no-summarize"],
+    )
+
+    project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
+    manifest = load_manifest(project_dir)
+    corrected = json.loads((project_dir / "asr" / "sentences_corrected.json").read_text(encoding="utf-8"))
+    auto_show = runner.invoke(app, ["project", "transcript", "show", manifest.project_id, "--projects-dir", str(projects_dir)])
+
+    assert result.exit_code == 0
+    assert "Local correction" in result.output
+    assert "applied (1 sentence(s), 1 rule(s))" in result.output
+    assert manifest.runtime["local_correction"]["status"] == "applied"
+    assert manifest.outputs["corrected_named_transcript"] == "exports/transcript_named_corrected.txt"
+    assert corrected["sentences"][0]["text"] == "今天聊iSee产品。"
+    assert corrected["sentences"][1]["text"] == "PIC保持不变。"
+    assert auto_show.exit_code == 0
+    assert "今天聊iSee产品。" in auto_show.output
+    assert "PIC保持不变。" in auto_show.output
 
 
 def test_asr_polling_heartbeat_redacts_signed_url_query_token(
@@ -2222,14 +2304,28 @@ def _sample_project(
 
 def _write_sample_sentences(path: Path) -> None:
     """Write a normalized sentences.json fixture."""
-    payload = {
-        "full_text": "大家好。收到。",
-        "detected_speakers": [0, 1],
-        "sentences": [
+    _write_sentences(
+        path,
+        [
             {"begin_time_ms": 0, "end_time_ms": 1000, "text": "大家好。", "speaker_id": 0, "sentence_id": 1},
             {"begin_time_ms": 1200, "end_time_ms": 1800, "text": "收到。", "speaker_id": 1, "sentence_id": 2},
             {"begin_time_ms": 1900, "end_time_ms": 2500, "text": "再补一句。", "speaker_id": 0, "sentence_id": 3},
         ],
+    )
+
+
+def _write_sentences(path: Path, sentences: list[dict[str, object]]) -> None:
+    """Write a normalized sentences.json fixture with custom text."""
+    payload = {
+        "full_text": "".join(str(sentence["text"]) for sentence in sentences),
+        "detected_speakers": sorted(
+            {
+                int(sentence["speaker_id"])
+                for sentence in sentences
+                if sentence.get("speaker_id") is not None
+            }
+        ),
+        "sentences": sentences,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

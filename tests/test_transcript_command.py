@@ -24,6 +24,18 @@ def test_project_transcript_show_prefers_named_output(tmp_path: Path) -> None:
     assert result.output == "欧丁: 你好\n"
 
 
+def test_project_transcript_show_auto_prefers_corrected_output(tmp_path: Path) -> None:
+    """Auto mode should prefer accepted local correction outputs when present."""
+    project_dir = _sample_project(tmp_path)
+    _write_transcript_outputs(project_dir)
+    (project_dir / "exports" / "transcript_named_corrected.txt").write_text("欧丁: iSee\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["project", "transcript", "show", str(project_dir)])
+
+    assert result.exit_code == 0
+    assert result.output == "欧丁: iSee\n"
+
+
 def test_project_transcript_show_accepts_project_id(tmp_path: Path) -> None:
     """Transcript commands should resolve project ids from the project store."""
     projects_dir = tmp_path / "projects"

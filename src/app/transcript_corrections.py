@@ -39,7 +39,12 @@ from app.correction_understanding import (
     refine_sample_replacements,
 )
 from app.core.project_models import ProjectManifest, ProjectPaths
-from app.lexicon_store import LexiconContext, default_lexicon_db_path, record_lexicon_contexts
+from app.lexicon_store import (
+    LexiconContext,
+    default_lexicon_db_path,
+    list_lexicon_correction_rules,
+    record_lexicon_contexts,
+)
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import detect_speaker_ids, render_plain_text, render_speaker_text, speaker_id_to_label
 from app.speaker_labeling import load_transcript_result, render_named_speaker_text, render_named_srt
@@ -201,6 +206,65 @@ def prepare_transcript_polish(
         model_error=model_error,
     )
     return _proposal_summary(proposal, lexicon_db)
+
+
+def apply_lexicon_corrections(
+    *,
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    speaker_mapping: dict[int, str],
+    options: CorrectionEditOptions,
+    progress: CliProgressReporter | None = None,
+) -> CorrectionEditSummary:
+    """
+    Apply active local lexicon correction rules without model inference.
+
+    Args:
+        paths: Project paths.
+        manifest: Loaded project manifest.
+        speaker_mapping: Speaker id to display name mapping.
+        options: Correction options.
+        progress: Optional progress reporter.
+
+    Returns:
+        Accepted correction summary when changes were written, otherwise a no-change summary.
+    """
+    lexicon_db = options.lexicon_db or default_lexicon_db_path()
+    review_path = _lexicon_review_path(paths)
+    rules = _lexicon_replacement_rules(lexicon_db)
+    if not rules:
+        return _empty_summary(review_path, lexicon_db, model="local-lexicon")
+    source = _load_correction_source(paths, from_original=options.from_original)
+    changes = _local_rule_changes(source.result, [], rules, speaker_mapping)
+    emit_progress(progress, f"Applying local vocabulary corrections | changes {len(changes)}")
+    if not changes:
+        return _empty_summary(review_path, lexicon_db, model="local-lexicon")
+    review_path = _write_lexicon_review_file(paths, manifest, lexicon_db)
+    corrected = _apply_changes(source.result, changes)
+    outputs = _write_corrected_outputs(paths, corrected, speaker_mapping, changes)
+    understanding = _active_understanding(rules, changes)
+    hotwords_path = _write_accept_hotwords(paths, options.category or "lexicon", understanding)
+    return CorrectionEditSummary(
+        review_path=review_path,
+        proposal_path=None,
+        proposal_diff_path=None,
+        proposal_json_path=None,
+        change_count=len(changes),
+        sample_change_count=0,
+        proposed_change_count=len(changes),
+        learned_count=0,
+        accepted=True,
+        model="local-lexicon",
+        model_error=None,
+        understanding=understanding,
+        corrected_sentences_path=outputs["sentences"],
+        corrected_transcript_path=outputs["transcript"],
+        corrected_named_transcript_path=outputs["named_transcript"],
+        corrected_srt_path=outputs["srt"],
+        hotwords_path=hotwords_path,
+        applied_path=outputs["applied"],
+        lexicon_db=lexicon_db,
+    )
 
 
 def accept_correction_proposal(
@@ -561,6 +625,48 @@ def _write_polish_review_file(
         lines.append(_review_sentence_line(sentence, speaker_mapping))
         lines.append("")
     return safe_write_text(review_path, "\n".join(lines))
+
+
+def _write_lexicon_review_file(paths: ProjectPaths, manifest: ProjectManifest, lexicon_db: Path) -> Path:
+    """Write a small trace file for the automatic local lexicon pass."""
+    review_path = _lexicon_review_path(paths)
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Meeting-ASR Local Lexicon Correction",
+        "",
+        "This file records the local lexicon correction pass used by project run.",
+        f"Project ID: {manifest.project_id}",
+        f"Title: {manifest.title}",
+        f"Lexicon DB: {lexicon_db}",
+        "",
+    ]
+    return safe_write_text(review_path, "\n".join(lines))
+
+
+def _lexicon_review_path(paths: ProjectPaths) -> Path:
+    """Return the trace path for one automatic local lexicon pass."""
+    return paths.root / "tmp" / REVIEW_DIR / f"review_lexicon_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+
+
+def _lexicon_replacement_rules(lexicon_db: Path) -> list[CorrectionReplacement]:
+    """Load active lexicon rules as transcript correction replacements."""
+    return [
+        CorrectionReplacement(
+            wrong_text=rule.wrong_text,
+            corrected_text=rule.corrected_text,
+            left_context=rule.left_context,
+            right_context=rule.right_context,
+        )
+        for rule in list_lexicon_correction_rules(db_path=lexicon_db)
+    ]
+
+
+def _active_understanding(
+    rules: list[CorrectionReplacement],
+    changes: list[CorrectionChange],
+) -> list[CorrectionUnderstanding]:
+    """Return only local lexicon rules that changed this transcript."""
+    return [item for item in _build_understanding(rules, [], changes) if item.proposed_count > 0]
 
 
 def _propose_full_document_changes(
@@ -1249,8 +1355,19 @@ def _apply_rules_to_text(text: str, rules: list[CorrectionReplacement]) -> str:
     """Apply deterministic replacement rules to text."""
     corrected = text.strip()
     for rule in rules:
-        corrected = corrected.replace(rule.wrong_text, rule.corrected_text)
+        corrected = _apply_one_rule_to_text(corrected, rule)
     return corrected
+
+
+def _apply_one_rule_to_text(text: str, rule: CorrectionReplacement) -> str:
+    """Apply one rule, using token boundaries for ASCII terms."""
+    if not rule.wrong_text:
+        return text
+    if ASCII_TERM_RE.fullmatch(rule.wrong_text):
+        pattern = re.compile(rf"(?<![A-Za-z0-9_+.#-]){re.escape(rule.wrong_text)}(?![A-Za-z0-9_+.#-])")
+        return pattern.sub(rule.corrected_text, text)
+    return text.replace(rule.wrong_text, rule.corrected_text)
+
 
 def _anchor(sentence: SentenceSegment) -> str:
     """Return a stable HTML anchor for one sentence."""

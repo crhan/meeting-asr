@@ -146,6 +146,8 @@ def _transcript_candidates(project_dir: Path, kind: TranscriptKind) -> list[Path
     paths = project_paths(project_dir)
     if kind == TranscriptKind.auto:
         return [
+            paths.exports_dir / "transcript_named_corrected.txt",
+            paths.exports_dir / "transcript_corrected.txt",
             paths.exports_dir / "transcript_named.txt",
             paths.exports_dir / "transcript_speakers.txt",
             paths.exports_dir / "transcript.txt",

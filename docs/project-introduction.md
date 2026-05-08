@@ -179,7 +179,7 @@ exports/transcript_named_corrected.txt
 corrections/asr_hotwords.json
 ```
 
-这样下一次 ASR 可以带着热词再跑，减少同类专业词错误。
+这样下一次 ASR 可以带着热词再跑；即使远端热词仍然识别不准，`project run` 也会在本地应用已确认的词汇订正规则。
 
 > 截图位 6：词级 correction diff  
 > 建议截图内容：Before/After、词级高亮、include/exclude 状态、应用按钮提示。  

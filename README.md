@@ -26,6 +26,7 @@ meeting-asr project show PROJECT_ID
 最终最常用的产物：
 
 ```text
+exports/transcript_named_corrected.txt  # 如果本地词汇订正或人工纠错已生效
 exports/transcript_named.txt
 exports/subtitle_named.srt
 exports/meeting_summary.md
@@ -34,7 +35,7 @@ exports/meeting_summary.md
 查看结果：
 
 ```bash
-meeting-asr project transcript show PROJECT_ID --kind named
+meeting-asr project transcript show PROJECT_ID --kind auto
 meeting-asr project speakers preview PROJECT_ID
 ```
 
@@ -90,7 +91,7 @@ scripts/install-tool.sh
 ```bash
 meeting-asr project run "/path/to/meeting.mp4" --meeting-time "2026-04-29T15:07:42+08:00"
 meeting-asr project review PROJECT_ID
-meeting-asr project transcript show PROJECT_ID --kind named
+meeting-asr project transcript show PROJECT_ID --kind auto
 meeting-asr project correct diff PROJECT_ID
 meeting-asr project correct accept PROJECT_ID
 meeting-asr voiceprint review PROJECT_ID
@@ -98,7 +99,7 @@ meeting-asr voiceprint embed
 meeting-asr voiceprint review
 ```
 
-`project run` 默认显示长任务进度，并把当前阶段、外部 task id、最近错误和 polish 状态写进 `project.json`。如果命令中断或怀疑卡住，先跑：
+`project run` 默认显示长任务进度，并把当前阶段、外部 task id、最近错误、本地词汇订正和 polish 状态写进 `project.json`。如果命令中断或怀疑卡住，先跑：
 
 ```bash
 meeting-asr project show PROJECT_ID

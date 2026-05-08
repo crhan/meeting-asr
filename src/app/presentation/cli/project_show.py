@@ -109,6 +109,9 @@ def _detail_rows(view: ProjectShowView) -> list[tuple[str, str]]:
             ("ASR cost", _cost_label(manifest.asr.get("cost"))),
         ]
     )
+    local_correction_label = _local_correction_label(view)
+    if local_correction_label:
+        rows.append(("Local correction", local_correction_label))
     polish_label = _polish_label(view)
     if polish_label:
         rows.append(("Transcript polish", polish_label))
@@ -281,6 +284,21 @@ def _polish_label(view: ProjectShowView) -> str | None:
     if status == "failed":
         error = str(state.get("error") or "unknown error")
         return f"failed; {error}"
+    return status.replace("_", " ")
+
+
+def _local_correction_label(view: ProjectShowView) -> str | None:
+    """Return the user-facing local correction state."""
+    state = view.manifest.runtime.get("local_correction")
+    if not isinstance(state, dict):
+        return None
+    status = str(state.get("status") or "unknown")
+    changed = _safe_int(state.get("changed_sentences"))
+    rules = _safe_int(state.get("rules_applied"))
+    if status == "applied":
+        return f"applied ({changed} sentence(s), {rules} rule(s))"
+    if status == "no_changes":
+        return "done; no local lexicon changes"
     return status.replace("_", " ")
 
 

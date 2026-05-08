@@ -127,7 +127,7 @@ meeting-asr project delete PROJECT_ID --permanent --yes
 meeting-asr project run "/path/to/meeting.mp4"
 ```
 
-`project run` 会创建或复用项目、抽取音频、上传 private OSS、提交 ASR、下载转写、生成回忆索引、生成 transcript polish proposal、声纹匹配，并自动应用 accepted speaker。
+`project run` 会创建或复用项目、抽取音频、上传 private OSS、提交 ASR、下载转写、应用已入库的本地词汇订正、生成回忆索引、生成 transcript polish proposal、声纹匹配，并自动应用 accepted speaker。
 
 如果只想对已有项目执行转写：
 
@@ -175,9 +175,17 @@ meeting-asr --no-color project list
 
 `project run` 会记录 OSS 上传和 DashScope ASR 等待的动态 ETA baseline。没有历史样本时显示 `baseline: collecting`。
 
-## 5. Transcript polish 和词汇纠错
+## 5. 本地词汇订正、Transcript polish 和人工纠错
 
-`project run` 默认只生成 polish proposal，不直接覆盖原始转写。看状态：
+`project run` 默认会先应用已经入库的本地词汇订正规则。这一步不调用模型，不猜新规则，只把已经确认过的错词规则应用到全文，例如 `IC -> iSee`。
+
+如果只想保留远端 ASR 原文，显式关闭本地订正：
+
+```bash
+meeting-asr project run "/path/to/meeting.mp4" --no-local-correction
+```
+
+`project run` 还会生成 polish proposal，但不会自动接受新的 LLM 润色建议。看状态：
 
 ```bash
 meeting-asr project show PROJECT_ID
@@ -222,6 +230,7 @@ corrections/applied.json
 ```bash
 meeting-asr lexicon list
 meeting-asr lexicon show TERM_OR_ID
+meeting-asr lexicon add iSee --category system --alias IC
 meeting-asr lexicon add iSee --category system --alias 艾赛
 meeting-asr lexicon stats
 meeting-asr lexicon export --output lexicon.json

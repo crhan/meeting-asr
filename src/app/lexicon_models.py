@@ -47,6 +47,19 @@ class LexiconContextRow:
 
 
 @dataclass(frozen=True, slots=True)
+class LexiconCorrectionRule:
+    """One active local replacement rule derived from the lexicon."""
+
+    wrong_text: str
+    corrected_text: str
+    left_context: str
+    right_context: str
+    canonical: str
+    category: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
 class LexiconTerm:
     """One local lexicon term row."""
 

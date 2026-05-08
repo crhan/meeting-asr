@@ -37,6 +37,7 @@ from app.core.project_workflow import (
     project_workflow_summary,
 )
 from app.correction_types import CorrectionEditOptions, CorrectionEditSummary
+from app.transcript_corrections import apply_lexicon_corrections
 from app.completion_helpers import (
     complete_asr_hotwords,
     complete_audio_format,
@@ -175,6 +176,7 @@ class ProjectRunSummary:
     transcription: ProjectTranscribeSummary
     meeting_summary: ProjectMeetingSummary | None
     correction_summary: CorrectionEditSummary | None
+    lexicon_correction_summary: CorrectionEditSummary | None
     matches: SpeakerMatchSummary
     applied_mapping: dict[int, str]
 
@@ -343,6 +345,11 @@ def run(
     summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Generate title and memory index after ASR."),
     summary_model: Optional[str] = typer.Option(None, "--summary-model", help="DashScope model for meeting memory index."),
     polish: bool = typer.Option(True, "--polish/--no-polish", help="Generate transcript polish proposal after ASR."),
+    local_correction: bool = typer.Option(
+        True,
+        "--local-correction/--no-local-correction",
+        help="Apply accepted local lexicon corrections after ASR.",
+    ),
     correction_model: Optional[str] = typer.Option(None, "--correction-model", help="DashScope model for transcript polish."),
     polish_concurrency: Optional[int] = typer.Option(
         None,
@@ -388,6 +395,7 @@ def run(
             summarize=summarize,
             summary_model=summary_model,
             polish=polish,
+            local_correction=local_correction,
             correction_model=correction_model,
             polish_concurrency=polish_concurrency,
             progress=reporter,
@@ -532,6 +540,7 @@ def _run_project_workflow(
     summarize: bool,
     summary_model: str | None,
     polish: bool,
+    local_correction: bool,
     correction_model: str | None,
     polish_concurrency: int | None,
     progress: CliProgressReporter | None,
@@ -553,14 +562,15 @@ def _run_project_workflow(
         match_threshold: Voiceprint match acceptance threshold.
         summarize: Generate meeting memory index when true.
         summary_model: Optional DashScope text model override.
+        local_correction: Apply active local lexicon rules when true.
         polish_concurrency: Optional transcript polish request concurrency override.
         progress: Optional progress reporter.
 
     Returns:
         Project run summary.
     """
-    step_total = 7 + int(polish) + int(summarize) + 2
-    step_descriptions = _project_run_step_descriptions(summarize, polish)
+    step_total = 7 + int(local_correction) + int(polish) + int(summarize) + 2
+    step_descriptions = _project_run_step_descriptions(summarize, polish, local_correction)
     emit_progress(
         progress,
         "Creating or reusing project",
@@ -590,9 +600,24 @@ def _run_project_workflow(
         step_total=step_total,
     )
     transcription = transcribe_project(project.project_dir, options, progress=progress, step_offset=1, step_total=step_total)
+    lexicon_correction_summary = None
+    if local_correction:
+        correction_step = 8
+        _record_and_emit_run_stage(
+            project.project_dir,
+            input_path,
+            "local correction",
+            progress,
+            description="Applying local vocabulary corrections",
+            step_index=correction_step,
+            step_total=step_total,
+            reset_total=True,
+        )
+        lexicon_correction_summary = _apply_run_lexicon_corrections(project.project_dir, progress=progress)
+        _record_local_correction_runtime(project.project_dir, lexicon_correction_summary)
     correction_summary = None
     if polish:
-        polish_step = 8
+        polish_step = 8 + int(local_correction)
         _record_and_emit_run_stage(
             project.project_dir,
             input_path,
@@ -615,7 +640,7 @@ def _run_project_workflow(
         _record_polish_runtime(project.project_dir, correction_summary)
     meeting_summary = None
     if summarize:
-        summary_step = 8 + int(polish)
+        summary_step = 8 + int(local_correction) + int(polish)
         _record_and_emit_run_stage(
             project.project_dir,
             input_path,
@@ -633,7 +658,7 @@ def _run_project_workflow(
             update_title=title is None,
             progress=progress,
         )
-    match_step = 8 + int(polish) + int(summarize)
+    match_step = 8 + int(local_correction) + int(polish) + int(summarize)
     apply_step = match_step + 1
     _record_and_emit_run_stage(
         project.project_dir,
@@ -684,16 +709,25 @@ def _run_project_workflow(
         last_success="project run complete",
     )
     emit_progress(progress, "Project run complete", completed=1, total=1)
-    return ProjectRunSummary(project, transcription, meeting_summary, correction_summary, matches, applied_mapping)
+    return ProjectRunSummary(
+        project,
+        transcription,
+        meeting_summary,
+        correction_summary,
+        lexicon_correction_summary,
+        matches,
+        applied_mapping,
+    )
 
 
-def _project_run_step_descriptions(summarize: bool, polish: bool) -> tuple[str, ...]:
+def _project_run_step_descriptions(summarize: bool, polish: bool, local_correction: bool) -> tuple[str, ...]:
     """
     Return the planned step names for ``project run``.
 
     Args:
         summarize: Whether the summary step is enabled.
         polish: Whether the transcript polish step is enabled.
+        local_correction: Whether local lexicon correction is enabled.
 
     Returns:
         Ordered step descriptions.
@@ -708,6 +742,8 @@ def _project_run_step_descriptions(summarize: bool, polish: bool) -> tuple[str, 
         "Writing transcript artifacts",
     )
     steps = list(transcription_steps)
+    if local_correction:
+        steps.append("Applying local vocabulary corrections")
     if polish:
         steps.append("Generating transcript polish proposal")
     if summarize:
@@ -784,6 +820,66 @@ def _polish_runtime_payload(project_dir: Path, summary: CorrectionEditSummary) -
         "proposed_changes": summary.proposed_change_count,
         "proposal_json": _relative_optional_path(project_dir, summary.proposal_json_path),
         "proposal_diff": _relative_optional_path(project_dir, summary.proposal_diff_path),
+    }
+
+
+def _apply_run_lexicon_corrections(
+    project_dir: Path,
+    *,
+    progress: CliProgressReporter | None,
+) -> CorrectionEditSummary:
+    """
+    Apply accepted local lexicon rules during ``project run``.
+
+    Args:
+        project_dir: Project root.
+        progress: Optional progress reporter.
+
+    Returns:
+        Local correction summary.
+    """
+    paths = project_paths(project_dir)
+    manifest = load_manifest(paths.root)
+    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    summary = apply_lexicon_corrections(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        options=CorrectionEditOptions(
+            open_editor=False,
+            open_proposal=False,
+            category="lexicon",
+            use_ai=False,
+        ),
+        progress=progress,
+    )
+    if summary.accepted and summary.change_count:
+        project_correct_commands.record_correction_outputs(paths.root, manifest, summary)
+        save_manifest(paths.root, manifest)
+    return summary
+
+
+def _record_local_correction_runtime(project_dir: Path, summary: CorrectionEditSummary) -> None:
+    """Persist local lexicon correction state for project show."""
+    manifest = load_manifest(project_dir)
+    runtime = dict(manifest.runtime)
+    runtime["local_correction"] = _local_correction_runtime_payload(project_dir, summary)
+    manifest.runtime = runtime
+    save_manifest(project_dir, manifest)
+
+
+def _local_correction_runtime_payload(project_dir: Path, summary: CorrectionEditSummary) -> dict[str, object]:
+    """Build JSON-safe local correction runtime state."""
+    status = "applied" if summary.accepted and summary.change_count else "no_changes"
+    return {
+        "status": status,
+        "updated_at": _now_local_iso(),
+        "model": summary.model,
+        "changed_sentences": summary.change_count,
+        "rules_applied": len(summary.understanding),
+        "corrected_transcript": _relative_optional_path(project_dir, summary.corrected_named_transcript_path),
+        "hotwords": _relative_optional_path(project_dir, summary.hotwords_path),
+        "lexicon_db": str(summary.lexicon_db) if summary.lexicon_db else None,
     }
 
 
@@ -1411,6 +1507,7 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
         source_label="new project" if summary.project.created else "reused project",
         meeting_summary=summary.meeting_summary,
         correction_summary=summary.correction_summary,
+        lexicon_correction_summary=summary.lexicon_correction_summary,
         transcription=summary.transcription,
         speaker_matches=speaker_match_rows(summary.matches.matches, default_threshold=summary.matches.threshold),
     )

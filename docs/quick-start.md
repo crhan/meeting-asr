@@ -15,10 +15,11 @@ meeting-asr project run "/path/to/meeting.mp4"
 1. 创建或复用项目；同一个源视频不会重复生成新 ID。
 2. 抽取音频、上传 private OSS、提交 DashScope ASR。
 3. 下载并标准化转写结果。
-4. 生成会议标题和回忆索引。
-5. 生成 transcript polish proposal。
-6. 用全局声纹库匹配 speaker。
-7. 自动应用 accepted speaker 匹配并写出 named transcript/SRT。
+4. 应用已入库的本地词汇订正规则，例如把 `IC` 订正为 `iSee`。
+5. 生成会议标题和回忆索引。
+6. 生成 transcript polish proposal。
+7. 用全局声纹库匹配 speaker。
+8. 自动应用 accepted speaker 匹配并写出 named transcript/SRT。
 
 看项目：
 
@@ -30,13 +31,14 @@ meeting-asr project show PROJECT_ID
 看结果：
 
 ```bash
-meeting-asr project transcript show PROJECT_ID --kind named
+meeting-asr project transcript show PROJECT_ID --kind auto
 meeting-asr project speakers preview PROJECT_ID
 ```
 
 最终重点产物：
 
 ```text
+exports/transcript_named_corrected.txt  # 有本地词汇订正或人工纠错时
 exports/transcript_named.txt
 exports/subtitle_named.srt
 exports/meeting_summary.md

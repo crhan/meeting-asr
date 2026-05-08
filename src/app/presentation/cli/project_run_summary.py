@@ -37,6 +37,7 @@ class ProjectRunSummaryView:
     source_label: str
     meeting_summary: ProjectMeetingSummary | None
     correction_summary: CorrectionEditSummary | None
+    lexicon_correction_summary: CorrectionEditSummary | None
     transcription: ProjectTranscribeSummary
     speaker_matches: tuple[SpeakerMatchRow, ...]
 
@@ -136,6 +137,9 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         rows.append(("Memory index", _relative_project_output(view.project_dir, view.meeting_summary.summary_path)))
         if view.meeting_summary.title_updated:
             rows.append(("Auto title", view.meeting_summary.title))
+    local_correction_label = _local_correction_label(view.lexicon_correction_summary)
+    if local_correction_label:
+        rows.append(("Local correction", local_correction_label))
     polish_label = _polish_label(view.correction_summary)
     if polish_label:
         rows.append(("Transcript polish", polish_label))
@@ -147,9 +151,19 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
 def _output_rows(view: ProjectRunSummaryView) -> list[tuple[str, str, str]]:
     """Return output artifact rows for the run summary."""
     final_status = _final_output_status(view)
+    final_transcript = _preferred_output_path(
+        view,
+        keys=("corrected_named_transcript", "named_transcript"),
+        fallback="exports/transcript_named.txt",
+    )
+    final_subtitle = _preferred_output_path(
+        view,
+        keys=("corrected_named_subtitle", "named_subtitle"),
+        fallback="exports/subtitle_named.srt",
+    )
     rows = [
-        ("Final transcript", final_status, "exports/transcript_named.txt"),
-        ("Final subtitles", final_status, "exports/subtitle_named.srt"),
+        ("Final transcript", final_status, final_transcript),
+        ("Final subtitles", final_status, final_subtitle),
         ("Speaker transcript", "ready", "exports/transcript_speakers.txt"),
         ("Plain transcript", "ready", "exports/transcript.txt"),
     ]
@@ -251,6 +265,25 @@ def _polish_label(summary: CorrectionEditSummary | None) -> str | None:
     if summary.model_error:
         return "failed; retry or continue without polish"
     return "no changes proposed"
+
+
+def _local_correction_label(summary: CorrectionEditSummary | None) -> str | None:
+    """Return a compact local lexicon correction state label."""
+    if summary is None:
+        return None
+    if summary.accepted and summary.change_count:
+        rule_count = len(summary.understanding)
+        return f"applied ({summary.change_count} sentence(s), {rule_count} rule(s))"
+    return "no local lexicon changes"
+
+
+def _preferred_output_path(view: ProjectRunSummaryView, *, keys: tuple[str, ...], fallback: str) -> str:
+    """Return the best manifest output path for one human-facing artifact."""
+    for key in keys:
+        value = view.manifest.outputs.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return fallback
 
 
 def _relative_project_output(project_dir: Path, output_path: Path) -> str:

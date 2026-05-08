@@ -11,6 +11,7 @@ from app.correction_hotwords import AsrHotword, hotwords_from_terms
 from app.lexicon_models import (
     AsrVocabularyState,
     LexiconAlias,
+    LexiconCorrectionRule,
     LexiconContext,
     LexiconContextRow,
     LexiconStats,
@@ -360,6 +361,54 @@ def list_asr_hotwords(*, db_path: Path | None = None, limit: int = 500) -> list[
             (limit,),
         ).fetchall()
     return hotwords_from_terms([(str(row[0]), str(row[1])) for row in rows])
+
+
+def list_lexicon_correction_rules(*, db_path: Path | None = None, limit: int = 1000) -> list[LexiconCorrectionRule]:
+    """
+    Return active local correction rules from accepted lexicon knowledge.
+
+    Args:
+        db_path: Optional database path override.
+        limit: Maximum rules to return.
+
+    Returns:
+        Replacement rules ordered for deterministic longest-match application.
+    """
+    database_path = db_path or default_lexicon_db_path()
+    if not database_path.exists():
+        return []
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        context_rows = connection.execute(
+            """
+            SELECT c.wrong_text, c.corrected_text, c.left_context, c.right_context,
+                   t.canonical, t.category
+            FROM contexts AS c
+            JOIN terms AS t ON t.id = c.term_id
+            WHERE t.status = 'active'
+              AND c.wrong_text != ''
+              AND c.corrected_text != ''
+              AND c.wrong_text != c.corrected_text
+            ORDER BY length(c.wrong_text) DESC, c.created_at DESC, c.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        alias_rows = connection.execute(
+            """
+            SELECT a.alias, t.canonical, t.canonical, t.category
+            FROM aliases AS a
+            JOIN terms AS t ON t.id = a.term_id
+            WHERE t.status = 'active'
+              AND a.alias_type = 'asr_error'
+              AND a.alias != ''
+              AND a.alias != t.canonical
+            ORDER BY length(a.alias) DESC, a.updated_at DESC, a.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return _lexicon_correction_rules_from_rows(context_rows, alias_rows, limit)
 
 
 def get_asr_vocabulary_state(
@@ -786,6 +835,76 @@ def _context_payload(context: LexiconContextRow) -> dict[str, object]:
         "source": context.source,
         "created_at": context.created_at,
     }
+
+
+def _lexicon_correction_rules_from_rows(
+    context_rows: list[tuple],
+    alias_rows: list[tuple],
+    limit: int,
+) -> list[LexiconCorrectionRule]:
+    """Merge context and alias rows into unique correction rules."""
+    rules: list[LexiconCorrectionRule] = []
+    seen: set[tuple[str, str]] = set()
+    for row in context_rows:
+        _append_correction_rule(
+            rules,
+            seen,
+            wrong_text=str(row[0]),
+            corrected_text=str(row[1]),
+            left_context=str(row[2]),
+            right_context=str(row[3]),
+            canonical=str(row[4]),
+            category=str(row[5]),
+            source="context",
+            limit=limit,
+        )
+    for row in alias_rows:
+        _append_correction_rule(
+            rules,
+            seen,
+            wrong_text=str(row[0]),
+            corrected_text=str(row[1]),
+            left_context="",
+            right_context="",
+            canonical=str(row[2]),
+            category=str(row[3]),
+            source="alias",
+            limit=limit,
+        )
+    return sorted(rules, key=lambda rule: (-len(rule.wrong_text), rule.wrong_text, rule.corrected_text))
+
+
+def _append_correction_rule(
+    rules: list[LexiconCorrectionRule],
+    seen: set[tuple[str, str]],
+    *,
+    wrong_text: str,
+    corrected_text: str,
+    left_context: str,
+    right_context: str,
+    canonical: str,
+    category: str,
+    source: str,
+    limit: int,
+) -> None:
+    """Append one unique correction rule when it is usable."""
+    if len(rules) >= limit or not wrong_text or not corrected_text or wrong_text == corrected_text:
+        return
+    key = (wrong_text, corrected_text)
+    if key in seen:
+        return
+    seen.add(key)
+    rules.append(
+        LexiconCorrectionRule(
+            wrong_text=wrong_text,
+            corrected_text=corrected_text,
+            left_context=left_context,
+            right_context=right_context,
+            canonical=canonical,
+            category=category,
+            source=source,
+        )
+    )
 
 
 def _import_term(connection: sqlite3.Connection, item: dict[str, Any]) -> int:
