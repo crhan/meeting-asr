@@ -53,7 +53,9 @@ CREATE TABLE IF NOT EXISTS asr_wait_baselines (
 MIN_AUDIO_DURATION_SECONDS = 1.0
 MIN_WAIT_SECONDS = 1.0
 ESTIMATE_LOOKBACK_LIMIT = 300
-ESTIMATE_HALF_LIFE_SECONDS = 14 * 24 * 60 * 60
+ESTIMATE_HALF_LIFE_SECONDS = 2 * 24 * 60 * 60
+OUTLIER_RATIO_MULTIPLIER = 3.0
+ROBUST_MAD_SCALE = 1.4826
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +179,7 @@ def estimate_asr_wait_seconds(
     """
     if audio_duration_seconds < MIN_AUDIO_DURATION_SECONDS:
         return None
+    _refresh_baseline_for_estimate(provider, service, model, endpoint, db_path)
     baseline = _load_baseline(provider, service, model, endpoint, db_path)
     if baseline is None:
         return None
@@ -210,6 +213,9 @@ def _refresh_baseline(
         None.
     """
     rows = _load_success_rows(connection, provider, service, model, endpoint)
+    if not rows:
+        _delete_baseline(connection, provider, service, model, endpoint)
+        return
     now = datetime.now(UTC)
     weighted_rows = [(_row_weight(created_at, now), duration, wait) for duration, wait, created_at in rows]
     baseline = _baseline_from_weighted_rows(weighted_rows)
@@ -240,6 +246,29 @@ def _refresh_baseline(
             _now_iso(),
         ),
     )
+
+
+def _refresh_baseline_for_estimate(
+    provider: str,
+    service: str,
+    model: str,
+    endpoint: str,
+    db_path: Path | None,
+) -> None:
+    """Refresh a persisted baseline before estimating with the current algorithm."""
+    database_path = _resolve_db_path(db_path)
+    if not database_path.exists():
+        return
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        _refresh_baseline(
+            connection,
+            _normalize_dimension(provider),
+            _normalize_dimension(service),
+            _normalize_dimension(model),
+            _normalize_dimension(endpoint),
+        )
 
 
 def _load_baseline(
@@ -295,6 +324,26 @@ def _load_baseline(
     )
 
 
+def _delete_baseline(
+    connection: sqlite3.Connection,
+    provider: str,
+    service: str,
+    model: str,
+    endpoint: str,
+) -> None:
+    """Remove a backend baseline when it has no successful observations."""
+    connection.execute(
+        """
+        DELETE FROM asr_wait_baselines
+        WHERE provider = ?
+          AND service = ?
+          AND model = ?
+          AND endpoint = ?
+        """,
+        (provider, service, model, endpoint),
+    )
+
+
 def _load_success_rows(
     connection: sqlite3.Connection,
     provider: str,
@@ -342,18 +391,44 @@ def _baseline_from_weighted_rows(rows: list[tuple[float, float, float]]) -> AsrW
     Returns:
         Precomputed baseline.
     """
-    if len(rows) >= 3:
-        linear = _weighted_linear_baseline(rows)
+    robust_rows = _robust_ratio_rows(rows)
+    if len(robust_rows) >= 3:
+        linear = _weighted_linear_baseline(robust_rows)
         if linear is not None:
             return linear
     method = "weighted-ratio"
     return AsrWaitBaseline(
-        sample_count=len(rows),
+        sample_count=len(robust_rows),
         method=method,
-        confidence=_estimate_confidence(len(rows), method),
+        confidence=_estimate_confidence(len(robust_rows), method),
         intercept_seconds=0.0,
-        slope_seconds_per_audio_second=_weighted_ratio_slope(rows),
+        slope_seconds_per_audio_second=_weighted_ratio_slope(robust_rows),
     )
+
+
+def _robust_ratio_rows(rows: list[tuple[float, float, float]]) -> list[tuple[float, float, float]]:
+    """
+    Drop extreme wait/audio ratio outliers before building a baseline.
+
+    Args:
+        rows: Rows as ``(weight, duration, wait)``.
+
+    Returns:
+        Rows that are close enough to the weighted median ratio.
+    """
+    if len(rows) < 4:
+        return rows
+    log_ratios = [(math.log(wait / max(MIN_AUDIO_DURATION_SECONDS, duration)), weight) for weight, duration, wait in rows]
+    median = _weighted_quantile(log_ratios, 0.5)
+    deviations = [(abs(value - median), weight) for value, weight in log_ratios]
+    mad = _weighted_quantile(deviations, 0.5)
+    threshold = max(math.log(OUTLIER_RATIO_MULTIPLIER), 3.0 * ROBUST_MAD_SCALE * mad)
+    filtered = [
+        row
+        for row in rows
+        if abs(math.log(row[2] / max(MIN_AUDIO_DURATION_SECONDS, row[1])) - median) <= threshold
+    ]
+    return filtered if len(filtered) >= 2 else rows
 
 
 def _weighted_linear_baseline(rows: list[tuple[float, float, float]]) -> AsrWaitBaseline | None:
@@ -398,12 +473,34 @@ def _weighted_ratio_slope(rows: list[tuple[float, float, float]]) -> float:
     Returns:
         Seconds of wait per audio second.
     """
-    weighted_ratio_sum = 0.0
-    weight_sum = 0.0
-    for weight, duration, wait in rows:
-        weighted_ratio_sum += weight * wait / max(MIN_AUDIO_DURATION_SECONDS, duration)
-        weight_sum += weight
-    return weighted_ratio_sum / weight_sum
+    ratios = [(wait / max(MIN_AUDIO_DURATION_SECONDS, duration), weight) for weight, duration, wait in rows]
+    return _weighted_quantile(ratios, 0.5)
+
+
+def _weighted_quantile(values: list[tuple[float, float]], quantile: float) -> float:
+    """
+    Return a weighted quantile from ``(value, weight)`` pairs.
+
+    Args:
+        values: Values with non-negative weights.
+        quantile: Quantile in the inclusive ``[0, 1]`` range.
+
+    Returns:
+        Weighted quantile value.
+    """
+    if not values:
+        return 0.0
+    ordered = sorted(values, key=lambda item: item[0])
+    total_weight = sum(max(0.0, weight) for _, weight in ordered)
+    if total_weight <= 0:
+        return ordered[len(ordered) // 2][0]
+    threshold = min(1.0, max(0.0, quantile)) * total_weight
+    cumulative = 0.0
+    for value, weight in ordered:
+        cumulative += max(0.0, weight)
+        if cumulative >= threshold:
+            return value
+    return ordered[-1][0]
 
 
 def _estimate_confidence(sample_count: int, method: str) -> str:
@@ -442,7 +539,7 @@ def _row_weight(created_at: str, now: datetime) -> float:
     if created.tzinfo is None:
         created = created.replace(tzinfo=UTC)
     age_seconds = max(0.0, (now - created.astimezone(UTC)).total_seconds())
-    return math.exp(-age_seconds / ESTIMATE_HALF_LIFE_SECONDS)
+    return math.exp(-math.log(2.0) * age_seconds / ESTIMATE_HALF_LIFE_SECONDS)
 
 
 def _resolve_db_path(db_path: Path | None) -> Path:
