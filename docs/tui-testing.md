@@ -1,31 +1,28 @@
-# TUI Testing
+# TUI 测试
 
-Speaker review TUI tests follow Textual's official headless testing model:
+Meeting-ASR 的 TUI 用 Textual headless 测试，重点测行为和状态，不做默认截图快照。
 
-- Use `App.run_test()` to run the app without opening a terminal UI.
-- Use `Pilot.press()` for keyboard flows.
-- Use `Pilot.resize_terminal()` for responsive layout behavior.
-- Assert application state and rendered markup after each interaction.
+## 规则
 
-Current test layers:
+- 用 `App.run_test()` 启动 TUI。
+- 用 `Pilot.press()` 驱动键盘流程。
+- 用 `Pilot.resize_terminal()` 测响应式布局。
+- 断言应用状态和关键 rendered markup。
+- 不依赖真实播放器、编辑器或外部网络；这些能力用 monkeypatch 隔离。
 
-- `tests/test_speaker_tui_status.py`: pure status rendering and conflict/mismatch rules.
-- `tests/test_speaker_tui.py`: Textual Pilot flows for browse/edit/save, playback targeting, column navigation,
-  pagination, resize behavior, and project session loading.
+## 测试分层
 
-Run focused TUI tests:
+- `tests/test_speaker_tui_status.py`：纯状态渲染、conflict/mismatch 规则。
+- `tests/test_speaker_tui.py`：Project Review TUI 的浏览、编辑、保存、播放目标、列导航、分页、resize、声纹入口。
+- `tests/test_voiceprint_review_tui.py`：Voiceprint Review 的项目候选、全局库、采样选择、颜色语义、退出行为。
+- `tests/test_voiceprint_review_workflow.py`：声纹采样、embedding、评测、回滚事务。
+
+## 常用命令
 
 ```bash
 uv run pytest tests/test_speaker_tui.py tests/test_speaker_tui_status.py -q
-```
-
-Run the full suite before committing:
-
-```bash
+uv run pytest tests/test_voiceprint_review_tui.py tests/test_voiceprint_review_workflow.py -q
 uv run pytest -q
 ```
 
-Snapshot testing is intentionally not enabled by default. The current risk is behavior and workflow state, so headless
-semantic tests are more stable than pixel snapshots. If layout styling becomes complex enough to justify visual
-regression tests, add `pytest-textual-snapshot` as a dev dependency and keep snapshots reviewed manually before updating
-baselines.
+如果以后布局复杂到需要视觉回归，再引入 `pytest-textual-snapshot`。快照更新必须人工 review，不能无脑覆盖 baseline。

@@ -1,372 +1,131 @@
 # Meeting-ASR
 
-`meeting-asr` 是一个项目化 CLI：从本地 MP4/MOV/MKV 创建项目，抽取 mono 16kHz 音频，上传 private OSS 并签出 URL，调用阿里云 DashScope / 百炼 Fun-ASR 异步转写，最后生成文本、字幕和 speaker 人工标注结果。
+`meeting-asr` 是一个项目化会议转写 CLI：输入本地视频，创建稳定 Project ID，抽取音频，上传 private OSS 签名 URL，调用 DashScope/Fun-ASR 转写，生成会议摘要、转写文本、字幕，并通过 TUI 完成 speaker、词汇纠错和声纹库维护。
 
-## 架构说明
+## 先看这里
 
-代码分层见 `docs/architecture.md`。新代码优先放入 `core/`、`infra/`、`presentation/cli` 或 `presentation/tui`，旧的顶层 import wrapper 只用于兼容。
+只想跑一次会议转写，读 [快速开始](docs/quick-start.md)。
 
-## 快速开始
+常用路径只有两条：
 
-如果只想知道怎么跑会议转写，先看 [快速开始：两条路径](docs/quick-start.md)。
+```bash
+# 1. 全自动：创建/复用项目、转写、摘要、声纹匹配、输出产物
+meeting-asr project run "/path/to/meeting.mp4"
 
-下面是开发和安装入口。
+# 2. 人工兜底：处理未匹配 speaker、词汇纠错、声纹采样
+meeting-asr project review PROJECT_ID
+```
+
+如果忘了 `PROJECT_ID`：
+
+```bash
+meeting-asr project list
+meeting-asr project show PROJECT_ID
+```
+
+最终最常用的产物：
+
+```text
+exports/transcript_named.txt
+exports/subtitle_named.srt
+exports/meeting_summary.md
+```
+
+查看结果：
+
+```bash
+meeting-asr project transcript show PROJECT_ID --kind named
+meeting-asr project speakers preview PROJECT_ID
+```
+
+## 安装和配置
+
+开发环境：
 
 ```bash
 uv venv
 uv sync --all-groups
 uv run meeting-asr --help
-uv run meeting-asr help project run
+uv run pytest -q
 ```
 
-本地开发安装成可直接运行的命令：
+安装全局可执行命令（本地开发）：
 
 ```bash
 scripts/install-tool.sh
-meeting-asr completion install zsh
-exec zsh
-```
-
-`scripts/install-tool.sh` 是独立安装入口，不属于业务 CLI。它固定使用：
-
-- `uv tool install --python 3.14 --editable`
-- 默认安装 `local-voiceprint` extra
-- 安装后验证 `meeting-asr` wrapper 实际使用的 Python、包来源和源码指纹
-
-`uv` 可以使用 pyenv 提供的 Python；这里显式传 `--python 3.14` 是为了避免
-`uv tool install` 默认解释器落到不满足本项目 `Python>=3.14` 的版本。
-本地开发默认 editable，源码修改会直接反映到全局命令，不需要重复构建 wheel。
-如果要模拟正式用户安装或发布验证，使用：
-
-```bash
-scripts/install-tool.sh --wheel
-```
-
-`pyproject.toml` 配置了 `tool.uv.cache-keys`，让 wheel 模式在 `src/**/*.py`
-变化时重建本地 wheel；安装后再比对当前 checkout 和实际 site-packages 的源码指纹。
-只有遇到已有非 uv 可执行文件冲突时，才使用 `scripts/install-tool.sh --force`。
-
-如果只想看当前安装状态：
-
-```bash
 scripts/install-tool.sh --check
+meeting-asr completion install zsh
 ```
 
-如果要使用默认的本地声纹 embedding provider，安装本地声纹依赖：
+配置遵循 XDG：
 
-```bash
-uv sync --extra local-voiceprint
+```text
+~/.config/meeting-asr/config.json
+~/.local/share/meeting-asr/projects
+~/.local/share/meeting-asr/voiceprints
 ```
 
-如果是 `uv tool install` 安装方式：
+最小配置入口：
 
 ```bash
-scripts/install-tool.sh
-```
-
-`completion install` 支持 `bash`、`zsh`、`fish`、`powershell` 和 `pwsh`；也可以用
-`meeting-asr completion zsh` 这类命令直接输出补全脚本。
-`meeting-asr`、`meeting-asr --help`、`meeting-asr -h`、`meeting-asr help` 和
-`meeting-asr help project list` 都会按 locale 显示帮助。中文 help 可以用
-`LC_ALL=zh_CN.UTF-8 meeting-asr`、`meeting-asr --lang zh help project list`，或设置
-`MEETING_ASR_LANG=zh` 后运行 `meeting-asr help project list`。
-列表类命令优先给人看 Rich 表格；脚本里用 `--json`，需要稳定行文本时用 `--plain`。
-
-配置遵循 XDG Base Directory：
-
-- 配置文件：`$XDG_CONFIG_HOME/meeting-asr/config.json`，默认 `~/.config/meeting-asr/config.json`
-- 默认项目：`$XDG_DATA_HOME/meeting-asr/projects`，默认 `~/.local/share/meeting-asr/projects`
-
-```bash
-meeting-asr config set dashscope.api_key "<your-dashscope-api-key>"
-meeting-asr config set dashscope.base_url "https://dashscope.aliyuncs.com/api/v1"
-meeting-asr config set dashscope.summary_model "qwen-plus"
-meeting-asr config set dashscope.correction_model "qwen-plus"
-meeting-asr config set oss.access_key_id "<your-oss-access-key-id>"
-meeting-asr config set oss.access_key_secret "<your-oss-access-key-secret>"
-meeting-asr config set oss.bucket_name "<your-bucket>"
-meeting-asr config set oss.region "<your-region>"
-meeting-asr config set oss.endpoint "<your-oss-endpoint>"
-meeting-asr config set voiceprint.embedding_provider "local-speechbrain"
-meeting-asr config set ui.editor "code --wait"
+meeting-asr config set dashscope.api_key "<dashscope-api-key>"
+meeting-asr config set oss.access_key_id "<oss-access-key-id>"
+meeting-asr config set oss.access_key_secret "<oss-access-key-secret>"
+meeting-asr config set oss.bucket_name "<bucket>"
+meeting-asr config set oss.region "<region>"
+meeting-asr config set oss.endpoint "<oss-endpoint>"
 meeting-asr doctor --full
 ```
 
-README 只记录当前已验证的声纹 embedding 路径：
+本地声纹 embedding 默认使用 `local-speechbrain`。如果全局命令缺依赖，重新运行：
 
 ```bash
-meeting-asr config set voiceprint.embedding_provider "local-speechbrain"
+scripts/install-tool.sh
 ```
 
-`local-speechbrain` 是默认值，使用本地 SpeechBrain ECAPA speaker embedding 模型，不依赖阿里云声纹服务。
+`doctor` 发现配置或依赖问题时会输出 `Repair prompts`，可直接交给 agent 继续修复。
 
-`doctor` 遇到 fail/warn 会输出 `Repair prompts`，这段可以直接交给大模型继续修复。
-
-## 主流程
-
-一条命令创建或复用项目、转写、生成会议标题/摘要、声纹匹配，并自动应用 accepted 的 speaker 匹配：
+## 核心命令
 
 ```bash
-meeting-asr project run "/path/to/meeting.mp4" \
-  --meeting-time "2026-04-29T15:07:42+08:00" \
-  --progress
-```
-
-分步执行：
-
-```bash
-meeting-asr project create "/path/to/meeting.mp4" --title "供应商管理AI治理"
-meeting-asr project list
-meeting-asr project transcribe PROJECT_ID
-meeting-asr project speakers match PROJECT_ID --apply
+meeting-asr project run "/path/to/meeting.mp4" --meeting-time "2026-04-29T15:07:42+08:00"
 meeting-asr project review PROJECT_ID
-meeting-asr project speakers preview PROJECT_ID
-meeting-asr project transcript show PROJECT_ID
+meeting-asr project transcript show PROJECT_ID --kind named
+meeting-asr project correct diff PROJECT_ID
+meeting-asr project correct accept PROJECT_ID
 meeting-asr voiceprint review PROJECT_ID
 meeting-asr voiceprint embed
 meeting-asr voiceprint review
 ```
 
-`project create` 会复制源视频到 `source/`，后续命令只需要项目目录，不需要再次传视频路径。
-`project run` 不需要手工输入会议标题；转写完成后会调用 DashScope 文本模型生成标题和摘要，
-写入 `exports/meeting_summary.md` 和 `exports/meeting_summary.json`。如果显式传了
-`--title`，模型仍会生成摘要，但不会覆盖手工标题。
-同一个源视频再次创建或 run 会复用已有项目；新项目 ID 基于源文件内容 hash，形如 `p-...`，
-不依赖创建日期。
-AutoRun 和 create 输出的后续命令使用稳定的 project id；也可以传 project path 或 project title，
-不需要先 `cd`。在项目目录内执行时，项目路径参数仍默认是当前目录。`project list` 第一列会打印
-稳定 Project ID；后续命令应复制这个 ID，或直接传 project 目录。
-也可以直接跑 `meeting-asr project review` 打开 project list TUI，选中历史 project 后进入 review。
-`project list` 默认列出 XDG 项目目录。要切换项目库，设置 `XDG_DATA_HOME`，项目会落在
-`$XDG_DATA_HOME/meeting-asr/projects`。表格里的
-`State` 从实际产物文件推导，只表达当前项目阶段。下一步命令、`Artifacts`、目录和原始内部
-status 放在 `project show PROJECT_ID`、`project status PROJECT_ID` 或 `--json` 里看。
-
-长音视频建议保留默认的 `--progress`。交互式终端会在 stderr 显示 Rich 多步骤进度；非 TTY、
-管道和日志环境会在 stderr 输出结构化 `stage`/`heartbeat` 文本，避免 ASR 轮询、summary、
-polish 这类长步骤数分钟没有任何可见反馈。结构化进度会打印 project id、project path、输入文件、
-当前时间、阶段名和非敏感外部标识，例如 `dashscope_task_id`、`oss_object_key`、
-`signed_url_ready`；签名 URL
-query、token、secret 和 access key 不会进入日志。需要完全关闭进度输出时加 `--no-progress`。
-
-当前长任务状态会持久化到 `project.json` 的 `runtime` 字段，包括 `current_stage`、
-`stage_started_at`、`last_heartbeat_at`、`external_ids` 和 `last_error`。如果命令中断或怀疑卡住，
-先跑：
+`project run` 默认显示长任务进度，并把当前阶段、外部 task id、最近错误和 polish 状态写进 `project.json`。如果命令中断或怀疑卡住，先跑：
 
 ```bash
 meeting-asr project show PROJECT_ID
 ```
 
-它会显示当前或最近阶段、外部任务 ID、缺失产物、失败恢复命令，以及 transcript polish 状态。
-
-`project run` 会记录两类动态 ETA baseline：OSS 上传吞吐和远程 ASR 等待耗时。
-OSS 上传按 provider、endpoint、bucket 分组，用文件大小估算；DashScope 等待按
-provider、service、model、endpoint 分组，用音频时长估算。样本默认写入
-`~/.local/share/meeting-asr/metrics/runtime.sqlite`。没有历史样本时显示
-`baseline: collecting`。
-
-Project 元数据和删除：
+删除项目默认进 trash，不会直接物理删除：
 
 ```bash
-meeting-asr project update PROJECT_ID --title "新的会议标题"
-meeting-asr project update PROJECT_ID --meeting-time "2026-05-02T10:00:00+08:00"
 meeting-asr project delete PROJECT_ID
 meeting-asr project trash list
 meeting-asr project trash restore TRASH_REF
 meeting-asr project trash purge TRASH_REF --yes
-meeting-asr project trash cleanup --older-than-days 30 --yes
-meeting-asr project delete PROJECT_ID --permanent --yes
 ```
 
-`project delete` 默认不会物理删除，会移动到
-`~/.local/share/meeting-asr/trash/projects/`，便于误删后恢复。`project trash restore`
-会把项目恢复回原目录；`project trash purge` 永久删除单个 trash 项；
-`project trash cleanup --older-than-days 30 --yes` 清理进入 trash 超过 30 天的项目。
-Meeting-ASR 不会自动清理 trash；只有显式执行 cleanup/purge 或 delete 时传
-`--permanent --yes` 才会物理删除项目目录。
+## 文档地图
 
-Speaker 命名分两步：`speakers match` 只写声纹候选到 `speakers/speaker_matches.json`，
-不改转写结果；推荐用 `project review` 完成人工确认并写入
-`speakers/speaker_map.json`、`exports/transcript_named.txt` 和
-`exports/subtitle_named.srt`。`speakers apply --map` 只作为脚本化替代入口。
+- [快速开始](docs/quick-start.md)：只讲全自动路径和 TUI 兜底路径。
+- [CLI 用户手册](docs/cli-user-guide.md)：命令、参数、产物、故障排查。
+- [架构说明](docs/architecture.md)：分层结构和新代码放置规则。
+- [开发者指南](docs/developer-guide.md)：安装、测试、completion 验证。
+- [TUI 测试](docs/tui-testing.md)：Textual headless 测试约定。
 
-词汇纠错可以直接用编辑器完成：
+## 关键边界
 
-```bash
-meeting-asr project review PROJECT_ID
-meeting-asr project correct edit PROJECT_ID
-meeting-asr project correct edit PROJECT_ID --editor "code --wait"
-meeting-asr project correct edit PROJECT_ID --model qwen-plus
-meeting-asr project correct accept PROJECT_ID
-meeting-asr lexicon list
-meeting-asr lexicon show iSee
-meeting-asr lexicon add iSee --category system --alias 艾赛
-meeting-asr lexicon stats
-meeting-asr lexicon export --output lexicon.json
-meeting-asr lexicon hotwords list
-meeting-asr lexicon hotwords status
-meeting-asr lexicon hotwords export
-meeting-asr lexicon hotwords sync --target-model fun-asr
-meeting-asr lexicon hotwords remote-list
-meeting-asr project transcribe PROJECT_ID --asr-hotwords auto
-meeting-asr config set ui.editor "code --wait"
-meeting-asr config set dashscope.correction_model qwen-plus
-meeting-asr project transcript show PROJECT_ID --kind corrected
-```
-
-`project run` 默认会生成 transcript polish proposal，用于通篇修复明显的语序、口语赘余和
-可安全改正的转写错误。它不会直接覆盖转写正文；状态会写入 `project.json` 的 `runtime.polish`。
-`meeting-asr project show PROJECT_ID` 会显示 `Transcript polish`：
-
-- `proposal ready`：先看 diff，再决定是否接受。
-- `done; no changes proposed`：模型没有提出安全修改。
-- `failed`：显示失败原因，并给出 retry 命令。
-- `accepted`：已写出 corrected transcript/subtitle。
-
-后续命令优先从 `project show` 复制，它会带上具体 `--proposal` 文件，避免误用其他 correction
-proposal：
-
-```bash
-meeting-asr project correct diff PROJECT_ID --proposal /path/to/proposal.json
-meeting-asr project correct accept PROJECT_ID --proposal /path/to/proposal.json
-```
-
-在 `project review` TUI 里按 `c` 会先保存当前 speaker 映射，然后进入和
-`project correct edit` 完全相同的编辑器纠错流程。它仍然会生成带稳定锚点的
-`tmp/corrections/review_*.md`，退出编辑器后通过前后 diff 推断样例改动，并生成全篇
-proposal。
-
-`correct edit` 会生成带稳定锚点的 `tmp/corrections/review_*.md`，打开编辑器等待你修改。
-退出编辑器后，Meeting-ASR 会解析你改过的样例句子，用 DashScope 文本模型生成全篇
-`tmp/corrections/proposal_*.md`、`proposal_*.diff` 和 `proposal_*.json`，先让你确认。
-接受 proposal 后才会写出
-`asr/sentences_corrected.json`、`exports/transcript_named_corrected.txt`、
-`exports/subtitle_named_corrected.srt`、`corrections/asr_hotwords.json` 和
-`corrections/applied.json`。原始
-`asr/sentences.json` 和 `exports/transcript_named.txt` 不会被覆盖。可学习的替换会写入
-`~/.local/share/meeting-asr/lexicon/lexicon.sqlite`，作为跨项目词汇库。
-`meeting-asr lexicon list/show/add/delete/stats/import/export` 管理的是本地词库本体：
-标准词、别名和纠错上下文。`asr_hotwords.json` 是这次 correction 理解直接产出的 ASR
-热词表；跨项目累计热词投影可以用 `meeting-asr lexicon hotwords list/status/export` 查看，用
-`meeting-asr lexicon hotwords sync --target-model fun-asr` 同步到 DashScope。远端表可用
-`remote-list`、`remote-show`、`remote-delete --yes` 管理；本地缓存错了用 `clear-cache` 清掉。
-`project transcribe/run` 默认 `--asr-hotwords auto`，会复用已配置的
-`dashscope.asr_vocabulary_id`，否则根据跨项目词库同步并传入 `vocabulary_id`；不想使用热词时传
-`--asr-hotwords off`，已有热词 ID 可直接传 `--asr-hotwords vocab-...`。
-如果想复用已经编辑过的 review 文件，可以用 `--review-file tmp/corrections/review_*.md`。
-如果没有传 `--editor`，编辑器优先级是 `ui.editor`、`VISUAL`、`EDITOR`、`code --wait`、`vim`。
-纠错模型优先使用 `--model`，否则使用 `dashscope.correction_model`；模型不可用时会退回本地替换规则，并在 proposal 里标出 fallback 原因。
-
-这个项目的终点不是 preview，而是人名版文本和字幕已经写出。`preview` 只是用播放器检查
-`exports/subtitle_named.srt` 是否和视频对得上；看完没问题就可以直接用
-`meeting-asr project transcript show` 或 `meeting-asr project transcript open --kind named`
-读取最终结果。
-
-没有声纹库也可以跑 `speakers match`；这时 speaker 会显示为
-`status=no-candidate`。这不是错误，只表示当前声纹库没有可匹配的人。
-
-推荐流程：
-
-1. 先跑 `meeting-asr project speakers match`。有声纹库时会生成候选；没有声纹库时会生成 `no-candidate` 结果。
-2. 优先跑 `meeting-asr project review PROJECT_ID` 进入 project 层 TUI；如果不传
-   `PROJECT_ID`，会先打开 project list。进入 review 后，它顶部会显示 project 概况、
-   match/manual/capture/embed 进度、match 分数和 conflict/mismatch；下方两栏用于切
-   speaker/sample、样例翻页、播放/停止当前样例、接受 match、输入新名字并保存；按 `?`
-   可查看快捷键。
-   顶部 `Output` 会直接列出最终项目产物；如果顶部信息太多，先看 `Next/Done` 行。
-   `Next` 表示还没完成，按它给的命令继续；`Done` 表示产物已就绪，并给出 preview 和查看文本的命令。
-3. 用 `meeting-asr project speakers inspect` 做只读诊断，查看每个 speaker 的样例和声纹建议。
-4. `meeting-asr project speakers apply --map 0=Name` 是 advanced/scripted 路径，只适合脚本或已经确认好的映射，不是人类默认修正入口。
-5. 用 `meeting-asr project speakers preview` 复核带名字的字幕。
-6. 确认无误后，最终项目产物就是 `exports/transcript_named.txt` 和 `exports/subtitle_named.srt`。
-7. 如果有新确认的人，再跑 `meeting-asr voiceprint review PROJECT_ID && meeting-asr voiceprint embed`，把他们补进跨项目声纹库。
-
-`meeting-asr project speakers match --apply` 只是快捷路径：它只会应用已 accepted
-的匹配，适合你确定自动结果已经足够时使用；如果还有未匹配的人，应使用交互式
-`project review` 补足。
-
-转写结果属于 project，用 project 子命令查看：
-
-```bash
-meeting-asr project transcript list
-meeting-asr project transcript show
-meeting-asr project transcript path --kind srt
-meeting-asr project transcript open --kind named
-```
-
-声纹是跨项目数据，不写在单个 project 里。默认存放位置遵循 XDG：
-
-```text
-~/.local/share/meeting-asr/voiceprints/
-  voiceprints.sqlite
-  clips/<project-id>/speaker_<id>/clip_001.wav
-```
-
-常用命令：
-
-```bash
-meeting-asr voiceprint review PROJECT_ID
-meeting-asr voiceprint embed
-meeting-asr voiceprint review
-meeting-asr voiceprint list
-meeting-asr voiceprint show 1
-meeting-asr voiceprint play 1 --sample 1
-meeting-asr voiceprint delete-sample 1 --sample 1
-meeting-asr voiceprint delete-speaker 1 --yes
-meeting-asr voiceprint path
-```
-
-`voiceprint review PROJECT_ID` 会在同一个 TUI 里切换项目待采样候选和全局声纹库；
-保存时只记录已确认姓名的 speaker。仍是 `Speaker A`、`Speaker C`
-这种匿名 label 的人会跳过。`voiceprint list` 会显示 speaker ID，并按 speaker
-汇总样本数、项目数和 embedding 覆盖率；`show`、`play`、`delete-sample` 和
-`delete-speaker` 可用姓名或 ID 引用同一个人。`show` 会显示样本编号，`play` 和
-`delete-sample` 都按这个编号精确操作。
-不带 PROJECT 的 `voiceprint review` 直接进入全局声纹库视图：左边选人，右边看这个人的 WAV 样本、来源项目、
-时间戳和转写文本；`space` 播放/停止当前样本，`?` 看快捷键。删除仍用显式 CLI，
-避免在浏览界面里误删。
-
-声纹 embedding 默认走 `local-speechbrain`。生成 embedding 后，可以匹配新项目：
-
-```bash
-meeting-asr doctor --full
-meeting-asr voiceprint embed
-meeting-asr project speakers match
-meeting-asr project review PROJECT_ID
-meeting-asr project speakers inspect   # diagnostic/read-only
-```
-
-## 输出结构
-
-```text
-project/
-  project.json
-  source/<video>
-  source/original.path
-  audio/audio.flac
-  asr/raw_result.json
-  asr/sentences.json
-  speakers/speaker_map.json
-  exports/transcript.txt
-  exports/transcript_speakers.txt
-  exports/transcript_named.txt
-  exports/subtitle.srt
-  exports/subtitle_named.srt
-  notes.md
-```
-
-## 关键约束
-
-- DashScope 录音文件识别只能接收公网 HTTP/HTTPS URL，不能直接传本地文件。
-- 本工具默认用 private OSS 上传后签出临时 GET URL，不要求 bucket public read。
-- `meeting-asr oss lifecycle set` 配置的是 OSS 前缀对象按对象年龄过期删除；阿里云 OSS 基于最后访问时间的生命周期规则不能用于删除对象。
-- speaker diarization 只适用于单声道音频，因此本地预处理固定为 mono 16kHz s16。
-- `speaker_count` 只是参考值，不能假设平台严格返回这个人数。
-- 工具只做匿名 speaker 聚合和人工映射，不自动识别人名。
-- `transcription_url` 会过期，任务完成后必须立刻下载保存。
-
-## 文档
-
-- [快速开始：两条路径](docs/quick-start.md)
-- [CLI 用户手册](docs/cli-user-guide.md)
-- [开发者指南](docs/developer-guide.md)
+- DashScope ASR 只能接收公网 HTTP/HTTPS URL；本工具默认走 private OSS + 临时 signed GET URL。
+- signed URL、token、secret、access key 不写入日志或 `project.json`。
+- 默认项目身份是内容 hash 生成的 `p-...`，同一个源视频会复用同一个项目。
+- 人类修正 speaker 的首选入口是 `meeting-asr project review PROJECT_ID`；`speakers apply --map` 是脚本化接口。
+- 声纹是跨项目数据，属于稳定 person ID，不用姓名做主键。
+- 文档只记录已验证路径；未验证的远端声纹 provider 不写成用户教程。
