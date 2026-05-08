@@ -9,6 +9,10 @@ from typing import Any
 from app.asr_pricing import AsrCostEstimate
 
 SCHEMA_VERSION = 1
+TITLE_SOURCE_SOURCE = "source"
+TITLE_SOURCE_MANUAL = "manual"
+TITLE_SOURCE_LLM = "llm"
+TITLE_SOURCE_UNKNOWN = "unknown"
 
 
 @dataclass(slots=True)
@@ -41,6 +45,8 @@ class ProjectManifest:
     outputs: dict[str, Any] = field(default_factory=dict)
     speakers: dict[str, Any] = field(default_factory=dict)
     runtime: dict[str, Any] = field(default_factory=dict)
+    title_source: str = TITLE_SOURCE_UNKNOWN
+    title_model: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the manifest to a JSON-ready dictionary."""
@@ -54,6 +60,8 @@ class ProjectManifest:
             schema_version=int(payload.get("schema_version", SCHEMA_VERSION)),
             project_id=str(payload["project_id"]),
             title=str(payload["title"]),
+            title_source=str(payload.get("title_source") or TITLE_SOURCE_UNKNOWN),
+            title_model=str(payload["title_model"]) if payload.get("title_model") else None,
             created_at=str(payload["created_at"]),
             updated_at=str(payload["updated_at"]),
             status=str(payload["status"]),
@@ -159,7 +167,7 @@ class ProjectTranscribeSummary:
 
 @dataclass(frozen=True, slots=True)
 class ProjectMeetingSummary:
-    """Terminal summary for generated meeting summary artifacts."""
+    """Terminal summary for generated meeting memory-index artifacts."""
 
     project_dir: Path
     title: str

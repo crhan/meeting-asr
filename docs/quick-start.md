@@ -15,7 +15,7 @@ meeting-asr project run "/path/to/meeting.mp4"
 1. 创建或复用项目；同一个源视频不会重复生成新 ID。
 2. 抽取音频、上传 private OSS、提交 DashScope ASR。
 3. 下载并标准化转写结果。
-4. 生成会议标题和摘要。
+4. 生成会议标题和回忆索引。
 5. 生成 transcript polish proposal。
 6. 用全局声纹库匹配 speaker。
 7. 自动应用 accepted speaker 匹配并写出 named transcript/SRT。

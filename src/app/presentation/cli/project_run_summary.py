@@ -133,7 +133,7 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         ("ASR task", view.transcription.task_id),
     ]
     if view.meeting_summary is not None:
-        rows.append(("Summary", _relative_project_output(view.project_dir, view.meeting_summary.summary_path)))
+        rows.append(("Memory index", _relative_project_output(view.project_dir, view.meeting_summary.summary_path)))
         if view.meeting_summary.title_updated:
             rows.append(("Auto title", view.meeting_summary.title))
     polish_label = _polish_label(view.correction_summary)
@@ -154,8 +154,8 @@ def _output_rows(view: ProjectRunSummaryView) -> list[tuple[str, str, str]]:
         ("Plain transcript", "ready", "exports/transcript.txt"),
     ]
     if view.meeting_summary is not None:
-        rows.append(("Meeting summary", "ready", "exports/meeting_summary.md"))
-        rows.append(("Summary JSON", "supporting", "exports/meeting_summary.json"))
+        rows.append(("Memory index", "ready", "exports/meeting_summary.md"))
+        rows.append(("Memory index JSON", "supporting", "exports/meeting_summary.json"))
     if view.correction_summary and view.correction_summary.proposal_diff_path:
         rows.append((
             "Transcript polish proposal",

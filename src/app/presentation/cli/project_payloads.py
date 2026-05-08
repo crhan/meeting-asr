@@ -43,6 +43,8 @@ def project_status_payload(paths: ProjectPaths, manifest: ProjectManifest) -> di
         "project": paths.root,
         "project_id": manifest.project_id,
         "title": manifest.title,
+        "title_source": manifest.title_source,
+        "title_model": manifest.title_model,
         "meeting_time": manifest.source.meeting_time,
         "status": manifest.status,
         "workflow": workflow_payload(workflow),

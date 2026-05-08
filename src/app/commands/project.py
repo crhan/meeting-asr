@@ -287,11 +287,11 @@ def transcribe(
 def summarize(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    model: Optional[str] = typer.Option(None, "--model", help="DashScope text model for meeting summary."),
+    model: Optional[str] = typer.Option(None, "--model", help="DashScope text model for meeting memory index."),
     update_title: bool = typer.Option(True, "--update-title/--no-update-title"),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
-    """Generate a meeting title and summary from a transcribed project."""
+    """Generate a meeting title and memory index from a transcribed project."""
     configure_logging(verbose=should_enable_verbose_logs())
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     summary = run_with_progress(
@@ -306,11 +306,11 @@ def summarize(
         enabled=progress,
     )
     manifest = load_manifest(resolved_project_dir)
-    typer.echo("Project summary completed.")
+    typer.echo("Project memory index completed.")
     typer.echo(f"Project ID: {manifest.project_id}")
     typer.echo(f"Title: {manifest.title}")
-    typer.echo(f"Summary: {summary.summary_path.resolve()}")
-    typer.echo(f"Summary JSON: {summary.json_path.resolve()}")
+    typer.echo(f"Memory index: {summary.summary_path.resolve()}")
+    typer.echo(f"Memory index JSON: {summary.json_path.resolve()}")
 
 
 @app.command("run")
@@ -340,8 +340,8 @@ def run(
         autocompletion=complete_voiceprint_model,
     ),
     match_threshold: float = typer.Option(0.75, "--match-threshold", min=0.0, max=1.0),
-    summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Generate title and summary after ASR."),
-    summary_model: Optional[str] = typer.Option(None, "--summary-model", help="DashScope model for meeting summary."),
+    summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Generate title and memory index after ASR."),
+    summary_model: Optional[str] = typer.Option(None, "--summary-model", help="DashScope model for meeting memory index."),
     polish: bool = typer.Option(True, "--polish/--no-polish", help="Generate transcript polish proposal after ASR."),
     correction_model: Optional[str] = typer.Option(None, "--correction-model", help="DashScope model for transcript polish."),
     polish_concurrency: Optional[int] = typer.Option(
@@ -551,7 +551,7 @@ def _run_project_workflow(
         voiceprint_endpoint: Optional voiceprint endpoint override.
         voiceprint_model: Optional voiceprint model override.
         match_threshold: Voiceprint match acceptance threshold.
-        summarize: Generate meeting summary when true.
+        summarize: Generate meeting memory index when true.
         summary_model: Optional DashScope text model override.
         polish_concurrency: Optional transcript polish request concurrency override.
         progress: Optional progress reporter.
@@ -1386,8 +1386,8 @@ def _echo_run_summary(summary: ProjectRunSummary) -> None:
     typer.echo("")
     render_project_run_summary(view)
     if summary.meeting_summary is not None:
-        typer.echo(f"Summary: {summary.meeting_summary.summary_path.resolve()}")
-        typer.echo(f"Summary JSON: {summary.meeting_summary.json_path.resolve()}")
+        typer.echo(f"Memory index: {summary.meeting_summary.summary_path.resolve()}")
+        typer.echo(f"Memory index JSON: {summary.meeting_summary.json_path.resolve()}")
 
 
 def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:

@@ -127,7 +127,7 @@ meeting-asr project delete PROJECT_ID --permanent --yes
 meeting-asr project run "/path/to/meeting.mp4"
 ```
 
-`project run` 会创建或复用项目、抽取音频、上传 private OSS、提交 ASR、下载转写、生成摘要、生成 transcript polish proposal、声纹匹配，并自动应用 accepted speaker。
+`project run` 会创建或复用项目、抽取音频、上传 private OSS、提交 ASR、下载转写、生成回忆索引、生成 transcript polish proposal、声纹匹配，并自动应用 accepted speaker。
 
 如果只想对已有项目执行转写：
 
@@ -346,8 +346,8 @@ exports/transcript_named_corrected.txt  # 人名 + 纠错文本
 exports/subtitle.srt                    # 匿名字幕
 exports/subtitle_named.srt              # 人名版字幕
 exports/subtitle_named_corrected.srt    # 人名 + 纠错字幕
-exports/meeting_summary.md              # 会议标题和摘要
-exports/meeting_summary.json            # 结构化会议摘要
+exports/meeting_summary.md              # 会议标题和回忆索引
+exports/meeting_summary.json            # 结构化回忆索引
 asr/raw_result.json                      # DashScope 原始结果
 asr/sentences.json                       # 标准化逐句结果
 ```

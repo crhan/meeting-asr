@@ -1,6 +1,6 @@
 # Meeting-ASR
 
-`meeting-asr` 是一个项目化会议转写 CLI：输入本地视频，创建稳定 Project ID，抽取音频，上传 private OSS 签名 URL，调用 DashScope/Fun-ASR 转写，生成会议摘要、转写文本、字幕，并通过 TUI 完成 speaker、词汇纠错和声纹库维护。
+`meeting-asr` 是一个项目化会议转写 CLI：输入本地视频，创建稳定 Project ID，抽取音频，上传 private OSS 签名 URL，调用 DashScope/Fun-ASR 转写，生成会议回忆索引、转写文本、字幕，并通过 TUI 完成 speaker、词汇纠错和声纹库维护。
 
 ## 先看这里
 
@@ -9,7 +9,7 @@
 常用路径只有两条：
 
 ```bash
-# 1. 全自动：创建/复用项目、转写、摘要、声纹匹配、输出产物
+# 1. 全自动：创建/复用项目、转写、回忆索引、声纹匹配、输出产物
 meeting-asr project run "/path/to/meeting.mp4"
 
 # 2. 人工兜底：处理未匹配 speaker、词汇纠错、声纹采样

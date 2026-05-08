@@ -1,4 +1,4 @@
-"""DashScope meeting summarization helpers."""
+"""DashScope meeting memory-index helpers."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ MAX_SUMMARY_TRANSCRIPT_CHARS = 24_000
 
 @dataclass(frozen=True, slots=True)
 class MeetingSummary:
-    """Structured meeting summary generated from a transcript."""
+    """Lightweight meeting memory index generated from a transcript."""
 
     title: str
     summary: str
@@ -40,7 +40,7 @@ def generate_meeting_summary(
     model: str | None,
 ) -> MeetingSummary:
     """
-    Generate a meeting title and summary with DashScope.
+    Generate a lightweight meeting memory index with DashScope.
 
     Args:
         result: Normalized transcript.
@@ -48,36 +48,36 @@ def generate_meeting_summary(
         model: Optional model override.
 
     Returns:
-        Structured meeting summary.
+        Lightweight meeting memory index.
     """
     resolved_model = model or settings.dashscope_summary_model
-    prompt = _build_summary_prompt(result)
     _configure_dashscope(settings)
-
-    def _call() -> Any:
-        response = Generation.call(
+    memory = _parse_summary_text(
+        _call_generation(
             model=resolved_model,
-            api_key=settings.dashscope_api_key,
-            messages=[
-                {"role": "system", "content": _system_prompt()},
-                {"role": "user", "content": prompt},
-            ],
-            result_format="message",
-            temperature=0.2,
+            settings=settings,
+            system_prompt=_memory_system_prompt(),
+            prompt=_build_memory_prompt(result),
+        ),
+        model=resolved_model,
+    )
+    title = _parse_title_text(
+        _call_generation(
+            model=resolved_model,
+            settings=settings,
+            system_prompt=_title_system_prompt(),
+            prompt=_build_title_prompt(memory),
         )
-        _raise_for_generation_error(response)
-        return response
-
-    content = _extract_generation_text(retry(_call, attempts=3, delay_seconds=1.0))
-    return _parse_summary_text(content, model=resolved_model)
+    )
+    return MeetingSummary(title, memory.summary, memory.topics, [], resolved_model)
 
 
 def render_meeting_summary_markdown(summary: MeetingSummary) -> str:
     """
-    Render a structured meeting summary as Markdown.
+    Render a lightweight meeting memory index as Markdown.
 
     Args:
-        summary: Structured summary.
+        summary: Lightweight memory index.
 
     Returns:
         Markdown text.
@@ -85,14 +85,12 @@ def render_meeting_summary_markdown(summary: MeetingSummary) -> str:
     lines = [
         f"# {summary.title}",
         "",
-        "## 摘要",
+        "## 回忆提示",
         summary.summary or "无",
         "",
-        "## 议题",
+        "## 关键词",
     ]
     lines.extend(_bullet_lines(summary.topics))
-    lines.extend(["", "## 待办"])
-    lines.extend(_bullet_lines(summary.action_items))
     lines.extend(["", f"模型：{summary.model}", ""])
     return "\n".join(lines)
 
@@ -114,19 +112,60 @@ def _configure_dashscope(settings: Settings) -> None:
                 setattr(dashscope, attr, settings.dashscope_base_url)
 
 
-def _system_prompt() -> str:
+def _call_generation(*, model: str, settings: Settings, system_prompt: str, prompt: str) -> str:
     """
-    Return the fixed summarization system prompt.
+    Call DashScope text generation and return message content.
+
+    Args:
+        model: DashScope model name.
+        settings: Runtime DashScope settings.
+        system_prompt: System prompt.
+        prompt: User prompt.
+
+    Returns:
+        Generated message content.
+    """
+
+    def _call() -> Any:
+        response = Generation.call(
+            model=model,
+            api_key=settings.dashscope_api_key,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            result_format="message",
+            temperature=0.2,
+        )
+        _raise_for_generation_error(response)
+        return response
+
+    return _extract_generation_text(retry(_call, attempts=3, delay_seconds=1.0))
+
+
+def _memory_system_prompt() -> str:
+    """
+    Return the fixed memory-index system prompt.
 
     Returns:
         System prompt.
     """
-    return "你是专业会议纪要助手。只输出 JSON，不要输出 Markdown，不要解释。"
+    return "你是会议回忆索引助手。只输出 JSON，不要输出 Markdown，不要解释。"
 
 
-def _build_summary_prompt(result: TranscriptResult) -> str:
+def _title_system_prompt() -> str:
     """
-    Build the user prompt from transcript text.
+    Return the fixed title-generation system prompt.
+
+    Returns:
+        System prompt.
+    """
+    return "你是会议标题助手。只输出 JSON，不要输出 Markdown，不要解释。"
+
+
+def _build_memory_prompt(result: TranscriptResult) -> str:
+    """
+    Build the memory-index prompt from transcript text.
 
     Args:
         result: Normalized transcript.
@@ -137,14 +176,35 @@ def _build_summary_prompt(result: TranscriptResult) -> str:
     transcript = render_speaker_text(result).strip() or result.full_text.strip()
     transcript = _truncate_transcript(transcript)
     return (
-        "请根据下面的会议转写生成结构化结果。\n"
+        "请根据下面的会议转写生成一个很短的回忆索引。\n"
         "要求：\n"
-        "1. title 使用 8 到 28 个中文字符，概括会议核心主题，不要写日期。\n"
-        "2. summary 用 2 到 5 句话说明会议结论和讨论重点。\n"
-        "3. topics 是 3 到 8 个要点。\n"
-        "4. action_items 是明确待办；没有待办时返回空数组。\n"
-        "5. 只返回 JSON，字段为 title, summary, topics, action_items。\n\n"
+        "1. summary 只写 1 到 2 句话，目标是让人快速想起这是哪一场会议。\n"
+        "2. 不要写正式纪要，不要写待办事项，不要扩展结论。\n"
+        "3. topics 是 3 到 6 个短关键词或场景词，用于检索和回忆。\n"
+        "4. 只返回 JSON，字段为 summary, topics。\n\n"
         f"会议转写：\n{transcript}"
+    )
+
+
+def _build_title_prompt(summary: MeetingSummary) -> str:
+    """
+    Build a compact title prompt from the generated memory index.
+
+    Args:
+        summary: Lightweight memory index without the final title.
+
+    Returns:
+        Prompt text.
+    """
+    topics = "、".join(summary.topics) if summary.topics else "无"
+    return (
+        "请根据下面的会议回忆索引生成一个短标题。\n"
+        "要求：\n"
+        "1. title 使用 8 到 28 个中文字符，概括这场会议，方便在项目列表里识别。\n"
+        "2. 不要写日期，不要写“会议总结”，不要写待办。\n"
+        "3. 只返回 JSON，字段为 title。\n\n"
+        f"回忆提示：{summary.summary}\n"
+        f"关键词：{topics}"
     )
 
 
@@ -161,11 +221,7 @@ def _truncate_transcript(transcript: str) -> str:
     if len(transcript) <= MAX_SUMMARY_TRANSCRIPT_CHARS:
         return transcript
     half = MAX_SUMMARY_TRANSCRIPT_CHARS // 2
-    return (
-        transcript[:half]
-        + "\n\n[中间内容过长，已截断]\n\n"
-        + transcript[-half:]
-    )
+    return transcript[:half] + "\n\n[中间内容过长，已截断]\n\n" + transcript[-half:]
 
 
 def _raise_for_generation_error(response: Any) -> None:
@@ -209,14 +265,14 @@ def _extract_generation_text(response: Any) -> str:
 
 def _parse_summary_text(text: str, *, model: str) -> MeetingSummary:
     """
-    Parse a model JSON response into a summary.
+    Parse a model JSON response into a lightweight memory index.
 
     Args:
         text: Raw model response.
         model: Model used for generation.
 
     Returns:
-        Structured summary.
+        Lightweight memory index.
     """
     payload = _load_summary_json(text)
     title = _clean_title(str(payload.get("title") or "会议总结"))
@@ -228,6 +284,23 @@ def _parse_summary_text(text: str, *, model: str) -> MeetingSummary:
         action_items=_string_list(payload.get("action_items")),
         model=model,
     )
+
+
+def _parse_title_text(text: str) -> str:
+    """
+    Parse a generated title response.
+
+    Args:
+        text: Raw model response.
+
+    Returns:
+        Clean title.
+    """
+    try:
+        payload = _load_summary_json(text)
+    except RuntimeError:
+        return _clean_title(text)
+    return _clean_title(str(payload.get("title") or text))
 
 
 def _load_summary_json(text: str) -> dict[str, Any]:

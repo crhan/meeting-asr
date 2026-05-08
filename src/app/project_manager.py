@@ -30,6 +30,10 @@ from app.asr_pricing import AsrCostEstimate, estimate_asr_cost
 from app.core.progress import CliProgressReporter, emit_progress
 from app.core.project_models import (
     SCHEMA_VERSION,
+    TITLE_SOURCE_LLM,
+    TITLE_SOURCE_MANUAL,
+    TITLE_SOURCE_SOURCE,
+    TITLE_SOURCE_UNKNOWN,
     ProjectCreateSummary,
     ProjectDeleteSummary,
     ProjectManifest,
@@ -147,7 +151,7 @@ def create_project(
     source = input_path.expanduser().resolve()
     if not source.exists():
         raise FileNotFoundError(f"Input media file does not exist: {source}")
-    resolved_title = title or source.stem
+    resolved_title, title_source = _resolve_initial_title(source, title)
     created_at = _now_iso()
     resolved_sha256 = source_sha256 or _sha256_file(source, progress)
     root = _resolve_project_root(source, projects_dir, project_dir, resolved_sha256)
@@ -160,6 +164,7 @@ def create_project(
         source,
         root,
         resolved_title,
+        title_source,
         created_at,
         meeting_time,
         resolved_sha256,
@@ -169,6 +174,17 @@ def create_project(
     safe_write_text(root / "notes.md", f"# {resolved_title}\n")
     save_manifest(root, manifest)
     return manifest
+
+
+def _resolve_initial_title(source: Path, title: str | None) -> tuple[str, str]:
+    """Return the initial project title and its provenance."""
+    if title is None:
+        return source.stem, TITLE_SOURCE_SOURCE
+    cleaned_title = title.strip()
+    if not cleaned_title:
+        raise ValueError("Project title must not be empty.")
+    return cleaned_title, TITLE_SOURCE_MANUAL
+
 
 def create_or_reuse_project(
     input_path: Path,
@@ -199,14 +215,14 @@ def create_or_reuse_project(
         existing = find_project_by_source(input_path, projects_dir)
         if existing is not None:
             emit_progress(progress, "Using existing project", total=1, completed=1)
-            return ProjectCreateSummary(existing, load_manifest(existing), False)
+            return ProjectCreateSummary(existing, _load_reused_manifest(existing, title), False)
     source = input_path.expanduser().resolve()
     source_sha256 = _sha256_file(source, progress)
     if project_dir is None:
         existing = find_project_by_source(input_path, projects_dir, source_sha256=source_sha256)
         if existing is not None:
             emit_progress(progress, "Using existing project", total=1, completed=1)
-            return ProjectCreateSummary(existing, load_manifest(existing), False)
+            return ProjectCreateSummary(existing, _load_reused_manifest(existing, title), False)
     manifest = create_project(
         input_path,
         title=title,
@@ -219,6 +235,23 @@ def create_or_reuse_project(
     )
     project_root = _resolve_project_root(source, projects_dir, project_dir, source_sha256)
     return ProjectCreateSummary(project_root, manifest, True)
+
+
+def _load_reused_manifest(project_dir: Path, title: str | None) -> ProjectManifest:
+    """Load a reused project and apply an explicit manual title when provided."""
+    manifest = load_manifest(project_dir)
+    if title is None:
+        return manifest
+    cleaned_title = title.strip()
+    if not cleaned_title:
+        raise ValueError("Project title must not be empty.")
+    if manifest.title == cleaned_title and manifest.title_source == TITLE_SOURCE_MANUAL:
+        return manifest
+    manifest.title = cleaned_title
+    manifest.title_source = TITLE_SOURCE_MANUAL
+    manifest.title_model = None
+    save_manifest(project_dir, manifest)
+    return manifest
 
 def load_manifest(project_dir: Path) -> ProjectManifest:
     """
@@ -467,6 +500,8 @@ def update_project_metadata(
         if not cleaned_title:
             raise ValueError("Project title must not be empty.")
         manifest.title = cleaned_title
+        manifest.title_source = TITLE_SOURCE_MANUAL
+        manifest.title_model = None
     if meeting_time is not None:
         manifest.source.meeting_time = meeting_time.strip() or None
     save_manifest(paths.root, manifest)
@@ -884,7 +919,7 @@ def summarize_project(
     progress: CliProgressReporter | None = None,
 ) -> ProjectMeetingSummary:
     """
-    Generate meeting summary artifacts from the project transcript.
+    Generate meeting memory-index artifacts from the project transcript.
 
     Args:
         project_dir: Project root.
@@ -914,7 +949,7 @@ def summarize_project(
         stage="summary",
         input_file=input_file,
         external_ids={"model": model_label},
-        description="Generating meeting summary",
+        description="Generating meeting memory index",
     )
     try:
         summary = _run_with_stage_heartbeat(
@@ -937,9 +972,11 @@ def summarize_project(
     title_updated = bool(update_title and _can_replace_title(manifest, summary))
     if title_updated:
         manifest.title = summary.title
+        manifest.title_source = TITLE_SOURCE_LLM
+        manifest.title_model = summary.model
     _record_meeting_summary(manifest, paths, summary, summary_path, json_path)
     save_manifest(paths.root, manifest)
-    emit_progress(progress, "Meeting summary ready", completed=1, total=1)
+    emit_progress(progress, "Meeting memory index ready", completed=1, total=1)
     return ProjectMeetingSummary(paths.root, summary.title, summary_path, json_path, summary.model, title_updated)
 
 def init_project_git(project_dir: Path) -> Path:
@@ -997,6 +1034,7 @@ def _initial_manifest(
     original_source: Path,
     project_root: Path,
     title: str,
+    title_source: str,
     created_at: str,
     meeting_time: str | None,
     source_sha256: str,
@@ -1008,6 +1046,8 @@ def _initial_manifest(
         schema_version=SCHEMA_VERSION,
         project_id=_build_project_id(source_sha256),
         title=title,
+        title_source=title_source,
+        title_model=None,
         created_at=created_at,
         updated_at=created_at,
         status="created",
@@ -1510,7 +1550,7 @@ def _record_meeting_summary(
     json_path: Path,
 ) -> None:
     """
-    Record meeting summary metadata in the manifest.
+    Record meeting memory-index metadata in the manifest.
 
     Args:
         manifest: Project manifest.
@@ -1535,11 +1575,22 @@ def _can_replace_title(manifest: ProjectManifest, summary: MeetingSummary) -> bo
         summary: Generated summary.
 
     Returns:
-        True when the current title is still the source filename stem.
+        True when the current title is automatic rather than manually edited.
     """
+    if not summary.title.strip():
+        return False
+    if manifest.title_source in {TITLE_SOURCE_SOURCE, TITLE_SOURCE_LLM}:
+        return True
+    if manifest.title_source == TITLE_SOURCE_MANUAL:
+        return False
+    return _looks_like_legacy_source_title(manifest)
+
+
+def _looks_like_legacy_source_title(manifest: ProjectManifest) -> bool:
+    """Infer whether an old manifest title still came from the source filename."""
     current_title = manifest.title.strip()
     source_stem = Path(manifest.source.filename).stem.strip()
-    return bool(summary.title.strip()) and current_title == source_stem
+    return manifest.title_source == TITLE_SOURCE_UNKNOWN and current_title == source_stem
 
 def _default_output_paths() -> dict[str, str]:
     """Return standard project output paths."""

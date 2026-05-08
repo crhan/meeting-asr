@@ -68,6 +68,8 @@ def test_create_project_writes_manifest_and_copies_source(tmp_path: Path) -> Non
     assert loaded.source.meeting_time == "2026-04-29T15:07:42+08:00"
     assert resolve_project_source_path(project_dir, loaded) == copied_source.resolve()
     assert loaded.source.sha256 is not None
+    assert loaded.title_source == "manual"
+    assert loaded.title_model is None
 
 
 def test_create_project_reports_copy_progress(tmp_path: Path) -> None:
@@ -673,10 +675,51 @@ def test_summarize_project_writes_summary_and_updates_auto_title(
 
     assert summary.title_updated is True
     assert manifest.title == "AI 转型研讨"
+    assert manifest.title_source == "llm"
+    assert manifest.title_model == "qwen-test"
     assert manifest.outputs["meeting_summary"] == "exports/meeting_summary.md"
     assert manifest.outputs["meeting_summary_json"] == "exports/meeting_summary.json"
     assert manifest.asr["summary_model"] == "qwen-test"
-    assert "讨论 AI 转型目标" in summary.summary_path.read_text(encoding="utf-8")
+    rendered = summary.summary_path.read_text(encoding="utf-8")
+    assert "讨论 AI 转型目标" in rendered
+    assert "待办" not in rendered
+
+
+def test_summarize_project_replaces_existing_llm_title(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A rerun may improve an existing LLM-generated title without touching manual titles."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "project"
+    create_project(
+        source,
+        title=None,
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    manifest = load_manifest(project_dir)
+    manifest.title = "旧自动标题"
+    manifest.title_source = "llm"
+    manifest.title_model = "qwen-old"
+    save_manifest(project_dir, manifest)
+    monkeypatch.setattr(
+        "app.project_manager.generate_meeting_summary",
+        lambda result, settings, model: MeetingSummary("新自动标题", "回忆提示。", ["关键词"], [], "qwen-test"),
+    )
+    monkeypatch.setattr("app.project_manager.load_settings", lambda require_oss=False: object())
+
+    summary = summarize_project(project_dir, model=None, update_title=True)
+    manifest = load_manifest(project_dir)
+
+    assert summary.title_updated is True
+    assert manifest.title == "新自动标题"
+    assert manifest.title_source == "llm"
+    assert manifest.title_model == "qwen-test"
 
 
 def test_summarize_project_preserves_manual_title(
@@ -708,13 +751,16 @@ def test_summarize_project_preserves_manual_title(
     summary = summarize_project(project_dir, model=None, update_title=True)
 
     assert summary.title_updated is False
-    assert load_manifest(project_dir).title == "手工标题"
+    manifest = load_manifest(project_dir)
+    assert manifest.title == "手工标题"
+    assert manifest.title_source == "manual"
+    assert manifest.title_model is None
 
-def test_project_summarize_command_prints_absolute_summary_paths(
+def test_project_summarize_command_prints_absolute_memory_index_paths(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Project summary command should print directly openable artifact paths."""
+    """Project memory-index command should print directly openable artifact paths."""
     source = tmp_path / "meeting.mp4"
     source.write_bytes(b"fake video")
     projects_dir = tmp_path / "projects"
@@ -745,8 +791,8 @@ def test_project_summarize_command_prints_absolute_summary_paths(
     )
 
     assert result.exit_code == 0
-    assert f"Summary: {(project_dir / 'exports' / 'meeting_summary.md').resolve()}" in result.output
-    assert f"Summary JSON: {(project_dir / 'exports' / 'meeting_summary.json').resolve()}" in result.output
+    assert f"Memory index: {(project_dir / 'exports' / 'meeting_summary.md').resolve()}" in result.output
+    assert f"Memory index JSON: {(project_dir / 'exports' / 'meeting_summary.json').resolve()}" in result.output
 
 
 def test_retranscribe_invalidates_downstream_artifacts(tmp_path: Path) -> None:
@@ -1028,6 +1074,8 @@ def test_project_update_command_changes_title_and_meeting_time(tmp_path: Path) -
     assert "Project updated." in result.output
     assert "Title: New Title" in result.output
     assert manifest.title == "New Title"
+    assert manifest.title_source == "manual"
+    assert manifest.title_model is None
     assert manifest.source.meeting_time == "2026-05-02T10:00:00+08:00"
 
 
@@ -1103,6 +1151,29 @@ def test_project_create_command_reuses_existing_source(
     assert "Project created." in first.output
     assert "Project already exists; reusing it." in second.output
     assert f"meeting-asr project review {load_manifest(project_dirs[0]).project_id}" in second.output
+
+
+def test_project_create_reuse_applies_explicit_manual_title(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An explicit title on a reused source should not be silently ignored."""
+    data_home = tmp_path / "data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"same video")
+
+    first = runner.invoke(app, ["project", "create", str(source)])
+    second = runner.invoke(app, ["project", "create", str(source), "--title", "手工复命名"])
+
+    projects_dir = data_home / "meeting-asr" / "projects"
+    project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
+    manifest = load_manifest(project_dir)
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert manifest.title == "手工复命名"
+    assert manifest.title_source == "manual"
+    assert manifest.title_model is None
 
 
 def test_default_project_directory_uses_project_id(
@@ -1244,7 +1315,7 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     assert "2026-05-02T10:00:00+08:00" in result.output
     assert "Outputs" in result.output
     assert "Commands" in result.output
-    assert "Meeting Summary" in result.output
+    assert "Memory Index" in result.output
     assert "关键结论" in result.output
     assert "Current stage" in result.output
     assert "ASR polling" in result.output

@@ -90,6 +90,7 @@ def _detail_rows(view: ProjectShowView) -> list[tuple[str, str]]:
     manifest = view.manifest
     rows = [
         ("Project ID", manifest.project_id),
+        ("Title source", _title_source_label(manifest)),
         ("State", view.workflow.state),
         ("Updated", _compact_timestamp(manifest.updated_at)),
         ("Meeting time", manifest.source.meeting_time or "-"),
@@ -109,6 +110,17 @@ def _detail_rows(view: ProjectShowView) -> list[tuple[str, str]]:
     if view.workflow.missing:
         rows.append(("Missing", ", ".join(view.workflow.missing)))
     return rows
+
+
+def _title_source_label(manifest: ProjectManifest) -> str:
+    """Return how the current project title was produced."""
+    if manifest.title_source == "llm":
+        return f"LLM ({manifest.title_model or 'configured model'})"
+    if manifest.title_source == "manual":
+        return "manual"
+    if manifest.title_source == "source":
+        return "source filename"
+    return "unknown"
 
 
 def _runtime_rows(manifest: ProjectManifest) -> list[tuple[str, str]]:
@@ -152,7 +164,7 @@ def _outputs_table(view: ProjectShowView) -> Table:
 
 def _summary_panel(view: ProjectShowView) -> Panel | None:
     """Build a direct meeting-summary preview when the artifact exists."""
-    row = _manifest_output(view.project_dir, view.manifest, "Meeting summary", "summary", ("meeting_summary",))
+    row = _manifest_output(view.project_dir, view.manifest, "Memory index", "summary", ("meeting_summary",))
     if row.path is None:
         return None
     try:
@@ -161,7 +173,7 @@ def _summary_panel(view: ProjectShowView) -> Panel | None:
         return None
     if not content:
         return None
-    return Panel(Markdown(content), title="[bold]Meeting Summary[/]", border_style="cyan", expand=False)
+    return Panel(Markdown(content), title="[bold]Memory Index[/]", border_style="cyan", expand=False)
 
 
 def _speaker_match_table(view: ProjectShowView) -> Table | None:
@@ -329,7 +341,7 @@ def _manifest_output(root: Path, manifest: ProjectManifest, label: str, kind: st
 
 
 def _display_summary_content(content: str) -> str:
-    """Return meeting summary markdown without generation metadata."""
+    """Return meeting memory-index markdown without generation metadata."""
     lines = []
     for line in content.splitlines():
         stripped = line.strip()
