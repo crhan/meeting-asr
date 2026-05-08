@@ -13,9 +13,7 @@ exports/subtitle_named.srt            # 带发言人姓名的字幕
 项目地址：[https://github.com/crhan/meeting-asr](https://github.com/crhan/meeting-asr)
 
 ## 第一部分：痛点与便捷性
-
 ### 痛点：会议录音不是会议记录
-
 拿到一段钉钉会议录音后，真正麻烦的是后面的链路：
 
 ```text
@@ -31,7 +29,6 @@ exports/subtitle_named.srt            # 带发言人姓名的字幕
 `meeting-asr` 的设计是让 Agent 和人都用同一个稳定入口：先自动跑，能自动接受的直接接受，不确定的再进入 review。
 
 ### 一个命令先拿到结果
-
 常用入口只有一个：
 
 ```bash
@@ -57,12 +54,9 @@ Next:
   meeting-asr project review p-xxxxxxxxxxxxxxxx
 ```
 
-> 截图位 1：`project run` 完成输出  
-> 建议截图内容：Project ID、speaker 匹配结果、最终转写路径、下一步 review 命令。  
-> 建议文件名：`docs/assets/meeting-asr-project-run.png`
+![Meeting-ASR screenshot 01](assets/meeting-asr-project-introduction-01.png)
 
 ### Agent 为什么会更方便
-
 对 Agent 来说，`project run` 的关键不是“炫功能”，而是输出结构稳定：
 
 - 有稳定的 `Project ID`，后续命令不用依赖当前目录。
@@ -75,12 +69,9 @@ meeting-asr project show p-xxxxxxxxxxxxxxxx
 meeting-asr project transcript show p-xxxxxxxxxxxxxxxx --kind named
 ```
 
-> 截图位 2：`project show` 项目状态页  
-> 建议截图内容：会议时间、当前阶段、最终产物、speaker 状态、下一步命令。  
-> 建议文件名：`docs/assets/meeting-asr-project-show.png`
+![Meeting-ASR screenshot 02](assets/meeting-asr-project-introduction-02.png)
 
 ### 这里自然会出现一个问题
-
 如果一条命令就能给出最终转写，那发言人姓名是怎么来的？
 
 答案不是“让用户每次手填”。`meeting-asr` 把 speaker review、声纹采样、embedding、历史项目评测放进同一个流程：
@@ -93,9 +84,7 @@ meeting-asr project transcript show p-xxxxxxxxxxxxxxxx --kind named
 下面用一个完整流程演示这件事。
 
 ## 第二部分：全流程演示
-
 ### 1. 从 Project Run 开始
-
 先把会议视频交给自动流程：
 
 ```bash
@@ -114,12 +103,9 @@ meeting-asr project transcript show p-xxxxxxxxxxxxxxxx --kind named
 meeting-asr project review p-xxxxxxxxxxxxxxxx
 ```
 
-> 截图位 3：自动流程提示需要 review  
-> 建议截图内容：below-threshold speaker、best candidate、score、recommended next step。  
-> 建议文件名：`docs/assets/meeting-asr-run-needs-review.png`
+![Meeting-ASR screenshot 03](assets/meeting-asr-project-introduction-03.png)
 
 ### 2. 进入 Project Review 浏览 speaker
-
 Project Review 是人工介入的主入口。它把当前项目、speaker 列表、样本片段、匹配分数和下一步动作放在一个 TUI 里。
 
 常用浏览操作：
@@ -131,12 +117,9 @@ PageUp/PageDown  翻页查看更多 sample
 ?                查看快捷键
 ```
 
-> 截图位 4：Project Review 总览  
-> 建议截图内容：顶部项目状态、左侧 speaker 列表、右侧 sample 列表、分数和状态。  
-> 建议文件名：`docs/assets/meeting-asr-review-overview.png`
+![Meeting-ASR screenshot 04](assets/meeting-asr-project-introduction-04.png)
 
 ### 3. 听片段，确认或忽略 speaker
-
 不要只看名字，要先听片段。TUI 支持直接播放当前 sample，再决定接受候选、改名或忽略。
 
 ```text
@@ -155,12 +138,11 @@ exports/transcript_named.txt
 exports/subtitle_named.srt
 ```
 
-> 截图位 5：确认 speaker 人名  
-> 建议截图内容：候选人列表、score、当前 speaker sample、确认后的姓名状态。  
-> 建议文件名：`docs/assets/meeting-asr-edit-speaker-name.png`
+![Meeting-ASR screenshot 05](assets/meeting-asr-project-introduction-05.png)
+
+![Meeting-ASR screenshot 06](assets/meeting-asr-project-introduction-06.png)
 
 ### 4. 修改转写错误，并把经验沉淀为热词
-
 如果样本里有错词，直接在 TUI 里改当前句子。这个修改不是只改一行；系统会基于这次修改理解上下文，扫描全文并提出 correction proposal。
 
 ```text
@@ -179,14 +161,19 @@ exports/transcript_named_corrected.txt
 corrections/asr_hotwords.json
 ```
 
-这样下一次 ASR 可以带着热词再跑；即使远端热词仍然识别不准，`project run` 也会在本地应用已确认的词汇订正规则。
+这样下一次 ASR 可以带着热词再跑，减少同类专业词错误。
 
-> 截图位 6：词级 correction diff  
-> 建议截图内容：Before/After、词级高亮、include/exclude 状态、应用按钮提示。  
-> 建议文件名：`docs/assets/meeting-asr-correction-diff.png`
+![Meeting-ASR screenshot 07](assets/meeting-asr-project-introduction-07.png)
+
+按 `s`保存后自动记录错词模式并且全面修复
+
+![Meeting-ASR screenshot 08](assets/meeting-asr-project-introduction-08.png)
+
+按 `d`可以看到具体是哪些修改，并且可以拒绝对应的修改
+
+![Meeting-ASR screenshot 09](assets/meeting-asr-project-introduction-09.png)
 
 ### 5. 进入 Voiceprint Review 做声纹采样
-
 speaker 名字确认后，就可以把可靠样本沉淀到全局声纹库。入口在 Project Review 里：
 
 ```text
@@ -202,12 +189,9 @@ d                取消当前人的全部 sample
 s                采集已选 sample、生成 embedding，并做评测
 ```
 
-> 截图位 7：Voiceprint Review 采样页  
-> 建议截图内容：候选 speaker、person id、score、sample 勾选状态、当前播放片段。  
-> 建议文件名：`docs/assets/meeting-asr-voiceprint-sampling.png`
+![Meeting-ASR screenshot 10](assets/meeting-asr-project-introduction-10.png)
 
 ### 6. 评测 embedding，再决定是否接受
-
 embedding 不是直接覆盖。系统会先评测这批新增声纹对当前项目和历史项目的影响：
 
 - 当前项目 score 是否上升。
@@ -222,12 +206,9 @@ a                接受本次 embedding
 r 或 Esc/q       回滚本次 embedding
 ```
 
-> 截图位 8：Voiceprint embedding 评测页  
-> 建议截图内容：当前项目分数变化、历史项目反向评测、黄色/红色风险、接受/回滚提示。  
-> 建议文件名：`docs/assets/meeting-asr-voiceprint-evaluation.png`
+![Meeting-ASR screenshot 11](assets/meeting-asr-project-introduction-11.png)
 
 ### 7. 回到 Project，重新匹配并导出最终转写
-
 声纹库更新后，可以回到 Project Review 重新匹配当前项目：
 
 ```text
@@ -247,8 +228,9 @@ meeting-asr project transcript show p-xxxxxxxxxxxxxxxx --kind corrected
 meeting-asr project transcript show p-xxxxxxxxxxxxxxxx --kind named
 ```
 
-## 最终结果
+![Meeting-ASR screenshot 12](assets/meeting-asr-project-introduction-12.png)
 
+## 最终结果
 `meeting-asr` 的目标不是生成一堆中间文件，而是把会议录音变成一份可靠转写：
 
 - 知道每句话是谁说的。
@@ -260,7 +242,6 @@ meeting-asr project transcript show p-xxxxxxxxxxxxxxxx --kind named
 这就是它解决的实际问题：让会议录音从“只能回放”变成“可以直接使用的文本资产”。
 
 ## 项目链接和手册
-
 如果想实际试用或查看实现，可以从这里开始：
 
 - 项目主页：[GitHub - crhan/meeting-asr](https://github.com/crhan/meeting-asr)
