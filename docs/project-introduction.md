@@ -10,6 +10,8 @@ exports/transcript_named_corrected.txt # 纠错后的最终转写，如有纠错
 exports/subtitle_named.srt            # 带发言人姓名的字幕
 ```
 
+项目地址：[https://github.com/crhan/meeting-asr](https://github.com/crhan/meeting-asr)
+
 ## 第一部分：痛点与便捷性
 
 ### 痛点：会议录音不是会议记录
@@ -256,3 +258,14 @@ meeting-asr project transcript show p-xxxxxxxxxxxxxxxx --kind named
 - Agent 可以拿 Project ID 和稳定命令继续处理，不依赖人工记路径。
 
 这就是它解决的实际问题：让会议录音从“只能回放”变成“可以直接使用的文本资产”。
+
+## 项目链接和手册
+
+如果想实际试用或查看实现，可以从这里开始：
+
+- 项目主页：[GitHub - crhan/meeting-asr](https://github.com/crhan/meeting-asr)
+- 快速开始：[docs/quick-start.md](https://github.com/crhan/meeting-asr/blob/main/docs/quick-start.md)
+- CLI 用户手册：[docs/cli-user-guide.md](https://github.com/crhan/meeting-asr/blob/main/docs/cli-user-guide.md)
+- 架构说明：[docs/architecture.md](https://github.com/crhan/meeting-asr/blob/main/docs/architecture.md)
+- 开发者手册：[docs/developer-guide.md](https://github.com/crhan/meeting-asr/blob/main/docs/developer-guide.md)
+- TUI 测试说明：[docs/tui-testing.md](https://github.com/crhan/meeting-asr/blob/main/docs/tui-testing.md)
