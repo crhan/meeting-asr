@@ -756,6 +756,44 @@ def test_summarize_project_preserves_manual_title(
     assert manifest.title_source == "manual"
     assert manifest.title_model is None
 
+
+def test_summarize_project_marks_legacy_custom_unknown_title_as_manual(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Legacy unknown titles that are not source names should be preserved as manual."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "project"
+    create_project(
+        source,
+        title=None,
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    manifest = load_manifest(project_dir)
+    manifest.title = "旧自定义标题"
+    manifest.title_source = "unknown"
+    manifest.title_model = None
+    save_manifest(project_dir, manifest)
+    monkeypatch.setattr(
+        "app.project_manager.generate_meeting_summary",
+        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], [], "qwen-test"),
+    )
+    monkeypatch.setattr("app.project_manager.load_settings", lambda require_oss=False: object())
+
+    summary = summarize_project(project_dir, model=None, update_title=True)
+
+    assert summary.title_updated is False
+    manifest = load_manifest(project_dir)
+    assert manifest.title == "旧自定义标题"
+    assert manifest.title_source == "manual"
+    assert manifest.title_model is None
+
+
 def test_project_summarize_command_prints_absolute_memory_index_paths(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

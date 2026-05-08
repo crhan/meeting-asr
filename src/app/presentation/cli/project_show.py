@@ -14,7 +14,13 @@ from rich.panel import Panel
 from rich.table import Table
 
 from app.asr_pricing import asr_cost_from_dict, format_asr_cost
-from app.core.project_models import ProjectManifest
+from app.core.project_models import (
+    TITLE_SOURCE_LLM,
+    TITLE_SOURCE_MANUAL,
+    TITLE_SOURCE_SOURCE,
+    TITLE_SOURCE_UNKNOWN,
+    ProjectManifest,
+)
 from app.core.project_workflow import ProjectWorkflowSummary
 from app.presentation.cli.output import cli_console
 from app.presentation.cli.speaker_match_table import SpeakerMatchRow, render_speaker_match_table, speaker_match_rows
@@ -114,13 +120,22 @@ def _detail_rows(view: ProjectShowView) -> list[tuple[str, str]]:
 
 def _title_source_label(manifest: ProjectManifest) -> str:
     """Return how the current project title was produced."""
-    if manifest.title_source == "llm":
+    if manifest.title_source == TITLE_SOURCE_LLM:
         return f"LLM ({manifest.title_model or 'configured model'})"
-    if manifest.title_source == "manual":
+    if manifest.title_source == TITLE_SOURCE_MANUAL:
         return "manual"
-    if manifest.title_source == "source":
+    if manifest.title_source == TITLE_SOURCE_SOURCE:
         return "source filename"
+    if manifest.title_source == TITLE_SOURCE_UNKNOWN and _has_legacy_custom_title(manifest):
+        return "manual (legacy)"
     return "unknown"
+
+
+def _has_legacy_custom_title(manifest: ProjectManifest) -> bool:
+    """Return whether an unknown title looks like a preserved custom title."""
+    current_title = manifest.title.strip()
+    source_stem = Path(manifest.source.filename).stem.strip()
+    return bool(current_title) and current_title != source_stem
 
 
 def _runtime_rows(manifest: ProjectManifest) -> list[tuple[str, str]]:

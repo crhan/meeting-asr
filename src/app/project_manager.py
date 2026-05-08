@@ -974,6 +974,9 @@ def summarize_project(
         manifest.title = summary.title
         manifest.title_source = TITLE_SOURCE_LLM
         manifest.title_model = summary.model
+    elif _looks_like_legacy_custom_title(manifest):
+        manifest.title_source = TITLE_SOURCE_MANUAL
+        manifest.title_model = None
     _record_meeting_summary(manifest, paths, summary, summary_path, json_path)
     save_manifest(paths.root, manifest)
     emit_progress(progress, "Meeting memory index ready", completed=1, total=1)
@@ -1591,6 +1594,13 @@ def _looks_like_legacy_source_title(manifest: ProjectManifest) -> bool:
     current_title = manifest.title.strip()
     source_stem = Path(manifest.source.filename).stem.strip()
     return manifest.title_source == TITLE_SOURCE_UNKNOWN and current_title == source_stem
+
+
+def _looks_like_legacy_custom_title(manifest: ProjectManifest) -> bool:
+    """Infer whether an old unknown title should be treated as manually preserved."""
+    current_title = manifest.title.strip()
+    source_stem = Path(manifest.source.filename).stem.strip()
+    return manifest.title_source == TITLE_SOURCE_UNKNOWN and bool(current_title) and current_title != source_stem
 
 def _default_output_paths() -> dict[str, str]:
     """Return standard project output paths."""
