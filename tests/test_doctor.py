@@ -21,7 +21,7 @@ def test_doctor_warns_when_local_voiceprint_dependencies_are_missing(
 ) -> None:
     """Default doctor should surface missing local voiceprint dependencies without failing."""
     _prepare_doctor(monkeypatch, tmp_path)
-    monkeypatch.setattr(doctor, "_missing_optional_modules", lambda modules: ["speechbrain"])
+    monkeypatch.setattr(doctor, "_missing_modules", lambda modules: ["speechbrain"])
     save_config_values({"dashscope.api_key": "secret"})
 
     result = runner.invoke(app, ["doctor"])
@@ -34,9 +34,9 @@ def test_doctor_warns_when_local_voiceprint_dependencies_are_missing(
     assert "WARN" in result.output
     assert "voiceprint-embedding" in result.output
     assert "provider=local-speechbrain" in result.output
-    assert "missing optional packages: speechbrain" in result.output
+    assert "missing standard packages: speechbrain" in result.output
     assert "Repair Prompts" in result.output
-    assert "uv sync --extra local-voiceprint" in result.output
+    assert "uv sync" in result.output
     assert "Mode" in result.output
     assert "Basic" in result.output
     assert "meeting-asr doctor --full" in result.output
@@ -48,7 +48,7 @@ def test_doctor_json_is_machine_readable(
 ) -> None:
     """Doctor should expose the same checks as stable JSON."""
     _prepare_doctor(monkeypatch, tmp_path)
-    monkeypatch.setattr(doctor, "_missing_optional_modules", lambda modules: ["speechbrain"])
+    monkeypatch.setattr(doctor, "_missing_modules", lambda modules: ["speechbrain"])
     save_config_values({"dashscope.api_key": "secret"})
 
     result = runner.invoke(app, ["doctor", "--json"], env={"MEETING_ASR_LANG": "zh"})
@@ -58,7 +58,7 @@ def test_doctor_json_is_machine_readable(
     assert payload["summary"] == {"ok": 6, "warn": 1, "fail": 0}
     assert payload["checks"][-1]["name"] == "voiceprint-embedding"
     assert payload["checks"][-1]["status"] == "warn"
-    assert "missing optional packages: speechbrain" in payload["checks"][-1]["detail"]
+    assert "missing standard packages: speechbrain" in payload["checks"][-1]["detail"]
 
 
 def test_doctor_full_runs_all_strict_checks(
@@ -165,7 +165,7 @@ def test_doctor_can_require_local_voiceprint_dependencies(
 ) -> None:
     """Strict voiceprint doctor mode should fail when local dependencies are missing."""
     _prepare_doctor(monkeypatch, tmp_path)
-    monkeypatch.setattr(doctor, "_missing_optional_modules", lambda modules: ["speechbrain", "torch"])
+    monkeypatch.setattr(doctor, "_missing_modules", lambda modules: ["speechbrain", "torch"])
     save_config_values({"dashscope.api_key": "secret"})
 
     result = runner.invoke(app, ["doctor", "--require-voiceprint-embedding"])
@@ -176,7 +176,7 @@ def test_doctor_can_require_local_voiceprint_dependencies(
     assert "1 FAIL" in result.output
     assert "FAIL" in result.output
     assert "voiceprint-embedding" in result.output
-    assert "missing optional packages:" in result.output
+    assert "missing standard packages:" in result.output
     assert "speechbrain," in result.output
     assert "torch" in result.output
     assert "meeting-asr doctor --require-voiceprint-embedding" in result.output
@@ -219,7 +219,7 @@ def test_doctor_human_output_can_render_chinese(
 ) -> None:
     """Human doctor output should follow CLI language settings."""
     _prepare_doctor(monkeypatch, tmp_path)
-    monkeypatch.setattr(doctor, "_missing_optional_modules", lambda modules: ["speechbrain"])
+    monkeypatch.setattr(doctor, "_missing_modules", lambda modules: ["speechbrain"])
     save_config_values({"dashscope.api_key": "secret"})
 
     result = runner.invoke(app, ["doctor"], env={"MEETING_ASR_LANG": "zh"})
@@ -229,7 +229,7 @@ def test_doctor_human_output_can_render_chinese(
     assert "汇总" in result.output
     assert "检查项" in result.output
     assert "警告" in result.output
-    assert "缺少可选依赖： speechbrain" in result.output
+    assert "缺少标准依赖： speechbrain" in result.output
     assert "修复提示" in result.output
 
 

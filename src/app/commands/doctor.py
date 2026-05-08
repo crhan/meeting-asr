@@ -263,9 +263,9 @@ def _check_local_speechbrain(*, required: bool) -> CheckResult:
     Returns:
         Diagnostic check result.
     """
-    missing = _missing_optional_modules(("speechbrain", "torch", "torchaudio"))
+    missing = _missing_modules(("speechbrain", "torch", "torchaudio"))
     if missing:
-        detail = f"provider=local-speechbrain; missing optional packages: {', '.join(missing)}"
+        detail = f"provider=local-speechbrain; missing standard packages: {', '.join(missing)}"
         return _voiceprint_problem(
             required=required,
             detail=detail,
@@ -300,9 +300,9 @@ def _check_bailian_voiceprint_settings(*, required: bool) -> CheckResult:
     return CheckResult("voiceprint-embedding", "ok", f"provider=bailian; endpoint={endpoint}")
 
 
-def _missing_optional_modules(modules: tuple[str, ...]) -> list[str]:
+def _missing_modules(modules: tuple[str, ...]) -> list[str]:
     """
-    Return optional modules that are not importable.
+    Return modules that are not importable.
 
     Args:
         modules: Module names to check.
@@ -388,9 +388,9 @@ def _local_speechbrain_fix() -> str:
     """
     return "\n".join(
         [
-            "Install local voiceprint dependencies.",
+            "Install Meeting-ASR standard dependencies.",
             "In the repository:",
-            "uv sync --extra local-voiceprint",
+            "uv sync",
             "For global uv tool installs:",
             "scripts/install-tool.sh",
         ]

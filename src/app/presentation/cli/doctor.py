@@ -66,7 +66,7 @@ STATUS_LABELS = {
 STATUS_STYLES = {"ok": "green", "warn": "yellow", "fail": "red"}
 DETAIL_REPLACEMENTS_ZH = (
     ("installed:", "已安装："),
-    ("missing optional packages:", "缺少可选依赖："),
+    ("missing standard packages:", "缺少标准依赖："),
     ("dependencies installed", "依赖已安装"),
     ("not found in PATH; install ffmpeg", "PATH 中找不到；请安装 ffmpeg"),
     ("not found; install mpv or IINA for speaker review", "未找到；请安装 mpv 或 IINA 用于 speaker review"),

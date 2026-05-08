@@ -10,7 +10,7 @@ meeting-asr doctor --full
 meeting-asr doctor --full --json
 ```
 
-- `doctor`：本地环境、基础配置、编辑器、播放器、声纹依赖提示；不做网络写入。
+- `doctor`：本地环境、基础配置、编辑器、播放器、声纹标准依赖提示；不做网络写入。
 - `doctor --full`：完整集成检查，会验证 OSS 上传/签名 URL/读回/删除，并严格检查声纹 embedding。
 - `doctor --full --json`：给 agent 或脚本用，字段和值保持英文稳定。
 

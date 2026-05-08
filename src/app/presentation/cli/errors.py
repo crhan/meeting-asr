@@ -408,7 +408,11 @@ def _looks_like_voiceprint_dependency(lowered_message: str) -> bool:
     Returns:
         True for missing SpeechBrain/Torch dependencies.
     """
-    return "local-speechbrain voiceprint embedding requires optional dependencies" in lowered_message
+    markers = (
+        "local-speechbrain voiceprint embedding requires standard dependencies",
+        "local-speechbrain voiceprint embedding requires optional dependencies",
+    )
+    return any(marker in lowered_message for marker in markers)
 
 
 def _looks_like_voiceprint_config(lowered_message: str) -> bool:
@@ -498,7 +502,7 @@ _ADVICE_RULES: tuple[AdviceRule, ...] = (
         _looks_like_voiceprint_dependency,
         "voiceprint embedding dependencies",
         "meeting-asr doctor --require-voiceprint-embedding",
-        "The local voiceprint provider is missing optional dependencies.",
+        "The local voiceprint provider is missing standard dependencies.",
     ),
     (
         _looks_like_voiceprint_config,

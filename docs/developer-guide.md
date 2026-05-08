@@ -23,13 +23,14 @@ scripts/install-tool.sh --check
 脚本默认执行：
 
 ```bash
-uv tool install --python 3.14 --editable .[local-voiceprint]
+uv tool install --python 3.14 --editable .
 ```
 
 关键原因：
 
 - `uv tool install` 可以使用 pyenv 的 Python，但必须显式指定 `--python 3.14`，否则可能选到不满足 `Python>=3.14` 的解释器。
 - 本地开发默认 editable，源码修改直接生效。
+- 本地声纹 `local-speechbrain` 是标准依赖，不再通过 extra 单独安装。
 - `scripts/install-tool.sh --wheel` 只用于发布验证或模拟正式用户安装。
 - wheel 模式依赖 `tool.uv.cache-keys` 跟踪 `src/**/*.py`，避免复用旧 wheel。
 - 安装后脚本会验证 wrapper、Python、源码路径和源码指纹；不一致直接失败。

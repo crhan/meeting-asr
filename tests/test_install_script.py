@@ -28,7 +28,8 @@ def test_install_script_print_only_uses_stable_uv_tool_command() -> None:
     assert "--refresh" not in result.stdout
     assert "--reinstall" not in result.stdout
     assert "--editable" in result.stdout
-    assert "local-voiceprint" in result.stdout
+    assert "Local voiceprint: standard dependency" in result.stdout
+    assert "local-voiceprint" not in result.stdout
 
 
 def test_install_script_wheel_mode_is_explicit() -> None:

@@ -198,8 +198,8 @@ def _speechbrain_install_message() -> str:
         Actionable install message.
     """
     return (
-        "local-speechbrain voiceprint embedding requires optional dependencies. "
-        "Install them with `uv sync --extra local-voiceprint` in the repo, or refresh the global tool with "
+        "local-speechbrain voiceprint embedding requires standard dependencies. "
+        "Install them with `uv sync` in the repo, or refresh the global tool with "
         "`scripts/install-tool.sh` from the repo."
     )
 

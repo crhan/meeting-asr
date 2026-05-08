@@ -44,7 +44,7 @@ def test_voiceprint_dependency_error_suggests_strict_voiceprint_doctor(
     with pytest.raises(typer.Exit):
         run_with_cli_errors(
             lambda: _raise(
-                RuntimeError("local-speechbrain voiceprint embedding requires optional dependencies.")
+                RuntimeError("local-speechbrain voiceprint embedding requires standard dependencies.")
             )
         )
 

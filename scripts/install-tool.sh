@@ -12,7 +12,7 @@ Options:
   --editable             Install this checkout in editable mode. Default for local development.
   --wheel                Install a built wheel. Use for release/user-install verification.
   --force                Overwrite executable conflicts. Not needed for normal refreshes.
-  --no-local-voiceprint  Do not install the local SpeechBrain voiceprint extra.
+  --no-local-voiceprint  Deprecated no-op. Local SpeechBrain is now a standard dependency.
   --print-only           Print the install plan without executing it.
   --check                Inspect the current meeting-asr executable and exit.
   -h, --help             Show this help.
@@ -199,9 +199,6 @@ fi
 
 source_dir="$(repo_root)"
 package="."
-if [[ "$local_voiceprint" -eq 1 ]]; then
-  package=".[local-voiceprint]"
-fi
 
 command=(uv tool install --python "$python_value")
 if [[ "$force" -eq 1 ]]; then
@@ -216,7 +213,11 @@ echo "Meeting-ASR install plan"
 echo "Source: $source_dir"
 echo "Mode: $([[ "$editable" -eq 1 ]] && echo editable || echo wheel)"
 echo "Force: $([[ "$force" -eq 1 ]] && echo yes || echo no)"
-echo "Local voiceprint: $([[ "$local_voiceprint" -eq 1 ]] && echo yes || echo no)"
+if [[ "$local_voiceprint" -eq 0 ]]; then
+  echo "Local voiceprint: standard dependency (--no-local-voiceprint is ignored)"
+else
+  echo "Local voiceprint: standard dependency"
+fi
 echo "Command:"
 echo "  cd $(printf '%q' "$source_dir")"
 printf '  '

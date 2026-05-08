@@ -77,7 +77,7 @@ meeting-asr config set oss.endpoint "<oss-endpoint>"
 meeting-asr doctor --full
 ```
 
-本地声纹 embedding 默认使用 `local-speechbrain`。如果全局命令缺依赖，重新运行：
+本地声纹 embedding 默认使用 `local-speechbrain`，SpeechBrain/Torch 是标准依赖。全局命令缺依赖时重新运行：
 
 ```bash
 scripts/install-tool.sh
