@@ -124,7 +124,7 @@ meeting-asr project delete PROJECT_ID --permanent --yes
 推荐入口：
 
 ```bash
-meeting-asr project run "/path/to/meeting.mp4" --progress
+meeting-asr project run "/path/to/meeting.mp4"
 ```
 
 `project run` 会创建或复用项目、抽取音频、上传 private OSS、提交 ASR、下载转写、生成摘要、生成 transcript polish proposal、声纹匹配，并自动应用 accepted speaker。
@@ -146,10 +146,17 @@ meeting-asr project transcribe PROJECT_ID \
 长任务可观测性：
 
 - 交互式终端显示多步骤进度。
-- 非 TTY、管道和日志环境输出结构化 `stage` / `heartbeat` 文本。
+- 默认人类输出只显示进度和最终摘要，不打印 `stage=` / `heartbeat=` 结构化日志。
 - 长轮询会输出 elapsed、last successful operation、next poll 或 batch index。
-- 日志只包含非敏感标识，例如 `dashscope_task_id`、`oss_object_key`、`signed_url_ready`。
-- signed URL query、token、secret、access key 不输出。
+- 结构化日志只在显式 `--agent-log` 开启时输出，供 Agent、CI 或日志系统诊断。
+- Agent 推荐使用 `--agent-log --no-progress`，这样 stdout/stderr 只有稳定的 stage/heartbeat 文本和最终摘要。
+- 日志只包含非敏感标识，例如 `dashscope_task_id`、`oss_object_key`、`signed_url_ready`；signed URL query、token、secret、access key 不输出。
+
+Agent 诊断入口：
+
+```bash
+meeting-asr project run "/path/to/meeting.mp4" --agent-log --no-progress
+```
 
 中断或怀疑卡住：
 

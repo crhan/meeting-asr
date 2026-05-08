@@ -226,11 +226,11 @@ def test_project_run_applies_accepted_voiceprint_matches(
     assert "敬悦" in transcript.read_text(encoding="utf-8")
 
 
-def test_project_run_progress_prints_project_id_before_polling(
+def test_project_run_agent_log_prints_project_id_before_polling(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Project run progress should expose project identity before long ASR polling."""
+    """Agent logs should expose project identity before long ASR polling."""
     source = tmp_path / "meeting.mp4"
     source.write_bytes(b"fake video")
     projects_dir = tmp_path / "projects"
@@ -264,7 +264,17 @@ def test_project_run_progress_prints_project_id_before_polling(
 
     result = runner.invoke(
         app,
-        ["project", "run", str(source), "--projects-dir", str(projects_dir), "--no-polish", "--no-summarize", "--progress"],
+        [
+            "project",
+            "run",
+            str(source),
+            "--projects-dir",
+            str(projects_dir),
+            "--no-polish",
+            "--no-summarize",
+            "--agent-log",
+            "--no-progress",
+        ],
     )
 
     project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
@@ -274,6 +284,53 @@ def test_project_run_progress_prints_project_id_before_polling(
     assert "stage=project created" in result.output
     assert "stage=ASR polling" in result.output
     assert str(project_dir) in result.output
+
+
+def test_project_run_human_output_suppresses_structured_agent_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Default human output should not print stage/heartbeat log lines."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    projects_dir = tmp_path / "projects"
+
+    def fake_transcribe_project(project_dir, options, progress=None, **kwargs):
+        manifest = load_manifest(project_dir)
+        emit_progress(
+            progress,
+            "Waiting for DashScope ASR",
+            log_kind="stage",
+            stage="ASR polling",
+            project_id=manifest.project_id,
+            project_path=str(project_dir),
+            input_file=str(source),
+            timestamp="2026-05-06T10:00:00+08:00",
+        )
+        _write_sample_sentences(project_dir / "asr" / "sentences.json")
+        return ProjectTranscribeSummary(project_dir, "task-1", "test", 1, 3)
+
+    def fake_match_project_speakers(project_dir, **kwargs):
+        return SpeakerMatchSummary(
+            project_dir / "speakers" / "speaker_matches.json",
+            "fake-provider",
+            "fake-model",
+            0.75,
+            [SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2)],
+        )
+
+    monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+
+    result = runner.invoke(
+        app,
+        ["project", "run", str(source), "--projects-dir", str(projects_dir), "--no-polish", "--no-summarize"],
+    )
+
+    assert result.exit_code == 0
+    assert "stage=project created" not in result.output
+    assert "stage=ASR polling" not in result.output
+    assert "heartbeat=" not in result.output
 
 
 def test_asr_polling_heartbeat_redacts_signed_url_query_token(

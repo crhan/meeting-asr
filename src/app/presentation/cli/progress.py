@@ -43,6 +43,7 @@ def run_with_progress(
     description: str,
     total: int | None = None,
     enabled: bool = True,
+    structured_log: bool = False,
 ) -> T:
     """
     Run a CLI operation with Rich progress when the terminal supports it.
@@ -52,16 +53,19 @@ def run_with_progress(
         description: Initial progress description.
         total: Optional total units for the initial phase.
         enabled: Whether the command allows progress rendering.
+        structured_log: Whether to print durable stage/heartbeat lines for agents.
 
     Returns:
         Operation result.
     """
     console = _console()
     if not enabled:
-        return run_with_cli_errors(lambda: operation(None))
+        reporter = _LineProgressReporter(console) if structured_log else None
+        return run_with_cli_errors(lambda: operation(reporter))
     if not _should_render_progress(console, enabled):
-        return run_with_cli_errors(lambda: operation(_LineProgressReporter(console)))
-    return run_with_cli_errors(lambda: _run_with_rich_progress(operation, console, description, total))
+        reporter = _LineProgressReporter(console) if structured_log else None
+        return run_with_cli_errors(lambda: operation(reporter))
+    return run_with_cli_errors(lambda: _run_with_rich_progress(operation, console, description, total, structured_log))
 
 
 def _run_with_rich_progress(
@@ -69,6 +73,7 @@ def _run_with_rich_progress(
     console: Console,
     description: str,
     total: int | None,
+    structured_log: bool,
 ) -> T:
     """
     Render progress for one operation.
@@ -78,6 +83,7 @@ def _run_with_rich_progress(
         console: Rich console bound to stderr.
         description: Initial progress description.
         total: Optional initial total.
+        structured_log: Whether to print durable stage/heartbeat lines for agents.
 
     Returns:
         Operation result.
@@ -101,7 +107,7 @@ def _run_with_rich_progress(
             step_started_at=now,
             workflow_started_at=now,
         )
-        renderer = _RichProgressRenderer(progress, task_id, now)
+        renderer = _RichProgressRenderer(progress, task_id, now, structured_log=structured_log)
 
         def report(event: CliProgressEvent) -> None:
             renderer.report(event)
@@ -149,6 +155,7 @@ class _RichProgressRenderer:
     progress: Progress
     fallback_task_id: int
     workflow_started_at: float
+    structured_log: bool = False
     workflow_enabled: bool = False
     step_total: int | None = None
     current_step_index: int | None = None
@@ -176,6 +183,8 @@ class _RichProgressRenderer:
 
     def _emit_log(self, event: CliProgressEvent) -> None:
         """Print structured observability lines above the live progress UI."""
+        if not self.structured_log:
+            return
         line = _progress_log_line(event)
         if line:
             self.progress.console.print(line, soft_wrap=True)

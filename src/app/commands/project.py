@@ -352,6 +352,11 @@ def run(
         help="Parallel DashScope batch requests for transcript polish.",
     ),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    agent_log: bool = typer.Option(
+        False,
+        "--agent-log/--no-agent-log",
+        help="Print structured stage and heartbeat logs for agents; combine with --no-progress for clean logs.",
+    ),
 ) -> None:
     """Create a project, transcribe, summarize, and match speakers automatically."""
     configure_logging(verbose=should_enable_verbose_logs())
@@ -389,6 +394,7 @@ def run(
         ),
         description="Running project workflow",
         enabled=progress,
+        structured_log=agent_log,
     )
     _echo_run_summary(summary)
 

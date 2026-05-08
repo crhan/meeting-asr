@@ -131,6 +131,8 @@ def test_localized_help_leads_with_examples_and_translated_options() -> None:
     assert "指定会议总结使用的" in run_result.output
     assert "ASR 后生成转写润色建议" in run_result.output
     assert "指定转写润色使用的" in run_result.output
+    assert "--agent-log" in run_result.output
+    assert "输出给 Agent/日志系统使用的" in run_result.output
     assert "Generate title and summary after ASR." not in run_result.output
     assert "Generate transcript polish proposal after ASR." not in run_result.output
     assert "DashScope model for transcript polish." not in run_result.output
