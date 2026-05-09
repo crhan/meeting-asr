@@ -12,7 +12,6 @@ from app.cli import app
 from app.config import (
     DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY,
     DEFAULT_DASHSCOPE_CORRECTION_MODEL,
-    DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER,
     DEFAULT_DASHSCOPE_SUMMARY_MODEL,
     get_cache_dir,
     get_config_path,
@@ -67,7 +66,6 @@ def test_load_settings_reads_global_config(monkeypatch: pytest.MonkeyPatch, tmp_
     assert settings.dashscope_correction_model == DEFAULT_DASHSCOPE_CORRECTION_MODEL
     assert settings.dashscope_correction_concurrency == DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY
     assert settings.dashscope_asr_vocabulary_id is None
-    assert settings.voiceprint_embedding_provider == DEFAULT_VOICEPRINT_EMBEDDING_PROVIDER
 
 
 def test_ui_editor_config_is_supported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -101,19 +99,18 @@ def test_config_show_prints_masked_json(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert payload["values"]["ui.editor"] == "vim"
 
 
-def test_load_settings_can_read_voiceprint_config_without_dashscope(
+def test_load_settings_without_dashscope_keeps_voiceprint_local_implicit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Local voiceprint provider config should not require DashScope credentials."""
+    """Local voiceprint embedding is implicit and does not require DashScope credentials."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     _clear_runtime_env(monkeypatch)
-    save_config_values({"voiceprint.embedding_provider": "local-speechbrain"})
 
     settings = load_settings(require_dashscope=False)
 
     assert settings.dashscope_api_key == ""
-    assert settings.voiceprint_embedding_provider == "local-speechbrain"
+    assert not hasattr(settings, "voiceprint_embedding_provider")
 
 
 def test_process_env_overrides_global_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -168,8 +165,6 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "OSS_BUCKET_NAME",
         "OSS_REGION",
         "OSS_ENDPOINT",
-        "VOICEPRINT_EMBEDDING_ENDPOINT",
-        "VOICEPRINT_EMBEDDING_PROVIDER",
         "MEETING_ASR_EDITOR",
     ):
         monkeypatch.delenv(name, raising=False)

@@ -382,7 +382,6 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             lambda: embed_voiceprint_samples(
                 store_dir=self.session.store_dir,
                 provider=None,
-                endpoint=None,
                 model=None,
                 rebuild=False,
             ),

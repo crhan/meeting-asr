@@ -176,7 +176,6 @@ def run_voiceprint_review_workflow(
         embedding = embed_voiceprint_samples(
             store_dir=store_dir or capture.store_dir,
             provider=None,
-            endpoint=None,
             model=None,
             rebuild=False,
         )
@@ -184,7 +183,6 @@ def run_voiceprint_review_workflow(
             project_dir,
             store_dir=store_dir or capture.store_dir,
             provider=None,
-            endpoint=None,
             model=embedding.model,
         )
     except Exception:

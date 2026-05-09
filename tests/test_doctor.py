@@ -182,37 +182,6 @@ def test_doctor_can_require_local_voiceprint_dependencies(
     assert "meeting-asr doctor --require-voiceprint-embedding" in result.output
 
 
-def test_doctor_accepts_bailian_voiceprint_embedding_endpoint(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Valid Bailian endpoint should pass strict voiceprint doctor mode."""
-    _prepare_doctor(monkeypatch, tmp_path)
-    save_config_values(
-        {
-            "dashscope.api_key": "secret",
-            "oss.access_key_id": "ak",
-            "oss.access_key_secret": "sk",
-            "oss.bucket_name": "bucket",
-            "oss.region": "cn-test",
-            "oss.endpoint": "oss-cn-test.aliyuncs.com",
-            "voiceprint.embedding_provider": "bailian",
-            "voiceprint.embedding_endpoint": "http://adb.example:8100/audio/embedding",
-        }
-    )
-
-    result = runner.invoke(app, ["doctor", "--require-voiceprint-embedding"])
-
-    assert result.exit_code == 0
-    assert "7 OK" in result.output
-    assert "0 WARN" in result.output
-    assert "0 FAIL" in result.output
-    assert "OK" in result.output
-    assert "voiceprint-embedding" in result.output
-    assert "provider=bailian" in result.output
-    assert "Repair Prompts" not in result.output
-
-
 def test_doctor_human_output_can_render_chinese(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -266,7 +235,5 @@ _CONFIG_ENV_NAMES = (
     "OSS_BUCKET_NAME",
     "OSS_REGION",
     "OSS_ENDPOINT",
-    "VOICEPRINT_EMBEDDING_ENDPOINT",
-    "VOICEPRINT_EMBEDDING_PROVIDER",
     "MEETING_ASR_EDITOR",
 )

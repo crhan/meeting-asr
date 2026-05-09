@@ -223,11 +223,11 @@ def _fake_extract_audio_clip(
     return output_path
 
 
-def _fake_embed_audio_file(path: Path, *, provider: str | None, endpoint: str | None) -> list[float]:
+def _fake_embed_audio_file(path: Path, *, provider: str | None) -> list[float]:
     """Return deterministic vectors based on speaker id in the path."""
     return [0.0, 1.0] if "speaker_1" in str(path) else [1.0, 0.0]
 
 
-def _raise_unexpected_embedding(path: Path, *, provider: str | None, endpoint: str | None) -> list[float]:
+def _raise_unexpected_embedding(path: Path, *, provider: str | None) -> list[float]:
     """Fail when an empty voiceprint library tries to embed project probes."""
     raise AssertionError(f"Unexpected embedding call for {path}.")

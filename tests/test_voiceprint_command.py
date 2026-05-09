@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 from app.cli import app
 from app.config import save_config_values
 from app.project_manager import create_project, load_manifest
-from app.voiceprint_embedding import BAILIAN_VOICEPRINT_MODEL, LOCAL_SPEECHBRAIN_MODEL
+from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
     get_voiceprint_db_path,
     list_voiceprint_embeddings,
@@ -260,32 +260,6 @@ def test_voiceprint_embed_stores_sample_embeddings(
     assert "Embedded samples: 2/2" in list_result.output
 
 
-def test_voiceprint_embed_uses_configured_provider_model(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    """Embedding should resolve provider defaults from global config."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    save_config_values({"voiceprint.embedding_provider": "bailian"})
-    project_dir = _sample_project(tmp_path)
-    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
-    _write_named_speaker_inputs(project_dir)
-    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
-    monkeypatch.setattr("app.voiceprint_embedding.embed_audio_file", _fake_embed_audio_file)
-    runner.invoke(
-        app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
-    )
-
-    result = runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
-    embeddings = list_voiceprint_embeddings(BAILIAN_VOICEPRINT_MODEL, get_voiceprint_db_path(store_dir))
-
-    assert result.exit_code == 0
-    assert "Provider: bailian" in result.output
-    assert f"Model: {BAILIAN_VOICEPRINT_MODEL}" in result.output
-    assert len(embeddings) == 2
-
-
 def test_voiceprint_delete_sample_removes_row_and_clip(
     monkeypatch,
     tmp_path: Path,
@@ -457,7 +431,7 @@ def _fake_extract_audio_clip(
     return output_path
 
 
-def _fake_embed_audio_file(path: Path, *, provider: str | None, endpoint: str | None) -> list[float]:
+def _fake_embed_audio_file(path: Path, *, provider: str | None) -> list[float]:
     """Return deterministic vectors based on the speaker path."""
     return [0.0, 1.0] if "speaker_1" in str(path) else [1.0, 0.0]
 

@@ -242,8 +242,8 @@ EXAMPLES = {
         "zh": ("meeting-asr voiceprint capture <project-id>",),
     },
     ("voiceprint", "embed"): {
-        "en": ("meeting-asr voiceprint embed", "meeting-asr voiceprint embed --provider local-speechbrain"),
-        "zh": ("meeting-asr voiceprint embed", "meeting-asr voiceprint embed --provider local-speechbrain"),
+        "en": ("meeting-asr voiceprint embed",),
+        "zh": ("meeting-asr voiceprint embed",),
     },
     ("voiceprint", "browse"): {
         "en": ("meeting-asr voiceprint browse",),
@@ -308,8 +308,6 @@ OPTION_ZH = {
     "--audio-format": "指定提取后的音频格式。",
     "--asr-hotwords": "指定 ASR 热词表 ID 或热词文件。",
     "--store-dir": "指定全局数据目录。",
-    "--voiceprint-provider": "指定声纹 embedding provider。",
-    "--voiceprint-endpoint": "指定声纹 embedding 服务地址。",
     "--voiceprint-model": "指定声纹 embedding 模型。",
     "--match-threshold": "设置声纹自动接受阈值。",
     "--summarize": "ASR 后生成会议标题和回忆索引；可用 --no-summarize 关闭。",

@@ -417,19 +417,16 @@ def _looks_like_voiceprint_dependency(lowered_message: str) -> bool:
 
 def _looks_like_voiceprint_config(lowered_message: str) -> bool:
     """
-    Return whether the error is a voiceprint provider configuration problem.
+    Return whether the error is a voiceprint configuration problem.
 
     Args:
         lowered_message: Lowercase combined exception message.
 
     Returns:
-        True for provider or endpoint configuration failures.
+        True for unsupported local voiceprint configuration failures.
     """
     markers = (
-        "voiceprint.embedding_endpoint",
-        "voiceprint.embedding_provider",
         "unsupported voiceprint embedding provider",
-        "bailian voiceprint embedding failed",
     )
     return any(marker in lowered_message for marker in markers)
 
@@ -507,8 +504,8 @@ _ADVICE_RULES: tuple[AdviceRule, ...] = (
     (
         _looks_like_voiceprint_config,
         "voiceprint embedding configuration",
-        "meeting-asr doctor --require-oss --require-voiceprint-embedding",
-        "The configured voiceprint provider cannot run with the current settings.",
+        "meeting-asr doctor --require-voiceprint-embedding",
+        "The local voiceprint embedding configuration is invalid.",
     ),
     (
         _looks_like_oss_config_or_access,

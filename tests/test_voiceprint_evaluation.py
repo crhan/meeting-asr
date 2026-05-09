@@ -34,7 +34,6 @@ def test_evaluate_voiceprint_embedding_updates_current_and_flags_history(monkeyp
         current,
         store_dir=None,
         provider=None,
-        endpoint=None,
         model="test-model",
     )
 
@@ -71,7 +70,6 @@ def test_evaluate_voiceprint_embedding_skips_ignored_speakers(monkeypatch, tmp_p
         current,
         store_dir=None,
         provider=None,
-        endpoint=None,
         model="test-model",
     )
 

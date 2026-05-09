@@ -25,7 +25,6 @@ meeting-asr config set oss.access_key_secret "<oss-access-key-secret>"
 meeting-asr config set oss.bucket_name "<bucket>"
 meeting-asr config set oss.region "<region>"
 meeting-asr config set oss.endpoint "<oss-endpoint>"
-meeting-asr config set voiceprint.embedding_provider local-speechbrain
 meeting-asr config set ui.editor "code --wait"
 ```
 
@@ -331,7 +330,7 @@ meeting-asr voiceprint people list
 
 `voiceprint review PROJECT_ID` 左侧是项目待采样候选，右侧是样本；`Tab` 可切到全局声纹库。没有 Project ID 时直接进入全局库视图。删除操作保留在显式 CLI，避免 TUI 里误删。
 
-默认 provider 是 `local-speechbrain`。本项目文档只记录已验证 provider；未验证远端 provider 不写成用户教程。
+声纹 embedding 只保留本地 `local-speechbrain`，不再提供远端 provider 配置。
 
 ## 8. 最终文件
 

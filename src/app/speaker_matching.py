@@ -118,7 +118,6 @@ def match_project_speakers(
     *,
     store_dir: Path | None,
     provider: str | None,
-    endpoint: str | None,
     model: str | None,
     threshold: float,
     sample_count: int,
@@ -133,7 +132,6 @@ def match_project_speakers(
         project_dir: Project root.
         store_dir: Optional voiceprint store directory.
         provider: Embedding provider.
-        endpoint: Optional provider endpoint.
         model: Embedding model key.
         threshold: Minimum accepted cosine score.
         sample_count: Maximum probe clips per speaker.
@@ -147,7 +145,6 @@ def match_project_speakers(
     context = _match_context(project_dir, store_dir, provider, model)
     summary = _build_match_summary(
         context,
-        endpoint=endpoint,
         threshold=threshold,
         sample_count=sample_count,
         max_seconds=max_seconds,
@@ -167,7 +164,6 @@ def preview_project_speaker_matches(
     *,
     store_dir: Path | None,
     provider: str | None,
-    endpoint: str | None,
     model: str | None,
     threshold: float,
     sample_count: int,
@@ -182,7 +178,6 @@ def preview_project_speaker_matches(
         project_dir: Project root.
         store_dir: Optional voiceprint store directory.
         provider: Embedding provider.
-        endpoint: Optional provider endpoint.
         model: Embedding model key.
         threshold: Minimum accepted cosine score.
         sample_count: Maximum probe clips per speaker.
@@ -196,7 +191,6 @@ def preview_project_speaker_matches(
     context = _match_context(project_dir, store_dir, provider, model)
     return _build_match_summary(
         context,
-        endpoint=endpoint,
         threshold=threshold,
         sample_count=sample_count,
         max_seconds=max_seconds,
@@ -208,7 +202,6 @@ def preview_project_speaker_matches(
 def _build_match_summary(
     context: _MatchContext,
     *,
-    endpoint: str | None,
     threshold: float,
     sample_count: int,
     max_seconds: float,
@@ -222,7 +215,6 @@ def _build_match_summary(
         context.segments,
         context.known,
         context.provider,
-        endpoint,
         threshold,
         sample_count,
         max_seconds,
@@ -293,7 +285,6 @@ def _match_speaker_groups(
     segments: list[SentenceSegment],
     known: dict[int, _KnownSpeakerVector],
     provider: str | None,
-    endpoint: str | None,
     threshold: float,
     sample_count: int,
     max_seconds: float,
@@ -317,7 +308,6 @@ def _match_speaker_groups(
                 speaker_segments,
                 known,
                 provider,
-                endpoint,
                 threshold,
                 sample_count,
                 max_seconds,
@@ -335,7 +325,6 @@ def _match_one_speaker_group(
     speaker_segments: list[SentenceSegment],
     known: dict[int, _KnownSpeakerVector],
     provider: str | None,
-    endpoint: str | None,
     threshold: float,
     sample_count: int,
     max_seconds: float,
@@ -348,7 +337,6 @@ def _match_one_speaker_group(
         speaker_id,
         speaker_segments,
         provider,
-        endpoint,
         sample_count,
         max_seconds,
         padding_seconds,
@@ -443,7 +431,6 @@ def _probe_speaker_vector(
     speaker_id: int,
     segments: list[SentenceSegment],
     provider: str | None,
-    endpoint: str | None,
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
@@ -453,7 +440,7 @@ def _probe_speaker_vector(
     for index, segment in enumerate(_select_segments(segments, sample_count), start=1):
         clip_path = _probe_clip_path(project_root, speaker_id, index)
         _write_probe_clip(source, clip_path, segment, max_seconds, padding_seconds)
-        vectors.append(embed_audio_file(clip_path, provider=provider, endpoint=endpoint))
+        vectors.append(embed_audio_file(clip_path, provider=provider))
     return _normalize(_mean_vector(vectors))
 
 

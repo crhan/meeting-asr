@@ -19,7 +19,7 @@ from app.presentation.cli.output import cli_console
 from app.presentation.cli.plain import echo_plain_table
 from app.presentation.cli.progress import run_with_progress
 from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
-from app.completion_helpers import complete_voiceprint_model, complete_voiceprint_provider
+from app.completion_helpers import complete_voiceprint_model
 from app.core.project_refs import resolve_project_ref
 from app.utils import format_ms_timestamp
 from app.voiceprint_playback import build_voiceprint_play_command
@@ -447,8 +447,6 @@ def people_show_command(
 @app.command("embed")
 def embed_command(
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    provider: Optional[str] = typer.Option(None, "--provider", autocompletion=complete_voiceprint_provider),
-    endpoint: Optional[str] = typer.Option(None, "--endpoint"),
     model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
     rebuild: bool = typer.Option(False, "--rebuild"),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
@@ -457,8 +455,7 @@ def embed_command(
     summary = run_with_progress(
         lambda reporter: embed_voiceprint_samples(
             store_dir=store_dir,
-            provider=provider,
-            endpoint=endpoint,
+            provider=None,
             model=model,
             rebuild=rebuild,
             progress=reporter,

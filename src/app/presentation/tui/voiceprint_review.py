@@ -902,7 +902,6 @@ class VoiceprintReviewScreen(_VoiceprintReviewBase, ModalScreen[VoiceprintReview
                 self.project_dir,
                 store_dir=self.store_dir,
                 provider=None,
-                endpoint=None,
                 model=None,
             ),
             group="voiceprint-review-evaluate",

@@ -44,7 +44,6 @@ from app.completion_helpers import (
     complete_model,
     complete_oss_upload_mode,
     complete_voiceprint_model,
-    complete_voiceprint_provider,
 )
 from app.config import get_default_projects_dir
 from app.asr_pricing import AsrCostEstimate, format_asr_cost
@@ -330,12 +329,6 @@ def run(
     audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
     asr_hotwords: str = typer.Option("auto", "--asr-hotwords", autocompletion=complete_asr_hotwords),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    voiceprint_provider: Optional[str] = typer.Option(
-        None,
-        "--voiceprint-provider",
-        autocompletion=complete_voiceprint_provider,
-    ),
-    voiceprint_endpoint: Optional[str] = typer.Option(None, "--voiceprint-endpoint"),
     voiceprint_model: Optional[str] = typer.Option(
         None,
         "--voiceprint-model",
@@ -388,8 +381,6 @@ def run(
             meeting_time=meeting_time,
             options=options,
             store_dir=store_dir,
-            voiceprint_provider=voiceprint_provider,
-            voiceprint_endpoint=voiceprint_endpoint,
             voiceprint_model=voiceprint_model,
             match_threshold=match_threshold,
             summarize=summarize,
@@ -533,8 +524,6 @@ def _run_project_workflow(
     meeting_time: str | None,
     options: ProjectTranscribeOptions,
     store_dir: Path | None,
-    voiceprint_provider: str | None,
-    voiceprint_endpoint: str | None,
     voiceprint_model: str | None,
     match_threshold: float,
     summarize: bool,
@@ -556,8 +545,6 @@ def _run_project_workflow(
         meeting_time: Optional meeting start time string.
         options: Project transcription options.
         store_dir: Optional voiceprint store directory.
-        voiceprint_provider: Optional voiceprint provider override.
-        voiceprint_endpoint: Optional voiceprint endpoint override.
         voiceprint_model: Optional voiceprint model override.
         match_threshold: Voiceprint match acceptance threshold.
         summarize: Generate meeting memory index when true.
@@ -665,7 +652,7 @@ def _run_project_workflow(
         input_path,
         "speaker match",
         progress,
-        external_ids={"provider": voiceprint_provider or "configured-default"},
+        external_ids={"provider": "local-speechbrain"},
         description="Matching speakers with voiceprints",
         step_index=match_step,
         step_total=step_total,
@@ -674,8 +661,7 @@ def _run_project_workflow(
     matches = match_project_speakers(
         project.project_dir,
         store_dir=store_dir,
-        provider=voiceprint_provider,
-        endpoint=voiceprint_endpoint,
+        provider=None,
         model=voiceprint_model,
         threshold=match_threshold,
         sample_count=2,
@@ -1356,8 +1342,6 @@ def speakers_match(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    provider: Optional[str] = typer.Option(None, "--provider", autocompletion=complete_voiceprint_provider),
-    endpoint: Optional[str] = typer.Option(None, "--endpoint"),
     model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
     threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
     sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
@@ -1372,8 +1356,7 @@ def speakers_match(
         lambda reporter: match_project_speakers(
             resolved_project_dir,
             store_dir=store_dir,
-            provider=provider,
-            endpoint=endpoint,
+            provider=None,
             model=model,
             threshold=threshold,
             sample_count=sample_count,

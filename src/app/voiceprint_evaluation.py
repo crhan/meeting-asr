@@ -127,7 +127,6 @@ def evaluate_voiceprint_embedding(
     *,
     store_dir: Path | None,
     provider: str | None,
-    endpoint: str | None,
     model: str | None,
     threshold: float = 0.75,
     sample_count: int = 2,
@@ -142,14 +141,13 @@ def evaluate_voiceprint_embedding(
     Args:
         project_dir: Current project root.
         store_dir: Optional global voiceprint store.
-        provider: Provider override; endpoint and model are optional overrides.
+        provider: Provider override. Model is optional.
     """
     project_root = project_dir.expanduser().resolve()
     current = _current_evaluation(
         project_root,
         store_dir=store_dir,
         provider=provider,
-        endpoint=endpoint,
         model=model,
         threshold=threshold,
         sample_count=sample_count,
@@ -161,7 +159,6 @@ def evaluate_voiceprint_embedding(
         project_root,
         store_dir=store_dir,
         provider=provider,
-        endpoint=endpoint,
         model=model,
         threshold=threshold,
         sample_count=sample_count,
@@ -178,7 +175,6 @@ def _current_evaluation(
     *,
     store_dir: Path | None,
     provider: str | None,
-    endpoint: str | None,
     model: str | None,
     threshold: float,
     sample_count: int,
@@ -192,7 +188,6 @@ def _current_evaluation(
         project_root,
         store_dir=store_dir,
         provider=provider,
-        endpoint=endpoint,
         model=model,
         threshold=threshold,
         sample_count=sample_count,
@@ -208,7 +203,6 @@ def _historical_evaluations(
     *,
     store_dir: Path | None,
     provider: str | None,
-    endpoint: str | None,
     model: str | None,
     threshold: float,
     sample_count: int,
@@ -223,7 +217,7 @@ def _historical_evaluations(
     evaluations: list[VoiceprintProjectEvaluation] = []
     for candidate in candidates[:limit]:
         before = _load_match_rows(candidate)
-        after = _preview_matches(candidate, store_dir, provider, endpoint, model, threshold, sample_count, max_seconds, padding_seconds)
+        after = _preview_matches(candidate, store_dir, provider, model, threshold, sample_count, max_seconds, padding_seconds)
         if after is not None:
             evaluations.append(_project_evaluation(candidate, False, before, after, decline_threshold))
     return evaluations
@@ -233,7 +227,6 @@ def _preview_matches(
     project_dir: Path,
     store_dir: Path | None,
     provider: str | None,
-    endpoint: str | None,
     model: str | None,
     threshold: float,
     sample_count: int,
@@ -246,7 +239,6 @@ def _preview_matches(
             project_dir,
             store_dir=store_dir,
             provider=provider,
-            endpoint=endpoint,
             model=model,
             threshold=threshold,
             sample_count=sample_count,

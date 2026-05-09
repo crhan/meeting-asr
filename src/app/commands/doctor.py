@@ -11,7 +11,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 from uuid import uuid4
 
 import typer
@@ -22,9 +21,6 @@ from app.presentation.cli.json_output import emit_json
 from app.uploader import build_oss_bucket, import_oss2
 from app.voiceprint_embedding import (
     LOCAL_SPEECHBRAIN_MODEL,
-    SUPPORTED_VOICEPRINT_PROVIDERS,
-    VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
-    resolve_voiceprint_provider,
 )
 
 
@@ -240,17 +236,11 @@ def _check_voiceprint_embedding_settings(*, required: bool) -> CheckResult:
         Diagnostic check result for voiceprint embedding config.
     """
     try:
-        settings = load_settings(require_oss=False, require_dashscope=False)
+        load_settings(require_oss=False, require_dashscope=False)
     except ValueError as exc:
         detail = f"skipped because base config is invalid: {exc}"
         return CheckResult("voiceprint-embedding", "warn", detail)
-    try:
-        provider = resolve_voiceprint_provider(settings.voiceprint_embedding_provider)
-    except ValueError as exc:
-        return _voiceprint_problem(required=required, detail=str(exc), fix=_provider_config_fix())
-    if provider == VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN:
-        return _check_local_speechbrain(required=required)
-    return _check_bailian_voiceprint_settings(required=required)
+    return _check_local_speechbrain(required=required)
 
 
 def _check_local_speechbrain(*, required: bool) -> CheckResult:
@@ -276,30 +266,6 @@ def _check_local_speechbrain(*, required: bool) -> CheckResult:
     return CheckResult("voiceprint-embedding", "ok", detail)
 
 
-def _check_bailian_voiceprint_settings(*, required: bool) -> CheckResult:
-    """
-    Check Bailian/AnalyticDB voiceprint provider config.
-
-    Args:
-        required: Whether missing config should fail.
-
-    Returns:
-        Diagnostic check result.
-    """
-    try:
-        settings = load_settings(require_oss=required, require_dashscope=required)
-    except ValueError as exc:
-        return _voiceprint_problem(required=required, detail=str(exc), fix=_bailian_endpoint_fix())
-    endpoint = settings.voiceprint_embedding_endpoint
-    if not endpoint:
-        detail = "provider=bailian; voiceprint.embedding_endpoint is not configured"
-        return _voiceprint_problem(required=required, detail=detail, fix=_bailian_endpoint_fix())
-    endpoint_problem = _validate_voiceprint_endpoint(endpoint)
-    if endpoint_problem:
-        return _voiceprint_problem(required=required, detail=endpoint_problem, fix=_bailian_endpoint_fix())
-    return CheckResult("voiceprint-embedding", "ok", f"provider=bailian; endpoint={endpoint}")
-
-
 def _missing_modules(modules: tuple[str, ...]) -> list[str]:
     """
     Return modules that are not importable.
@@ -311,24 +277,6 @@ def _missing_modules(modules: tuple[str, ...]) -> list[str]:
         Missing module names.
     """
     return [module for module in modules if importlib.util.find_spec(module) is None]
-
-
-def _validate_voiceprint_endpoint(endpoint: str) -> str | None:
-    """
-    Validate the configured voiceprint embedding endpoint shape.
-
-    Args:
-        endpoint: Configured endpoint URL.
-
-    Returns:
-        Problem text, or ``None`` when the endpoint shape is valid.
-    """
-    parsed = urlparse(endpoint)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return f"voiceprint.embedding_endpoint must be an HTTP URL; got {endpoint}"
-    if parsed.path.rstrip("/") != "/audio/embedding":
-        return f"voiceprint.embedding_endpoint should end with /audio/embedding; got {endpoint}"
-    return None
 
 
 def _voiceprint_problem(
@@ -360,25 +308,6 @@ def _voiceprint_problem(
     return CheckResult("voiceprint-embedding", status, detail, prompt)
 
 
-def _provider_config_fix() -> str:
-    """
-    Return actionable guidance for fixing provider selection.
-
-    Returns:
-        Repair guidance for provider config.
-    """
-    providers = ", ".join(SUPPORTED_VOICEPRINT_PROVIDERS)
-    return "\n".join(
-        [
-            f"Supported providers: {providers}.",
-            "Configure:",
-            "meeting-asr config set voiceprint.embedding_provider local-speechbrain",
-            "or:",
-            "meeting-asr config set voiceprint.embedding_provider bailian",
-        ]
-    )
-
-
 def _local_speechbrain_fix() -> str:
     """
     Return actionable guidance for local SpeechBrain setup.
@@ -393,32 +322,6 @@ def _local_speechbrain_fix() -> str:
             "uv sync",
             "For global uv tool installs:",
             "scripts/install-tool.sh",
-        ]
-    )
-
-
-def _bailian_endpoint_fix() -> str:
-    """
-    Return actionable guidance for obtaining the voiceprint endpoint.
-
-    Returns:
-        Repair guidance for the AnalyticDB voiceprint endpoint.
-    """
-    return "\n".join(
-        [
-            "Do not install this locally.",
-            "Set any missing DashScope and OSS config reported above.",
-            "Configure provider first:",
-            "meeting-asr config set voiceprint.embedding_provider bailian",
-            "Endpoint source: AnalyticDB MySQL voiceprint retrieval service, which is invite-only.",
-            "If it is not enabled, submit an Alibaba Cloud support ticket.",
-            "After the service or AI application is available, open the AnalyticDB MySQL console.",
-            "Select the target cluster.",
-            "Go to AI Application > Application Management > Call Information.",
-            "Copy the call address or host.",
-            "Configure:",
-            'meeting-asr config set voiceprint.embedding_endpoint "http://<addr>:8100/audio/embedding"',
-            "This is not a Tongyi vision embedding model name.",
         ]
     )
 

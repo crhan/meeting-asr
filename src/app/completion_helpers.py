@@ -5,15 +5,13 @@ from __future__ import annotations
 from app.config import CONFIG_KEYS
 from app.infra.ffmpeg import SUPPORTED_AUDIO_FORMATS
 from app.voiceprint_embedding import (
-    BAILIAN_VOICEPRINT_MODEL,
     LOCAL_SPEECHBRAIN_MODEL,
-    SUPPORTED_VOICEPRINT_PROVIDERS,
 )
 
 ASR_MODELS = ("fun-asr",)
 ASR_HOTWORD_MODES = ("auto", "off")
 OSS_UPLOAD_MODES = ("auto", "true", "false")
-VOICEPRINT_MODELS = (LOCAL_SPEECHBRAIN_MODEL, BAILIAN_VOICEPRINT_MODEL)
+VOICEPRINT_MODELS = (LOCAL_SPEECHBRAIN_MODEL,)
 CLI_LANGUAGES = ("auto", "en", "zh")
 
 
@@ -96,19 +94,6 @@ def complete_voiceprint_model(incomplete: str) -> list[str]:
         Matching voiceprint model keys.
     """
     return _matching(VOICEPRINT_MODELS, incomplete)
-
-
-def complete_voiceprint_provider(incomplete: str) -> list[str]:
-    """
-    Complete supported voiceprint embedding providers.
-
-    Args:
-        incomplete: Current shell token.
-
-    Returns:
-        Matching provider names.
-    """
-    return _matching(SUPPORTED_VOICEPRINT_PROVIDERS, incomplete)
 
 
 def complete_cli_language(incomplete: str) -> list[str]:

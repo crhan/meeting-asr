@@ -93,14 +93,14 @@ def test_bash_completion_runtime_includes_value_completions() -> None:
     """Runtime completion should expose finite parameter values."""
     upload_modes = _bash_complete("meeting-asr project transcribe --oss-upload ", 4)
     hotword_modes = _bash_complete("meeting-asr project transcribe --asr-hotwords ", 4)
-    voiceprint_providers = _bash_complete("meeting-asr voiceprint embed --provider ", 4)
+    voiceprint_models = _bash_complete("meeting-asr voiceprint embed --model ", 4)
     cli_languages = _bash_complete("meeting-asr --lang ", 2)
     config_keys = _bash_complete("meeting-asr config set dash", 3)
     install_shells = _bash_complete("meeting-asr completion install ", 3)
 
     assert upload_modes == ["auto", "true", "false"]
     assert hotword_modes == ["auto", "off"]
-    assert voiceprint_providers == ["local-speechbrain", "bailian"]
+    assert voiceprint_models == ["speechbrain-spkrec-ecapa-voxceleb"]
     assert cli_languages == ["auto", "en", "zh"]
     assert "dashscope.api_key" in config_keys
     assert "dashscope.base_url" in config_keys

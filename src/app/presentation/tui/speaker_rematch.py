@@ -88,7 +88,6 @@ def run_speaker_rematch(
         project_dir,
         store_dir=store_dir,
         provider=None,
-        endpoint=None,
         model=None,
         threshold=DEFAULT_REVIEW_MATCH_THRESHOLD,
         sample_count=DEFAULT_REVIEW_MATCH_SAMPLE_COUNT,
