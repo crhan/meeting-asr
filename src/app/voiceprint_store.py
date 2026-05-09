@@ -449,6 +449,65 @@ def delete_voiceprint_sample(
     return _deleted_sample(row, delete_clip)
 
 
+def delete_voiceprint_samples_by_ids(
+    sample_ids: list[int],
+    *,
+    db_path: Path | None = None,
+    delete_clips: bool = True,
+) -> list[DeletedVoiceprintSample]:
+    """Delete voiceprint samples by registry row id.
+
+    Used by sentence reassignment to drop samples whose audio now belongs to
+    a different speaker than the one captured at sample time.
+
+    Args:
+        sample_ids: Sample row ids to delete.
+        db_path: Optional SQLite path.
+        delete_clips: Whether to remove the underlying clip files.
+
+    Returns:
+        Deleted sample summaries (empty when ``sample_ids`` is empty or
+        contains only unknown ids).
+    """
+    if not sample_ids:
+        return []
+    database_path = _resolve_db_path(db_path)
+    if not database_path.exists():
+        return []
+    placeholders = ",".join("?" for _ in sample_ids)
+    deleted: list[DeletedVoiceprintSample] = []
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        rows = connection.execute(
+            f"""
+            SELECT samples.id, samples.public_id,
+                   speakers.id AS speaker_id, speakers.public_id AS speaker_public_id, speakers.name,
+                   samples.project_id, samples.project_speaker_id,
+                   samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
+                   samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.transcript_text, samples.sample_status
+            FROM voiceprint_samples AS samples
+            JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
+            WHERE samples.id IN ({placeholders})
+            """,
+            tuple(int(value) for value in sample_ids),
+        ).fetchall()
+        sample_rows = [_sample_row(row) for row in rows]
+        if not sample_rows:
+            return []
+        connection.execute(
+            f"DELETE FROM voiceprint_samples WHERE id IN ({placeholders})",
+            tuple(int(value) for value in sample_ids),
+        )
+        speaker_ids = {row.speaker_id for row in sample_rows}
+        for speaker_id in speaker_ids:
+            _delete_empty_speaker(connection, speaker_id)
+    for row in sample_rows:
+        deleted.append(_deleted_sample(row, delete_clips))
+    return deleted
+
+
 def delete_voiceprint_speaker(
     speaker: str,
     *,

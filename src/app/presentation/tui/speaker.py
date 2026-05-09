@@ -1009,23 +1009,27 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _handle_save_outcome(self, outcome: SpeakerReviewSaveOutcome) -> None:
         """Update review state after the in-TUI save workflow completes."""
         self._mark_speaker_names_saved()
+        reassignment_note = _summarize_reassignment_outcome(outcome.reassignment_result)
         summary = outcome.correction_summary
         if summary is not None and summary.accepted:
             self.correction_edits.clear()
-            self._set_status(
-                tr(
-                    "Saved names and accepted transcript correction. Press v to capture voiceprints.",
-                    "已保存姓名并接受文字修正。按 v 继续声纹采样。",
-                )
+            base = tr(
+                "Saved names and accepted transcript correction.",
+                "已保存姓名并接受文字修正。",
             )
+            tail = tr(" Press v to capture voiceprints.", " 按 v 继续声纹采样。")
+            self._set_status(base + reassignment_note + tail)
             self._refresh()
             return
-        self._set_status(
-            tr(
-                "Saved project review. Press v to capture voiceprints, or continue reviewing.",
-                "已保存 Project Review。按 v 继续声纹采样，或继续 review。",
-            )
+        base = tr(
+            "Saved project review.",
+            "已保存 Project Review。",
         )
+        tail = tr(
+            " Press v to capture voiceprints, or continue reviewing.",
+            " 按 v 继续声纹采样，或继续 review。",
+        )
+        self._set_status(base + reassignment_note + tail)
 
     def _mark_speaker_names_saved(self) -> None:
         """Keep in-memory workflow state aligned with the just-written speaker map."""
@@ -1351,6 +1355,35 @@ def _identity_snapshot(speakers: list[ReviewSpeaker]) -> dict[int, tuple[str, bo
         )
         for speaker in speakers
     }
+
+
+def _summarize_reassignment_outcome(result: object | None) -> str:
+    """Return a short status fragment describing the reassignment pipeline.
+
+    Args:
+        result: ``SentenceReassignmentApplyResult`` or ``None``.
+
+    Returns:
+        Localized status fragment to append to the save status line. Empty
+        when no reassignments ran.
+    """
+    if result is None:
+        return ""
+    deleted = len(getattr(result, "deleted_samples", ()) or ())
+    rematched = getattr(result, "match_summary", None) is not None
+    rematch_reason = getattr(result, "rematch_skipped_reason", None)
+    pieces: list[str] = []
+    pieces.append(tr(" Reassignments applied", " 已应用归属变更"))
+    if deleted:
+        pieces.append(
+            tr(f", {deleted} voiceprint sample(s) invalidated", f"，失效 {deleted} 条声纹样本")
+        )
+    if rematched:
+        pieces.append(tr(", voiceprint matches refreshed", "，声纹匹配已刷新"))
+    elif rematch_reason:
+        pieces.append(tr(f", rematch skipped: {rematch_reason}", f"，重新匹配被跳过：{rematch_reason}"))
+    pieces.append(".")
+    return "".join(pieces)
 
 
 def _trim_sample_text(text: str, *, limit: int = 90) -> str:

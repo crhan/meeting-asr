@@ -24,6 +24,7 @@ from app.presentation.tui.diff_render import (
     word_diff_segments,
 )
 from app.presentation.tui.i18n import tr
+from app.sentence_reassignment import SentenceReassignmentApplyResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,7 @@ class SpeakerReviewSaveOutcome:
     transcript_path: Path | None
     srt_path: Path | None
     correction_summary: CorrectionEditSummary | None = None
+    reassignment_result: SentenceReassignmentApplyResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,6 +288,8 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         lines.extend(_speaker_ignore_change_lines(self.ignore_changes))
         lines.extend(["", tr("[b]Sentence reassignments[/b]", "[b]句子归属变更[/b]")])
         lines.extend(_reassignment_change_lines(self.reassignment_changes))
+        if self.outcome.reassignment_result is not None:
+            lines.extend(_reassignment_pipeline_lines(self.outcome.reassignment_result))
         if self.outcome.correction_summary is not None:
             lines.extend(["", tr("[b]Transcript correction[/b]", "[b]文字修正[/b]")])
             lines.extend(_summary_lines(self.outcome.correction_summary))
@@ -347,6 +351,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
             self.outcome.transcript_path,
             self.outcome.srt_path,
             outcome.correction_summary,
+            reassignment_result=outcome.reassignment_result or self.outcome.reassignment_result,
         )
 
 
@@ -648,6 +653,61 @@ def _speaker_change_lines(changes: Sequence[SpeakerReviewNameChange]) -> list[st
         )
         for item in changes
     ]
+
+
+def _reassignment_pipeline_lines(result: SentenceReassignmentApplyResult) -> list[str]:
+    """Render the downstream pipeline summary triggered by reassignments.
+
+    Args:
+        result: Apply result returned by
+            ``apply_project_sentence_reassignments``.
+
+    Returns:
+        Localized summary lines for the save modal body.
+    """
+    lines: list[str] = ["", tr("[b]Reassignment pipeline[/b]", "[b]归属变更后链路[/b]")]
+    if result.sentence_files:
+        files = ", ".join(escape(path.name) for path in result.sentence_files)
+        lines.append(tr(f"- Sentence files updated: {files}", f"- 句子文件已更新：{files}"))
+    if result.anonymous_transcript_path is not None:
+        path = escape(str(result.anonymous_transcript_path))
+        lines.append(
+            tr(
+                f"- Anonymous transcript regenerated: {path}",
+                f"- 匿名转写已重写：{path}",
+            )
+        )
+    if result.deleted_samples:
+        lines.append(
+            tr(
+                f"- Voiceprint samples invalidated: {len(result.deleted_samples)} (re-capture from voiceprint review)",
+                f"- 已失效声纹样本：{len(result.deleted_samples)} 条（请重新采样）",
+            )
+        )
+    else:
+        lines.append(
+            tr(
+                "- Voiceprint samples invalidated: none",
+                "- 无声纹样本需要失效",
+            )
+        )
+    if result.match_summary is not None:
+        path = escape(str(result.match_summary.match_path))
+        lines.append(
+            tr(
+                f"- Voiceprint matches refreshed: {path}",
+                f"- 声纹匹配已刷新：{path}",
+            )
+        )
+    elif result.rematch_skipped_reason is not None:
+        reason = escape(result.rematch_skipped_reason)
+        lines.append(
+            tr(
+                f"- Voiceprint rematch skipped: {reason}",
+                f"- 声纹重新匹配被跳过：{reason}",
+            )
+        )
+    return lines
 
 
 def _reassignment_change_lines(changes: Sequence[SentenceReassignmentChange]) -> list[str]:

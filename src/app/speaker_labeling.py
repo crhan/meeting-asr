@@ -176,13 +176,16 @@ class SentenceReassignmentSpec:
     The triple ``(sentence_id, begin_time_ms, end_time_ms)`` matches the
     sentence inside the persisted JSON payload. ``sentence_id`` is preferred
     when present; the timing pair is used as a fallback because some legacy
-    ASR payloads omit a stable id.
+    ASR payloads omit a stable id. ``original_speaker_id`` is the speaker
+    label the sentence carried at load time and is required by downstream
+    invalidation (e.g. dropping voiceprint samples captured for that speaker).
     """
 
     sentence_id: int | None
     begin_time_ms: int
     end_time_ms: int
     new_speaker_id: int
+    original_speaker_id: int | None = None
 
 
 def apply_sentence_reassignments(

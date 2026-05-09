@@ -276,7 +276,17 @@ s              保存
 ?              快捷键
 ```
 
-时间轴视图（`t`）按 ASR 切分的真实时间顺序展示所有句子，便于边听边核对。如果听出某句话其实是另一个人讲的，光标停在该句上按 `r` 选目标 speaker，保存后会写回 `asr/sentences.json`（以及 `asr/sentences_corrected.json`，如果存在），重新生成 named transcript / 字幕。
+时间轴视图（`t`）按 ASR 切分的真实时间顺序展示所有句子，便于边听边核对。如果听出某句话其实是另一个人讲的，光标停在该句上按 `r` 选目标 speaker。
+
+按 `s` 保存若存在归属变更，会自动跑后链路：
+
+- 写回 `asr/sentences.json`（以及 `asr/sentences_corrected.json`，如果存在）
+- 重新生成命名 transcript / 字幕（`transcript_named.txt` / `subtitle_named.srt` 及对应 corrected 版本）
+- 重新生成匿名分组 transcript（`transcript_speakers.txt`）
+- 删除已采集的声纹样本中、与归属变更句子区间重叠且属于原 speaker 的那些（其它项目和其它 speaker 的样本不受影响），用户需要后续重新采集
+- 重新跑 `project speakers match`，刷新 `speakers/speaker_matches.json`
+
+只改 speaker 姓名（没有 reassign）不会触发声纹失效或 rematch。
 
 如果发现 ASR 把多个人合并成同一个 speaker（典型表现：某个 speaker 声纹评分异常低，且每个 speaker 的样本里听到不同的人），先按估算的真实人数重跑 ASR：
 

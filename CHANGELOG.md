@@ -10,7 +10,8 @@
 ### 新增
 
 - Project Review TUI 新增「时间轴视图」（`t` 键切换）：按 ASR 切分的真实时间顺序展示所有句子，便于边听边核对。
-- 在时间轴视图下按 `r` 可把当前句子重新指派给另一个 speaker；保存时写回 `asr/sentences.json`（以及 `asr/sentences_corrected.json`），并重新生成 named transcript 与字幕。
+- 在时间轴视图下按 `r` 可把当前句子重新指派给另一个 speaker。
+- 按 `s` 保存若存在归属变更，会自动跑后链路：写回 `asr/sentences.json` / `sentences_corrected.json`，重新生成命名 transcript 与字幕、匿名 `transcript_speakers.txt`，删除被归属变更覆盖的声纹样本，并重跑 voiceprint 匹配（`speaker_matches.json`）。
 - Voiceprint Review 播放样本时会在状态栏显示播放进度，并在当前 sample 行标记 `PLAY`。
 
 ### 变更

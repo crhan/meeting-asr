@@ -80,6 +80,10 @@ from app.presentation.tui.project import (
     render_project_picker_summary,
     run_project_picker_tui,
 )
+from app.sentence_reassignment import (
+    SentenceReassignmentApplyResult,
+    apply_project_sentence_reassignments,
+)
 from app.speaker_labeling import (
     SentenceReassignmentSpec,
     apply_sentence_reassignments,
@@ -191,6 +195,7 @@ class ProjectReviewCorrectionOptions:
 
     edit_options: CorrectionEditOptions
     yes: bool
+    store_dir: Path | None = None
 
 
 @app.command("create")
@@ -509,6 +514,7 @@ def review(
             model=model,
         ),
         yes=yes,
+        store_dir=store_dir,
     )
     _run_speaker_review(
         project_dir,
@@ -1157,20 +1163,27 @@ def _run_speaker_review(
         )
         return
     decision = run_speaker_review_tui(session)
-    _handle_speaker_review_decision(project_dir, decision, correction_options)
+    _handle_speaker_review_decision(project_dir, decision, correction_options, store_dir=store_dir)
 
 
 def _handle_speaker_review_decision(
     project_dir: Path,
     decision: SpeakerReviewDecision,
     correction_options: ProjectReviewCorrectionOptions | None,
+    *,
+    store_dir: Path | None = None,
 ) -> None:
     """Persist one TUI decision and run the requested follow-up action."""
     if not decision.saved:
         typer.echo("Speaker review exited without saving.")
         return
     project_dir = decision.project_dir or project_dir
-    _persist_sentence_reassignments(project_dir, decision)
+    effective_store_dir = store_dir if store_dir is not None else (
+        correction_options.store_dir if correction_options else None
+    )
+    reassignment_result = _persist_sentence_reassignments(
+        project_dir, decision, store_dir=effective_store_dir
+    )
     mapping_path, transcript_path, srt_path = run_with_cli_errors(
         lambda: apply_project_speakers(
             project_dir,
@@ -1183,6 +1196,7 @@ def _handle_speaker_review_decision(
     typer.echo(f"Mapping written to: {mapping_path}")
     typer.echo(f"Named transcript written to: {transcript_path}")
     typer.echo(f"Named subtitle written to: {srt_path}")
+    _echo_reassignment_result(reassignment_result)
     if decision.action == "correct-inline":
         _run_review_inline_correction(project_dir, decision, correction_options)
         return
@@ -1197,13 +1211,33 @@ def _handle_speaker_review_decision(
     typer.echo("  meeting-asr voiceprint embed")
 
 
+def _echo_reassignment_result(result: SentenceReassignmentApplyResult | None) -> None:
+    """Print a compact summary when sentence reassignments were applied."""
+    if result is None:
+        return
+    typer.echo("")
+    typer.echo(f"Sentence reassignments applied to: {', '.join(str(path) for path in result.sentence_files)}")
+    if result.anonymous_transcript_path is not None:
+        typer.echo(f"Anonymous transcript regenerated: {result.anonymous_transcript_path}")
+    if result.deleted_samples:
+        typer.echo(
+            f"Voiceprint samples invalidated: {len(result.deleted_samples)} (re-capture from voiceprint review)"
+        )
+    if result.match_summary is not None:
+        typer.echo(f"Voiceprint matches refreshed: {result.match_summary.match_path}")
+    elif result.rematch_skipped_reason is not None:
+        typer.echo(f"Voiceprint rematch skipped: {result.rematch_skipped_reason}")
+
+
 def _save_review_from_tui(
     project_dir: Path,
     decision: SpeakerReviewDecision,
     correction_options: ProjectReviewCorrectionOptions,
 ) -> SpeakerReviewSaveOutcome:
     """Persist project review state from inside the TUI."""
-    _persist_sentence_reassignments(project_dir, decision)
+    reassignment_result = _persist_sentence_reassignments(
+        project_dir, decision, store_dir=correction_options.store_dir
+    )
     mapping_path, transcript_path, srt_path = apply_project_speakers(
         project_dir,
         decision.mapping,
@@ -1220,7 +1254,13 @@ def _save_review_from_tui(
                 correction_summary.proposal_json_path,
                 correction_options,
             ).correction_summary
-    return SpeakerReviewSaveOutcome(mapping_path, transcript_path, srt_path, correction_summary)
+    return SpeakerReviewSaveOutcome(
+        mapping_path,
+        transcript_path,
+        srt_path,
+        correction_summary,
+        reassignment_result=reassignment_result,
+    )
 
 
 def _prepare_review_correction_from_tui(
@@ -1268,31 +1308,50 @@ def _accept_review_correction_from_tui(
 def _persist_sentence_reassignments(
     project_dir: Path,
     decision: SpeakerReviewDecision,
-) -> None:
-    """Apply pending sentence speaker reassignments to the project's ASR files.
+    *,
+    store_dir: Path | None = None,
+    rematch: bool = True,
+) -> SentenceReassignmentApplyResult | None:
+    """Apply pending reassignments and refresh every dependent artifact.
 
     Args:
         project_dir: Project root directory.
         decision: Save decision returned by the speaker review TUI.
+        store_dir: Optional voiceprint store directory.
+        rematch: Whether to rerun voiceprint matching after invalidation.
+
+    Returns:
+        Apply result describing rewritten sentence files, dropped voiceprint
+        samples, and the new match summary; ``None`` when there were no
+        reassignments to apply.
 
     Notes:
         Reassignments rewrite ``sentences.json`` (and ``sentences_corrected.json``
-        when present) so the named transcript and SRT regenerated by
-        ``apply_project_speakers`` reflect the corrected speaker labels.
+        when present), regenerate ``exports/transcript_speakers.txt``, drop
+        voiceprint samples whose audio now belongs to another speaker, and
+        rerun ``speaker_matches.json``. The named transcript and SRT remain
+        the responsibility of the caller's ``apply_project_speakers`` step.
     """
     if not decision.sentence_reassignments:
-        return
-    paths = project_paths(project_dir)
+        return None
     specs = [
         SentenceReassignmentSpec(
             sentence_id=item.sentence_id,
             begin_time_ms=item.begin_time_ms,
             end_time_ms=item.end_time_ms,
             new_speaker_id=item.new_speaker_id,
+            original_speaker_id=item.original_speaker_id,
         )
         for item in decision.sentence_reassignments
     ]
-    run_with_cli_errors(lambda: apply_sentence_reassignments(paths.asr_dir, specs))
+    return run_with_cli_errors(
+        lambda: apply_project_sentence_reassignments(
+            project_dir,
+            specs,
+            store_dir=store_dir,
+            rematch=rematch,
+        )
+    )
 
 
 def _decision_correction_edits(decision: SpeakerReviewDecision) -> list[object]:
