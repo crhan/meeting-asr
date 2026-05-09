@@ -744,18 +744,18 @@ def _propose_polish_changes(
                 progress,
                 concurrency=concurrency,
             )
-        else:
-            changes = _strict_ai_polish_changes(
-                paths,
-                manifest,
-                result,
-                speaker_mapping,
-                settings,
-                model,
-                progress,
-                concurrency=concurrency,
-            )
-        return changes, model, None
+            return changes, model, None
+        changes, partial_error = _strict_ai_polish_changes(
+            paths,
+            manifest,
+            result,
+            speaker_mapping,
+            settings,
+            model,
+            progress,
+            concurrency=concurrency,
+        )
+        return changes, model, partial_error
     except Exception as exc:
         return [], options.model or "dashscope-correction", str(exc)
 
@@ -862,11 +862,19 @@ def _strict_ai_polish_changes(
     progress: CliProgressReporter | None,
     *,
     concurrency: int,
-) -> list[CorrectionChange]:
-    """Run strict polish: hard-whitelist prompt + deterministic guard, write sidecar."""
+) -> tuple[list[CorrectionChange], str | None]:
+    """
+    Run strict polish: hard-whitelist prompt + deterministic guard, write sidecar.
+
+    Returns ``(changes, error_message)``. ``error_message`` is non-None when one
+    or more batches failed but the run still produced usable output. When EVERY
+    batch fails we raise so the caller surfaces the same recovery context as
+    the legacy path — silently returning an empty proposal would let DashScope
+    outages disguise themselves as 'no changes needed'.
+    """
     candidates = _all_llm_candidates(result, speaker_mapping)
     if not candidates:
-        return []
+        return [], None
     batches = list(_batches(candidates, _POLISH_STRICT_BATCH_SIZE))
     request_timeout = _strict_polish_request_timeout(model)
     items_by_id: dict[str, LlmPolishItem] = {}
@@ -904,7 +912,13 @@ def _strict_ai_polish_changes(
                 active=0,
                 model=model,
             )
-    return _strict_polish_changes_from_items(
+    if failed_batches and len(failed_batches) == len(batches):
+        first_index, first_error = failed_batches[0]
+        wrapped = RuntimeError(first_error)
+        raise RuntimeError(
+            _polish_failure_message(manifest.project_id, model, first_index, len(batches), wrapped)
+        )
+    changes = _strict_polish_changes_from_items(
         paths=paths,
         result=result,
         candidates=candidates,
@@ -913,6 +927,27 @@ def _strict_ai_polish_changes(
         model=model,
         failed_batches=failed_batches,
         total_batches=len(batches),
+    )
+    error_msg = (
+        _strict_polish_partial_failure_message(model, failed_batches, len(batches))
+        if failed_batches
+        else None
+    )
+    return changes, error_msg
+
+
+def _strict_polish_partial_failure_message(
+    model: str,
+    failed_batches: list[tuple[int, str]],
+    total: int,
+) -> str:
+    """Compact summary for caller to surface when only some strict batches failed."""
+    failed_count = len(failed_batches)
+    sample_index, sample_error = failed_batches[0]
+    return (
+        f"Strict polish completed with partial failures: model={model} "
+        f"failed_batches={failed_count}/{total} first_failure_batch={sample_index} "
+        f"first_error={sample_error[:200]}"
     )
 
 

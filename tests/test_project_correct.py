@@ -407,6 +407,65 @@ def test_project_correct_polish_default_uses_strict_path_and_records_change_type
     assert all("我觉得" not in c["original_text"] for c in changes)
 
 
+def test_project_correct_polish_strict_surfaces_total_failure(tmp_path: Path, monkeypatch) -> None:
+    """When every strict batch fails, polish must surface the legacy-style recovery context, not a silent no-op."""
+    project_dir = _sample_project_with_text(tmp_path, "用codekex这个嘛。")
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+
+    def always_fail(**_kwargs):
+        raise TimeoutError("read timeout")
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish_strict", always_fail)
+
+    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+
+    assert result.exit_code == 0
+    manifest = load_manifest(project_dir)
+    assert "Transcript polish" in result.output
+    assert "Model fallback:" in result.output
+    assert "stage=polish" in result.output
+    assert f"project_id={manifest.project_id}" in result.output
+    assert f"meeting-asr project correct polish {manifest.project_id}" in result.output
+    proposal_files = sorted((project_dir / "tmp" / "corrections").glob("proposal_*.json"))
+    assert proposal_files == []
+
+
+def test_project_correct_polish_strict_reports_partial_failure(tmp_path: Path, monkeypatch) -> None:
+    """When some strict batches fail but others succeed, polish must surface partial failure via model_error."""
+    sentences = [f"第 {i} 句话需要修复。" for i in range(1, 25)]  # 2 batches of 12
+    project_dir = _sample_project_with_sentences(tmp_path, sentences)
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+    call_state = {"count": 0}
+
+    def half_fail(**kwargs):
+        call_state["count"] += 1
+        if call_state["count"] == 1:
+            raise TimeoutError("read timeout")
+        first = kwargs["candidates"][0]
+        return LlmStrictPolishResult(
+            "ok",
+            [LlmPolishItem(first.candidate_id, first.text + " 修复后。", "punct", "")],
+            kwargs["model"],
+        )
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish_strict", half_fail)
+
+    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+
+    assert result.exit_code == 0
+    assert "Model fallback:" in result.output
+    assert "Strict polish completed with partial failures" in result.output
+    proposal = _latest_proposal(project_dir)
+    assert proposal["model_error"] and "partial failures" in proposal["model_error"]
+    assert len(proposal["proposed_changes"]) >= 1
+
+
 def test_project_correct_polish_strict_guard_rejects_protected_word_deletion(
     tmp_path: Path, monkeypatch
 ) -> None:
