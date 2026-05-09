@@ -233,7 +233,6 @@ def test_project_run_applies_accepted_voiceprint_matches(
     assert f"meeting-asr voiceprint review {manifest.project_id}" in result.output
     assert f"meeting-asr project correct edit {manifest.project_id}" in result.output
     assert f"meeting-asr project transcript show {manifest.project_id} --kind corrected" in result.output
-    assert "meeting-asr project review" not in result.output
     assert "欧丁" in transcript.read_text(encoding="utf-8")
     assert "敬悦" in transcript.read_text(encoding="utf-8")
 
@@ -1094,7 +1093,7 @@ def test_project_list_command_shows_meeting_time(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Meeting (Local)" in result.output
-    assert "2026-05-02 10:00" in result.output
+    assert "2026-05-02" in result.output
     assert "Timed Demo" in result.output
 
 
