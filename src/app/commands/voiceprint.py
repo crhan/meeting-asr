@@ -17,6 +17,11 @@ from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import cli_console
 from app.presentation.cli.plain import echo_plain_table
+from app.presentation.cli.voiceprint_quality import (
+    voiceprint_quality_payload,
+    voiceprint_quality_summary_lines,
+    voiceprint_quality_table,
+)
 from app.presentation.cli.progress import run_with_progress
 from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.completion_helpers import complete_voiceprint_model
@@ -48,7 +53,15 @@ from app.presentation.tui.voiceprint_review import (
     run_voiceprint_review_tui,
 )
 from app.presentation.tui.voiceprint_review_context import render_voiceprint_review_summary
+from app.presentation.tui.voiceprint_quality import (
+    persist_quality_decision,
+    run_voiceprint_quality_tui,
+)
 from app.voiceprint_embedding import embed_voiceprint_samples
+from app.voiceprint_quality import (
+    VoiceprintQualityReport,
+    analyze_voiceprint_quality,
+)
 from app.voiceprints import (
     VoiceprintCaptureSummary,
     capture_voiceprints,
@@ -470,6 +483,37 @@ def embed_command(
     typer.echo(f"Skipped: {summary.skipped_count}")
 
 
+@app.command("quality")
+def quality_command(
+    speaker: Optional[str] = typer.Argument(None, metavar="[SPEAKER]"),
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
+    review: bool = typer.Option(False, "--review", help="Open an interactive review TUI for suspicious samples."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Find and review voiceprint sample outliers without deleting user data."""
+    report = run_with_cli_errors(
+        lambda: analyze_voiceprint_quality(store_dir=store_dir, speaker=speaker, model=model)
+    )
+    if as_json:
+        emit_json(voiceprint_quality_payload(report))
+        return
+    if review:
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            _echo_voiceprint_quality_report(report)
+            raise typer.BadParameter("Voiceprint quality TUI requires an interactive terminal.")
+        decision = run_voiceprint_quality_tui(report)
+        changes = run_with_cli_errors(lambda: persist_quality_decision(decision, store_dir=store_dir))
+        if not decision.saved:
+            typer.echo("Voiceprint quality review closed; no changes were written.")
+            return
+        typer.echo(f"Voiceprint quality changes saved: {len(changes)}")
+        for sample_id, status in changes.items():
+            typer.echo(f"  {sample_id} -> {status}")
+        return
+    _echo_voiceprint_quality_report(report)
+
+
 @app.command("show")
 def show_command(
     speaker: str = typer.Argument(..., metavar="SPEAKER"),
@@ -495,6 +539,7 @@ def show_command(
         typer.echo(f"  clip: {row.clip_path}")
         typer.echo(f"  time: {start} - {end}")
         typer.echo(f"  sha256: {row.clip_sha256}")
+        typer.echo(f"  status: {row.sample_status}")
         typer.echo(f"  text: {row.transcript_text}")
 
 
@@ -721,8 +766,29 @@ def _voiceprint_sample_payload(index: int, row: VoiceprintSampleRow) -> dict[str
         "clip_sha256": row.clip_sha256,
         "source_begin_time_ms": row.source_begin_time_ms,
         "source_end_time_ms": row.source_end_time_ms,
+        "status": row.sample_status,
         "transcript_text": row.transcript_text,
     }
+
+
+def _echo_voiceprint_quality_report(report: VoiceprintQualityReport) -> None:
+    """
+    Print voiceprint quality diagnostics.
+
+    Args:
+        report: Quality report.
+    """
+    for line in voiceprint_quality_summary_lines(report):
+        typer.echo(line)
+    if not report.people:
+        typer.echo("No embedded voiceprint samples found.")
+        return
+    _voiceprint_table_console().print(voiceprint_quality_table(report))
+    if report.suspicious_count:
+        typer.echo("")
+        typer.echo("Review suspicious samples:")
+        typer.echo("  meeting-asr voiceprint quality --review")
+        typer.echo("Quarantined samples are kept in the library but excluded from future matching.")
 
 
 def _embedded_count_text(row: VoiceprintSpeakerRow) -> str:

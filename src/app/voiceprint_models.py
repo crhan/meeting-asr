@@ -23,6 +23,7 @@ class VoiceprintSampleRow:
     source_begin_time_ms: int
     source_end_time_ms: int
     transcript_text: str
+    sample_status: str = "active"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,8 +50,13 @@ class VoiceprintEmbeddingRow:
     speaker_public_id: str
     speaker_name: str
     clip_path: Path
+    project_id: str
+    source_begin_time_ms: int
+    source_end_time_ms: int
+    transcript_text: str
     model: str
     vector: list[float]
+    sample_status: str = "active"
 
 
 @dataclass(frozen=True, slots=True)

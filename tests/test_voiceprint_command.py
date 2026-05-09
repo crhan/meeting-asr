@@ -13,9 +13,13 @@ from app.config import save_config_values
 from app.project_manager import create_project, load_manifest
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
+    StoredVoiceprintSample,
     get_voiceprint_db_path,
     list_voiceprint_embeddings,
     list_voiceprint_samples_for_project,
+    store_voiceprint_samples,
+    update_voiceprint_sample_status,
+    upsert_voiceprint_embedding,
 )
 
 runner = CliRunner()
@@ -260,6 +264,35 @@ def test_voiceprint_embed_stores_sample_embeddings(
     assert "Embedded samples: 2/2" in list_result.output
 
 
+def test_voiceprint_quality_flags_outliers_and_quarantine_excludes_embedding(
+    tmp_path: Path,
+) -> None:
+    """Quality review should expose outliers and statuses should affect matching inputs."""
+    store_dir = _quality_store(tmp_path)
+    db_path = get_voiceprint_db_path(store_dir)
+
+    result = runner.invoke(app, ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir)])
+    json_result = runner.invoke(app, ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir), "--json"])
+    payload = json.loads(json_result.output)
+    critical_sample = next(
+        sample for sample in payload["people"][0]["samples"] if sample["label"] == "critical"
+    )
+    update_voiceprint_sample_status(critical_sample["sample_public_id"], "quarantined", db_path)
+
+    active_embeddings = list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)
+    all_embeddings = list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path, include_inactive=True)
+    show_result = runner.invoke(app, ["voiceprint", "show", "Alice", "--store-dir", str(store_dir)])
+
+    assert result.exit_code == 0
+    assert "Suspicious: 1 | Critical: 1" in result.output
+    assert "Review suspicious samples:" in result.output
+    assert json_result.exit_code == 0
+    assert critical_sample["score"] < 0.6
+    assert len(active_embeddings) == 3
+    assert len(all_embeddings) == 4
+    assert "status: quarantined" in show_result.output
+
+
 def test_voiceprint_delete_sample_removes_row_and_clip(
     monkeypatch,
     tmp_path: Path,
@@ -434,6 +467,50 @@ def _fake_extract_audio_clip(
 def _fake_embed_audio_file(path: Path, *, provider: str | None) -> list[float]:
     """Return deterministic vectors based on the speaker path."""
     return [0.0, 1.0] if "speaker_1" in str(path) else [1.0, 0.0]
+
+
+def _quality_store(tmp_path: Path) -> Path:
+    """Create a voiceprint store with one obvious outlier."""
+    store_dir = tmp_path / "quality-voiceprints"
+    source_path = tmp_path / "meeting.mp4"
+    source_path.write_bytes(b"source")
+    samples = [
+        _stored_sample(store_dir, source_path, "Alice", index=index)
+        for index in range(1, 5)
+    ]
+    db_path = store_voiceprint_samples(samples, get_voiceprint_db_path(store_dir))
+    rows = list_voiceprint_samples_for_project("project-quality", db_path)
+    vectors = ([1.0, 0.0], [0.98, 0.02], [0.99, 0.01], [0.0, 1.0])
+    for row, vector in zip(rows, vectors, strict=True):
+        upsert_voiceprint_embedding(row.sample_id, LOCAL_SPEECHBRAIN_MODEL, vector, db_path)
+    return store_dir
+
+
+def _stored_sample(
+    store_dir: Path,
+    source_path: Path,
+    speaker_name: str,
+    *,
+    index: int,
+) -> StoredVoiceprintSample:
+    """Build one stored sample fixture."""
+    clip_path = store_dir / "clips" / "project-quality" / "speaker_0" / f"clip_{index:03d}.wav"
+    clip_path.parent.mkdir(parents=True, exist_ok=True)
+    clip_path.write_bytes(f"{speaker_name}-{index}".encode())
+    return StoredVoiceprintSample(
+        speaker_name=speaker_name,
+        project_id="project-quality",
+        project_path=store_dir / "project-quality",
+        project_speaker_id=0,
+        source_path=source_path,
+        clip_path=clip_path,
+        clip_rel_path=str(clip_path.relative_to(store_dir)),
+        source_begin_time_ms=index * 1000,
+        source_end_time_ms=index * 1000 + 500,
+        clip_begin_time_ms=0,
+        clip_end_time_ms=500,
+        transcript_text=f"sample {index}",
+    )
 
 
 def _speaker_id_from_list(output: str, name: str) -> str:

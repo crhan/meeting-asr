@@ -23,7 +23,7 @@ from app.voiceprint_models import (
     VoiceprintSpeakerRow,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 VOICEPRINT_STORE_DIR = "voiceprints"
 VOICEPRINT_DB_FILENAME = "voiceprints.sqlite"
 VOICEPRINT_CLIPS_DIR = "clips"
@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS voiceprint_samples (
   source_end_time_ms INTEGER NOT NULL,
   clip_begin_time_ms INTEGER NOT NULL,
   clip_end_time_ms INTEGER NOT NULL,
+  sample_status TEXT NOT NULL DEFAULT 'active',
   transcript_text TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -83,8 +84,8 @@ INSERT INTO voiceprint_samples (
   public_id, speaker_id, project_id, project_path, project_speaker_id,
   source_path, clip_path, clip_rel_path, clip_sha256,
   source_begin_time_ms, source_end_time_ms, clip_begin_time_ms,
-  clip_end_time_ms, transcript_text, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  clip_end_time_ms, sample_status, transcript_text, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(clip_path) DO UPDATE SET
   speaker_id = excluded.speaker_id,
   project_id = excluded.project_id,
@@ -230,7 +231,7 @@ def list_voiceprint_samples(speaker: str, db_path: Path | None = None) -> list[V
                    samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
-                   samples.transcript_text
+                   samples.transcript_text, samples.sample_status
             FROM voiceprint_samples AS samples
             JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
             WHERE speakers.id = ?
@@ -264,7 +265,7 @@ def list_all_voiceprint_samples(db_path: Path | None = None) -> list[VoiceprintS
                    samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
-                   samples.transcript_text
+                   samples.transcript_text, samples.sample_status
             FROM voiceprint_samples AS samples
             JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
             ORDER BY speakers.name, samples.project_id, samples.source_begin_time_ms
@@ -297,7 +298,7 @@ def list_voiceprint_samples_for_project(project_id: str, db_path: Path | None = 
                    samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
-                   samples.transcript_text
+                   samples.transcript_text, samples.sample_status
             FROM voiceprint_samples AS samples
             JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
             WHERE samples.project_id = ?
@@ -356,13 +357,19 @@ def upsert_voiceprint_embedding(sample_id: int, model: str, vector: list[float],
         )
 
 
-def list_voiceprint_embeddings(model: str, db_path: Path | None = None) -> list[VoiceprintEmbeddingRow]:
+def list_voiceprint_embeddings(
+    model: str,
+    db_path: Path | None = None,
+    *,
+    include_inactive: bool = False,
+) -> list[VoiceprintEmbeddingRow]:
     """
     List stored embeddings for a model.
 
     Args:
         model: Embedding model key.
         db_path: Optional SQLite path.
+        include_inactive: Include quarantined/rejected samples when true.
 
     Returns:
         Embedding rows.
@@ -373,8 +380,43 @@ def list_voiceprint_embeddings(model: str, db_path: Path | None = None) -> list[
     with sqlite3.connect(database_path) as connection:
         _configure_connection(connection)
         _ensure_schema(connection)
-        rows = connection.execute(_embedding_rows_sql(), (model,)).fetchall()
+        rows = connection.execute(_embedding_rows_sql(include_inactive=include_inactive), (model,)).fetchall()
     return [_embedding_row(row) for row in rows]
+
+
+def update_voiceprint_sample_status(
+    sample_public_id: str,
+    status: str,
+    db_path: Path | None = None,
+) -> VoiceprintSampleRow:
+    """
+    Update one sample's lifecycle status.
+
+    Args:
+        sample_public_id: Stable voiceprint sample id.
+        status: New sample status.
+        db_path: Optional SQLite path.
+
+    Returns:
+        Updated sample row.
+    """
+    if status not in {"active", "quarantined", "rejected"}:
+        raise ValueError(f"Unsupported voiceprint sample status: {status}")
+    database_path = _resolve_db_path(db_path)
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        row = connection.execute(_sample_by_public_id_sql(), (sample_public_id,)).fetchone()
+        if row is None:
+            raise LookupError(f"No voiceprint sample found for id: {sample_public_id}")
+        connection.execute(
+            "UPDATE voiceprint_samples SET sample_status = ?, updated_at = ? WHERE public_id = ?",
+            (status, _now_iso(), sample_public_id),
+        )
+        updated = connection.execute(_sample_by_public_id_sql(), (sample_public_id,)).fetchone()
+    if updated is None:
+        raise LookupError(f"No voiceprint sample found for id: {sample_public_id}")
+    return _sample_row(updated)
 
 
 def delete_voiceprint_sample(
@@ -480,8 +522,21 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         connection: SQLite connection.
     """
     connection.executescript(SCHEMA_SQL)
+    _ensure_sample_status_column(connection)
     ensure_voiceprint_public_ids(connection)
     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
+def _ensure_sample_status_column(connection: sqlite3.Connection) -> None:
+    """
+    Backfill sample status for databases created before quality review.
+
+    Args:
+        connection: SQLite connection.
+    """
+    columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(voiceprint_samples)").fetchall()}
+    if "sample_status" not in columns:
+        connection.execute("ALTER TABLE voiceprint_samples ADD COLUMN sample_status TEXT NOT NULL DEFAULT 'active'")
 
 
 def _upsert_sample(connection: sqlite3.Connection, sample: StoredVoiceprintSample) -> None:
@@ -548,6 +603,7 @@ def _sample_values(sample: StoredVoiceprintSample, speaker_id: int, public_id: s
         sample.source_end_time_ms,
         sample.clip_begin_time_ms,
         sample.clip_end_time_ms,
+        "active",
         sample.transcript_text,
         now,
         now,
@@ -743,6 +799,7 @@ def _sample_row(row: sqlite3.Row) -> VoiceprintSampleRow:
         source_begin_time_ms=int(row["source_begin_time_ms"]),
         source_end_time_ms=int(row["source_end_time_ms"]),
         transcript_text=str(row["transcript_text"]),
+        sample_status=str(row["sample_status"]),
     )
 
 
@@ -769,23 +826,47 @@ def _speaker_row(row: sqlite3.Row) -> VoiceprintSpeakerRow:
     )
 
 
-def _embedding_rows_sql() -> str:
+def _embedding_rows_sql(*, include_inactive: bool = False) -> str:
     """
     Return SQL for joined embedding rows.
 
     Returns:
         SQL query.
     """
-    return """
+    status_filter = "" if include_inactive else "AND samples.sample_status = 'active'"
+    return f"""
         SELECT samples.id AS sample_id, samples.public_id AS sample_public_id,
                speakers.id AS speaker_id, speakers.public_id AS speaker_public_id,
-               speakers.name, samples.clip_path,
+               speakers.name, samples.clip_path, samples.project_id,
+               samples.source_begin_time_ms, samples.source_end_time_ms,
+               samples.transcript_text, samples.sample_status,
                embeddings.model, embeddings.vector
         FROM voiceprint_embeddings AS embeddings
         JOIN voiceprint_samples AS samples ON samples.id = embeddings.sample_id
         JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
         WHERE embeddings.model = ?
+          {status_filter}
         ORDER BY speakers.name, samples.project_id, samples.source_begin_time_ms
+    """
+
+
+def _sample_by_public_id_sql() -> str:
+    """
+    Return SQL for one sample by public id.
+
+    Returns:
+        Joined sample query.
+    """
+    return """
+        SELECT samples.id, samples.public_id,
+               speakers.id AS speaker_id, speakers.public_id AS speaker_public_id, speakers.name,
+               samples.project_id, samples.project_speaker_id,
+               samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
+               samples.source_begin_time_ms, samples.source_end_time_ms,
+               samples.transcript_text, samples.sample_status
+        FROM voiceprint_samples AS samples
+        JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
+        WHERE samples.public_id = ?
     """
 
 
@@ -806,8 +887,13 @@ def _embedding_row(row: sqlite3.Row) -> VoiceprintEmbeddingRow:
         speaker_public_id=str(row["speaker_public_id"]),
         speaker_name=str(row["name"]),
         clip_path=Path(str(row["clip_path"])),
+        project_id=str(row["project_id"]),
+        source_begin_time_ms=int(row["source_begin_time_ms"]),
+        source_end_time_ms=int(row["source_end_time_ms"]),
+        transcript_text=str(row["transcript_text"]),
         model=str(row["model"]),
         vector=_unpack_vector(bytes(row["vector"])),
+        sample_status=str(row["sample_status"]),
     )
 
 
