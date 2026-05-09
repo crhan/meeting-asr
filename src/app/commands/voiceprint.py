@@ -55,7 +55,7 @@ from app.presentation.tui.voiceprint_review import (
 from app.presentation.tui.voiceprint_review_context import render_voiceprint_review_summary
 from app.presentation.tui.voiceprint_quality import (
     persist_quality_decision,
-    run_voiceprint_quality_tui,
+    run_voiceprint_quality_review_tui,
 )
 from app.voiceprint_embedding import embed_voiceprint_samples
 from app.voiceprint_quality import (
@@ -502,7 +502,7 @@ def quality_command(
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             _echo_voiceprint_quality_report(report)
             raise typer.BadParameter("Voiceprint quality TUI requires an interactive terminal.")
-        decision = run_voiceprint_quality_tui(report)
+        decision = run_voiceprint_quality_review_tui(report, store_dir=store_dir, speaker=speaker, model=model)
         changes = run_with_cli_errors(lambda: persist_quality_decision(decision, store_dir=store_dir))
         if not decision.saved:
             typer.echo("Voiceprint quality review closed; no changes were written.")

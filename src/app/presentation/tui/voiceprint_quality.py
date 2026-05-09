@@ -22,6 +22,7 @@ from app.voiceprint_quality import (
     VoiceprintQualityPerson,
     VoiceprintQualityReport,
     VoiceprintQualitySample,
+    analyze_voiceprint_quality,
 )
 from app.voiceprint_store import get_voiceprint_db_path, update_voiceprint_sample_status
 
@@ -128,20 +129,34 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         Binding("a", "mark_active", "Keep active"),
         Binding("r", "mark_quarantined", "Quarantine"),
         Binding("s", "save", "Save"),
+        Binding("u", "refresh_quality", "Refresh"),
         Binding("?", "show_shortcuts", "Help"),
         Binding("escape", "quit", "Quit", show=False),
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, report: VoiceprintQualityReport) -> None:
+    def __init__(
+        self,
+        report: VoiceprintQualityReport,
+        *,
+        store_dir: Path | None = None,
+        speaker: str | None = None,
+        model: str | None = None,
+    ) -> None:
         """
         Create the quality review app.
 
         Args:
             report: Quality report to review.
+            store_dir: Optional voiceprint store directory for in-place save/refresh.
+            speaker: Optional speaker filter to preserve on refresh.
+            model: Optional embedding model key to preserve on refresh.
         """
         super().__init__()
         self.report = report
+        self.store_dir = store_dir
+        self.speaker = speaker
+        self.model = model
         self.selected_person_index = 0
         self.selected_sample_indices = {person.speaker_public_id: 0 for person in report.people}
         self.focused_column = "people"
@@ -228,8 +243,24 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         self._mark_sample(VOICEPRINT_SAMPLE_STATUS_QUARANTINED)
 
     def action_save(self) -> None:
-        """Persist changed sample statuses and exit."""
-        self.exit(VoiceprintQualityDecision(True, _changed_statuses(self.report, self.statuses)))
+        """Persist changed sample statuses and refresh quality scores."""
+        changes = _changed_statuses(self.report, self.statuses)
+        if self.store_dir is None:
+            self.exit(VoiceprintQualityDecision(True, changes))
+            return
+        if not changes:
+            self._set_status(tr("No staged quality changes to save.", "没有待保存的声纹质量变更。"))
+            return
+        for sample_id, status in changes.items():
+            update_voiceprint_sample_status(sample_id, status, get_voiceprint_db_path(self.store_dir))
+        self._reload_report(status=tr(f"Saved {len(changes)} change(s) and refreshed quality scores.", f"已保存 {len(changes)} 个变更，并刷新质量评分。"))
+
+    def action_refresh_quality(self) -> None:
+        """Reload quality scores from SQLite."""
+        if _changed_statuses(self.report, self.statuses):
+            self._set_status(tr("Save staged changes before refreshing quality scores.", "刷新质量评分前请先保存暂存变更。"))
+            return
+        self._reload_report(status=tr("Quality scores refreshed.", "质量评分已刷新。"))
 
     def action_show_shortcuts(self) -> None:
         """Show shortcut help."""
@@ -270,6 +301,16 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         self.query_one("#overview", Static).update(self._overview())
         self.query_one("#people", Static).update(self._people_pane())
         self.query_one("#samples", Static).update(self._samples_pane())
+
+    def _reload_report(self, *, status: str) -> None:
+        """Reload quality report while preserving the selected person when possible."""
+        previous_person_id = self._person().speaker_public_id if self._person() is not None else None
+        self.report = analyze_voiceprint_quality(store_dir=self.store_dir, speaker=self.speaker, model=self.model)
+        self.selected_sample_indices = {person.speaker_public_id: 0 for person in self.report.people}
+        self.statuses = _initial_statuses(self.report)
+        self.selected_person_index = _person_index(self.report, previous_person_id)
+        self._refresh()
+        self._set_status(status)
 
     def _refresh_focus_styles(self) -> None:
         """Make the focused pane visually obvious."""
@@ -381,6 +422,28 @@ def run_voiceprint_quality_tui(report: VoiceprintQualityReport) -> VoiceprintQua
     return VoiceprintQualityApp(report).run()
 
 
+def run_voiceprint_quality_review_tui(
+    report: VoiceprintQualityReport,
+    *,
+    store_dir: Path | None,
+    speaker: str | None,
+    model: str | None,
+) -> VoiceprintQualityDecision:
+    """
+    Run the quality review TUI with in-place save and refresh enabled.
+
+    Args:
+        report: Quality report.
+        store_dir: Optional voiceprint store directory.
+        speaker: Optional speaker filter.
+        model: Optional model key.
+
+    Returns:
+        User decision when the app exits.
+    """
+    return VoiceprintQualityApp(report, store_dir=store_dir, speaker=speaker, model=model).run()
+
+
 def persist_quality_decision(decision: VoiceprintQualityDecision, *, store_dir: Path | None) -> dict[str, str]:
     """
     Persist sample status changes from quality review.
@@ -416,11 +479,21 @@ def _changed_statuses(report: VoiceprintQualityReport, statuses: dict[str, str])
     return changes
 
 
+def _person_index(report: VoiceprintQualityReport, person_public_id: str | None) -> int:
+    """Return the best selected person index after a report refresh."""
+    if person_public_id is None:
+        return 0
+    for index, person in enumerate(report.people):
+        if person.speaker_public_id == person_public_id:
+            return index
+    return 0
+
+
 def _status_text() -> str:
     """Return bottom status help."""
     return tr(
-        "j/k move | h/l pane | space play/stop | x toggle quarantine | a active | r quarantine | s save | q quit",
-        "j/k 移动 | h/l 切栏 | space 播放/停止 | x 切换隔离 | a 保留 | r 隔离 | s 保存 | q 退出",
+        "j/k move | h/l pane | space play/stop | x toggle quarantine | a active | r quarantine | s save+refresh | u refresh | q quit",
+        "j/k 移动 | h/l 切栏 | space 播放/停止 | x 切换隔离 | a 保留 | r 隔离 | s 保存并刷新 | u 刷新 | q 退出",
     )
 
 
@@ -436,7 +509,8 @@ space            Play or stop selected WAV sample
 x                Toggle selected sample active/quarantined
 a                Mark selected sample active
 r                Mark selected sample quarantined
-s                Save status changes
+s                Save status changes and refresh scores
+u                Refresh quality scores from SQLite
 q / Esc          Quit without saving
 
 Quarantined samples stay in the library but are excluded from future matching.
@@ -450,7 +524,8 @@ space            播放或停止当前 WAV 样本
 x                在 active/quarantined 之间切换
 a                保留当前样本，参与后续匹配
 r                隔离当前样本，不参与后续匹配
-s                保存状态变更
+s                保存状态变更并刷新评分
+u                从 SQLite 刷新质量评分
 q / Esc          不保存退出
 
 被隔离的样本仍保留在声纹库里，但后续匹配不再使用。

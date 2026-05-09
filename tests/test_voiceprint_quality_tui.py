@@ -43,6 +43,32 @@ def test_voiceprint_quality_tui_stages_quarantine_and_saves(tmp_path: Path) -> N
     asyncio.run(scenario())
 
 
+def test_voiceprint_quality_tui_save_refreshes_scores_in_place(tmp_path: Path) -> None:
+    """Saving in review mode should keep the TUI open and recompute quality scores."""
+    store_dir = _quality_store(tmp_path)
+    report = analyze_voiceprint_quality(store_dir=store_dir, speaker="Alice")
+
+    async def scenario() -> None:
+        async with VoiceprintQualityApp(report, store_dir=store_dir, speaker="Alice").run_test(size=(120, 24)) as pilot:
+            app = pilot.app
+
+            assert app.report.suspicious_count == 1
+
+            await pilot.press("right")
+            await pilot.press("x")
+            await pilot.press("s")
+            await pilot.pause()
+
+            assert app.report.suspicious_count == 0
+            assert "已保存 1 个变更" in str(app.query_one("#status", Static).render()) or "Saved 1 change" in str(
+                app.query_one("#status", Static).render()
+            )
+
+            await pilot.press("q")
+
+    asyncio.run(scenario())
+
+
 def test_voiceprint_quality_tui_space_toggles_playback(monkeypatch, tmp_path: Path) -> None:
     """Space should play and stop the selected suspicious WAV sample."""
     report = analyze_voiceprint_quality(store_dir=_quality_store(tmp_path), speaker="Alice")
