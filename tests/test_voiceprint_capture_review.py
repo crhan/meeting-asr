@@ -25,6 +25,7 @@ from app.voiceprints import (
     VoiceprintCaptureSummary,
     VoiceprintClip,
     VoiceprintSpeaker,
+    capture_voiceprints,
     persist_voiceprint_capture_selection,
     plan_voiceprint_capture,
 )
@@ -169,6 +170,65 @@ def test_plan_voiceprint_capture_resolves_existing_person_by_name(tmp_path: Path
     assert planned.speakers[0].person_public_id == person.public_id
 
 
+def test_plan_voiceprint_capture_prefers_diverse_informative_segments(tmp_path: Path) -> None:
+    """Capture planning should avoid filler and near-duplicate neighboring samples."""
+    project_dir = _sample_project_with_sentences(
+        tmp_path,
+        [
+            _sentence(1, "嗯嗯嗯嗯嗯嗯嗯嗯", 0, 10_000),
+            _sentence(2, "这是第一段适合做声纹的完整表达。", 20_000, 30_000),
+            _sentence(3, "这是离上一段太近的重复表达。", 21_000, 31_000),
+            _sentence(4, "这是第二段相隔较远的有效声纹样本。", 50_000, 60_000),
+        ],
+    )
+
+    planned = plan_voiceprint_capture(
+        project_dir,
+        sample_count=2,
+        max_seconds=12.0,
+        padding_seconds=0.0,
+        store_dir=tmp_path / "voiceprints",
+    )
+
+    texts = [clip.text for clip in planned.speakers[0].clips]
+    assert texts == ["这是第一段适合做声纹的完整表达。", "这是第二段相隔较远的有效声纹样本。"]
+    assert all(clip.selection_score > 0 for clip in planned.speakers[0].clips)
+    assert "boundary=" in planned.speakers[0].clips[0].selection_reason
+
+
+def test_capture_voiceprints_skips_definitely_bad_audio(monkeypatch, tmp_path: Path) -> None:
+    """Captured WAVs with clearly unusable audio should not enter the store."""
+    project_dir = _sample_project_with_sentences(
+        tmp_path,
+        [
+            _sentence(1, "这是第一段有效声纹样本。", 0, 10_000),
+            _sentence(2, "这是第二段有效声纹样本。", 30_000, 40_000),
+        ],
+    )
+
+    def fake_extract_audio_clip(source, output, start_seconds, duration_seconds) -> Path:
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        amplitude = 0 if "clip_001" in str(output) else 1200
+        _write_wav(Path(output), amplitude)
+        return Path(output)
+
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", fake_extract_audio_clip)
+
+    summary = capture_voiceprints(
+        project_dir,
+        sample_count=2,
+        max_seconds=12.0,
+        padding_seconds=0.0,
+        store_dir=tmp_path / "voiceprints",
+        dry_run=False,
+    )
+    samples = list_all_voiceprint_samples(summary.db_path)
+
+    assert summary.sample_count == 1
+    assert len(samples) == 1
+    assert summary.speakers[0].clips[0].audio_reason == "audio=ok"
+
+
 def test_voiceprint_capture_command_accepts_project_id_for_dry_run(tmp_path: Path) -> None:
     """Capture should accept the same project id references shown in next-step guidance."""
     project_dir = _sample_project(tmp_path)
@@ -307,6 +367,18 @@ def _sample_project(tmp_path: Path) -> Path:
     return project_dir
 
 
+def _sample_project_with_sentences(tmp_path: Path, sentences: list[dict]) -> Path:
+    """Create a minimal project with caller-provided transcript sentences."""
+    project_dir = _sample_project(tmp_path)
+    payload = {
+        "full_text": "".join(str(sentence["text"]) for sentence in sentences),
+        "detected_speakers": [0],
+        "sentences": sentences,
+    }
+    (project_dir / "asr" / "sentences.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return project_dir
+
+
 def _sentence(sentence_id: int, text: str, begin_ms: int, end_ms: int) -> dict:
     """Build one transcript sentence payload."""
     return {
@@ -316,3 +388,14 @@ def _sentence(sentence_id: int, text: str, begin_ms: int, end_ms: int) -> dict:
         "speaker_id": 0,
         "sentence_id": sentence_id,
     }
+
+
+def _write_wav(path: Path, amplitude: int) -> None:
+    """Write a tiny mono PCM WAV fixture."""
+    import wave
+
+    with wave.open(str(path), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(16000)
+        writer.writeframes(amplitude.to_bytes(2, "little", signed=True) * 1600)

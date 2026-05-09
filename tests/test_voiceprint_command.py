@@ -516,7 +516,7 @@ def _fake_extract_audio_clip(
         writer.setnchannels(1)
         writer.setsampwidth(2)
         writer.setframerate(16000)
-        writer.writeframes(b"\x00\x00" * 160)
+        writer.writeframes((1000).to_bytes(2, "little", signed=True) * 160)
     return output_path
 
 

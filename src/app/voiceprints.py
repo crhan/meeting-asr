@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
+import re
+import struct
+import wave
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +37,10 @@ class VoiceprintClip:
     clip_begin_time_ms: int
     clip_end_time_ms: int
     text: str
+    selection_score: float = 0.0
+    selection_reason: str = "legacy"
+    audio_score: float | None = None
+    audio_reason: str = "not-analyzed"
 
     @property
     def duration_seconds(self) -> float:
@@ -118,7 +126,7 @@ def capture_voiceprints(
     if dry_run:
         emit_progress(progress, "Voiceprint clips planned", total=_clip_count(speakers), completed=_clip_count(speakers))
     if not dry_run:
-        _persist_voiceprint_capture(paths.root, manifest, source, speakers, resolved_store_dir, db_path, progress)
+        speakers = _persist_voiceprint_capture(paths.root, manifest, source, speakers, resolved_store_dir, db_path, progress)
     return VoiceprintCaptureSummary(resolved_store_dir, db_path, clip_dir, speakers, dry_run)
 
 
@@ -181,7 +189,7 @@ def persist_voiceprint_capture_selection(
     speakers = _filter_voiceprint_speakers(planned.speakers, selected_clip_rel_paths)
     if not speakers:
         raise ValueError("No selected voiceprint clips matched the capture plan.")
-    _persist_voiceprint_capture(paths.root, manifest, source, speakers, planned.store_dir, planned.db_path, progress)
+    speakers = _persist_voiceprint_capture(paths.root, manifest, source, speakers, planned.store_dir, planned.db_path, progress)
     return VoiceprintCaptureSummary(planned.store_dir, planned.db_path, planned.clip_dir, speakers, False)
 
 
@@ -214,7 +222,7 @@ def _persist_voiceprint_capture(
     store_dir: Path,
     db_path: Path,
     progress: CliProgressReporter | None,
-) -> None:
+) -> list[VoiceprintSpeaker]:
     """
     Write clips, store SQLite rows, and update the project manifest pointer.
 
@@ -227,7 +235,9 @@ def _persist_voiceprint_capture(
         db_path: SQLite database path.
         progress: Optional progress reporter.
     """
-    _write_voiceprint_clips(source, speakers, progress)
+    speakers = _write_voiceprint_clips(source, speakers, progress)
+    if not speakers:
+        raise RuntimeError("No voiceprint clips passed audio quality checks.")
     emit_progress(progress, "Indexing voiceprint samples")
     samples = _stored_samples(project_root, manifest.project_id, source, speakers)
     store_voiceprint_samples(samples, db_path)
@@ -235,6 +245,7 @@ def _persist_voiceprint_capture(
     manifest.status = "voiceprinted"
     save_manifest(project_root, manifest)
     emit_progress(progress, "Voiceprint capture complete")
+    return speakers
 
 
 def _validate_capture_options(sample_count: int, max_seconds: float, padding_seconds: float) -> None:
@@ -377,7 +388,7 @@ def _build_voiceprint_speakers(
         identity = _identified_speaker_identity(speaker_id, identities)
         if identity is None:
             continue
-        selected = _select_segments(grouped[speaker_id], sample_count)
+        selected = _select_segments(grouped[speaker_id], result.sentences, sample_count)
         clips = _build_clips(clip_dir, project_id, speaker_id, selected, max_seconds, padding_seconds)
         if clips:
             speakers.append(VoiceprintSpeaker(speaker_id, identity.name, identity.person_id, identity.person_public_id, clips))
@@ -427,19 +438,152 @@ def _speaker_segments_by_id(result: TranscriptResult) -> dict[int, list[Sentence
     return grouped
 
 
-def _select_segments(segments: list[SentenceSegment], sample_count: int) -> list[SentenceSegment]:
+@dataclass(frozen=True, slots=True)
+class _ScoredSegment:
+    """One voiceprint candidate segment with selection diagnostics."""
+
+    segment: SentenceSegment
+    score: float
+    reason: str
+
+
+def _select_segments(
+    segments: list[SentenceSegment],
+    all_segments: list[SentenceSegment],
+    sample_count: int,
+) -> list[_ScoredSegment]:
     """
     Select the longest segments and return them in timeline order.
 
     Args:
         segments: Candidate segments for one speaker.
+        all_segments: Full transcript segments for boundary scoring.
         sample_count: Maximum segment count.
 
     Returns:
         Selected segments.
     """
-    longest = sorted(segments, key=_segment_duration_ms, reverse=True)[:sample_count]
-    return sorted(longest, key=lambda segment: segment.begin_time_ms)
+    scored = _scored_unique_segments(segments, all_segments)
+    selected = _select_diverse_segments(scored, sample_count, min_gap_ms=10_000)
+    if len(selected) < sample_count:
+        selected = _select_diverse_segments(scored, sample_count, min_gap_ms=2_000)
+    if len(selected) < sample_count:
+        selected = _select_diverse_segments(scored, sample_count, min_gap_ms=0)
+    return sorted(selected, key=lambda item: item.segment.begin_time_ms)
+
+
+def _scored_unique_segments(
+    segments: list[SentenceSegment],
+    all_segments: list[SentenceSegment],
+) -> list[_ScoredSegment]:
+    """Return unique candidate segments sorted by descending quality score."""
+    seen: set[tuple[int, int, str]] = set()
+    scored: list[_ScoredSegment] = []
+    for segment in segments:
+        key = (segment.begin_time_ms, segment.end_time_ms, _normalized_text(segment.text))
+        if key in seen:
+            continue
+        seen.add(key)
+        candidate = _score_segment(segment, all_segments)
+        if candidate.score > 0:
+            scored.append(candidate)
+    return sorted(scored, key=lambda item: (-item.score, item.segment.begin_time_ms))
+
+
+def _select_diverse_segments(
+    candidates: list[_ScoredSegment],
+    sample_count: int,
+    *,
+    min_gap_ms: int,
+) -> list[_ScoredSegment]:
+    """Select high-scoring segments while avoiding nearby duplicates."""
+    selected: list[_ScoredSegment] = []
+    for candidate in candidates:
+        if len(selected) >= sample_count:
+            break
+        if any(_segments_too_close(candidate.segment, item.segment, min_gap_ms) for item in selected):
+            continue
+        selected.append(candidate)
+    return selected
+
+
+def _segments_too_close(left: SentenceSegment, right: SentenceSegment, min_gap_ms: int) -> bool:
+    """Return whether two candidate segments are too close for diverse sampling."""
+    if left.begin_time_ms <= right.end_time_ms and right.begin_time_ms <= left.end_time_ms:
+        return True
+    return abs(left.begin_time_ms - right.begin_time_ms) < min_gap_ms
+
+
+def _score_segment(segment: SentenceSegment, all_segments: list[SentenceSegment]) -> _ScoredSegment:
+    """Score one transcript segment for voiceprint capture."""
+    duration_ms = _segment_duration_ms(segment)
+    text = segment.text.strip()
+    duration_score = _duration_score(duration_ms)
+    text_score = _text_score(text)
+    boundary_score = _boundary_score(segment, all_segments)
+    score = round(0.45 * duration_score + 0.35 * text_score + 0.20 * boundary_score, 3)
+    reason = f"duration={duration_score:.2f}, text={text_score:.2f}, boundary={boundary_score:.2f}"
+    return _ScoredSegment(segment, score, reason)
+
+
+def _duration_score(duration_ms: int) -> float:
+    """Score duration, preferring 6-18 second speech samples."""
+    seconds = duration_ms / 1000
+    if seconds < 3:
+        return max(0.0, seconds / 3 * 0.45)
+    if seconds <= 18:
+        return 1.0
+    if seconds <= 30:
+        return 0.8
+    return 0.55
+
+
+def _text_score(text: str) -> float:
+    """Score text content, penalizing filler-only fragments."""
+    normalized = _normalized_text(text)
+    if not normalized:
+        return 0.0
+    if _is_low_information_text(normalized):
+        return 0.1
+    length_score = min(1.0, len(normalized) / 24)
+    unique_score = min(1.0, len(set(normalized)) / 10)
+    return round(0.65 * length_score + 0.35 * unique_score, 3)
+
+
+def _boundary_score(segment: SentenceSegment, all_segments: list[SentenceSegment]) -> float:
+    """Score speaker-boundary safety using neighboring transcript segments."""
+    sorted_segments = sorted(all_segments, key=lambda item: (item.begin_time_ms, item.end_time_ms))
+    index = next((i for i, item in enumerate(sorted_segments) if item is segment), -1)
+    if index < 0:
+        return 0.7
+    previous_score = _neighbor_score(segment, sorted_segments[index - 1] if index else None, before=True)
+    next_score = _neighbor_score(segment, sorted_segments[index + 1] if index + 1 < len(sorted_segments) else None, before=False)
+    return min(previous_score, next_score)
+
+
+def _neighbor_score(segment: SentenceSegment, neighbor: SentenceSegment | None, *, before: bool) -> float:
+    """Score one neighboring segment for possible speaker overlap."""
+    if neighbor is None or neighbor.speaker_id == segment.speaker_id:
+        return 1.0
+    gap = segment.begin_time_ms - neighbor.end_time_ms if before else neighbor.begin_time_ms - segment.end_time_ms
+    if gap < 0:
+        return 0.2
+    if gap < 500:
+        return 0.45
+    if gap < 1200:
+        return 0.75
+    return 1.0
+
+
+def _normalized_text(text: str) -> str:
+    """Return compact text for quality heuristics."""
+    return re.sub(r"\s+", "", text.strip().casefold())
+
+
+def _is_low_information_text(text: str) -> bool:
+    """Return whether text is mostly filler/backchannel content."""
+    filler_pattern = r"(嗯+|啊+|呃+|哦+|对+|是+|好+|可以|就是|然后|那个|这个|ok|嗯哼|哈哈)+"
+    return re.fullmatch(filler_pattern, text) is not None
 
 
 def _segment_duration_ms(segment: SentenceSegment) -> int:
@@ -459,7 +603,7 @@ def _build_clips(
     clip_dir: Path,
     project_id: str,
     speaker_id: int,
-    segments: list[SentenceSegment],
+    segments: list[_ScoredSegment],
     max_seconds: float,
     padding_seconds: float,
 ) -> list[VoiceprintClip]:
@@ -478,8 +622,8 @@ def _build_clips(
         Clip descriptors.
     """
     clips: list[VoiceprintClip] = []
-    for index, segment in enumerate(segments, start=1):
-        clip = _build_clip(clip_dir, project_id, speaker_id, index, segment, max_seconds, padding_seconds)
+    for index, candidate in enumerate(segments, start=1):
+        clip = _build_clip(clip_dir, project_id, speaker_id, index, candidate, max_seconds, padding_seconds)
         if clip.duration_seconds > 0:
             clips.append(clip)
     return clips
@@ -490,7 +634,7 @@ def _build_clip(
     project_id: str,
     speaker_id: int,
     index: int,
-    segment: SentenceSegment,
+    candidate: _ScoredSegment,
     max_seconds: float,
     padding_seconds: float,
 ) -> VoiceprintClip:
@@ -502,7 +646,7 @@ def _build_clip(
         project_id: Project id.
         speaker_id: Speaker id.
         index: One-based clip index.
-        segment: Source transcript segment.
+        candidate: Source transcript segment with selection diagnostics.
         max_seconds: Maximum seconds per output clip.
         padding_seconds: Extra context around the segment.
 
@@ -511,6 +655,7 @@ def _build_clip(
     """
     padding_ms = int(round(padding_seconds * 1000))
     max_ms = int(round(max_seconds * 1000))
+    segment = candidate.segment
     clip_begin = max(0, segment.begin_time_ms - padding_ms)
     clip_end = min(segment.end_time_ms + padding_ms, clip_begin + max_ms)
     rel_path = f"clips/{project_id}/speaker_{speaker_id}/clip_{index:03d}.wav"
@@ -523,6 +668,8 @@ def _build_clip(
         clip_begin,
         clip_end,
         segment.text.strip(),
+        candidate.score,
+        candidate.reason,
     )
 
 
@@ -530,7 +677,7 @@ def _write_voiceprint_clips(
     source: Path,
     speakers: list[VoiceprintSpeaker],
     progress: CliProgressReporter | None,
-) -> None:
+) -> list[VoiceprintSpeaker]:
     """
     Write all planned voiceprint clips.
 
@@ -539,8 +686,10 @@ def _write_voiceprint_clips(
         speakers: Planned voiceprint speakers.
         progress: Optional progress reporter.
     """
+    captured_speakers: list[VoiceprintSpeaker] = []
     emit_progress(progress, "Writing voiceprint clips", total=_clip_count(speakers), completed=0)
     for speaker in speakers:
+        captured_clips: list[VoiceprintClip] = []
         for clip in speaker.clips:
             extract_audio_clip(
                 source,
@@ -548,7 +697,61 @@ def _write_voiceprint_clips(
                 start_seconds=clip.clip_begin_time_ms / 1000,
                 duration_seconds=clip.duration_seconds,
             )
+            clip = _with_audio_quality(clip, _analyze_wav_quality(clip.path))
+            if not _should_skip_audio_sample(clip):
+                captured_clips.append(clip)
             emit_progress(progress, f"Captured {speaker.name} voiceprint clip", advance=1)
+        if captured_clips:
+            captured_speakers.append(
+                VoiceprintSpeaker(speaker.speaker_id, speaker.name, speaker.person_id, speaker.person_public_id, captured_clips)
+            )
+    return captured_speakers
+
+
+def _with_audio_quality(clip: VoiceprintClip, quality: tuple[float | None, str]) -> VoiceprintClip:
+    """Return clip metadata annotated with WAV quality diagnostics."""
+    score, reason = quality
+    return VoiceprintClip(
+        clip.path,
+        clip.rel_path,
+        clip.source_begin_time_ms,
+        clip.source_end_time_ms,
+        clip.clip_begin_time_ms,
+        clip.clip_end_time_ms,
+        clip.text,
+        clip.selection_score,
+        clip.selection_reason,
+        score,
+        reason,
+    )
+
+
+def _analyze_wav_quality(path: Path) -> tuple[float | None, str]:
+    """Return a simple 0-1 WAV quality score and reason."""
+    try:
+        with wave.open(str(path), "rb") as reader:
+            frames = reader.readframes(reader.getnframes())
+            sample_width = reader.getsampwidth()
+    except (wave.Error, OSError, EOFError):
+        return None, "audio=unknown"
+    if sample_width != 2 or not frames:
+        return None, "audio=unknown"
+    samples = [value[0] for value in struct.iter_unpack("<h", frames[: len(frames) - len(frames) % 2])]
+    if not samples:
+        return None, "audio=unknown"
+    rms = math.sqrt(sum(sample * sample for sample in samples) / len(samples))
+    peak = max(abs(sample) for sample in samples)
+    silent_ratio = sum(1 for sample in samples if abs(sample) < 80) / len(samples)
+    if rms < 80 or silent_ratio > 0.85:
+        return round(min(rms / 400, 1.0), 3), "audio=low-volume"
+    if peak > 32000:
+        return 0.35, "audio=clipped"
+    return round(min(rms / 1600, 1.0), 3), "audio=ok"
+
+
+def _should_skip_audio_sample(clip: VoiceprintClip) -> bool:
+    """Return whether an analyzed clip should be excluded from storage."""
+    return clip.audio_reason in {"audio=low-volume", "audio=clipped"}
 
 
 def _clip_count(speakers: list[VoiceprintSpeaker]) -> int:

@@ -103,6 +103,10 @@ class VoiceprintCaptureClipEntry:
     clip_begin_time_ms: int
     clip_end_time_ms: int
     text: str
+    selection_score: float = 0.0
+    selection_reason: str = "-"
+    audio_score: float | None = None
+    audio_reason: str = "-"
     included: bool = True
 
     @property
@@ -657,6 +661,10 @@ def _speaker_entry(speaker, match: Any | None = None) -> VoiceprintCaptureSpeake
                 clip_begin_time_ms=clip.clip_begin_time_ms,
                 clip_end_time_ms=clip.clip_end_time_ms,
                 text=clip.text,
+                selection_score=clip.selection_score,
+                selection_reason=clip.selection_reason,
+                audio_score=clip.audio_score,
+                audio_reason=clip.audio_reason,
                 included=included,
             )
             for clip in speaker.clips
@@ -711,12 +719,15 @@ def _selected_sample_summary(sample: VoiceprintCaptureClipEntry | None) -> str:
     """Render selected sample summary."""
     if sample is None:
         return "-"
-    return f"{_sample_time_range(sample)} | {'included' if sample.included else 'excluded'}"
+    return (
+        f"{_sample_time_range(sample)} | score {sample.selection_score:.3f} | "
+        f"{sample.selection_reason} | {'included' if sample.included else 'excluded'}"
+    )
 
 
 def _sample_line(sample: VoiceprintCaptureClipEntry) -> str:
     """Render one capture sample row."""
-    return f"{_sample_time_range(sample)} {_trim_text(sample.text)}"
+    return f"{_sample_time_range(sample)} score={sample.selection_score:.3f} {_trim_text(sample.text)}"
 
 
 def _sample_time_range(sample: VoiceprintCaptureClipEntry) -> str:

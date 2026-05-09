@@ -63,7 +63,7 @@ def project_sample_summary(sample: VoiceprintCaptureClipEntry | None) -> str:
     if sample is None:
         return "-"
     state = tr("included", "已选中") if sample.included else tr("excluded", "已排除")
-    return f"{project_sample_time_range(sample)} | {state}"
+    return f"{project_sample_time_range(sample)} | score {sample.selection_score:.3f} | {sample.selection_reason} | {state}"
 
 
 def library_sample_summary(sample: VoiceprintSampleRow | None) -> str:
@@ -75,7 +75,7 @@ def library_sample_summary(sample: VoiceprintSampleRow | None) -> str:
 
 def project_sample_line(sample: VoiceprintCaptureClipEntry) -> str:
     """Render one project capture sample row."""
-    return f"{project_sample_time_range(sample)} {trim_text(sample.text)}"
+    return f"{project_sample_time_range(sample)} score={sample.selection_score:.3f} {trim_text(sample.text)}"
 
 
 def project_match_score_text(score: float | None) -> str:
