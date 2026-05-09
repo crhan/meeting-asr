@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections import defaultdict
 from dataclasses import dataclass
@@ -215,6 +217,7 @@ def _build_match_summary(
         context.segments,
         context.known,
         context.provider,
+        context.model,
         threshold,
         sample_count,
         max_seconds,
@@ -285,6 +288,7 @@ def _match_speaker_groups(
     segments: list[SentenceSegment],
     known: dict[int, _KnownSpeakerVector],
     provider: str | None,
+    model: str,
     threshold: float,
     sample_count: int,
     max_seconds: float,
@@ -308,6 +312,7 @@ def _match_speaker_groups(
                 speaker_segments,
                 known,
                 provider,
+                model,
                 threshold,
                 sample_count,
                 max_seconds,
@@ -325,6 +330,7 @@ def _match_one_speaker_group(
     speaker_segments: list[SentenceSegment],
     known: dict[int, _KnownSpeakerVector],
     provider: str | None,
+    model: str,
     threshold: float,
     sample_count: int,
     max_seconds: float,
@@ -337,6 +343,7 @@ def _match_one_speaker_group(
         speaker_id,
         speaker_segments,
         provider,
+        model,
         sample_count,
         max_seconds,
         padding_seconds,
@@ -431,17 +438,116 @@ def _probe_speaker_vector(
     speaker_id: int,
     segments: list[SentenceSegment],
     provider: str | None,
+    model: str,
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
 ) -> list[float]:
     """Build an averaged probe vector for one project speaker."""
+    selected_segments = _select_segments(segments, sample_count)
+    cache_key = _probe_cache_key(
+        speaker_id=speaker_id,
+        segments=selected_segments,
+        provider=provider,
+        model=model,
+        max_seconds=max_seconds,
+        padding_seconds=padding_seconds,
+    )
+    cached_vector = _read_probe_cache(project_root, cache_key)
+    if cached_vector is not None:
+        return cached_vector
     vectors: list[list[float]] = []
-    for index, segment in enumerate(_select_segments(segments, sample_count), start=1):
+    for index, segment in enumerate(selected_segments, start=1):
         clip_path = _probe_clip_path(project_root, speaker_id, index)
         _write_probe_clip(source, clip_path, segment, max_seconds, padding_seconds)
         vectors.append(embed_audio_file(clip_path, provider=provider))
-    return _normalize(_mean_vector(vectors))
+    vector = _normalize(_mean_vector(vectors))
+    _write_probe_cache(project_root, cache_key, vector)
+    return vector
+
+
+def _probe_cache_key(
+    *,
+    speaker_id: int,
+    segments: list[SentenceSegment],
+    provider: str | None,
+    model: str,
+    max_seconds: float,
+    padding_seconds: float,
+) -> str:
+    """Return a stable cache key for one project speaker probe embedding."""
+    payload = {
+        "version": 1,
+        "speaker_id": speaker_id,
+        "provider": provider,
+        "model": model,
+        "max_seconds": max_seconds,
+        "padding_seconds": padding_seconds,
+        "segments": [
+            {
+                "sentence_id": segment.sentence_id,
+                "begin_time_ms": segment.begin_time_ms,
+                "end_time_ms": segment.end_time_ms,
+                "text": segment.text,
+            }
+            for segment in segments
+        ],
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _probe_cache_path(project_root: Path) -> Path:
+    """Return the project-local probe embedding cache path."""
+    return project_root / "tmp" / "voiceprint_match" / "probe_embeddings.json"
+
+
+def _read_probe_cache(project_root: Path, cache_key: str) -> list[float] | None:
+    """Read one cached probe embedding vector."""
+    cache_path = _probe_cache_path(project_root)
+    if not cache_path.exists():
+        return None
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    vector = payload.get(cache_key) if isinstance(payload, dict) else None
+    if not isinstance(vector, list) or not vector:
+        return None
+    try:
+        return [float(item) for item in vector]
+    except (TypeError, ValueError):
+        return None
+
+
+def _write_probe_cache(project_root: Path, cache_key: str, vector: list[float]) -> None:
+    """Write one cached probe embedding vector."""
+    cache_path = _probe_cache_path(project_root)
+    payload: dict[str, list[float]] = {}
+    if cache_path.exists():
+        try:
+            loaded = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            loaded = {}
+        if isinstance(loaded, dict):
+            payload = _valid_probe_cache_payload(loaded)
+    payload[cache_key] = vector
+    safe_write_json(cache_path, payload)
+
+
+def _valid_probe_cache_payload(payload: object) -> dict[str, list[float]]:
+    """Return only valid cached vectors from a loaded JSON payload."""
+    if not isinstance(payload, dict):
+        return {}
+    valid: dict[str, list[float]] = {}
+    for key, value in payload.items():
+        if not isinstance(value, list):
+            continue
+        try:
+            valid[str(key)] = [float(item) for item in value]
+        except (TypeError, ValueError):
+            continue
+    return valid
 
 
 def _select_segments(segments: list[SentenceSegment], sample_count: int) -> list[SentenceSegment]:

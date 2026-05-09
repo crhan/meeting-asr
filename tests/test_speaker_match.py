@@ -138,6 +138,33 @@ def test_project_speakers_match_can_apply_matches(
     assert all(str(value).startswith("vpp-") for value in person_map.values())
 
 
+def test_project_speakers_match_reuses_project_probe_embedding_cache(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Repeated matching should not re-embed unchanged project speaker probes."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    calls: list[Path] = []
+    _write_named_speaker_inputs(project_dir)
+    _patch_audio_embedding(monkeypatch, calls=calls)
+    runner.invoke(
+        app,
+        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+    )
+    runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
+
+    first = runner.invoke(app, ["project", "speakers", "match", str(project_dir), "--store-dir", str(store_dir)])
+    after_first = len(calls)
+    second = runner.invoke(app, ["project", "speakers", "match", str(project_dir), "--store-dir", str(store_dir)])
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert after_first > 0
+    assert len(calls) == after_first
+    assert (project_dir / "tmp" / "voiceprint_match" / "probe_embeddings.json").exists()
+
+
 def test_project_speakers_match_allows_empty_voiceprint_library(
     monkeypatch,
     tmp_path: Path,
@@ -202,12 +229,16 @@ def _write_named_speaker_inputs(project_dir: Path) -> None:
     )
 
 
-def _patch_audio_embedding(monkeypatch) -> None:
+def _patch_audio_embedding(monkeypatch, *, calls: list[Path] | None = None) -> None:
     """Patch audio extraction and embedding with deterministic test doubles."""
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
     monkeypatch.setattr("app.speaker_matching.extract_audio_clip", _fake_extract_audio_clip)
-    monkeypatch.setattr("app.voiceprint_embedding.embed_audio_file", _fake_embed_audio_file)
-    monkeypatch.setattr("app.speaker_matching.embed_audio_file", _fake_embed_audio_file)
+    if calls is None:
+        monkeypatch.setattr("app.voiceprint_embedding.embed_audio_file", _fake_embed_audio_file)
+        monkeypatch.setattr("app.speaker_matching.embed_audio_file", _fake_embed_audio_file)
+        return
+    monkeypatch.setattr("app.voiceprint_embedding.embed_audio_file", _tracking_fake_embed_audio_file(calls))
+    monkeypatch.setattr("app.speaker_matching.embed_audio_file", _tracking_fake_embed_audio_file(calls))
 
 
 def _fake_extract_audio_clip(
@@ -226,6 +257,16 @@ def _fake_extract_audio_clip(
 def _fake_embed_audio_file(path: Path, *, provider: str | None) -> list[float]:
     """Return deterministic vectors based on speaker id in the path."""
     return [0.0, 1.0] if "speaker_1" in str(path) else [1.0, 0.0]
+
+
+def _tracking_fake_embed_audio_file(calls: list[Path]):
+    """Return an embedding fake that records each call."""
+
+    def fake(path: Path, *, provider: str | None) -> list[float]:
+        calls.append(path)
+        return _fake_embed_audio_file(path, provider=provider)
+
+    return fake
 
 
 def _raise_unexpected_embedding(path: Path, *, provider: str | None) -> list[float]:
