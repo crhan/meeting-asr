@@ -107,6 +107,7 @@ class VoiceprintCaptureClipEntry:
     selection_reason: str = "-"
     audio_score: float | None = None
     audio_reason: str = "-"
+    recommended: bool = True
     included: bool = True
 
     @property
@@ -665,7 +666,8 @@ def _speaker_entry(speaker, match: Any | None = None) -> VoiceprintCaptureSpeake
                 selection_reason=clip.selection_reason,
                 audio_score=clip.audio_score,
                 audio_reason=clip.audio_reason,
-                included=included,
+                recommended=clip.recommended,
+                included=included and clip.recommended,
             )
             for clip in speaker.clips
         ],
@@ -727,7 +729,8 @@ def _selected_sample_summary(sample: VoiceprintCaptureClipEntry | None) -> str:
 
 def _sample_line(sample: VoiceprintCaptureClipEntry) -> str:
     """Render one capture sample row."""
-    return f"{_sample_time_range(sample)} score={sample.selection_score:.3f} {_trim_text(sample.text)}"
+    tag = "recommended" if sample.recommended else "candidate"
+    return f"{_sample_time_range(sample)} {tag} score={sample.selection_score:.3f} {_trim_text(sample.text)}"
 
 
 def _sample_time_range(sample: VoiceprintCaptureClipEntry) -> str:

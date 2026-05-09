@@ -196,6 +196,27 @@ def test_plan_voiceprint_capture_prefers_diverse_informative_segments(tmp_path: 
     assert "boundary=" in planned.speakers[0].clips[0].selection_reason
 
 
+def test_plan_voiceprint_capture_exposes_candidate_pool_with_recommendations(tmp_path: Path) -> None:
+    """Planning should expose more candidates while marking only the requested top samples."""
+    project_dir = _sample_project_with_sentences(
+        tmp_path,
+        [_sentence(index, f"这是第 {index} 段适合做声纹的完整表达。", index * 20_000, index * 20_000 + 8_000) for index in range(1, 16)],
+    )
+
+    planned = plan_voiceprint_capture(
+        project_dir,
+        sample_count=3,
+        max_seconds=12.0,
+        padding_seconds=0.0,
+        store_dir=tmp_path / "voiceprints",
+    )
+    session = load_voiceprint_capture_review_session(summary=planned, source_path=project_dir / "source" / "meeting.mp4")
+
+    assert len(planned.speakers[0].clips) == 12
+    assert sum(1 for clip in planned.speakers[0].clips if clip.recommended) == 3
+    assert sum(1 for clip in session.speakers[0].clips if clip.included) == 3
+
+
 def test_capture_voiceprints_skips_definitely_bad_audio(monkeypatch, tmp_path: Path) -> None:
     """Captured WAVs with clearly unusable audio should not enter the store."""
     project_dir = _sample_project_with_sentences(
@@ -227,6 +248,38 @@ def test_capture_voiceprints_skips_definitely_bad_audio(monkeypatch, tmp_path: P
     assert summary.sample_count == 1
     assert len(samples) == 1
     assert summary.speakers[0].clips[0].audio_reason == "audio=ok"
+
+
+def test_capture_voiceprints_prefers_embedding_central_candidates(monkeypatch, tmp_path: Path) -> None:
+    """Final persistence should prefer candidates near the embedding centroid."""
+    project_dir = _sample_project_with_sentences(
+        tmp_path,
+        [_sentence(index, f"这是第 {index} 段适合做声纹的完整表达。", index * 20_000, index * 20_000 + 8_000) for index in range(1, 5)],
+    )
+
+    def fake_extract_audio_clip(source, output, start_seconds, duration_seconds) -> Path:
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        _write_wav(Path(output), 1200)
+        return Path(output)
+
+    def fake_embed_audio_file(path: Path, *, provider: str | None) -> list[float]:
+        return [0.0, 1.0] if "clip_004" in str(path) else [1.0, 0.0]
+
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", fake_extract_audio_clip)
+    monkeypatch.setattr("app.voiceprints.embed_audio_file", fake_embed_audio_file)
+
+    summary = capture_voiceprints(
+        project_dir,
+        sample_count=2,
+        max_seconds=12.0,
+        padding_seconds=0.0,
+        store_dir=tmp_path / "voiceprints",
+        dry_run=False,
+    )
+    texts = [clip.text for clip in summary.speakers[0].clips]
+
+    assert len(texts) == 2
+    assert "这是第 4 段适合做声纹的完整表达。" not in texts
 
 
 def test_voiceprint_capture_command_accepts_project_id_for_dry_run(tmp_path: Path) -> None:

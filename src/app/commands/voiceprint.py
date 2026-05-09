@@ -870,9 +870,10 @@ def _echo_capture_summary(summary: VoiceprintCaptureSummary) -> None:
         person = "" if speaker.person_public_id is None else f", person {speaker.person_public_id}"
         typer.echo(f"{speaker.name} (speaker {speaker.speaker_id}{person}): {len(speaker.clips)} sample(s)")
         for clip in speaker.clips:
+            tag = "recommended" if clip.recommended else "candidate"
             typer.echo(
                 f"  - {clip.path} "
-                f"(score={clip.selection_score:.3f}; {clip.selection_reason}; {clip.audio_reason})"
+                f"({tag}; score={clip.selection_score:.3f}; {clip.selection_reason}; {clip.audio_reason})"
             )
     if not summary.dry_run and summary.sample_count:
         typer.echo("")

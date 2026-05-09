@@ -75,7 +75,8 @@ def library_sample_summary(sample: VoiceprintSampleRow | None) -> str:
 
 def project_sample_line(sample: VoiceprintCaptureClipEntry) -> str:
     """Render one project capture sample row."""
-    return f"{project_sample_time_range(sample)} score={sample.selection_score:.3f} {trim_text(sample.text)}"
+    tag = "recommended" if sample.recommended else "candidate"
+    return f"{project_sample_time_range(sample)} {tag} score={sample.selection_score:.3f} {trim_text(sample.text)}"
 
 
 def project_match_score_text(score: float | None) -> str:

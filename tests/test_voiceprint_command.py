@@ -85,7 +85,7 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert re.search(r"sample_id: vps-[0-9a-f]{16}", show_result.output)
     assert "sample_id:" in show_result.output
     assert manifest.project_id in show_result.output
-    assert "clip_001.wav" in show_result.output
+    assert "clip_002.wav" in show_result.output
     assert list_json_result.exit_code == 0
     assert list_payload["database"] == str(store_dir.resolve() / "voiceprints.sqlite")
     assert list_payload["count"] == 2
@@ -99,7 +99,7 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
     assert show_payload["samples"][0]["speaker_public_id"] == speaker_id
     assert show_payload["samples"][0]["speaker_name"] == "欧丁"
     assert show_payload["samples"][0]["project_id"] == manifest.project_id
-    assert show_payload["samples"][0]["clip_path"].endswith("clip_001.wav")
+    assert show_payload["samples"][0]["clip_path"].endswith("clip_002.wav")
 
 
 def test_voiceprint_people_lifecycle_uses_stable_ids(tmp_path: Path) -> None:
@@ -235,7 +235,7 @@ def test_voiceprint_play_dry_run_prints_clip_command(
     )
 
     assert result.exit_code == 0
-    assert "clip_001.wav" in result.output
+    assert "clip_002.wav" in result.output
 
 
 def test_voiceprint_embed_stores_sample_embeddings(
@@ -359,7 +359,7 @@ def test_voiceprint_delete_sample_removes_row_and_clip(
         app,
         ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
     )
-    clip_path = store_dir / "clips" / load_manifest(project_dir).project_id / "speaker_0" / "clip_001.wav"
+    clip_path = store_dir / "clips" / load_manifest(project_dir).project_id / "speaker_0" / "clip_002.wav"
 
     result = runner.invoke(app, ["voiceprint", "delete-sample", "欧丁", "--sample", "1", "--store-dir", str(store_dir)])
     show_result = runner.invoke(app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)])
@@ -427,7 +427,7 @@ def test_voiceprint_capture_dry_run_does_not_write_store(
     )
 
     assert result.exit_code == 0
-    assert "Planned voiceprint samples: 2" in result.output
+    assert "Planned voiceprint samples: 3" in result.output
     assert "Next steps:" not in result.output
     assert "meeting-asr voiceprint embed" not in result.output
     assert not (store_dir / "voiceprints.sqlite").exists()
