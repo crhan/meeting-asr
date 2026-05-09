@@ -721,8 +721,12 @@ class _VoiceprintReviewBase:
             status = self.quality_statuses[sample.sample_public_id]
             score = "-" if sample.score is None else f"{sample.score:.3f}"
             style = quality_sample_style(sample, status)
-            line = f"{marker} [cyan]#{index + 1}[/] {sample.sample_public_id} score={score} {sample.label} -> {status} | {self._quality_sample_time(sample)}"
-            rendered = f"[{style}]{escape(line)}[/]" if style else escape(line)
+            line = (
+                f"{marker} [cyan]#{index + 1}[/] {escape(sample.sample_public_id)} "
+                f"score={escape(score)} {escape(sample.label)} -> {escape(status)} | "
+                f"{escape(self._quality_sample_time(sample))}"
+            )
+            rendered = f"[{style}]{line}[/]" if style else line
             lines.append(self._current_row(rendered) if prefix == ">" else rendered)
             if prefix == ">":
                 lines.append(f"  [dim]{escape(sample.reason)}[/]")

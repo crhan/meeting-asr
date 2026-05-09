@@ -209,6 +209,30 @@ def test_voiceprint_review_quality_mode_saves_and_refreshes(tmp_path: Path) -> N
     asyncio.run(scenario())
 
 
+def test_voiceprint_review_quality_rows_do_not_escape_markup(tmp_path: Path) -> None:
+    """Quality rows should render Rich markup instead of showing markup tags as text."""
+    store_dir = _quality_store(tmp_path)
+    session = VoiceprintReviewSession(
+        capture=None,
+        library=load_voiceprint_library_session(store_dir=store_dir),
+        quality=analyze_voiceprint_quality(store_dir=store_dir),
+        store_dir=store_dir,
+        initial_mode="quality",
+    )
+    app = VoiceprintReviewApp(session)
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)):
+            pane = app._sample_pane()
+
+            assert "\\[dim]" not in pane
+            assert "\\[cyan]" not in pane
+            assert "[cyan]#1[/]" in pane
+            assert "vps-" in pane
+
+    asyncio.run(scenario())
+
+
 def test_voiceprint_review_without_project_starts_in_library_mode(tmp_path: Path) -> None:
     """Without a project, review should behave as the global library browser."""
     store_dir = _store(tmp_path)
