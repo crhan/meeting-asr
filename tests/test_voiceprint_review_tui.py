@@ -7,6 +7,7 @@ from pathlib import Path
 
 from textual.widgets import Static
 
+import app.presentation.tui.voiceprint_review as voiceprint_review
 from app.presentation.cli.i18n import configure_cli_language
 from app.presentation.tui.voiceprint_review_text import quality_reason_text
 from app.presentation.tui.voiceprint import load_voiceprint_library_session
@@ -162,6 +163,32 @@ def test_voiceprint_review_tui_uses_colored_rows_and_checkmarks(tmp_path: Path) 
     assert "[bold yellow]>" in speaker_pane
     assert "[green]selected 2/2" in speaker_pane
     assert "[green]x[/]" in sample_pane
+
+
+def test_voiceprint_review_project_playback_shows_progress(monkeypatch, tmp_path: Path) -> None:
+    """Playing a project sample should show a visible state and progress."""
+    fake_process = _FakePlaybackProcess()
+    monkeypatch.setattr(voiceprint_review, "_start_player", lambda command: fake_process)
+    app = VoiceprintReviewApp(_review_session(tmp_path))
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.press("right")
+            await pilot.press("space")
+            await pilot.pause()
+
+            status = str(app.query_one("#status", Static).render())
+            assert "Playing project sample" in status
+            assert "0:00/0:01" in status
+            assert "PLAY" in app._sample_pane()
+
+            await pilot.press("space")
+            await pilot.pause()
+
+            assert fake_process.terminated is True
+            assert "Stopped sample playback" in str(app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
 
 
 def test_voiceprint_review_refuses_save_from_global_library(tmp_path: Path) -> None:
@@ -431,6 +458,31 @@ def _quality_store(tmp_path: Path) -> Path:
     for row, vector in zip(rows, vectors, strict=True):
         upsert_voiceprint_embedding(row.sample_id, LOCAL_SPEECHBRAIN_MODEL, vector, db_path)
     return store_dir
+
+
+class _FakePlaybackProcess:
+    """Small subprocess.Popen test double for playback controls."""
+
+    def __init__(self) -> None:
+        """Create a running fake process."""
+        self.terminated = False
+
+    def poll(self) -> int | None:
+        """Return None while the fake process is playing."""
+        return 0 if self.terminated else None
+
+    def terminate(self) -> None:
+        """Mark the fake process as terminated."""
+        self.terminated = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        """Return a successful exit code."""
+        self.terminated = True
+        return 0
+
+    def kill(self) -> None:
+        """Mark the fake process as killed."""
+        self.terminated = True
 
 
 def _sample(

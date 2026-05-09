@@ -197,7 +197,7 @@ def test_plan_voiceprint_capture_prefers_diverse_informative_segments(tmp_path: 
 
 
 def test_plan_voiceprint_capture_exposes_candidate_pool_with_recommendations(tmp_path: Path) -> None:
-    """Planning should expose more candidates while marking only the requested top samples."""
+    """Planning should expose more candidates while marking only balanced defaults."""
     project_dir = _sample_project_with_sentences(
         tmp_path,
         [_sentence(index, f"这是第 {index} 段适合做声纹的完整表达。", index * 20_000, index * 20_000 + 8_000) for index in range(1, 16)],
@@ -215,6 +215,8 @@ def test_plan_voiceprint_capture_exposes_candidate_pool_with_recommendations(tmp
     assert len(planned.speakers[0].clips) == 12
     assert sum(1 for clip in planned.speakers[0].clips if clip.recommended) == 3
     assert sum(1 for clip in session.speakers[0].clips if clip.included) == 3
+    recommended = [clip for clip in planned.speakers[0].clips if clip.recommended]
+    assert recommended[-1].source_begin_time_ms - recommended[0].source_begin_time_ms >= 100_000
 
 
 def test_capture_voiceprints_skips_definitely_bad_audio(monkeypatch, tmp_path: Path) -> None:

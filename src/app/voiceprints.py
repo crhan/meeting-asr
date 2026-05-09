@@ -27,6 +27,7 @@ from app.voiceprint_store import (
 from app.voiceprint_people import get_voiceprint_person
 
 MIN_SELECTION_SCORE = 0.30
+MIN_RECOMMENDED_SCORE = 0.55
 
 
 @dataclass(frozen=True, slots=True)
@@ -497,12 +498,40 @@ def _select_segments(
         selected = _select_diverse_segments(scored, candidate_count, min_gap_ms=2_000)
     if len(selected) < candidate_count:
         selected = _select_diverse_segments(scored, candidate_count, min_gap_ms=0)
-    recommended_ids = {id(item.segment) for item in selected[:sample_count]}
+    recommended_ids = _recommended_segment_ids(selected, sample_count)
     marked = [
         _ScoredSegment(item.segment, item.score, item.reason, id(item.segment) in recommended_ids)
         for item in selected
     ]
     return sorted(marked, key=lambda item: item.segment.begin_time_ms)
+
+
+def _recommended_segment_ids(segments: list[_ScoredSegment], sample_count: int) -> set[int]:
+    """
+    Pick default checked samples from a good-enough, time-spread pool.
+
+    The score is a usability gate, not a target to maximize. Always taking the
+    highest scores overfits toward one speaking style and often clusters around
+    long dense monologues, so defaults should cover the speaker's timeline.
+    """
+    if sample_count <= 0 or not segments:
+        return set()
+    eligible = [item for item in segments if item.score >= MIN_RECOMMENDED_SCORE]
+    if len(eligible) < sample_count:
+        eligible = segments
+    return {id(item.segment) for item in _spread_segments_by_time(eligible, sample_count)}
+
+
+def _spread_segments_by_time(segments: list[_ScoredSegment], sample_count: int) -> list[_ScoredSegment]:
+    """Return up to sample_count segments spread across the speaker timeline."""
+    ordered = sorted(segments, key=lambda item: item.segment.begin_time_ms)
+    if len(ordered) <= sample_count:
+        return ordered
+    if sample_count == 1:
+        return [ordered[len(ordered) // 2]]
+    last_index = len(ordered) - 1
+    indices = [round(index * last_index / (sample_count - 1)) for index in range(sample_count)]
+    return [ordered[index] for index in indices]
 
 
 def _scored_unique_segments(

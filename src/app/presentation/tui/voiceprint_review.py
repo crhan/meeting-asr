@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 from typing import Literal
 
 from rich.markup import escape
@@ -115,6 +117,17 @@ class VoiceprintReviewDecision:
 
     saved: bool
     selected_clip_rel_paths: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class PlaybackState:
+    """Current sample playback state for human-visible progress."""
+
+    view: Mode
+    key: str
+    label: str
+    started_at: float
+    duration_seconds: float | None
 
 
 class VoiceprintReviewHelpScreen(ModalScreen[None]):
@@ -246,6 +259,8 @@ class _VoiceprintReviewBase:
         self.quality_focused_column: Column = "speakers"
         self.quality_statuses = quality_initial_statuses(session.quality)
         self.playback_process: subprocess.Popen | None = None
+        self.playback_state: PlaybackState | None = None
+        self.playback_timer: Any | None = None
         self.workflow_summary: VoiceprintReviewWorkflowSummary | None = None
         self.evaluation_summary: VoiceprintEvaluationSummary | None = None
 
@@ -383,6 +398,7 @@ class _VoiceprintReviewBase:
         if self._is_playing():
             self._stop_playback()
             self._set_status(tr("Stopped sample playback.", "已停止 sample 播放。"))
+            self._refresh()
             return
         try:
             self._play_active_sample()
@@ -687,7 +703,8 @@ class _VoiceprintReviewBase:
             prefix = ">" if index == speaker.selected_clip_index else " "
             checked = "[green]x[/]" if sample.included else "[dim] [/]"
             marker = "[bold yellow]>[/]" if prefix == ">" else "[dim] [/]"
-            line = f"{marker} {checked} [cyan]#{index + 1}[/] {escape(project_sample_line(sample))}"
+            playing = "[bold magenta]PLAY[/]" if self._playing_key(PROJECT_MODE) == sample.rel_path else "[dim]    [/]"
+            line = f"{marker} {checked} {playing} [cyan]#{index + 1}[/] {escape(project_sample_line(sample))}"
             lines.append(self._current_row(line) if prefix == ">" else line)
         if not samples:
             lines.append(tr("[yellow]No samples for this speaker.[/]", "[yellow]当前 speaker 没有样本。[/]"))
@@ -707,7 +724,8 @@ class _VoiceprintReviewBase:
             index = page_start + offset
             prefix = ">" if index == speaker.selected_sample_index else " "
             marker = "[bold yellow]>[/]" if prefix == ">" else "[dim] [/]"
-            line = f"{marker} [cyan]#{index + 1}[/] {escape(library_sample_line(sample))}"
+            playing = "[bold magenta]PLAY[/]" if self._playing_key(LIBRARY_MODE) == sample.public_id else "[dim]    [/]"
+            line = f"{marker} {playing} [cyan]#{index + 1}[/] {escape(library_sample_line(sample))}"
             lines.append(self._current_row(line) if prefix == ">" else line)
         if not samples:
             lines.append(tr("[yellow]No samples for this person.[/]", "[yellow]当前人员没有样本。[/]"))
@@ -731,8 +749,9 @@ class _VoiceprintReviewBase:
             status = self.quality_statuses[sample.sample_public_id]
             score = "-" if sample.score is None else f"{sample.score:.3f}"
             style = quality_sample_style(sample, status)
+            playing = "[bold magenta]PLAY[/]" if self._playing_key(QUALITY_MODE) == sample.sample_public_id else "[dim]    [/]"
             line = (
-                f"{marker} [cyan]#{index + 1}[/] {escape(sample.sample_public_id)} "
+                f"{marker} {playing} [cyan]#{index + 1}[/] {escape(sample.sample_public_id)} "
                 f"score={escape(score)} {escape(sample.label)} -> {escape(status)} | "
                 f"{escape(self._quality_sample_time(sample))}"
             )
@@ -779,24 +798,105 @@ class _VoiceprintReviewBase:
             start_seconds=sample.clip_begin_time_ms / 1000,
             duration_seconds=sample.duration_seconds,
         )
-        self.playback_process = _start_player(command)
-        self._set_status(tr(f"Playing project sample {project_sample_time_range(sample)}.", f"正在播放项目样本 {project_sample_time_range(sample)}。"))
+        self._start_playback(
+            _start_player(command),
+            view=PROJECT_MODE,
+            key=sample.rel_path,
+            label=tr(f"project sample {project_sample_time_range(sample)}", f"项目样本 {project_sample_time_range(sample)}"),
+            duration_seconds=sample.duration_seconds,
+        )
 
     def _play_library_sample(self, sample: VoiceprintSampleRow) -> None:
         """Start WAV playback for one stored library sample."""
         self._stop_playback()
-        self.playback_process = _start_player(build_voiceprint_play_command(sample.clip_path))
-        self._set_status(tr(f"Playing {sample.speaker_name} sample {sample.public_id}.", f"正在播放 {sample.speaker_name} 的样本 {sample.public_id}。"))
+        self._start_playback(
+            _start_player(build_voiceprint_play_command(sample.clip_path)),
+            view=LIBRARY_MODE,
+            key=sample.public_id,
+            label=tr(f"{sample.speaker_name} sample {sample.public_id}", f"{sample.speaker_name} 的样本 {sample.public_id}"),
+            duration_seconds=(sample.source_end_time_ms - sample.source_begin_time_ms) / 1000,
+        )
 
     def _play_quality_sample(self, sample: VoiceprintQualitySample) -> None:
         """Start WAV playback for one quality-review sample."""
         self._stop_playback()
         clip_path = voiceprint_playback_clip_path(sample.clip_path, store_dir=self.session.store_dir)
-        self.playback_process = _start_player(build_voiceprint_play_command(clip_path))
-        self._set_status(tr(f"Playing quality sample {sample.sample_public_id}.", f"正在播放质量样本 {sample.sample_public_id}。"))
+        self._start_playback(
+            _start_player(build_voiceprint_play_command(clip_path)),
+            view=QUALITY_MODE,
+            key=sample.sample_public_id,
+            label=tr(f"quality sample {sample.sample_public_id}", f"质量样本 {sample.sample_public_id}"),
+            duration_seconds=(sample.source_end_time_ms - sample.source_begin_time_ms) / 1000,
+        )
+
+    def _start_playback(
+        self,
+        process: subprocess.Popen,
+        *,
+        view: Mode,
+        key: str,
+        label: str,
+        duration_seconds: float | None,
+    ) -> None:
+        """Start tracking one playback process and refresh progress."""
+        self.playback_process = process
+        self.playback_state = PlaybackState(view, key, label, time.monotonic(), duration_seconds)
+        self._restart_playback_timer()
+        self._refresh_playback_status()
+        self._refresh()
+
+    def _restart_playback_timer(self) -> None:
+        """Restart the UI timer used to update playback progress."""
+        self._stop_playback_timer()
+        self.playback_timer = self.set_interval(0.5, self._refresh_playback_status)
+
+    def _stop_playback_timer(self) -> None:
+        """Stop the playback progress timer if it exists."""
+        timer = self.playback_timer
+        self.playback_timer = None
+        if timer is not None:
+            timer.stop()
+
+    def _refresh_playback_status(self) -> None:
+        """Refresh playback progress in the status bar."""
+        state = self.playback_state
+        if state is None:
+            return
+        if not self._is_playing():
+            label = state.label
+            self.playback_state = None
+            self._stop_playback_timer()
+            self._set_status(tr(f"Finished playing {label}.", f"已播放完成：{label}。"))
+            self._refresh()
+            return
+        self.query_one("#status", Static).update(escape(self._playback_status_text(state)))
+
+    def _playback_status_text(self, state: PlaybackState) -> str:
+        """Render a human-readable playback progress line."""
+        elapsed = max(0.0, time.monotonic() - state.started_at)
+        duration = state.duration_seconds if state.duration_seconds and state.duration_seconds > 0 else None
+        if duration is None:
+            return tr(
+                f"Playing {state.label} | elapsed {_format_duration(elapsed)} | Space stops playback.",
+                f"正在播放 {state.label} | 已播放 {_format_duration(elapsed)} | Space 停止播放。",
+            )
+        progress = min(1.0, elapsed / duration)
+        return tr(
+            f"Playing {state.label} | {_format_duration(elapsed)}/{_format_duration(duration)} | {progress:.0%} | Space stops playback.",
+            f"正在播放 {state.label} | {_format_duration(elapsed)}/{_format_duration(duration)} | {progress:.0%} | Space 停止播放。",
+        )
+
+    def _playing_key(self, view: Mode) -> str | None:
+        """Return the playing sample key for one view."""
+        state = self.playback_state
+        if state is None or not self._is_playing() or state.view != view:
+            return None
+        return state.key
 
     def _stop_playback(self) -> None:
         """Stop the current playback child process if it is still running."""
+        self._stop_playback_timer()
+        self.playback_state = None
         process = self.playback_process
         self.playback_process = None
         if process is None or process.poll() is not None:
@@ -1395,3 +1495,10 @@ def _start_player(command: list[str]) -> subprocess.Popen:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+def _format_duration(seconds: float) -> str:
+    """Render seconds as M:SS for playback progress."""
+    total = max(0, int(seconds))
+    minutes, remainder = divmod(total, 60)
+    return f"{minutes}:{remainder:02d}"
