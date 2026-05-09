@@ -6,8 +6,10 @@ import hashlib
 import json
 import math
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 
 from app.core.progress import CliProgressReporter, emit_progress
 from app.infra.ffmpeg import extract_audio_clip
@@ -302,10 +304,32 @@ def _match_speaker_groups(
     if not known:
         emit_progress(progress, "No voiceprint embeddings found; writing review-only matches")
         return _unknown_speaker_matches(speaker_groups, threshold)
-    for speaker_id, speaker_segments in speaker_groups:
+    if len(speaker_groups) == 1:
+        speaker_id, speaker_segments = speaker_groups[0]
         emit_progress(progress, f"Matching {speaker_id_to_label(speaker_id)}")
-        matches.append(
-            _match_one_speaker_group(
+        match = _match_one_speaker_group(
+            project_root,
+            source,
+            speaker_id,
+            speaker_segments,
+            known,
+            provider,
+            model,
+            threshold,
+            sample_count,
+            max_seconds,
+            padding_seconds,
+            Lock(),
+        )
+        emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)}", advance=1)
+        return [match]
+
+    cache_lock = Lock()
+    workers = min(4, len(speaker_groups))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                _match_one_speaker_group,
                 project_root,
                 source,
                 speaker_id,
@@ -317,10 +341,16 @@ def _match_speaker_groups(
                 sample_count,
                 max_seconds,
                 padding_seconds,
-            )
-        )
-        emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)}", advance=1)
-    return matches
+                cache_lock,
+            ): speaker_id
+            for speaker_id, speaker_segments in speaker_groups
+        }
+        matched_by_id: dict[int, SpeakerMatch] = {}
+        for future in as_completed(futures):
+            speaker_id = futures[future]
+            matched_by_id[speaker_id] = future.result()
+            emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)}", advance=1)
+    return [matched_by_id[speaker_id] for speaker_id, _segments in speaker_groups]
 
 
 def _match_one_speaker_group(
@@ -335,6 +365,7 @@ def _match_one_speaker_group(
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
+    cache_lock: Lock,
 ) -> SpeakerMatch:
     """Match one project speaker against known voiceprint vectors."""
     vector = _probe_speaker_vector(
@@ -347,6 +378,7 @@ def _match_one_speaker_group(
         sample_count,
         max_seconds,
         padding_seconds,
+        cache_lock,
     )
     candidates = _ranked_matches(vector, known, limit=3)
     best = candidates[0] if candidates else None
@@ -442,6 +474,7 @@ def _probe_speaker_vector(
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
+    cache_lock: Lock,
 ) -> list[float]:
     """Build an averaged probe vector for one project speaker."""
     selected_segments = _select_segments(segments, sample_count)
@@ -462,7 +495,8 @@ def _probe_speaker_vector(
         _write_probe_clip(source, clip_path, segment, max_seconds, padding_seconds)
         vectors.append(embed_audio_file(clip_path, provider=provider))
     vector = _normalize(_mean_vector(vectors))
-    _write_probe_cache(project_root, cache_key, vector)
+    with cache_lock:
+        _write_probe_cache(project_root, cache_key, vector)
     return vector
 
 
