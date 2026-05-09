@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import wave
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -250,7 +251,11 @@ def _fake_extract_audio_clip(
 ) -> Path:
     """Write a fake clip payload."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(f"{input_path}:{start_seconds}:{duration_seconds}".encode())
+    with wave.open(str(output_path), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(16000)
+        writer.writeframes(b"\x00\x00" * 160)
     return output_path
 
 

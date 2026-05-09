@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+import wave
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 from app.cli import app
-from app.config import save_config_values
 from app.project_manager import create_project, load_manifest
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
@@ -459,8 +459,11 @@ def _fake_extract_audio_clip(
 ) -> Path:
     """Write a fake WAV payload for tests."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = f"{input_path}:{start_seconds:.3f}:{duration_seconds:.3f}".encode()
-    output_path.write_bytes(payload)
+    with wave.open(str(output_path), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(16000)
+        writer.writeframes(b"\x00\x00" * 160)
     return output_path
 
 

@@ -27,6 +27,7 @@ from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.completion_helpers import complete_voiceprint_model
 from app.core.project_refs import resolve_project_ref
 from app.utils import format_ms_timestamp
+from app.voiceprint_audio import normalize_voiceprint_samples
 from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_people import (
     create_voiceprint_person,
@@ -464,7 +465,7 @@ def embed_command(
     rebuild: bool = typer.Option(False, "--rebuild"),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
 ) -> None:
-    """Generate embeddings for stored voiceprint samples."""
+    """Normalize audio and generate embeddings for stored voiceprint samples."""
     summary = run_with_progress(
         lambda reporter: embed_voiceprint_samples(
             store_dir=store_dir,
@@ -479,7 +480,21 @@ def embed_command(
     typer.echo(f"Database: {summary.db_path}")
     typer.echo(f"Provider: {summary.provider}")
     typer.echo(f"Model: {summary.model}")
+    typer.echo("Audio preprocessing: audio-norm-v1")
     typer.echo(f"Embedded: {summary.embedded_count}")
+    typer.echo(f"Skipped: {summary.skipped_count}")
+
+
+@app.command("normalize")
+def normalize_command(
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    rebuild: bool = typer.Option(False, "--rebuild"),
+) -> None:
+    """Normalize stored voiceprint sample audio without modifying original clips."""
+    summary = run_with_cli_errors(lambda: normalize_voiceprint_samples(store_dir=store_dir, rebuild=rebuild))
+    typer.echo(f"Store: {summary.store_dir}")
+    typer.echo(f"Normalized: {summary.normalized_dir}")
+    typer.echo(f"Processed: {summary.processed_count}")
     typer.echo(f"Skipped: {summary.skipped_count}")
 
 

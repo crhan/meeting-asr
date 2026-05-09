@@ -9,6 +9,10 @@ from typing import Any
 from app.core.progress import CliProgressReporter, emit_progress
 from app.config import get_cache_dir
 from app.utils import suppress_noisy_dependency_info_logs
+from app.voiceprint_audio import (
+    VOICEPRINT_AUDIO_PREPROCESS_VERSION,
+    ensure_normalized_voiceprint_sample,
+)
 from app.voiceprint_store import (
     get_voiceprint_db_path,
     list_all_voiceprint_samples,
@@ -18,7 +22,8 @@ from app.voiceprint_store import (
 
 VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN = "local-speechbrain"
 DEFAULT_VOICEPRINT_PROVIDER = VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
-LOCAL_SPEECHBRAIN_MODEL = "speechbrain-spkrec-ecapa-voxceleb"
+LOCAL_SPEECHBRAIN_BASE_MODEL = "speechbrain-spkrec-ecapa-voxceleb"
+LOCAL_SPEECHBRAIN_MODEL = f"{LOCAL_SPEECHBRAIN_BASE_MODEL}+{VOICEPRINT_AUDIO_PREPROCESS_VERSION}"
 SUPPORTED_VOICEPRINT_PROVIDERS = (VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,)
 
 _PROVIDER_ALIASES = {
@@ -76,7 +81,8 @@ def embed_voiceprint_samples(
             skipped_count += 1
             emit_progress(progress, "Skipping existing voiceprint embedding", advance=1)
             continue
-        vector = embed_audio_file(sample.clip_path, provider=resolved_provider)
+        normalized_path = ensure_normalized_voiceprint_sample(sample, store_dir=store_dir)
+        vector = embed_audio_file(normalized_path, provider=resolved_provider)
         upsert_voiceprint_embedding(sample.sample_id, resolved_model, vector, db_path)
         embedded_count += 1
         emit_progress(progress, "Embedded voiceprint sample", advance=1)
