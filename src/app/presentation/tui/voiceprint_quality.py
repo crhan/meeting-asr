@@ -14,6 +14,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Header, Static
 
 from app.presentation.tui.i18n import tr
+from app.presentation.tui.voiceprint_review_text import quality_reason_text
 from app.utils import format_ms_timestamp
 from app.voiceprint_audio import voiceprint_playback_clip_path
 from app.voiceprint_playback import build_voiceprint_play_command
@@ -371,7 +372,7 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
             line = f"{marker} {sample.sample_public_id} score={score} {sample.label} -> {status} | {_clip_time(sample)}"
             lines.append(f"[{style}]{escape(line)}[/]" if style else escape(line))
             if index == selected_index:
-                lines.append(f"  [dim]{escape(sample.reason)}[/]")
+                lines.append(f"  [dim]{escape(quality_reason_text(sample.reason))}[/]")
                 lines.append(f"  [dim]{escape(trim_text(sample.transcript_text, 120))}[/]")
                 lines.append(f"  [dim]{escape(str(sample.clip_path))}[/]")
         return "\n".join(lines)

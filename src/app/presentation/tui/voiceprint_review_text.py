@@ -101,3 +101,26 @@ q / Esc              返回调用方，不写入新样本
 ?                    显示或关闭帮助
 """,
     )
+
+
+def quality_reason_text(reason: str) -> str:
+    """
+    Return localized display text for a voiceprint quality reason.
+
+    Args:
+        reason: Stable internal quality reason.
+
+    Returns:
+        Human-facing localized reason.
+    """
+    if reason == "statistical outlier":
+        return tr("statistical outlier: this sample is far from this person's voiceprint cluster", "统计离群：这段样本和此人的其他声纹样本差异明显")
+    if reason == "cluster-consistent":
+        return tr("cluster-consistent: this sample matches this person's voiceprint cluster", "声纹一致：这段样本和此人的声纹簇匹配")
+    if reason == "need at least 3 active samples":
+        return tr("need at least 3 active samples for quality scoring", "至少需要 3 个 active 样本才能计算质量评分")
+    if reason.startswith("score<"):
+        return tr(f"score below threshold ({reason.removeprefix('score<')})", f"分数低于阈值（{reason.removeprefix('score<')}）")
+    if reason.startswith("status="):
+        return tr(f"sample status is {reason.removeprefix('status=')}", f"样本状态为 {reason.removeprefix('status=')}")
+    return reason

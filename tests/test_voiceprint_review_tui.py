@@ -8,6 +8,7 @@ from pathlib import Path
 from textual.widgets import Static
 
 from app.presentation.cli.i18n import configure_cli_language
+from app.presentation.tui.voiceprint_review_text import quality_reason_text
 from app.presentation.tui.voiceprint import load_voiceprint_library_session
 from app.presentation.tui.voiceprint_capture import load_voiceprint_capture_review_session
 from app.presentation.tui.voiceprint_review import (
@@ -231,6 +232,17 @@ def test_voiceprint_review_quality_rows_do_not_escape_markup(tmp_path: Path) -> 
             assert "vps-" in pane
 
     asyncio.run(scenario())
+
+
+def test_voiceprint_quality_reason_is_localized() -> None:
+    """Quality reason text should be human-facing in Chinese."""
+    try:
+        configure_cli_language("zh")
+        assert quality_reason_text("statistical outlier") == "统计离群：这段样本和此人的其他声纹样本差异明显"
+        assert quality_reason_text("cluster-consistent") == "声纹一致：这段样本和此人的声纹簇匹配"
+        assert quality_reason_text("score<0.60") == "分数低于阈值（0.60）"
+    finally:
+        configure_cli_language("en")
 
 
 def test_voiceprint_review_without_project_starts_in_library_mode(tmp_path: Path) -> None:

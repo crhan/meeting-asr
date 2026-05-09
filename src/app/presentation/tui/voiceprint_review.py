@@ -57,7 +57,7 @@ from app.presentation.tui.voiceprint_quality import (
     _sample_style as quality_sample_style,
 )
 from app.presentation.tui.speaker_matches import load_match_candidates
-from app.presentation.tui.voiceprint_review_text import help_text, status_text
+from app.presentation.tui.voiceprint_review_text import help_text, quality_reason_text, status_text
 from app.presentation.tui.voiceprint_review_workflow import (
     VoiceprintReviewProcessingScreen,
     VoiceprintReviewResultScreen,
@@ -730,7 +730,7 @@ class _VoiceprintReviewBase:
             rendered = f"[{style}]{line}[/]" if style else line
             lines.append(self._current_row(rendered) if prefix == ">" else rendered)
             if prefix == ">":
-                lines.append(f"  [dim]{escape(sample.reason)}[/]")
+                lines.append(f"  [dim]{escape(quality_reason_text(sample.reason))}[/]")
                 lines.append(f"  [dim]{escape(trim_text(sample.transcript_text, limit=120))}[/]")
         if not samples:
             lines.append(tr("[yellow]No samples for this person.[/]", "[yellow]当前人员没有样本。[/]"))
