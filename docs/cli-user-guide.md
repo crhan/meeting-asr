@@ -146,7 +146,7 @@ meeting-asr project transcribe PROJECT_ID \
 
 - 交互式终端显示多步骤进度。
 - 默认人类输出只显示进度和最终摘要，不打印 `stage=` / `heartbeat=` 结构化日志。
-- 长轮询会输出 elapsed、last successful operation、next poll 或 batch index。
+- 长轮询会更新当前步骤的 elapsed、ETA、poll 状态或 batch index。
 - 结构化日志只在显式 `--agent-log` 开启时输出，供 Agent、CI 或日志系统诊断。
 - Agent 推荐使用 `--agent-log --no-progress`，这样 stdout/stderr 只有稳定的 stage/heartbeat 文本和最终摘要。
 - 日志只包含非敏感标识，例如 `dashscope_task_id`、`oss_object_key`、`signed_url_ready`；signed URL query、token、secret、access key 不输出。
@@ -264,8 +264,12 @@ space          播放/停止当前 sample
 a              接受当前声纹 match
 i              忽略当前 speaker
 /              搜索或输入人名
-c              进入转写纠错
+e              修改当前 sample 文本并进入转写纠错
+c              同 e，保留为隐藏别名
+p              切换 Project
 v              进入 Voiceprint Review
+m              用最新声纹库重新匹配当前项目
+b              对已采集声纹补做 embedding
 s              保存
 ?              快捷键
 ```
@@ -310,16 +314,24 @@ exports/subtitle_named.srt
 
 ```bash
 meeting-asr voiceprint review PROJECT_ID
-meeting-asr voiceprint embed
 meeting-asr project speakers match PROJECT_ID
 ```
 
-在 `project review` TUI 中按 `v` 也可以进入 Voiceprint Review；从那里保存会采样、生成 embedding，并做当前项目和历史项目反向评测。评测发现风险时，先看提示的 `meeting-asr project review PROJECT_ID`，确认后再接受 embedding。
+首选流程是在 `project review` TUI 中按 `v` 进入 Voiceprint Review。确认样本后按 `s`，它会采样、生成 embedding，并做当前项目和历史项目反向评测。评测发现风险时，先看提示的 `meeting-asr project review PROJECT_ID`，确认后再接受 embedding。
+
+`meeting-asr voiceprint embed` 仍保留给脚本和补救场景，例如已有样本但 embedding 缺失时使用。
+它会先使用归一化后的派生音频提取 embedding，不覆盖原始 clip。只想重建归一化音频时：
+
+```bash
+meeting-asr voiceprint normalize --rebuild
+meeting-asr voiceprint embed --rebuild
+```
 
 全局声纹库浏览：
 
 ```bash
 meeting-asr voiceprint review
+meeting-asr voiceprint quality --review
 meeting-asr voiceprint list
 meeting-asr voiceprint show PERSON_ID_OR_NAME
 meeting-asr voiceprint play PERSON_ID_OR_NAME --sample 1
@@ -328,7 +340,7 @@ meeting-asr voiceprint delete-speaker PERSON_ID_OR_NAME --yes
 meeting-asr voiceprint people list
 ```
 
-`voiceprint review PROJECT_ID` 左侧是项目待采样候选，右侧是样本；`Tab` 可切到全局声纹库。没有 Project ID 时直接进入全局库视图。删除操作保留在显式 CLI，避免 TUI 里误删。
+`voiceprint review PROJECT_ID` 左侧是项目待采样候选，右侧是样本；`Tab` 切换视图，`p` 看项目候选样本，`g` 看全局库，`y` 看质量检查。没有 Project ID 时直接进入全局库视图。质量页可播放样本、隔离离群样本、标记人工确认，并按 `u` 重新计算质量。删除操作保留在显式 CLI，避免 TUI 里误删。
 
 声纹 embedding 只保留本地 `local-speechbrain`，不再提供远端 provider 配置。
 

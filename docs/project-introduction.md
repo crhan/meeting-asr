@@ -187,6 +187,8 @@ space            播放或停止当前 sample
 x                勾选或排除当前 sample
 d                取消当前人的全部 sample
 s                采集已选 sample、生成 embedding，并做评测
+u                在质量页刷新质量分数
+y                切到声纹质量检查
 ```
 
 ![Meeting-ASR screenshot 10](assets/meeting-asr-project-introduction-10.png)

@@ -109,8 +109,8 @@ meeting-asr project transcript show PROJECT_ID --kind auto
 meeting-asr project correct diff PROJECT_ID
 meeting-asr project correct accept PROJECT_ID
 meeting-asr voiceprint review PROJECT_ID
-meeting-asr voiceprint embed
 meeting-asr voiceprint review
+meeting-asr voiceprint quality --review
 ```
 
 `project run` 默认显示长任务进度，并把当前阶段、外部 task id、最近错误、本地词汇订正和 polish 状态写进 `project.json`。如果命令中断或怀疑卡住，先跑：

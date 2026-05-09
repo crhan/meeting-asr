@@ -83,7 +83,8 @@ space          播放/停止当前 sample
 a              接受当前声纹匹配
 i              忽略当前 speaker
 /              搜索或输入人名
-c              修改转写文本并生成 correction proposal
+e              修改转写文本并生成 correction proposal
+c              同 e，隐藏兼容键
 v              进入 Voiceprint Review，采样、embedding、评测
 s              保存当前 review
 ```
@@ -95,11 +96,16 @@ meeting-asr project transcript show PROJECT_ID --kind named
 meeting-asr project speakers preview PROJECT_ID
 ```
 
-如果这次确认了新人，在 Project Review 里按 `v` 进入声纹采样；或者用 CLI：
+如果这次确认了新人，在 Project Review 里按 `v` 进入 Voiceprint Review，然后按 `s`。这一步会完成采样、embedding 和当前/历史项目评测。也可以从 CLI 直接打开同一个 TUI：
 
 ```bash
 meeting-asr voiceprint review PROJECT_ID
-meeting-asr voiceprint embed
+```
+
+如果怀疑已有声纹库里有坏样本或重复样本：
+
+```bash
+meeting-asr voiceprint quality --review
 ```
 
 ## 故障时
