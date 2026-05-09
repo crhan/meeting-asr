@@ -15,6 +15,7 @@ from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
+    list_voiceprint_samples,
     list_voiceprint_embeddings,
     list_voiceprint_samples_for_project,
     store_voiceprint_samples,
@@ -262,6 +263,29 @@ def test_voiceprint_embed_stores_sample_embeddings(
     assert "Embedded: 2" in result.output
     assert len(embeddings) == 2
     assert "Embedded samples: 2/2" in list_result.output
+
+
+def test_voiceprint_store_skips_duplicate_clip_hash(tmp_path: Path) -> None:
+    """The global library should not store the same audio bytes twice."""
+    store_dir = tmp_path / "voiceprints"
+    source_path = tmp_path / "meeting.mp4"
+    source_path.write_bytes(b"source")
+    first_clip = store_dir / "clips" / "project-a" / "speaker_0" / "clip_001.wav"
+    second_clip = store_dir / "clips" / "project-b" / "speaker_0" / "clip_001.wav"
+    first_clip.parent.mkdir(parents=True, exist_ok=True)
+    second_clip.parent.mkdir(parents=True, exist_ok=True)
+    first_clip.write_bytes(b"same-audio")
+    second_clip.write_bytes(b"same-audio")
+    samples = [
+        _stored_voiceprint_sample(store_dir, source_path, first_clip, "project-a"),
+        _stored_voiceprint_sample(store_dir, source_path, second_clip, "project-b"),
+    ]
+
+    db_path = store_voiceprint_samples(samples, get_voiceprint_db_path(store_dir))
+
+    rows = list_voiceprint_samples("Alice", db_path)
+    assert len(rows) == 1
+    assert rows[0].project_id == "project-a"
 
 
 def test_voiceprint_quality_flags_outliers_and_quarantine_excludes_embedding(
@@ -542,6 +566,29 @@ def _stored_sample(
         clip_begin_time_ms=0,
         clip_end_time_ms=500,
         transcript_text=f"sample {index}",
+    )
+
+
+def _stored_voiceprint_sample(
+    store_dir: Path,
+    source_path: Path,
+    clip_path: Path,
+    project_id: str,
+) -> StoredVoiceprintSample:
+    """Build one stored sample fixture with a caller-provided clip."""
+    return StoredVoiceprintSample(
+        speaker_name="Alice",
+        project_id=project_id,
+        project_path=store_dir / project_id,
+        project_speaker_id=0,
+        source_path=source_path,
+        clip_path=clip_path,
+        clip_rel_path=str(clip_path.relative_to(store_dir)),
+        source_begin_time_ms=1000,
+        source_end_time_ms=2000,
+        clip_begin_time_ms=0,
+        clip_end_time_ms=1000,
+        transcript_text="same sample",
     )
 
 

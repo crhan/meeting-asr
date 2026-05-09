@@ -548,8 +548,39 @@ def _upsert_sample(connection: sqlite3.Connection, sample: StoredVoiceprintSampl
         sample: Sample metadata to store.
     """
     now = _now_iso()
+    clip_sha256 = _sha256_file(sample.clip_path)
     speaker_id = _speaker_id_for_sample(connection, sample, now)
-    connection.execute(UPSERT_SAMPLE_SQL, _sample_values(sample, speaker_id, new_sample_public_id(connection), now))
+    if _has_duplicate_clip_hash(connection, sample, speaker_id, clip_sha256):
+        return
+    connection.execute(UPSERT_SAMPLE_SQL, _sample_values(sample, speaker_id, new_sample_public_id(connection), clip_sha256, now))
+
+
+def _has_duplicate_clip_hash(
+    connection: sqlite3.Connection,
+    sample: StoredVoiceprintSample,
+    speaker_id: int,
+    clip_sha256: str,
+) -> bool:
+    """
+    Return true when the same audio bytes are already stored under another path.
+
+    Args:
+        connection: SQLite connection.
+        sample: Sample metadata to store.
+        speaker_id: Stored speaker id.
+        clip_sha256: SHA-256 digest for the clip bytes.
+
+    Returns:
+        True when storing this sample would duplicate an existing clip.
+    """
+    existing = connection.execute(
+        "SELECT clip_path FROM voiceprint_samples WHERE speaker_id = ? AND clip_sha256 = ? LIMIT 1",
+        (speaker_id, clip_sha256),
+    ).fetchone()
+    if existing is None:
+        return False
+    existing_path = Path(str(existing["clip_path"])).expanduser().resolve()
+    return existing_path != sample.clip_path.expanduser().resolve()
 
 
 def _speaker_id_for_sample(
@@ -576,7 +607,13 @@ def _speaker_id_for_sample(
     return sample.person_id
 
 
-def _sample_values(sample: StoredVoiceprintSample, speaker_id: int, public_id: str, now: str) -> tuple[object, ...]:
+def _sample_values(
+    sample: StoredVoiceprintSample,
+    speaker_id: int,
+    public_id: str,
+    clip_sha256: str,
+    now: str,
+) -> tuple[object, ...]:
     """
     Build SQLite values for one voiceprint sample.
 
@@ -584,6 +621,7 @@ def _sample_values(sample: StoredVoiceprintSample, speaker_id: int, public_id: s
         sample: Sample metadata.
         speaker_id: Stored speaker id.
         public_id: Stable sample public id for new rows.
+        clip_sha256: SHA-256 digest for the clip bytes.
         now: Current timestamp.
 
     Returns:
@@ -598,7 +636,7 @@ def _sample_values(sample: StoredVoiceprintSample, speaker_id: int, public_id: s
         str(sample.source_path.expanduser().resolve()),
         str(sample.clip_path.expanduser().resolve()),
         sample.clip_rel_path,
-        _sha256_file(sample.clip_path),
+        clip_sha256,
         sample.source_begin_time_ms,
         sample.source_end_time_ms,
         sample.clip_begin_time_ms,
