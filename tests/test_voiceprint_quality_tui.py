@@ -14,6 +14,7 @@ from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
+    list_voiceprint_embeddings,
     list_voiceprint_samples_for_project,
     store_voiceprint_samples,
     upsert_voiceprint_embedding,
@@ -65,6 +66,28 @@ def test_voiceprint_quality_tui_save_refreshes_scores_in_place(tmp_path: Path) -
             )
 
             await pilot.press("q")
+
+    asyncio.run(scenario())
+
+
+def test_voiceprint_quality_tui_marks_verified_active(tmp_path: Path) -> None:
+    """The quality TUI should mark human-confirmed outliers without excluding them."""
+    store_dir = _quality_store(tmp_path)
+    report = analyze_voiceprint_quality(store_dir=store_dir, speaker="Alice")
+
+    async def scenario() -> None:
+        async with VoiceprintQualityApp(report, store_dir=store_dir, speaker="Alice").run_test(size=(120, 24)) as pilot:
+            app = pilot.app
+
+            assert app.report.suspicious_count == 1
+
+            await pilot.press("right")
+            await pilot.press("v")
+            await pilot.press("s")
+            await pilot.pause()
+
+            assert app.report.suspicious_count == 0
+            assert len(list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, get_voiceprint_db_path(store_dir))) == 4
 
     asyncio.run(scenario())
 

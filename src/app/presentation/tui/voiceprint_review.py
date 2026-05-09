@@ -74,6 +74,7 @@ from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_quality import (
     VOICEPRINT_SAMPLE_STATUS_ACTIVE,
     VOICEPRINT_SAMPLE_STATUS_QUARANTINED,
+    VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
     VoiceprintQualityPerson,
     VoiceprintQualityReport,
     VoiceprintQualitySample,
@@ -215,6 +216,7 @@ class _VoiceprintReviewBase:
         Binding("a", "toggle_speaker", "Toggle speaker"),
         Binding("d", "exclude_speaker", "Exclude speaker"),
         Binding("r", "mark_quality_quarantined", "Quarantine", show=False),
+        Binding("v", "mark_quality_verified", "Verify sample", show=False),
         Binding("s", "save", "Save selected"),
         Binding("u", "refresh_quality", "Refresh quality"),
         Binding("e", "evaluate", "Evaluate"),
@@ -368,6 +370,13 @@ class _VoiceprintReviewBase:
             self._set_status(tr("Quarantine applies only to Quality review.", "隔离只适用于质量检查视图。"))
             return
         self._mark_quality_sample(VOICEPRINT_SAMPLE_STATUS_QUARANTINED)
+
+    def action_mark_quality_verified(self) -> None:
+        """Mark the selected quality sample as human-verified active."""
+        if self.mode != QUALITY_MODE:
+            self._set_status(tr("Verification applies only to Quality review.", "人工确认只适用于质量检查视图。"))
+            return
+        self._mark_quality_sample(VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE)
 
     def action_play_sample(self) -> None:
         """Play or stop the selected sample for the active view."""
@@ -957,7 +966,7 @@ class _VoiceprintReviewBase:
             return
         current = self.quality_statuses[sample.sample_public_id]
         status = VOICEPRINT_SAMPLE_STATUS_ACTIVE
-        if current == VOICEPRINT_SAMPLE_STATUS_ACTIVE:
+        if current in {VOICEPRINT_SAMPLE_STATUS_ACTIVE, VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE}:
             status = VOICEPRINT_SAMPLE_STATUS_QUARANTINED
         self._set_quality_sample_status(sample, status)
 

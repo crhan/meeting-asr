@@ -10,11 +10,11 @@ def status_text() -> str:
     return tr(
         (
             "Voiceprint: Tab switch Project/Global/Quality | p project | g global | y quality | h/l columns | "
-            "j/k rows | Space play/stop | x include/quarantine | s save/refresh | u refresh quality | e evaluate | ? help | q back/quit"
+            "j/k rows | Space play/stop | x include/quarantine | v verify | s save/refresh | u refresh quality | e evaluate | ? help | q back/quit"
         ),
         (
             "声纹：Tab 切项目/全局/质量 | p 项目 | g 全局 | y 质量 | h/l 切列 | j/k 移动 | "
-            "Space 播放/停止 | x 选择/隔离 | s 保存/刷新 | u 刷新质量 | e 评测 | ? 帮助 | q 返回/退出"
+            "Space 播放/停止 | x 选择/隔离 | v 人工确认 | s 保存/刷新 | u 刷新质量 | e 评测 | ? 帮助 | q 返回/退出"
         ),
     )
 
@@ -54,6 +54,7 @@ space                Play or stop selected stored WAV sample
 x                    Toggle selected sample active/quarantined
 a                    Mark selected sample active
 r                    Mark selected sample quarantined
+v                    Mark selected sample human-verified active
 s                    Save quality changes and refresh scores
 u                    Refresh quality scores from SQLite
 
@@ -93,6 +94,7 @@ space                播放或停止当前已保存 WAV 样本
 x                    在 active/quarantined 之间切换
 a                    保留当前样本，参与后续匹配
 r                    隔离当前样本，不参与后续匹配
+v                    人工确认当前样本，继续参与匹配且不再作为质量风险
 s                    保存质量变更并刷新评分
 u                    从 SQLite 刷新质量评分
 
@@ -117,6 +119,8 @@ def quality_reason_text(reason: str) -> str:
         return tr("statistical outlier: this sample is far from this person's voiceprint cluster", "统计离群：这段样本和此人的其他声纹样本差异明显")
     if reason == "cluster-consistent":
         return tr("cluster-consistent: this sample matches this person's voiceprint cluster", "声纹一致：这段样本和此人的声纹簇匹配")
+    if reason == "human verified active":
+        return tr("human verified: keep this sample active despite quality risk", "人工确认：这段样本保留参与匹配，不再作为质量风险")
     if reason == "need at least 3 active samples":
         return tr("need at least 3 active samples for quality scoring", "至少需要 3 个 active 样本才能计算质量评分")
     if reason.startswith("score<"):

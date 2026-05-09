@@ -21,6 +21,7 @@ from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_quality import (
     VOICEPRINT_SAMPLE_STATUS_ACTIVE,
     VOICEPRINT_SAMPLE_STATUS_QUARANTINED,
+    VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
     VoiceprintQualityPerson,
     VoiceprintQualityReport,
     VoiceprintQualitySample,
@@ -130,6 +131,7 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         Binding("x", "toggle_quarantine", "Quarantine/active"),
         Binding("a", "mark_active", "Keep active"),
         Binding("r", "mark_quarantined", "Quarantine"),
+        Binding("v", "mark_verified", "Verify sample"),
         Binding("s", "save", "Save"),
         Binding("u", "refresh_quality", "Refresh"),
         Binding("?", "show_shortcuts", "Help"),
@@ -232,7 +234,11 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         if sample is None:
             return
         current = self.statuses[sample.sample_public_id]
-        target = VOICEPRINT_SAMPLE_STATUS_ACTIVE if current == VOICEPRINT_SAMPLE_STATUS_QUARANTINED else VOICEPRINT_SAMPLE_STATUS_QUARANTINED
+        target = (
+            VOICEPRINT_SAMPLE_STATUS_ACTIVE
+            if current == VOICEPRINT_SAMPLE_STATUS_QUARANTINED
+            else VOICEPRINT_SAMPLE_STATUS_QUARANTINED
+        )
         self.statuses[sample.sample_public_id] = target
         self._set_status(tr(f"Set {sample.sample_public_id} to {target}.", f"已把 {sample.sample_public_id} 标记为 {target}。"))
         self._refresh()
@@ -244,6 +250,10 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
     def action_mark_quarantined(self) -> None:
         """Mark the selected sample quarantined."""
         self._mark_sample(VOICEPRINT_SAMPLE_STATUS_QUARANTINED)
+
+    def action_mark_verified(self) -> None:
+        """Mark the selected sample human-verified active."""
+        self._mark_sample(VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE)
 
     def action_save(self) -> None:
         """Persist changed sample statuses and refresh quality scores."""
@@ -495,8 +505,8 @@ def _person_index(report: VoiceprintQualityReport, person_public_id: str | None)
 def _status_text() -> str:
     """Return bottom status help."""
     return tr(
-        "j/k move | h/l pane | space play/stop | x toggle quarantine | a active | r quarantine | s save+refresh | u refresh | q quit",
-        "j/k 移动 | h/l 切栏 | space 播放/停止 | x 切换隔离 | a 保留 | r 隔离 | s 保存并刷新 | u 刷新 | q 退出",
+        "j/k move | h/l pane | space play/stop | x toggle quarantine | a active | r quarantine | v verify | s save+refresh | u refresh | q quit",
+        "j/k 移动 | h/l 切栏 | space 播放/停止 | x 切换隔离 | a 保留 | r 隔离 | v 人工确认 | s 保存并刷新 | u 刷新 | q 退出",
     )
 
 
@@ -512,6 +522,7 @@ space            Play or stop selected WAV sample
 x                Toggle selected sample active/quarantined
 a                Mark selected sample active
 r                Mark selected sample quarantined
+v                Mark selected sample human-verified active
 s                Save status changes and refresh scores
 u                Refresh quality scores from SQLite
 q / Esc          Quit without saving
@@ -527,6 +538,7 @@ space            播放或停止当前 WAV 样本
 x                在 active/quarantined 之间切换
 a                保留当前样本，参与后续匹配
 r                隔离当前样本，不参与后续匹配
+v                人工确认当前样本，继续参与匹配且不再作为质量风险
 s                保存状态变更并刷新评分
 u                从 SQLite 刷新质量评分
 q / Esc          不保存退出
@@ -563,6 +575,8 @@ def _person_style(person: VoiceprintQualityPerson) -> str:
 
 def _sample_style(sample: VoiceprintQualitySample, status: str) -> str:
     """Return markup style for a sample row."""
+    if status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
+        return "bold cyan"
     if status != VOICEPRINT_SAMPLE_STATUS_ACTIVE:
         return "dim"
     if sample.label == "critical":

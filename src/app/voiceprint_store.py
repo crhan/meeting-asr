@@ -400,7 +400,7 @@ def update_voiceprint_sample_status(
     Returns:
         Updated sample row.
     """
-    if status not in {"active", "quarantined", "rejected"}:
+    if status not in {"active", "verified-active", "quarantined", "rejected"}:
         raise ValueError(f"Unsupported voiceprint sample status: {status}")
     database_path = _resolve_db_path(db_path)
     with sqlite3.connect(database_path) as connection:
@@ -833,7 +833,7 @@ def _embedding_rows_sql(*, include_inactive: bool = False) -> str:
     Returns:
         SQL query.
     """
-    status_filter = "" if include_inactive else "AND samples.sample_status = 'active'"
+    status_filter = "" if include_inactive else "AND samples.sample_status IN ('active', 'verified-active')"
     return f"""
         SELECT samples.id AS sample_id, samples.public_id AS sample_public_id,
                speakers.id AS speaker_id, speakers.public_id AS speaker_public_id,

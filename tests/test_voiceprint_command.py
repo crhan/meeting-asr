@@ -293,6 +293,35 @@ def test_voiceprint_quality_flags_outliers_and_quarantine_excludes_embedding(
     assert "status: quarantined" in show_result.output
 
 
+def test_voiceprint_quality_verified_active_keeps_matching_without_risk(
+    tmp_path: Path,
+) -> None:
+    """Human-verified outliers should stay matchable without raising quality risk."""
+    store_dir = _quality_store(tmp_path)
+    db_path = get_voiceprint_db_path(store_dir)
+    payload = json.loads(runner.invoke(app, ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir), "--json"]).output)
+    critical_sample = next(sample for sample in payload["people"][0]["samples"] if sample["label"] == "critical")
+
+    update_voiceprint_sample_status(critical_sample["sample_public_id"], "verified-active", db_path)
+
+    verified_result = runner.invoke(app, ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir), "--json"])
+    verified_payload = json.loads(verified_result.output)
+    verified_sample = next(
+        sample
+        for sample in verified_payload["people"][0]["samples"]
+        if sample["sample_public_id"] == critical_sample["sample_public_id"]
+    )
+    active_embeddings = list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)
+
+    assert verified_result.exit_code == 0
+    assert verified_payload["suspicious_count"] == 0
+    assert verified_payload["critical_count"] == 0
+    assert verified_sample["status"] == "verified-active"
+    assert verified_sample["label"] == "verified"
+    assert verified_sample["reason"] == "human verified active"
+    assert len(active_embeddings) == 4
+
+
 def test_voiceprint_delete_sample_removes_row_and_clip(
     monkeypatch,
     tmp_path: Path,

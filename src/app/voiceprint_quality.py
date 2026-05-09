@@ -12,12 +12,20 @@ from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
 
 VOICEPRINT_SAMPLE_STATUS_ACTIVE = "active"
+VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE = "verified-active"
 VOICEPRINT_SAMPLE_STATUS_QUARANTINED = "quarantined"
 VOICEPRINT_SAMPLE_STATUS_REJECTED = "rejected"
 VOICEPRINT_SAMPLE_STATUSES = (
     VOICEPRINT_SAMPLE_STATUS_ACTIVE,
+    VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
     VOICEPRINT_SAMPLE_STATUS_QUARANTINED,
     VOICEPRINT_SAMPLE_STATUS_REJECTED,
+)
+VOICEPRINT_MATCHING_SAMPLE_STATUSES = frozenset(
+    {
+        VOICEPRINT_SAMPLE_STATUS_ACTIVE,
+        VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
+    }
 )
 DEFAULT_CRITICAL_SCORE = 0.60
 DEFAULT_WARNING_SCORE = 0.70
@@ -148,7 +156,7 @@ def _person_quality(
 ) -> VoiceprintQualityPerson:
     """Build quality diagnostics for one person."""
     first = rows[0]
-    active_rows = [row for row in rows if row.sample_status == VOICEPRINT_SAMPLE_STATUS_ACTIVE]
+    active_rows = [row for row in rows if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES]
     centroid = _centroid([row.vector for row in active_rows]) if len(active_rows) >= min_cluster_size else None
     scores = [_cosine(_normalize(row.vector), centroid) for row in active_rows] if centroid is not None else []
     mean_score = statistics.mean(scores) if scores else None
@@ -186,11 +194,15 @@ def _sample_quality(
     warning_score: float,
 ) -> VoiceprintQualitySample:
     """Score one sample against the active cluster centroid."""
-    if row.sample_status != VOICEPRINT_SAMPLE_STATUS_ACTIVE:
+    if row.sample_status not in VOICEPRINT_MATCHING_SAMPLE_STATUSES:
         return _quality_sample(row, None, row.sample_status, f"status={row.sample_status}")
     if centroid is None:
+        if row.sample_status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
+            return _quality_sample(row, None, "verified", "human verified active")
         return _quality_sample(row, None, "unknown", "need at least 3 active samples")
     score = _cosine(_normalize(row.vector), centroid)
+    if row.sample_status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
+        return _quality_sample(row, score, "verified", "human verified active")
     statistical_limit = None if mean_score is None or stdev_score is None else mean_score - 2 * stdev_score
     if score < critical_score:
         return _quality_sample(row, score, "critical", f"score<{critical_score:.2f}")
@@ -246,6 +258,6 @@ def _person_sort_key(person: VoiceprintQualityPerson) -> tuple[int, str]:
 
 def _sample_sort_key(sample: VoiceprintQualitySample) -> tuple[int, float, str]:
     """Sort suspicious samples first, then by score."""
-    severity = {"critical": 0, "warning": 1, "ok": 2, "unknown": 3}.get(sample.label, 4)
+    severity = {"critical": 0, "warning": 1, "ok": 2, "verified": 3, "unknown": 4}.get(sample.label, 5)
     score = sample.score if sample.score is not None else 999.0
     return (severity, score, sample.sample_public_id)

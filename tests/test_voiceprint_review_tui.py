@@ -21,6 +21,7 @@ from app.voiceprint_quality import analyze_voiceprint_quality
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
+    list_voiceprint_embeddings,
     list_voiceprint_samples_for_project,
     store_voiceprint_samples,
     upsert_voiceprint_embedding,
@@ -210,6 +211,34 @@ def test_voiceprint_review_quality_mode_saves_and_refreshes(tmp_path: Path) -> N
     asyncio.run(scenario())
 
 
+def test_voiceprint_review_quality_mode_marks_verified_active(tmp_path: Path) -> None:
+    """Unified review should let users confirm a true sample without removing it from matching."""
+    store_dir = _quality_store(tmp_path)
+    db_path = get_voiceprint_db_path(store_dir)
+    session = VoiceprintReviewSession(
+        capture=None,
+        library=load_voiceprint_library_session(store_dir=store_dir),
+        quality=analyze_voiceprint_quality(store_dir=store_dir),
+        store_dir=store_dir,
+        initial_mode="quality",
+    )
+    app = VoiceprintReviewApp(session)
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            assert app.session.quality.suspicious_count == 1
+
+            await pilot.press("right")
+            await pilot.press("v")
+            await pilot.press("s")
+            await pilot.pause()
+
+            assert app.session.quality.suspicious_count == 0
+            assert len(list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)) == 4
+
+    asyncio.run(scenario())
+
+
 def test_voiceprint_review_quality_rows_do_not_escape_markup(tmp_path: Path) -> None:
     """Quality rows should render Rich markup instead of showing markup tags as text."""
     store_dir = _quality_store(tmp_path)
@@ -241,6 +270,7 @@ def test_voiceprint_quality_reason_is_localized() -> None:
         assert quality_reason_text("statistical outlier") == "统计离群：这段样本和此人的其他声纹样本差异明显"
         assert quality_reason_text("cluster-consistent") == "声纹一致：这段样本和此人的声纹簇匹配"
         assert quality_reason_text("score<0.60") == "分数低于阈值（0.60）"
+        assert quality_reason_text("human verified active") == "人工确认：这段样本保留参与匹配，不再作为质量风险"
     finally:
         configure_cli_language("en")
 
