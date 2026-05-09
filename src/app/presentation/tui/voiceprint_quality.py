@@ -372,8 +372,8 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
             line = f"{marker} {sample.sample_public_id} score={score} {sample.label} -> {status} | {_clip_time(sample)}"
             lines.append(f"[{style}]{escape(line)}[/]" if style else escape(line))
             if index == selected_index:
-                lines.append(f"  [dim]{escape(quality_reason_text(sample.reason))}[/]")
-                lines.append(f"  [dim]{escape(trim_text(sample.transcript_text, 120))}[/]")
+                lines.append(tr(f"  [yellow]diagnosis[/]: {escape(quality_reason_text(sample.reason))}", f"  [yellow]诊断[/]：{escape(quality_reason_text(sample.reason))}"))
+                lines.append(tr(f"  [bright_black]text[/]: {escape(trim_text(sample.transcript_text, 120))}", f"  [bright_black]文本[/]：{escape(trim_text(sample.transcript_text, 120))}"))
                 lines.append(f"  [dim]{escape(str(sample.clip_path))}[/]")
         return "\n".join(lines)
 

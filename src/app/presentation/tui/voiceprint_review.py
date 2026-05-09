@@ -730,8 +730,8 @@ class _VoiceprintReviewBase:
             rendered = f"[{style}]{line}[/]" if style else line
             lines.append(self._current_row(rendered) if prefix == ">" else rendered)
             if prefix == ">":
-                lines.append(f"  [dim]{escape(quality_reason_text(sample.reason))}[/]")
-                lines.append(f"  [dim]{escape(trim_text(sample.transcript_text, limit=120))}[/]")
+                lines.append(tr(f"  [yellow]diagnosis[/]: {escape(quality_reason_text(sample.reason))}", f"  [yellow]诊断[/]：{escape(quality_reason_text(sample.reason))}"))
+                lines.append(tr(f"  [bright_black]text[/]: {escape(trim_text(sample.transcript_text, limit=120))}", f"  [bright_black]文本[/]：{escape(trim_text(sample.transcript_text, limit=120))}"))
         if not samples:
             lines.append(tr("[yellow]No samples for this person.[/]", "[yellow]当前人员没有样本。[/]"))
         lines.extend(["", page_footer("Samples", len(person.samples), page_start, self._sample_page_size())])
