@@ -33,6 +33,23 @@ class ReviewSpeaker:
 
 
 @dataclass(frozen=True, slots=True)
+class SentenceReassignment:
+    """One sentence whose speaker_id changed during review.
+
+    The triple ``(sentence_id, begin_time_ms, end_time_ms)`` identifies the
+    sentence inside the persisted ``sentences.json`` payload. The reassignment
+    is applied on save to update the speaker_id in both the raw and corrected
+    ASR sentence files.
+    """
+
+    sentence_id: int | None
+    begin_time_ms: int
+    end_time_ms: int
+    original_speaker_id: int | None
+    new_speaker_id: int
+
+
+@dataclass(frozen=True, slots=True)
 class SpeakerReviewSession:
     """Inputs needed by the speaker review TUI."""
 
@@ -60,4 +77,5 @@ class SpeakerReviewDecision:
     ignored_speaker_ids: tuple[int, ...] = ()
     correction_edit: SentenceCorrectionEdit | None = None
     correction_edits: tuple[SentenceCorrectionEdit, ...] = ()
+    sentence_reassignments: tuple[SentenceReassignment, ...] = ()
     project_dir: Path | None = field(default=None, compare=False)

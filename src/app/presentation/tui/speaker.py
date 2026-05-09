@@ -25,10 +25,20 @@ from app.presentation.tui.speaker_correction import (
     SentenceCorrectionScreen,
 )
 from app.presentation.tui.i18n import tr
-from app.presentation.tui.speaker_help import ShortcutHelpScreen, browse_status, edit_status
+from app.presentation.tui.speaker_help import (
+    ShortcutHelpScreen,
+    browse_status,
+    edit_status,
+    timeline_status,
+)
 from app.presentation.tui.speaker_identity import IdentityEditScreen, IdentitySelection
 from app.presentation.tui.speaker_matches import SpeakerMatchCandidate
-from app.presentation.tui.speaker_models import ReviewSpeaker, SpeakerReviewDecision, SpeakerReviewSession
+from app.presentation.tui.speaker_models import (
+    ReviewSpeaker,
+    SentenceReassignment,
+    SpeakerReviewDecision,
+    SpeakerReviewSession,
+)
 from app.presentation.tui.speaker_people import (
     KnownPerson,
     find_person_by_name,
@@ -42,10 +52,22 @@ from app.presentation.tui.speaker_rematch import (
 from app.presentation.tui.speaker_save import (
     SpeakerReviewSaveOutcome,
     SpeakerReviewSaveScreen,
+    sentence_reassignment_changes,
     speaker_ignore_changes,
     speaker_name_changes,
 )
 from app.presentation.tui.speaker_session import load_speaker_review_session, load_voiceprint_review_progress
+from app.presentation.tui.speaker_timeline import (
+    SpeakerPickScreen,
+    TimelineRow,
+    build_timeline_rows,
+    capture_speaker_baseline,
+    move_segment_between_speakers,
+    render_timeline_pane,
+    segment_key,
+    speaker_by_id,
+    speaker_pick_options,
+)
 from app.presentation.tui.speaker_status import (
     SpeakerReviewOverview,
     VoiceprintReviewProgress,
@@ -66,9 +88,14 @@ from app.utils import format_ms_timestamp
 
 DEFAULT_SAMPLE_PAGE_SIZE = 6
 SAMPLE_PANE_RESERVED_ROWS = 5
+TIMELINE_PANE_RESERVED_ROWS = 4
+DEFAULT_TIMELINE_PAGE_SIZE = 16
 COLUMNS = ("speakers", "samples")
 FOCUSED_PANE_CLASS = "focused-pane"
 UNFOCUSED_PANE_CLASS = "unfocused-pane"
+
+VIEW_MODE_SPEAKERS = "speakers"
+VIEW_MODE_TIMELINE = "timeline"
 
 __all__ = [
     "FOCUSED_PANE_CLASS",
@@ -76,16 +103,22 @@ __all__ = [
     "KnownPerson",
     "ReviewSpeaker",
     "SentenceCorrectionScreen",
+    "SentenceReassignment",
     "ShortcutHelpScreen",
     "SpeakerMatchCandidate",
+    "SpeakerPickScreen",
     "SpeakerRematchProcessingScreen",
     "SpeakerRematchResult",
     "SpeakerReviewApp",
     "SpeakerReviewDecision",
     "SpeakerReviewOverview",
     "SpeakerReviewSession",
+    "TimelineRow",
     "UNFOCUSED_PANE_CLASS",
+    "VIEW_MODE_SPEAKERS",
+    "VIEW_MODE_TIMELINE",
     "VoiceprintReviewProgress",
+    "build_timeline_rows",
     "load_speaker_review_session",
     "run_speaker_review_tui",
 ]
@@ -106,6 +139,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     #main {
         height: 1fr;
     }
+    #timeline-main {
+        height: 1fr;
+        display: none;
+    }
     .pane {
         border: round $accent;
         height: 100%;
@@ -123,6 +160,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     }
     #samples {
         width: 70%;
+    }
+    #timeline {
+        width: 100%;
     }
     #status {
         height: 2;
@@ -149,6 +189,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("i", "ignore_speaker", "Ignore"),
         Binding("e", "edit_sample_text", "Edit text"),
         Binding("c", "edit_sample_text", "Correct text", show=False),
+        Binding("t", "toggle_view", "Toggle view"),
+        Binding("r", "reassign_speaker", "Reassign sentence"),
         Binding("p", "switch_project", "Switch project"),
         Binding("v", "voiceprint_review", "Voiceprint"),
         Binding("m", "rematch_speakers", "Rematch"),
@@ -193,6 +235,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.known_people = list(session.people)
         self.correction_edits: list[SentenceCorrectionEdit] = []
         self.identity_baseline = _identity_snapshot(session.speakers)
+        self.view_mode = VIEW_MODE_SPEAKERS
+        self.timeline_selected_index = 0
+        self.original_speaker_by_segment: dict[tuple[int | None, int, int], int] = (
+            capture_speaker_baseline(session.speakers)
+        )
 
     def compose(self) -> ComposeResult:
         """Build the TUI layout."""
@@ -201,6 +248,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         with Horizontal(id="main"):
             yield Static(id="speakers", classes="pane")
             yield Static(id="samples", classes="pane")
+        with Horizontal(id="timeline-main"):
+            yield Static(id="timeline", classes="pane")
         yield Static(browse_status(), id="status")
 
     def on_mount(self) -> None:
@@ -222,27 +271,43 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             return
 
     def action_down(self) -> None:
-        """Move down in the focused column."""
+        """Move down in the focused column or timeline."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            self._move_timeline(1)
+            return
         self._move_focused_row(1)
 
     def action_up(self) -> None:
-        """Move up in the focused column."""
+        """Move up in the focused column or timeline."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            self._move_timeline(-1)
+            return
         self._move_focused_row(-1)
 
     def action_left(self) -> None:
-        """Focus the previous column."""
+        """Focus the previous column (no-op in timeline view)."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            return
         self._move_column(-1)
 
     def action_right(self) -> None:
-        """Focus the next column."""
+        """Focus the next column (no-op in timeline view)."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            return
         self._move_column(1)
 
     def action_next_sample_page(self) -> None:
-        """Select the first sample on the next page."""
+        """Select the first row on the next page."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            self._move_timeline_page(1)
+            return
         self._move_sample_page(1)
 
     def action_previous_sample_page(self) -> None:
-        """Select the first sample on the previous page."""
+        """Select the first row on the previous page."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            self._move_timeline_page(-1)
+            return
         self._move_sample_page(-1)
 
     def action_play_sample(self) -> None:
@@ -252,7 +317,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._set_status(tr("Stopped sample playback.", "已停止 sample 播放。"))
             return
         try:
-            self._play_sample(self._selected_sample())
+            self._play_sample(self._active_segment())
         except Exception as exc:  # noqa: BLE001
             self._set_status(tr(f"Preview failed: {exc}", f"预览失败：{exc}"))
 
@@ -412,6 +477,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                     self.session.speakers,
                     self.session.overview.saved_ignored_speaker_ids,
                 ),
+                reassignment_changes=sentence_reassignment_changes(
+                    self.session.speakers,
+                    decision.sentence_reassignments,
+                ),
             )
         )
 
@@ -425,14 +494,53 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 )
             )
             return
-        speaker = self._speaker()
+        segment = self._active_segment()
+        speaker = self._speaker_for_segment(segment)
         self.push_screen(
             SentenceCorrectionScreen(
                 speaker_label=speaker.label,
                 speaker_name=speaker.current_name,
-                segment=self._selected_sample(),
+                segment=segment,
             ),
             self._handle_sentence_correction,
+        )
+
+    def action_toggle_view(self) -> None:
+        """Switch between speaker-grouped and chronological views."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            self.view_mode = VIEW_MODE_SPEAKERS
+            self._set_status(browse_status())
+        else:
+            self.view_mode = VIEW_MODE_TIMELINE
+            self._sync_timeline_to_selection()
+            self._set_status(timeline_status())
+        self._apply_view_mode()
+        self._refresh()
+
+    def action_reassign_speaker(self) -> None:
+        """Reassign the timeline-selected sentence to a different speaker."""
+        if self.view_mode != VIEW_MODE_TIMELINE:
+            self._set_status(
+                tr(
+                    "Press t to enter timeline view before reassigning speakers.",
+                    "请先按 t 进入时间轴视图，再重新指派 speaker。",
+                )
+            )
+            return
+        rows = self._timeline_rows()
+        if not rows:
+            self._set_status(tr("No sentences to reassign.", "没有可改的句子。"))
+            return
+        self.timeline_selected_index = max(0, min(self.timeline_selected_index, len(rows) - 1))
+        row = rows[self.timeline_selected_index]
+        options = speaker_pick_options(self.session.speakers)
+        self.push_screen(
+            SpeakerPickScreen(
+                sentence_text=row.segment.text,
+                current_speaker_id=row.speaker_id,
+                options=options,
+            ),
+            lambda choice: self._handle_speaker_reassignment(row, choice),
         )
 
     def action_quit_review(self) -> None:
@@ -493,8 +601,63 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.known_people = list(session.people)
         self.correction_edits.clear()
         self.identity_baseline = _identity_snapshot(session.speakers)
+        self.original_speaker_by_segment = capture_speaker_baseline(session.speakers)
+        self.view_mode = VIEW_MODE_SPEAKERS
+        self.timeline_selected_index = 0
+        self._apply_view_mode()
         self._enter_browse_mode(tr(f"Switched to project {session.overview.project_id}.", f"已切换到项目 {session.overview.project_id}。"))
         self._refresh()
+
+    def _handle_speaker_reassignment(
+        self,
+        row: TimelineRow,
+        new_speaker_id: int | None,
+    ) -> None:
+        """Move a sentence to another speaker after the picker resolves."""
+        if new_speaker_id is None:
+            self._set_status(tr("Speaker reassignment canceled.", "已取消 speaker 重新指派。"))
+            return
+        if new_speaker_id == row.speaker_id:
+            self._set_status(tr("Same speaker chosen; no change.", "选择的还是当前 speaker，不做改动。"))
+            return
+        source = speaker_by_id(self.session.speakers, row.speaker_id)
+        target = speaker_by_id(self.session.speakers, new_speaker_id)
+        if source is None or target is None:
+            self._set_status(tr("Reassignment target unavailable.", "无法找到重新指派的目标 speaker。"))
+            return
+        if not move_segment_between_speakers(source, target, row.segment):
+            self._set_status(tr("Sentence not found on its current speaker.", "未在当前 speaker 中找到该句子。"))
+            return
+        target.ignored = False
+        if not target.current_name.strip():
+            target.current_name = target.label
+        self._retarget_correction_edits(row.segment, row.speaker_id, target.speaker_id)
+        self._sync_timeline_to_segment(row.segment)
+        self._set_status(
+            tr(
+                f"Moved sentence {_segment_time_range(row.segment)} to {target.label} {target.current_name}.",
+                f"已把 {_segment_time_range(row.segment)} 的句子改到 {target.label} {target.current_name}。",
+            )
+        )
+        self._refresh()
+
+    def _retarget_correction_edits(
+        self,
+        segment: SentenceSegment,
+        previous_speaker_id: int,
+        new_speaker_id: int,
+    ) -> None:
+        """Realign staged transcript edits to the segment's new speaker_id."""
+        if previous_speaker_id == new_speaker_id:
+            return
+        for index, edit in enumerate(self.correction_edits):
+            if (
+                edit.sentence_id == segment.sentence_id
+                and edit.begin_time_ms == segment.begin_time_ms
+                and edit.end_time_ms == segment.end_time_ms
+                and edit.speaker_id == previous_speaker_id
+            ):
+                self.correction_edits[index] = replace(edit, speaker_id=new_speaker_id)
 
     def _move_focused_row(self, delta: int) -> None:
         """Move selection inside the focused column."""
@@ -537,16 +700,158 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Refresh all panes from current state."""
         self._refresh_focus_styles()
         self.query_one("#overview", Static).update(self._overview_pane())
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            self.query_one("#timeline", Static).update(self._timeline_pane())
+            return
         self.query_one("#speakers", Static).update(self._speaker_pane())
         self.query_one("#samples", Static).update(self._sample_pane())
 
     def _refresh_focus_styles(self) -> None:
         """Make the focused pane visually obvious."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            timeline_pane = self.query_one("#timeline", Static)
+            timeline_pane.set_class(True, FOCUSED_PANE_CLASS)
+            timeline_pane.set_class(False, UNFOCUSED_PANE_CLASS)
+            for column in COLUMNS:
+                pane = self.query_one(f"#{column}", Static)
+                pane.set_class(False, FOCUSED_PANE_CLASS)
+                pane.set_class(True, UNFOCUSED_PANE_CLASS)
+            return
+        timeline_pane = self.query_one("#timeline", Static)
+        timeline_pane.set_class(False, FOCUSED_PANE_CLASS)
+        timeline_pane.set_class(True, UNFOCUSED_PANE_CLASS)
         for column in COLUMNS:
             pane = self.query_one(f"#{column}", Static)
             focused = column == self.focused_column
             pane.set_class(focused, FOCUSED_PANE_CLASS)
             pane.set_class(not focused, UNFOCUSED_PANE_CLASS)
+
+    def _apply_view_mode(self) -> None:
+        """Show or hide top-level panes based on the current view mode."""
+        try:
+            main = self.query_one("#main")
+            timeline_main = self.query_one("#timeline-main")
+        except Exception:  # noqa: BLE001
+            return
+        timeline_active = self.view_mode == VIEW_MODE_TIMELINE
+        main.display = not timeline_active
+        timeline_main.display = timeline_active
+
+    def _timeline_pane(self) -> str:
+        """Render the chronological transcript view."""
+        rows = self._timeline_rows()
+        edited_keys = {
+            (edit.sentence_id, edit.begin_time_ms, edit.end_time_ms)
+            for edit in self.correction_edits
+        }
+        reassigned_keys = self._reassigned_segment_keys()
+        page_size = self._timeline_page_size()
+        page_start = _sample_page_start(self.timeline_selected_index, page_size)
+        return render_timeline_pane(
+            rows,
+            selected_index=self.timeline_selected_index,
+            page_start=page_start,
+            page_size=page_size,
+            speaker_count=len(self.session.speakers),
+            edited_keys=edited_keys,
+            reassigned_keys=reassigned_keys,
+        )
+
+    def _timeline_rows(self) -> list[TimelineRow]:
+        """Return the current chronological row list (recomputed on demand)."""
+        return build_timeline_rows(self.session.speakers)
+
+    def _move_timeline(self, delta: int) -> None:
+        """Move the timeline cursor by ``delta`` rows."""
+        rows = self._timeline_rows()
+        if not rows:
+            return
+        target = self.timeline_selected_index + delta
+        self.timeline_selected_index = _clamp(target, 0, len(rows) - 1)
+        self._refresh()
+
+    def _move_timeline_page(self, delta: int) -> None:
+        """Move the timeline cursor by one full page."""
+        rows = self._timeline_rows()
+        if not rows:
+            return
+        page_size = self._timeline_page_size()
+        current_start = _sample_page_start(self.timeline_selected_index, page_size)
+        last_start = _last_sample_page_start(len(rows), page_size)
+        target_start = _clamp(current_start + delta * page_size, 0, last_start)
+        self.timeline_selected_index = target_start
+        self._refresh()
+
+    def _timeline_page_size(self) -> int:
+        """Return the number of timeline rows that fit in the pane."""
+        if self.session.page_size is not None:
+            return max(1, self.session.page_size)
+        try:
+            pane_height = self.query_one("#timeline", Static).size.height
+        except Exception:  # noqa: BLE001
+            pane_height = 0
+        if pane_height <= TIMELINE_PANE_RESERVED_ROWS:
+            return DEFAULT_TIMELINE_PAGE_SIZE
+        return max(1, pane_height - TIMELINE_PANE_RESERVED_ROWS)
+
+    def _sync_timeline_to_selection(self) -> None:
+        """Move the timeline cursor to the currently selected speaker sample."""
+        rows = self._timeline_rows()
+        if not rows:
+            self.timeline_selected_index = 0
+            return
+        speaker = self._speaker()
+        if speaker.segments:
+            sample_index = _clamp(speaker.selected_sample_index, 0, speaker.segment_count - 1)
+            target = speaker.segments[sample_index]
+            self._sync_timeline_to_segment(target, rows=rows)
+            return
+        self.timeline_selected_index = 0
+
+    def _sync_timeline_to_segment(
+        self,
+        segment: SentenceSegment,
+        *,
+        rows: list[TimelineRow] | None = None,
+    ) -> None:
+        """Move the timeline cursor to a specific segment."""
+        rows = rows if rows is not None else self._timeline_rows()
+        target_key = segment_key(segment)
+        for index, row in enumerate(rows):
+            if segment_key(row.segment) == target_key:
+                self.timeline_selected_index = index
+                return
+        self.timeline_selected_index = 0
+
+    def _active_segment(self) -> SentenceSegment:
+        """Return the currently selected sentence for either view mode."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            rows = self._timeline_rows()
+            if not rows:
+                raise RuntimeError("Timeline has no sentences to operate on.")
+            self.timeline_selected_index = max(0, min(self.timeline_selected_index, len(rows) - 1))
+            return rows[self.timeline_selected_index].segment
+        return self._selected_sample()
+
+    def _speaker_for_segment(self, segment: SentenceSegment) -> ReviewSpeaker:
+        """Return the review speaker that currently owns a segment."""
+        for speaker in self.session.speakers:
+            for owned in speaker.segments:
+                if owned is segment or segment_key(owned) == segment_key(segment):
+                    return speaker
+        return self._speaker()
+
+    def _reassigned_segment_keys(self) -> set[tuple[int | None, int, int]]:
+        """Return segment keys whose speaker_id changed since load."""
+        keys: set[tuple[int | None, int, int]] = set()
+        for speaker in self.session.speakers:
+            for seg in speaker.segments:
+                key = segment_key(seg)
+                original = self.original_speaker_by_segment.get(key)
+                current = seg.speaker_id if seg.speaker_id is not None else speaker.speaker_id
+                if original is not None and original != current:
+                    keys.add(key)
+        return keys
 
     def _overview_pane(self) -> str:
         """Render stable project and workflow state."""
@@ -649,6 +954,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Build the current save decision."""
         correction_edits = tuple(self.correction_edits)
         latest_edit = correction_edits[-1] if correction_edits else None
+        reassignments = self._sentence_reassignments()
         action = "correct-inline" if correction_edits else "save"
         return SpeakerReviewDecision(
             saved=True,
@@ -659,8 +965,34 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             ignored_speaker_ids=self._ignored_speaker_ids(),
             correction_edit=latest_edit,
             correction_edits=correction_edits,
+            sentence_reassignments=reassignments,
             project_dir=self.session.project_dir,
         )
+
+    def _sentence_reassignments(self) -> tuple[SentenceReassignment, ...]:
+        """Build sentence speaker reassignments since the last load."""
+        seen: set[tuple[int | None, int, int]] = set()
+        out: list[SentenceReassignment] = []
+        for speaker in self.session.speakers:
+            for seg in speaker.segments:
+                key = segment_key(seg)
+                if key in seen:
+                    continue
+                original = self.original_speaker_by_segment.get(key)
+                current = seg.speaker_id if seg.speaker_id is not None else speaker.speaker_id
+                if original is None or original == current:
+                    continue
+                out.append(
+                    SentenceReassignment(
+                        sentence_id=seg.sentence_id,
+                        begin_time_ms=seg.begin_time_ms,
+                        end_time_ms=seg.end_time_ms,
+                        original_speaker_id=original,
+                        new_speaker_id=current,
+                    )
+                )
+                seen.add(key)
+        return tuple(out)
 
     def _upsert_correction_edit(self, edit: SentenceCorrectionEdit) -> None:
         """Insert or replace one staged edit by sentence identity."""
@@ -704,6 +1036,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         )
         self.session = replace(self.session, overview=overview)
         self.identity_baseline = _identity_snapshot(self.session.speakers)
+        self.original_speaker_by_segment = capture_speaker_baseline(self.session.speakers)
 
     def _save_handler_for_current_project(self) -> Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome]:
         """Return a save handler bound to the currently visible project."""
@@ -779,6 +1112,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.selected_speaker_index = _speaker_index_by_id(result.session.speakers, selected_speaker_id)
         self.focused_column = "speakers"
         self.identity_baseline = _identity_snapshot(result.session.speakers)
+        self.original_speaker_by_segment = capture_speaker_baseline(result.session.speakers)
+        self.view_mode = VIEW_MODE_SPEAKERS
+        self.timeline_selected_index = 0
+        self._apply_view_mode()
         self._enter_browse_mode(compact_rematch_line(result))
         self._refresh()
 
@@ -818,7 +1155,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def _has_unsaved_review_changes(self) -> bool:
         """Return whether switching projects would discard visible TUI edits."""
-        return _identity_snapshot(self.session.speakers) != self.identity_baseline or bool(self.correction_edits)
+        if _identity_snapshot(self.session.speakers) != self.identity_baseline:
+            return True
+        if self.correction_edits:
+            return True
+        return bool(self._reassigned_segment_keys())
 
     def _set_speaker_identity(
         self,
@@ -1018,3 +1359,5 @@ def _trim_sample_text(text: str, *, limit: int = 90) -> str:
     if len(preview) <= limit:
         return preview
     return preview[: limit - 3] + "..."
+
+

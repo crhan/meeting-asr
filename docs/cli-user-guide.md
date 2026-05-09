@@ -266,6 +266,8 @@ i              忽略当前 speaker
 /              搜索或输入人名
 e              修改当前 sample 文本并进入转写纠错
 c              同 e，保留为隐藏别名
+t              切换「分组视图 / 时间轴视图」
+r              在时间轴视图下，把当前句子改给另一个 speaker
 p              切换 Project
 v              进入 Voiceprint Review
 m              用最新声纹库重新匹配当前项目
@@ -273,6 +275,16 @@ b              对已采集声纹补做 embedding
 s              保存
 ?              快捷键
 ```
+
+时间轴视图（`t`）按 ASR 切分的真实时间顺序展示所有句子，便于边听边核对。如果听出某句话其实是另一个人讲的，光标停在该句上按 `r` 选目标 speaker，保存后会写回 `asr/sentences.json`（以及 `asr/sentences_corrected.json`，如果存在），重新生成 named transcript / 字幕。
+
+如果发现 ASR 把多个人合并成同一个 speaker（典型表现：某个 speaker 声纹评分异常低，且每个 speaker 的样本里听到不同的人），先按估算的真实人数重跑 ASR：
+
+```bash
+meeting-asr project transcribe PROJECT_ID --speaker-count 6
+```
+
+`--speaker-count` 也可以加在 `project run` 上。重跑会作废下游产物（corrections / named transcript / SRT），声纹样本不变；之后可重新做 voiceprint match。
 
 只读诊断：
 

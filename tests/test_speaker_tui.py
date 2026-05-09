@@ -58,7 +58,21 @@ from app.presentation.tui.speaker_matches import SpeakerMatchPerson
 from app.voiceprint_evaluation import VoiceprintEvaluationSummary, VoiceprintProjectEvaluation, VoiceprintScoreChange
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL, VoiceprintEmbedSummary
 from app.voiceprint_quality import analyze_voiceprint_quality
+from app.speaker_labeling import (
+    SentenceReassignmentSpec,
+    apply_sentence_reassignments,
+)
 from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
+from app.presentation.tui.speaker_timeline import (
+    SpeakerPickScreen,
+    build_timeline_rows,
+    render_timeline_pane,
+)
+from app.presentation.tui.speaker_save import (
+    SentenceReassignmentChange,
+    sentence_reassignment_changes,
+)
+from app.presentation.tui.speaker_models import SentenceReassignment
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
@@ -1716,3 +1730,268 @@ def _store_project_voiceprint(project_dir: Path, store_dir: Path) -> tuple[int, 
     db_path = store_voiceprint_samples([sample], get_voiceprint_db_path(store_dir))
     rows = list_voiceprint_samples_for_project("20260429-tui-test", db_path)
     return rows[0].sample_id, rows[0].speaker_id
+
+
+def _timeline_session() -> SpeakerReviewSession:
+    """Build a fresh review session with two speakers and distinct segments."""
+    speaker_a_segments = [
+        SentenceSegment(
+            begin_time_ms=0,
+            end_time_ms=1000,
+            text="第一句来自惧留孙的发言",
+            speaker_id=0,
+            sentence_id=1,
+        ),
+        SentenceSegment(
+            begin_time_ms=4000,
+            end_time_ms=4500,
+            text="第三句也是惧留孙",
+            speaker_id=0,
+            sentence_id=3,
+        ),
+    ]
+    speaker_b_segments = [
+        SentenceSegment(
+            begin_time_ms=2000,
+            end_time_ms=2500,
+            text="第二句其实是欧丁讲的",
+            speaker_id=1,
+            sentence_id=2,
+        ),
+    ]
+    speakers = [
+        ReviewSpeaker(0, "Speaker A", speaker_a_segments, "惧留孙", None),
+        ReviewSpeaker(1, "Speaker B", speaker_b_segments, "欧丁", None),
+    ]
+    return SpeakerReviewSession(
+        project_dir=Path("."),
+        source_media=Path("source.mp4"),
+        overview=_overview(with_status=False),
+        speakers=speakers,
+        people_names=[],
+        page_size=8,
+    )
+
+
+def test_timeline_view_toggle_renders_chronological_order() -> None:
+    """Pressing t should swap to the timeline pane and back."""
+
+    async def scenario() -> None:
+        async with SpeakerReviewApp(_timeline_session()).run_test() as pilot:
+            await pilot.press("t")
+            await pilot.pause()
+
+            assert pilot.app.view_mode == "timeline"
+            timeline_text = pilot.app.query_one("#timeline", Static).render().plain
+            # Sentences should appear in chronological order (id 1, 2, 3).
+            first = timeline_text.index("第一句来自惧留孙")
+            second = timeline_text.index("第二句其实是欧丁")
+            third = timeline_text.index("第三句也是惧留孙")
+            assert first < second < third
+
+            # Speaker pane is hidden in timeline view.
+            assert pilot.app.query_one("#main").display is False
+            assert pilot.app.query_one("#timeline-main").display is True
+
+            await pilot.press("t")
+            await pilot.pause()
+
+            assert pilot.app.view_mode == "speakers"
+            assert pilot.app.query_one("#main").display is True
+            assert pilot.app.query_one("#timeline-main").display is False
+
+    asyncio.run(scenario())
+
+
+def test_timeline_reassign_moves_segment_and_records_change() -> None:
+    """Reassigning a sentence in timeline view should move it between speakers."""
+
+    app = SpeakerReviewApp(_timeline_session())
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("t")
+            await pilot.pause()
+            # Move cursor to the second timeline row (sentence_id=2, currently Speaker B).
+            await pilot.press("j")
+            await pilot.press("r")
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, SpeakerPickScreen)
+
+            # Picker preselects a non-current speaker; press enter to accept.
+            await pilot.press("enter")
+            await pilot.pause()
+
+            speaker_a, speaker_b = pilot.app.session.speakers
+            assert any(seg.sentence_id == 2 for seg in speaker_a.segments)
+            assert all(seg.sentence_id != 2 for seg in speaker_b.segments)
+            moved = next(seg for seg in speaker_a.segments if seg.sentence_id == 2)
+            assert moved.speaker_id == 0
+
+            decision = pilot.app._decision()
+            assert len(decision.sentence_reassignments) == 1
+            change = decision.sentence_reassignments[0]
+            assert change.sentence_id == 2
+            assert change.original_speaker_id == 1
+            assert change.new_speaker_id == 0
+
+    asyncio.run(scenario())
+
+
+def test_apply_sentence_reassignments_rewrites_persisted_files(tmp_path: Path) -> None:
+    """The persistence helper updates raw and corrected sentence files in place."""
+    asr_dir = tmp_path / "asr"
+    asr_dir.mkdir()
+    raw = {
+        "full_text": "第一句。第二句。",
+        "detected_speakers": [0, 1],
+        "sentences": [
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 1000,
+                "text": "第一句",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 2000,
+                "end_time_ms": 2500,
+                "text": "第二句",
+                "speaker_id": 1,
+                "sentence_id": 2,
+            },
+        ],
+    }
+    (asr_dir / "sentences.json").write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    corrected = {
+        "full_text": "第一句修正。第二句修正。",
+        "detected_speakers": [0, 1],
+        "sentences": [
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 1000,
+                "text": "第一句修正",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 2000,
+                "end_time_ms": 2500,
+                "text": "第二句修正",
+                "speaker_id": 1,
+                "sentence_id": 2,
+            },
+        ],
+    }
+    (asr_dir / "sentences_corrected.json").write_text(
+        json.dumps(corrected, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    written = apply_sentence_reassignments(
+        asr_dir,
+        [
+            SentenceReassignmentSpec(
+                sentence_id=2,
+                begin_time_ms=2000,
+                end_time_ms=2500,
+                new_speaker_id=0,
+            )
+        ],
+    )
+
+    assert {path.name for path in written} == {"sentences.json", "sentences_corrected.json"}
+    raw_after = json.loads((asr_dir / "sentences.json").read_text(encoding="utf-8"))
+    corrected_after = json.loads((asr_dir / "sentences_corrected.json").read_text(encoding="utf-8"))
+    assert raw_after["sentences"][1]["speaker_id"] == 0
+    assert corrected_after["sentences"][1]["speaker_id"] == 0
+    # detected_speakers should drop the now-unused speaker.
+    assert raw_after["detected_speakers"] == [0]
+
+
+def test_apply_sentence_reassignments_falls_back_to_timing_match(tmp_path: Path) -> None:
+    """Sentences without sentence_id should still match by timing."""
+    asr_dir = tmp_path / "asr"
+    asr_dir.mkdir()
+    payload = {
+        "sentences": [
+            {
+                "begin_time_ms": 1000,
+                "end_time_ms": 2000,
+                "text": "无 id 的句子",
+                "speaker_id": 1,
+            }
+        ]
+    }
+    (asr_dir / "sentences.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    apply_sentence_reassignments(
+        asr_dir,
+        [
+            SentenceReassignmentSpec(
+                sentence_id=None,
+                begin_time_ms=1000,
+                end_time_ms=2000,
+                new_speaker_id=2,
+            )
+        ],
+    )
+
+    after = json.loads((asr_dir / "sentences.json").read_text(encoding="utf-8"))
+    assert after["sentences"][0]["speaker_id"] == 2
+
+
+def test_sentence_reassignment_changes_uses_speaker_names() -> None:
+    """The save-modal helper should look up speaker names by current state."""
+    speakers = [
+        ReviewSpeaker(0, "Speaker A", [
+            SentenceSegment(
+                begin_time_ms=2000,
+                end_time_ms=2500,
+                text="第二句",
+                speaker_id=0,
+                sentence_id=2,
+            ),
+        ], "惧留孙", None),
+        ReviewSpeaker(1, "Speaker B", [], "欧丁", None),
+    ]
+    reassignments = [
+        SentenceReassignment(
+            sentence_id=2,
+            begin_time_ms=2000,
+            end_time_ms=2500,
+            original_speaker_id=1,
+            new_speaker_id=0,
+        )
+    ]
+
+    rows = sentence_reassignment_changes(speakers, reassignments)
+
+    assert len(rows) == 1
+    assert isinstance(rows[0], SentenceReassignmentChange)
+    assert rows[0].before_label == "Speaker B"
+    assert rows[0].before_name == "欧丁"
+    assert rows[0].after_label == "Speaker A"
+    assert rows[0].after_name == "惧留孙"
+    assert "第二句" in rows[0].text
+
+
+def test_timeline_unsaved_changes_block_project_switch() -> None:
+    """A pending reassignment must block project switching just like rename edits."""
+
+    app = SpeakerReviewApp(_timeline_session())
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("t")
+            await pilot.pause()
+            await pilot.press("j")
+            await pilot.press("r")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert pilot.app._has_unsaved_review_changes() is True
+
+    asyncio.run(scenario())

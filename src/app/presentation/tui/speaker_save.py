@@ -55,6 +55,19 @@ class SpeakerReviewIgnoreChange:
 
 
 @dataclass(frozen=True, slots=True)
+class SentenceReassignmentChange:
+    """One sentence reassignment shown in the save modal."""
+
+    begin_time_ms: int
+    end_time_ms: int
+    before_label: str
+    before_name: str
+    after_label: str
+    after_name: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class CorrectionProposalSelection:
     """User selection returned by the proposal review modal."""
 
@@ -120,6 +133,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         followup_label: str = "continue",
         speaker_changes: Sequence[SpeakerReviewNameChange] = (),
         ignore_changes: Sequence[SpeakerReviewIgnoreChange] = (),
+        reassignment_changes: Sequence[SentenceReassignmentChange] = (),
     ) -> None:
         """
         Create save workflow screen.
@@ -133,6 +147,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
             followup_label: Human-readable follow-up action shown in the modal.
             speaker_changes: Human-readable speaker name diff for this save.
             ignore_changes: Human-readable speaker ignore diff for this save.
+            reassignment_changes: Human-readable sentence reassignment diff for this save.
         """
         super().__init__()
         self.decision = decision
@@ -143,6 +158,7 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         self.followup_label = followup_label
         self.speaker_changes = tuple(speaker_changes)
         self.ignore_changes = tuple(ignore_changes)
+        self.reassignment_changes = tuple(reassignment_changes)
         self.outcome: SpeakerReviewSaveOutcome | None = None
         self.selected_change_indices: tuple[int, ...] | None = None
         self.running = False
@@ -268,6 +284,8 @@ class SpeakerReviewSaveScreen(ModalScreen[None]):
         lines.extend(_speaker_change_lines(self.speaker_changes))
         lines.extend(["", tr("[b]Speaker ignore changes[/b]", "[b]Speaker 忽略变更[/b]")])
         lines.extend(_speaker_ignore_change_lines(self.ignore_changes))
+        lines.extend(["", tr("[b]Sentence reassignments[/b]", "[b]句子归属变更[/b]")])
+        lines.extend(_reassignment_change_lines(self.reassignment_changes))
         if self.outcome.correction_summary is not None:
             lines.extend(["", tr("[b]Transcript correction[/b]", "[b]文字修正[/b]")])
             lines.extend(_summary_lines(self.outcome.correction_summary))
@@ -539,6 +557,59 @@ def speaker_name_changes(
     return tuple(changes)
 
 
+def sentence_reassignment_changes(
+    speakers: Sequence[object],
+    reassignments: Sequence[object],
+) -> tuple[SentenceReassignmentChange, ...]:
+    """Render sentence reassignments for the save modal.
+
+    Args:
+        speakers: Current TUI speaker rows (used to display names by id).
+        reassignments: ``SentenceReassignment`` records returned by the TUI.
+
+    Returns:
+        Display-ready reassignment rows ordered by transcript time.
+    """
+    info_by_id: dict[int, tuple[str, str]] = {}
+    text_by_key: dict[tuple[int | None, int, int], str] = {}
+    for speaker in speakers:
+        speaker_id = int(getattr(speaker, "speaker_id"))
+        label = str(getattr(speaker, "label"))
+        name = str(getattr(speaker, "current_name") or label)
+        info_by_id[speaker_id] = (label, name)
+        for segment in getattr(speaker, "segments", []) or []:
+            key = (
+                getattr(segment, "sentence_id", None),
+                int(getattr(segment, "begin_time_ms", 0)),
+                int(getattr(segment, "end_time_ms", 0)),
+            )
+            text_by_key[key] = str(getattr(segment, "text", ""))
+    rows: list[SentenceReassignmentChange] = []
+    for item in reassignments:
+        before_id = getattr(item, "original_speaker_id", None)
+        after_id = int(getattr(item, "new_speaker_id"))
+        before_label, before_name = info_by_id.get(int(before_id) if before_id is not None else -1, ("?", "?"))
+        after_label, after_name = info_by_id.get(after_id, ("?", "?"))
+        key = (
+            getattr(item, "sentence_id", None),
+            int(getattr(item, "begin_time_ms", 0)),
+            int(getattr(item, "end_time_ms", 0)),
+        )
+        rows.append(
+            SentenceReassignmentChange(
+                begin_time_ms=key[1],
+                end_time_ms=key[2],
+                before_label=before_label,
+                before_name=before_name,
+                after_label=after_label,
+                after_name=after_name,
+                text=text_by_key.get(key, ""),
+            )
+        )
+    rows.sort(key=lambda row: (row.begin_time_ms, row.end_time_ms))
+    return tuple(rows)
+
+
 def speaker_ignore_changes(
     speakers: Sequence[object],
     saved_ignored_speaker_ids: frozenset[int],
@@ -577,6 +648,41 @@ def _speaker_change_lines(changes: Sequence[SpeakerReviewNameChange]) -> list[st
         )
         for item in changes
     ]
+
+
+def _reassignment_change_lines(changes: Sequence[SentenceReassignmentChange]) -> list[str]:
+    """Render sentence reassignment summary lines."""
+    if not changes:
+        return [tr("- No sentence reassignments.", "- 无句子归属变更。")]
+    lines: list[str] = []
+    for change in changes:
+        time_range = f"{_ms_to_clock(change.begin_time_ms)}-{_ms_to_clock(change.end_time_ms)}"
+        before = f"{change.before_label} {change.before_name}".strip()
+        after = f"{change.after_label} {change.after_name}".strip()
+        preview = _trim_change_text(change.text)
+        lines.append(
+            tr(
+                f"- {time_range}: {escape(before)} -> {escape(after)} | {escape(preview)}",
+                f"- {time_range}：{escape(before)} -> {escape(after)} | {escape(preview)}",
+            )
+        )
+    return lines
+
+
+def _ms_to_clock(value: int) -> str:
+    """Format a millisecond value as ``HH:MM:SS``."""
+    seconds_total = max(0, int(value)) // 1000
+    hours, rem = divmod(seconds_total, 3600)
+    minutes, seconds = divmod(rem, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _trim_change_text(text: str, *, limit: int = 60) -> str:
+    """Trim a sentence preview shown in the save modal."""
+    preview = text.strip().replace("\n", " ")
+    if len(preview) <= limit:
+        return preview
+    return preview[: limit - 3] + "..."
 
 
 def _speaker_ignore_change_lines(changes: Sequence[SpeakerReviewIgnoreChange]) -> list[str]:

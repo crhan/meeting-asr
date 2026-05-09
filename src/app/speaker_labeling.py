@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -166,6 +167,137 @@ def load_speaker_person_mapping(path: Path) -> dict[int, int | str]:
     for key, value in payload.items():
         mapping[int(key)] = value
     return mapping
+
+
+@dataclass(frozen=True, slots=True)
+class SentenceReassignmentSpec:
+    """Lightweight identity for one sentence whose speaker_id should change.
+
+    The triple ``(sentence_id, begin_time_ms, end_time_ms)`` matches the
+    sentence inside the persisted JSON payload. ``sentence_id`` is preferred
+    when present; the timing pair is used as a fallback because some legacy
+    ASR payloads omit a stable id.
+    """
+
+    sentence_id: int | None
+    begin_time_ms: int
+    end_time_ms: int
+    new_speaker_id: int
+
+
+def apply_sentence_reassignments(
+    asr_dir: Path,
+    reassignments: Iterable[SentenceReassignmentSpec],
+) -> tuple[Path, ...]:
+    """Update speaker_id in persisted ASR sentence files.
+
+    Mutates ``sentences.json`` and ``sentences_corrected.json`` (when present)
+    in place, matching each reassignment by sentence identity. The full payload
+    is rewritten so filler-only speaker tracks and unrelated sentences are
+    preserved verbatim.
+
+    Args:
+        asr_dir: Project ``asr/`` directory.
+        reassignments: Sentence speaker reassignments to apply.
+
+    Returns:
+        Paths of updated transcript files.
+
+    Raises:
+        ValueError: When a reassignment cannot be matched to any sentence.
+    """
+    specs = list(reassignments)
+    if not specs:
+        return ()
+    candidate_paths = (asr_dir / "sentences.json", asr_dir / "sentences_corrected.json")
+    written: list[Path] = []
+    for path in candidate_paths:
+        if not path.exists():
+            continue
+        if _rewrite_sentences_with_reassignments(path, specs):
+            written.append(path)
+    if not written:
+        raise ValueError(f"No transcript file under {asr_dir} accepted reassignments.")
+    return tuple(written)
+
+
+def _rewrite_sentences_with_reassignments(
+    path: Path,
+    reassignments: Sequence[SentenceReassignmentSpec],
+) -> bool:
+    """Rewrite one sentence file with the given reassignments.
+
+    Args:
+        path: Sentence file (raw or corrected) to update.
+        reassignments: Reassignments to apply.
+
+    Returns:
+        ``True`` when the file was rewritten, ``False`` when the payload was
+        missing the ``sentences`` key (treated as a no-op).
+    """
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return False
+    sentences = payload.get("sentences")
+    if not isinstance(sentences, list):
+        return False
+    by_sentence_id: dict[int, SentenceReassignmentSpec] = {}
+    by_timing: dict[tuple[int, int], SentenceReassignmentSpec] = {}
+    for spec in reassignments:
+        if spec.sentence_id is not None:
+            by_sentence_id[int(spec.sentence_id)] = spec
+        by_timing[(int(spec.begin_time_ms), int(spec.end_time_ms))] = spec
+    matched_any = False
+    for sentence in sentences:
+        if not isinstance(sentence, dict):
+            continue
+        spec = _match_reassignment(sentence, by_sentence_id, by_timing)
+        if spec is None:
+            continue
+        sentence["speaker_id"] = int(spec.new_speaker_id)
+        matched_any = True
+    if matched_any:
+        payload["detected_speakers"] = _recompute_detected_speakers(sentences)
+    safe_write_json(path, payload)
+    return True
+
+
+def _match_reassignment(
+    sentence: dict,
+    by_sentence_id: dict[int, SentenceReassignmentSpec],
+    by_timing: dict[tuple[int, int], SentenceReassignmentSpec],
+) -> SentenceReassignmentSpec | None:
+    """Return the reassignment matching one sentence payload."""
+    sentence_id = sentence.get("sentence_id")
+    if sentence_id is not None:
+        try:
+            spec = by_sentence_id.get(int(sentence_id))
+        except (TypeError, ValueError):
+            spec = None
+        if spec is not None:
+            return spec
+    try:
+        begin = int(sentence.get("begin_time_ms", 0))
+        end = int(sentence.get("end_time_ms", 0))
+    except (TypeError, ValueError):
+        return None
+    return by_timing.get((begin, end))
+
+
+def _recompute_detected_speakers(sentences: list) -> list[int]:
+    """Return sorted speaker ids present in the rewritten sentence list."""
+    ids: set[int] = set()
+    for sentence in sentences:
+        if not isinstance(sentence, dict):
+            continue
+        speaker_id = sentence.get("speaker_id")
+        if speaker_id is None:
+            continue
+        try:
+            ids.add(int(speaker_id))
+        except (TypeError, ValueError):
+            continue
+    return sorted(ids)
 
 
 def write_named_outputs(
