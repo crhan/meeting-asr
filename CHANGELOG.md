@@ -7,6 +7,8 @@
 
 ## [未发布]
 
+## [0.2.0] - 2026-05-09
+
 ### 新增
 
 - 新增统一的声纹质量检查 TUI，可在全局声纹库中检查样本质量、播放单个样本、原地刷新评分并修改样本状态。
@@ -39,5 +41,6 @@
 - 首个公开版本，提供基于 project 的 Meeting-ASR CLI。
 - 新增项目创建、会议转写、转写导出、speaker review、声纹匹配、词汇纠错 review，以及 GitHub Actions 发布基础能力。
 
-[未发布]: https://github.com/crhan/meeting-asr/compare/v0.1.0...HEAD
+[未发布]: https://github.com/crhan/meeting-asr/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/crhan/meeting-asr/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/crhan/meeting-asr/releases/tag/v0.1.0
