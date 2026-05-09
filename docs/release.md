@@ -19,11 +19,12 @@ The GitHub environment is intentional. Configure `pypi` in GitHub repository set
 
 1. Confirm the working tree is clean.
 2. Update `version` in `pyproject.toml`.
-3. Run `uv run pytest`.
-4. Run `uv build`.
-5. Create and publish a GitHub Release for tag `vX.Y.Z`.
-6. Wait for the `Publish to PyPI` workflow.
-7. Verify install from PyPI:
+3. Move `CHANGELOG.md` entries from `Unreleased` to the release version.
+4. Run `uv run pytest`.
+5. Run `uv build`.
+6. Create and publish a GitHub Release for tag `vX.Y.Z`.
+7. Wait for the `Publish to PyPI` workflow.
+8. Verify install from PyPI:
 
 ```bash
 uv tool install meeting-asr --python 3.14 --reinstall --refresh
