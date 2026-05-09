@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Project-based CLI for Alibaba Cloud DashScope Fun-ASR video transcription."
 readme = "README.md"
 requires-python = ">=3.14"
+authors = [
+  { name = "Ruohan Chen" },
+]
 dependencies = [
   "dashscope>=1.20.14",
   "oss2>=2.19.1",
@@ -19,6 +22,11 @@ dependencies = [
 
 [project.scripts]
 meeting-asr = "app.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/crhan/meeting-asr"
+Repository = "https://github.com/crhan/meeting-asr"
+Issues = "https://github.com/crhan/meeting-asr/issues"
 
 [build-system]
 requires = ["hatchling"]
