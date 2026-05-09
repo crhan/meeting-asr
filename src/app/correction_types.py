@@ -22,6 +22,7 @@ class CorrectionEditOptions:
     use_ai: bool = True
     model: str | None = None
     polish_concurrency: int | None = None
+    polish_legacy: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +56,8 @@ class CorrectionChange:
     original_text: str
     corrected_text: str
     replacements: list[CorrectionReplacement]
+    change_type: str = ""  # multi-tag tokens like "dup|filler"; empty for non-polish changes
+    reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)

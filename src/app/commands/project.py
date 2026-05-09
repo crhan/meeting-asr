@@ -361,6 +361,12 @@ def run(
         max=64,
         help="Parallel DashScope batch requests for transcript polish.",
     ),
+    polish_legacy: bool = typer.Option(
+        False,
+        "--legacy-polish",
+        help="Use the legacy aggressive-rewrite polish prompt (pre-2026 behavior). "
+        "Default is the strict downstream-summary-friendly polish.",
+    ),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
     agent_log: bool = typer.Option(
         False,
@@ -399,6 +405,7 @@ def run(
             local_correction=local_correction,
             correction_model=correction_model,
             polish_concurrency=polish_concurrency,
+            polish_legacy=polish_legacy,
             progress=reporter,
         ),
         description="Running project workflow",
@@ -543,7 +550,8 @@ def _run_project_workflow(
     local_correction: bool,
     correction_model: str | None,
     polish_concurrency: int | None,
-    progress: CliProgressReporter | None,
+    polish_legacy: bool = False,
+    progress: CliProgressReporter | None = None,
 ) -> ProjectRunSummary:
     """
     Create or reuse a project, then run the automatic workflow.
@@ -633,6 +641,7 @@ def _run_project_workflow(
             project.project_dir,
             correction_model,
             polish_concurrency=polish_concurrency,
+            polish_legacy=polish_legacy,
             progress=progress,
         )
         _record_polish_runtime(project.project_dir, correction_summary)
@@ -895,6 +904,7 @@ def _prepare_run_transcript_polish(
     correction_model: str | None,
     *,
     polish_concurrency: int | None = None,
+    polish_legacy: bool = False,
     progress: CliProgressReporter | None = None,
 ) -> CorrectionEditSummary:
     """
@@ -903,6 +913,7 @@ def _prepare_run_transcript_polish(
     Args:
         project_dir: Project root.
         correction_model: Optional DashScope model override.
+        polish_legacy: When True, use the legacy aggressive-rewrite polish.
 
     Returns:
         Pending polish summary, or a no-change/error summary.
@@ -917,6 +928,7 @@ def _prepare_run_transcript_polish(
         use_ai=True,
         model=correction_model,
         polish_concurrency=polish_concurrency,
+        polish_legacy=polish_legacy,
     )
     return project_correct_commands.prepare_transcript_polish_for_review(
         paths=paths,

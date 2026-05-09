@@ -15,7 +15,12 @@ from app.commands import project as project_commands
 from app.commands import project_correct as project_correct_commands
 from app.cli import app
 from app.config import Settings
-from app.correction_llm import LlmCorrectionResult, LlmReplacementRule
+from app.correction_llm import (
+    LlmCorrectionResult,
+    LlmPolishItem,
+    LlmReplacementRule,
+    LlmStrictPolishResult,
+)
 from app.correction_types import CorrectionEditOptions
 from app.project_manager import create_project, load_manifest, project_paths
 from app.speaker_tui import SentenceCorrectionEdit, SpeakerReviewDecision
@@ -246,7 +251,7 @@ def test_project_correct_polish_creates_non_lexicon_proposal(tmp_path: Path, mon
         lambda **kwargs: LlmCorrectionResult("修复口语语序", {"c0": good_text}, kwargs["model"]),
     )
 
-    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir), "--legacy-polish"], input="n\n")
 
     assert result.exit_code == 0
     assert "Transcript polish proposal ready." in result.output
@@ -294,7 +299,11 @@ def test_project_correct_polish_runs_batches_in_parallel(tmp_path: Path, monkeyp
 
     monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish", fake_propose_transcript_polish)
 
-    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir), "--concurrency", "3"], input="n\n")
+    result = runner.invoke(
+        app,
+        ["project", "correct", "polish", str(project_dir), "--concurrency", "3", "--legacy-polish"],
+        input="n\n",
+    )
 
     assert result.exit_code == 0
     assert max_active_calls == 3
@@ -335,6 +344,7 @@ def test_project_correct_polish_reports_batch_progress(tmp_path: Path, monkeypat
             category="polish",
             model="qwen-test",
             polish_concurrency=3,
+            polish_legacy=True,
         ),
         progress=events.append,
     )
@@ -355,6 +365,260 @@ def test_project_correct_polish_reports_batch_progress(tmp_path: Path, monkeypat
     assert polish_events[-1].completed == 3
     assert "batches 3/3" in polish_events[-1].description
     assert "active 0" in polish_events[-1].description
+
+
+def test_project_correct_polish_default_uses_strict_path_and_records_change_type(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Polish without --legacy-polish must call the strict LLM path and persist change_type/reason."""
+    sentences = [
+        "然后用用这个CLI去拿。",          # dup: 用用 -> 用
+        "我觉得这个方案可能不太需要做。",  # protected: 我觉得 + 可能 must survive
+        "用codekex这个嘛，又不用钱。",     # term: codekex -> Codex
+    ]
+    project_dir = _sample_project_with_sentences(tmp_path, sentences)
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+
+    def fake_strict(**kwargs):
+        items = []
+        for cand in kwargs["candidates"]:
+            if "用用" in cand.text:
+                items.append(LlmPolishItem(cand.candidate_id, "然后用这个CLI去拿。", "dup", "ASR 同字重复"))
+            elif "codekex" in cand.text:
+                items.append(LlmPolishItem(cand.candidate_id, "用Codex这个嘛，又不用钱。", "term", "ASR 误识别"))
+        return LlmStrictPolishResult("修字+清噪", items, kwargs["model"])
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish_strict", fake_strict)
+
+    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+
+    assert result.exit_code == 0, result.output
+    proposal = _latest_proposal(project_dir)
+    changes = proposal["proposed_changes"]
+    assert {c["change_type"] for c in changes} == {"dup", "term"}
+    types_to_text = {c["change_type"]: (c["original_text"], c["corrected_text"]) for c in changes}
+    assert types_to_text["dup"][1] == "然后用这个CLI去拿。"
+    assert types_to_text["term"][1] == "用Codex这个嘛，又不用钱。"
+    # Sentence containing protected words ("我觉得"/"可能") was not proposed by LLM,
+    # so it must remain absent from the proposal entirely.
+    assert all("我觉得" not in c["original_text"] for c in changes)
+
+
+def test_project_correct_polish_strict_surfaces_total_failure(tmp_path: Path, monkeypatch) -> None:
+    """When every strict batch fails, polish must surface the legacy-style recovery context, not a silent no-op."""
+    project_dir = _sample_project_with_text(tmp_path, "用codekex这个嘛。")
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+
+    def always_fail(**_kwargs):
+        raise TimeoutError("read timeout")
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish_strict", always_fail)
+
+    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+
+    assert result.exit_code == 0
+    manifest = load_manifest(project_dir)
+    assert "Transcript polish" in result.output
+    assert "Model fallback:" in result.output
+    assert "stage=polish" in result.output
+    assert f"project_id={manifest.project_id}" in result.output
+    assert f"meeting-asr project correct polish {manifest.project_id}" in result.output
+    proposal_files = sorted((project_dir / "tmp" / "corrections").glob("proposal_*.json"))
+    assert proposal_files == []
+
+
+def test_project_correct_polish_strict_reports_partial_failure(tmp_path: Path, monkeypatch) -> None:
+    """When some strict batches fail but others succeed, polish must surface partial failure via model_error."""
+    sentences = [f"第 {i} 句话需要修复。" for i in range(1, 25)]  # 2 batches of 12
+    project_dir = _sample_project_with_sentences(tmp_path, sentences)
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+    call_state = {"count": 0}
+
+    def half_fail(**kwargs):
+        call_state["count"] += 1
+        if call_state["count"] == 1:
+            raise TimeoutError("read timeout")
+        first = kwargs["candidates"][0]
+        return LlmStrictPolishResult(
+            "ok",
+            [LlmPolishItem(first.candidate_id, first.text + " 修复后。", "punct", "")],
+            kwargs["model"],
+        )
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish_strict", half_fail)
+
+    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+
+    assert result.exit_code == 0
+    assert "Model fallback:" in result.output
+    assert "Strict polish completed with partial failures" in result.output
+    proposal = _latest_proposal(project_dir)
+    assert proposal["model_error"] and "partial failures" in proposal["model_error"]
+    assert len(proposal["proposed_changes"]) >= 1
+
+
+def test_project_correct_polish_strict_guard_rejects_protected_word_deletion(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Strict guard must reject any LLM proposal that strips a protected attitude word."""
+    project_dir = _sample_project_with_text(tmp_path, "这个我觉得可能不需要做。")
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+
+    def fake_strict(**kwargs):
+        cand = kwargs["candidates"][0]
+        return LlmStrictPolishResult(
+            "wrongly stripped attitude",
+            [LlmPolishItem(cand.candidate_id, "这个不需要做。", "filler", "压成事实")],
+            kwargs["model"],
+        )
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish_strict", fake_strict)
+
+    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+
+    assert result.exit_code == 0
+    # Guard nuked the only proposed change → no proposal file; sidecar still records the rejection.
+    proposal_files = sorted((project_dir / "tmp" / "corrections").glob("proposal_*.json"))
+    assert proposal_files == []
+    sidecars = sorted((project_dir / "tmp" / "corrections").glob("polish_strict_meta_*.json"))
+    sidecar = json.loads(sidecars[-1].read_text(encoding="utf-8"))
+    decisions = [it["decision"] for it in sidecar["items"] if it["decision"].startswith("reject")]
+    assert any("protected_word_deleted" in d for d in decisions)
+
+
+def test_project_correct_accept_select_indices(tmp_path: Path, monkeypatch) -> None:
+    """`accept --select` should apply only the listed proposed changes."""
+    project_dir = _sample_project_with_sentences(
+        tmp_path, ["然后用用这个CLI。", "用codekex这个嘛。"]
+    )
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+
+    def fake_strict(**kwargs):
+        items = []
+        for cand in kwargs["candidates"]:
+            if "用用" in cand.text:
+                items.append(LlmPolishItem(cand.candidate_id, "然后用这个CLI。", "dup", ""))
+            else:
+                items.append(LlmPolishItem(cand.candidate_id, "用Codex这个嘛。", "term", ""))
+        return LlmStrictPolishResult("两类", items, kwargs["model"])
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish_strict", fake_strict)
+
+    runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+    proposal_before = _latest_proposal(project_dir)
+    assert len(proposal_before["proposed_changes"]) == 2
+
+    accept_result = runner.invoke(
+        app, ["project", "correct", "accept", str(project_dir), "--select", "1"]
+    )
+    assert accept_result.exit_code == 0, accept_result.output
+    corrected = (project_dir / "asr" / "sentences_corrected.json").read_text(encoding="utf-8")
+    assert "Codex" in corrected
+    assert "用用" in corrected  # change index 0 (dup) NOT applied
+
+
+def test_project_correct_accept_types_filter(tmp_path: Path, monkeypatch) -> None:
+    """`accept --types term` should apply only changes whose primary change_type is term."""
+    project_dir = _sample_project_with_sentences(
+        tmp_path, ["然后用用这个CLI。", "用codekex这个嘛。"]
+    )
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+
+    def fake_strict(**kwargs):
+        items = []
+        for cand in kwargs["candidates"]:
+            if "用用" in cand.text:
+                items.append(LlmPolishItem(cand.candidate_id, "然后用这个CLI。", "dup|filler", ""))
+            else:
+                items.append(LlmPolishItem(cand.candidate_id, "用Codex这个嘛。", "term", ""))
+        return LlmStrictPolishResult("两类", items, kwargs["model"])
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish_strict", fake_strict)
+
+    runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+
+    accept_result = runner.invoke(
+        app, ["project", "correct", "accept", str(project_dir), "--types", "term"]
+    )
+    assert accept_result.exit_code == 0, accept_result.output
+    corrected = (project_dir / "asr" / "sentences_corrected.json").read_text(encoding="utf-8")
+    assert "Codex" in corrected
+    assert "用用" in corrected  # dup-tagged change NOT applied
+
+
+def test_project_correct_accept_rejects_unknown_type_token(tmp_path: Path, monkeypatch) -> None:
+    """Invalid --types tokens must produce an error rather than silently ignore them."""
+    project_dir = _sample_project_with_text(tmp_path, "用codekex这个嘛。")
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+    monkeypatch.setattr(
+        "app.transcript_corrections.propose_transcript_polish_strict",
+        lambda **kwargs: LlmStrictPolishResult(
+            "x",
+            [LlmPolishItem(kwargs["candidates"][0].candidate_id, "用Codex这个嘛。", "term", "")],
+            kwargs["model"],
+        ),
+    )
+    runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+
+    accept_result = runner.invoke(
+        app, ["project", "correct", "accept", str(project_dir), "--types", "bogus"]
+    )
+    assert accept_result.exit_code != 0
+    assert "bogus" in accept_result.output
+
+
+def test_project_correct_polish_proposal_markdown_groups_by_change_type(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """When change_type is present, the proposal markdown should render grouped sections."""
+    project_dir = _sample_project_with_sentences(
+        tmp_path, ["然后用用这个CLI。", "用codekex这个嘛。"]
+    )
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+
+    def fake_strict(**kwargs):
+        items = []
+        for cand in kwargs["candidates"]:
+            if "用用" in cand.text:
+                items.append(LlmPolishItem(cand.candidate_id, "然后用这个CLI。", "dup", "同字重复"))
+            else:
+                items.append(LlmPolishItem(cand.candidate_id, "用Codex这个嘛。", "term", "ASR 误识别"))
+        return LlmStrictPolishResult("两类", items, kwargs["model"])
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish_strict", fake_strict)
+    runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+
+    proposal_md = sorted((project_dir / "tmp" / "corrections").glob("proposal_*.md"))[-1].read_text(encoding="utf-8")
+    assert "Proposed Changes (grouped by change_type)" in proposal_md
+    assert "### dup" in proposal_md
+    assert "### term" in proposal_md
+    assert "Counts:" in proposal_md
+    assert "dup=1" in proposal_md
+    assert "term=1" in proposal_md
 
 
 def test_project_transcript_show_can_select_corrected_output(tmp_path: Path) -> None:
