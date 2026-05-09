@@ -15,7 +15,15 @@ from app.presentation.tui.voiceprint_review import (
     VoiceprintReviewHelpScreen,
     VoiceprintReviewSession,
 )
-from app.voiceprint_store import StoredVoiceprintSample, get_voiceprint_db_path, store_voiceprint_samples
+from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
+from app.voiceprint_quality import analyze_voiceprint_quality
+from app.voiceprint_store import (
+    StoredVoiceprintSample,
+    get_voiceprint_db_path,
+    list_voiceprint_samples_for_project,
+    store_voiceprint_samples,
+    upsert_voiceprint_embedding,
+)
 from app.voiceprints import VoiceprintCaptureSummary, VoiceprintClip, VoiceprintSpeaker
 
 
@@ -46,6 +54,13 @@ def test_voiceprint_review_tui_switches_project_and_library_views(tmp_path: Path
             assert "Global library" in app._overview_pane()
             assert "Global voiceprint people" in app._speaker_pane()
             assert "library sample one" in app._sample_pane()
+
+            await pilot.press("tab")
+            await pilot.pause()
+
+            assert app.mode == "quality"
+            assert "view=[bold cyan]Quality review" in app._overview_pane()
+            assert "Voiceprint quality" in app._speaker_pane()
 
             await pilot.press("tab")
             await pilot.pause()
@@ -165,15 +180,50 @@ def test_voiceprint_review_refuses_save_from_global_library(tmp_path: Path) -> N
     asyncio.run(scenario())
 
 
+def test_voiceprint_review_quality_mode_saves_and_refreshes(tmp_path: Path) -> None:
+    """Unified review should update sample quality status without leaving the TUI."""
+    store_dir = _quality_store(tmp_path)
+    session = VoiceprintReviewSession(
+        capture=None,
+        library=load_voiceprint_library_session(store_dir=store_dir),
+        quality=analyze_voiceprint_quality(store_dir=store_dir),
+        store_dir=store_dir,
+        initial_mode="quality",
+    )
+    app = VoiceprintReviewApp(session)
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            assert app.mode == "quality"
+            assert app.session.quality.suspicious_count == 1
+
+            await pilot.press("right")
+            await pilot.press("x")
+            await pilot.press("s")
+            await pilot.pause()
+
+            assert app.return_value is None
+            assert app.session.quality.suspicious_count == 0
+            assert "Saved 1 quality change" in str(app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
+
+
 def test_voiceprint_review_without_project_starts_in_library_mode(tmp_path: Path) -> None:
     """Without a project, review should behave as the global library browser."""
-    session = VoiceprintReviewSession(capture=None, library=load_voiceprint_library_session(store_dir=_store(tmp_path)))
+    store_dir = _store(tmp_path)
+    session = VoiceprintReviewSession(
+        capture=None,
+        library=load_voiceprint_library_session(store_dir=store_dir),
+        quality=analyze_voiceprint_quality(store_dir=store_dir),
+        store_dir=store_dir,
+    )
     app = VoiceprintReviewApp(session)
 
     async def scenario() -> None:
         async with app.run_test(size=(120, 24)) as pilot:
             assert app.mode == "library"
-            assert "no alternate project view" in app._overview_pane()
+            assert "Tab -> Quality review" in app._overview_pane()
 
             await pilot.press("p")
             await pilot.pause()
@@ -249,8 +299,10 @@ def _review_session(
         meeting_time="2026-05-05T09:00:00+08:00",
         match_candidates=match_candidates,
     )
-    library = load_voiceprint_library_session(store_dir=_store(tmp_path), page_size=1)
-    return VoiceprintReviewSession(capture=capture, library=library)
+    store_dir = _store(tmp_path)
+    library = load_voiceprint_library_session(store_dir=store_dir, page_size=1)
+    quality = analyze_voiceprint_quality(store_dir=store_dir)
+    return VoiceprintReviewSession(capture=capture, library=library, quality=quality, store_dir=store_dir)
 
 
 def _capture_summary(tmp_path: Path) -> VoiceprintCaptureSummary:
@@ -298,6 +350,20 @@ def _store(tmp_path: Path) -> Path:
         ],
         get_voiceprint_db_path(store_dir),
     )
+    return store_dir
+
+
+def _quality_store(tmp_path: Path) -> Path:
+    """Create a voiceprint store with one suspicious embedded sample."""
+    store_dir = tmp_path / "quality-voiceprints"
+    source_path = tmp_path / "quality-meeting.mp4"
+    source_path.write_bytes(b"source")
+    samples = [_sample(store_dir, source_path, "Alice", speaker_id=0, index=index, text=f"sample {index}") for index in range(1, 5)]
+    db_path = store_voiceprint_samples(samples, get_voiceprint_db_path(store_dir))
+    rows = list_voiceprint_samples_for_project("project-1", db_path)
+    vectors = ([1.0, 0.0], [0.98, 0.02], [0.99, 0.01], [0.0, 1.0])
+    for row, vector in zip(rows, vectors, strict=True):
+        upsert_voiceprint_embedding(row.sample_id, LOCAL_SPEECHBRAIN_MODEL, vector, db_path)
     return store_dir
 
 

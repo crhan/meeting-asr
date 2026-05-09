@@ -10,18 +10,27 @@ from app.voiceprint_store import VoiceprintSampleRow
 
 PROJECT_MODE = "project"
 LIBRARY_MODE = "library"
+QUALITY_MODE = "quality"
 
 
 def mode_label(mode: str) -> str:
     """Return the human-readable mode label."""
-    return tr("Project candidates", "项目候选样本") if mode == PROJECT_MODE else tr("Global library", "全局声纹库")
+    if mode == PROJECT_MODE:
+        return tr("Project candidates", "项目候选样本")
+    if mode == QUALITY_MODE:
+        return tr("Quality review", "质量检查")
+    return tr("Global library", "全局声纹库")
 
 
 def next_view_label(mode: str, project_available: bool) -> str | None:
     """Return the view reached by pressing Tab, if there is one."""
-    if mode == LIBRARY_MODE and not project_available:
-        return None
-    return mode_label(LIBRARY_MODE) if mode == PROJECT_MODE else mode_label(PROJECT_MODE)
+    if mode == PROJECT_MODE:
+        return mode_label(LIBRARY_MODE)
+    if mode == LIBRARY_MODE:
+        return mode_label(QUALITY_MODE)
+    if project_available:
+        return mode_label(PROJECT_MODE)
+    return mode_label(LIBRARY_MODE)
 
 
 def project_speaker_summary(speaker: VoiceprintCaptureSpeakerEntry | None) -> str:

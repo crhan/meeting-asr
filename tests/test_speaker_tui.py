@@ -57,6 +57,7 @@ from app.presentation.tui.voiceprint_review import (
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
 from app.voiceprint_evaluation import VoiceprintEvaluationSummary, VoiceprintProjectEvaluation, VoiceprintScoreChange
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL, VoiceprintEmbedSummary
+from app.voiceprint_quality import analyze_voiceprint_quality
 from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
 from app.voiceprint_store import (
     StoredVoiceprintSample,
@@ -324,7 +325,13 @@ def test_project_review_tui_save_handler_keeps_tui_open(monkeypatch, tmp_path: P
         speaker_tui,
         "load_voiceprint_review_session",
         lambda **kwargs: (
-            VoiceprintReviewSession(capture=None, library=library, return_hint=kwargs["return_hint"]),
+            VoiceprintReviewSession(
+                capture=None,
+                library=library,
+                quality=analyze_voiceprint_quality(store_dir=tmp_path / "voiceprints"),
+                store_dir=tmp_path / "voiceprints",
+                return_hint=kwargs["return_hint"],
+            ),
             None,
         ),
     )
@@ -632,7 +639,13 @@ def test_project_review_tui_opens_embedded_voiceprint_review(monkeypatch, tmp_pa
         speaker_tui,
         "load_voiceprint_review_session",
         lambda **kwargs: (
-            VoiceprintReviewSession(capture=None, library=library, return_hint=kwargs["return_hint"]),
+            VoiceprintReviewSession(
+                capture=None,
+                library=library,
+                quality=analyze_voiceprint_quality(store_dir=tmp_path / "voiceprints"),
+                store_dir=tmp_path / "voiceprints",
+                return_hint=kwargs["return_hint"],
+            ),
             None,
         ),
     )
@@ -761,6 +774,12 @@ def test_project_review_tui_voiceprint_tab_shows_current_view(monkeypatch, tmp_p
             await pilot.pause()
 
             assert "view=[bold cyan]Global library" in pilot.app.screen._overview_pane()
+            assert "Tab -> Quality review" in pilot.app.screen._overview_pane()
+
+            await pilot.press("tab")
+            await pilot.pause()
+
+            assert "view=[bold cyan]Quality review" in pilot.app.screen._overview_pane()
             assert "Tab -> Project candidates" in pilot.app.screen._overview_pane()
 
     asyncio.run(scenario())
@@ -1474,6 +1493,8 @@ def _voiceprint_review_session(tmp_path: Path, *, return_hint: str) -> Voiceprin
     return VoiceprintReviewSession(
         capture=capture,
         library=VoiceprintLibrarySession(db_path=get_voiceprint_db_path(store_dir), speakers=[]),
+        quality=analyze_voiceprint_quality(store_dir=store_dir),
+        store_dir=store_dir,
         return_hint=return_hint,
     )
 

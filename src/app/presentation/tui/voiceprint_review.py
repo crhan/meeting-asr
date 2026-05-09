@@ -49,6 +49,13 @@ from app.presentation.tui.voiceprint_review_render import (
     sample_page_start,
     trim_text,
 )
+from app.presentation.tui.voiceprint_quality import (
+    _changed_statuses as quality_changed_statuses,
+    _initial_statuses as quality_initial_statuses,
+    _person_style as quality_person_style,
+    _person_index as quality_person_index,
+    _sample_style as quality_sample_style,
+)
 from app.presentation.tui.speaker_matches import load_match_candidates
 from app.presentation.tui.voiceprint_review_text import help_text, status_text
 from app.presentation.tui.voiceprint_review_workflow import (
@@ -60,12 +67,21 @@ from app.presentation.tui.voiceprint_review_workflow import (
     run_voiceprint_review_workflow,
 )
 from app.speaker_review import build_audio_preview_command
+from app.utils import format_ms_timestamp
 from app.voiceprint_evaluation import VoiceprintEvaluationSummary, evaluate_voiceprint_embedding
 from app.voiceprint_playback import build_voiceprint_play_command
-from app.voiceprint_store import VoiceprintSampleRow
+from app.voiceprint_quality import (
+    VOICEPRINT_SAMPLE_STATUS_ACTIVE,
+    VOICEPRINT_SAMPLE_STATUS_QUARANTINED,
+    VoiceprintQualityPerson,
+    VoiceprintQualityReport,
+    VoiceprintQualitySample,
+    analyze_voiceprint_quality,
+)
+from app.voiceprint_store import VoiceprintSampleRow, get_voiceprint_db_path, update_voiceprint_sample_status
 from app.voiceprints import VoiceprintCaptureSummary, plan_voiceprint_capture
 
-Mode = Literal["project", "library"]
+Mode = Literal["project", "library", "quality"]
 Column = Literal["speakers", "samples"]
 
 DEFAULT_SAMPLE_PAGE_SIZE = 6
@@ -75,6 +91,7 @@ FOCUSED_PANE_CLASS = "focused-pane"
 UNFOCUSED_PANE_CLASS = "unfocused-pane"
 PROJECT_MODE = "project"
 LIBRARY_MODE = "library"
+QUALITY_MODE = "quality"
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +100,9 @@ class VoiceprintReviewSession:
 
     capture: VoiceprintCaptureReviewSession | None
     library: VoiceprintLibrarySession
+    quality: VoiceprintQualityReport
+    store_dir: Path | None = None
+    quality_model: str | None = None
     initial_mode: Mode = PROJECT_MODE
     return_hint: str = "quit"
 
@@ -176,6 +196,7 @@ class _VoiceprintReviewBase:
         Binding("tab", "switch_mode", "Switch view", priority=True),
         Binding("p", "project_mode", "Project"),
         Binding("g", "library_mode", "Library"),
+        Binding("y", "quality_mode", "Quality"),
         Binding("j", "down", "Down"),
         Binding("k", "up", "Up"),
         Binding("down", "down", "Down", show=False),
@@ -192,7 +213,9 @@ class _VoiceprintReviewBase:
         Binding("x", "toggle_sample", "Include/exclude"),
         Binding("a", "toggle_speaker", "Toggle speaker"),
         Binding("d", "exclude_speaker", "Exclude speaker"),
+        Binding("r", "mark_quality_quarantined", "Quarantine", show=False),
         Binding("s", "save", "Save selected"),
+        Binding("u", "refresh_quality", "Refresh quality"),
         Binding("e", "evaluate", "Evaluate"),
         Binding("?", "show_shortcuts", "Help"),
         Binding("escape", "quit", "Back", show=False),
@@ -213,6 +236,12 @@ class _VoiceprintReviewBase:
         self.project_focused_column: Column = "speakers"
         self.library_selected_speaker_index = 0
         self.library_focused_column: Column = "speakers"
+        self.quality_selected_person_index = 0
+        self.quality_selected_sample_indices = {
+            person.speaker_public_id: 0 for person in session.quality.people
+        }
+        self.quality_focused_column: Column = "speakers"
+        self.quality_statuses = quality_initial_statuses(session.quality)
         self.playback_process: subprocess.Popen | None = None
         self.workflow_summary: VoiceprintReviewWorkflowSummary | None = None
         self.evaluation_summary: VoiceprintEvaluationSummary | None = None
@@ -235,12 +264,9 @@ class _VoiceprintReviewBase:
         self._stop_playback()
 
     def action_switch_mode(self) -> None:
-        """Switch between project candidates and the global library."""
-        if self.session.capture is None:
-            self._set_status(tr("Project candidates unavailable; showing the global library.", "项目候选样本不可用，正在显示全局声纹库。"))
-            return
+        """Switch between project candidates, library, and quality review."""
         self._stop_playback()
-        self.mode = LIBRARY_MODE if self.mode == PROJECT_MODE else PROJECT_MODE
+        self.mode = self._next_mode()
         self._set_status(tr(f"Switched to {mode_label(self.mode)}.", f"已切换到{mode_label(self.mode)}。"))
         self._refresh()
 
@@ -254,6 +280,10 @@ class _VoiceprintReviewBase:
     def action_library_mode(self) -> None:
         """Jump to the global library view."""
         self._switch_to(LIBRARY_MODE)
+
+    def action_quality_mode(self) -> None:
+        """Jump to the global quality review view."""
+        self._switch_to(QUALITY_MODE)
 
     def action_down(self) -> None:
         """Move down in the focused column."""
@@ -281,6 +311,9 @@ class _VoiceprintReviewBase:
 
     def action_toggle_sample(self) -> None:
         """Include or exclude the selected project sample."""
+        if self.mode == QUALITY_MODE:
+            self._toggle_quality_sample()
+            return
         if self.mode != PROJECT_MODE:
             self._set_status(tr("Sample selection only applies to project candidates.", "样本选择只适用于项目候选样本。"))
             return
@@ -295,6 +328,9 @@ class _VoiceprintReviewBase:
 
     def action_toggle_speaker(self) -> None:
         """Include or exclude all samples for the selected project speaker."""
+        if self.mode == QUALITY_MODE:
+            self._mark_quality_sample(VOICEPRINT_SAMPLE_STATUS_ACTIVE)
+            return
         if self.mode != PROJECT_MODE:
             self._set_status(tr("Speaker selection only applies to project candidates.", "speaker 选择只适用于项目候选样本。"))
             return
@@ -325,6 +361,13 @@ class _VoiceprintReviewBase:
         self._set_status(tr(f"Excluded all samples for {speaker.name}.", f"已取消 {speaker.name} 的全部样本。"))
         self._refresh()
 
+    def action_mark_quality_quarantined(self) -> None:
+        """Mark the selected quality sample as quarantined."""
+        if self.mode != QUALITY_MODE:
+            self._set_status(tr("Quarantine applies only to Quality review.", "隔离只适用于质量检查视图。"))
+            return
+        self._mark_quality_sample(VOICEPRINT_SAMPLE_STATUS_QUARANTINED)
+
     def action_play_sample(self) -> None:
         """Play or stop the selected sample for the active view."""
         if self._is_playing():
@@ -338,6 +381,9 @@ class _VoiceprintReviewBase:
 
     def action_save(self) -> None:
         """Capture and embed selected project clips, or return them to the caller."""
+        if self.mode == QUALITY_MODE:
+            self._save_quality_changes()
+            return
         if self.mode != PROJECT_MODE:
             self._set_status(tr("Switch to Project candidates before saving new samples.", "保存新样本前请先切换到项目候选样本。"))
             return
@@ -353,6 +399,16 @@ class _VoiceprintReviewBase:
     def action_evaluate(self) -> None:
         """Evaluate current voiceprint matching impact."""
         self._set_status(tr("Evaluation is available after this screen is embedded in Project Review.", "评测能力需要从 Project Review 内进入后使用。"))
+
+    def action_refresh_quality(self) -> None:
+        """Refresh quality scores from SQLite."""
+        if self.mode != QUALITY_MODE:
+            self._set_status(tr("Switch to Quality review before refreshing quality scores.", "刷新质量评分前请先切换到质量检查。"))
+            return
+        if quality_changed_statuses(self.session.quality, self.quality_statuses):
+            self._set_status(tr("Save staged quality changes before refreshing.", "刷新前请先保存暂存的质量变更。"))
+            return
+        self._reload_quality(status=tr("Quality scores refreshed.", "质量评分已刷新。"))
 
     def action_show_shortcuts(self) -> None:
         """Show keyboard shortcut help."""
@@ -379,6 +435,16 @@ class _VoiceprintReviewBase:
         self._set_status(tr(f"Switched to {mode_label(mode)}.", f"已切换到{mode_label(mode)}。"))
         self._refresh()
 
+    def _next_mode(self) -> Mode:
+        """Return the next visible voiceprint review mode."""
+        if self.mode == PROJECT_MODE:
+            return LIBRARY_MODE
+        if self.mode == LIBRARY_MODE:
+            return QUALITY_MODE
+        if self.session.capture is not None:
+            return PROJECT_MODE
+        return LIBRARY_MODE
+
     def _move_focused_row(self, delta: int) -> None:
         """Move selection inside the focused column."""
         if self._focused_column() == "speakers":
@@ -397,6 +463,9 @@ class _VoiceprintReviewBase:
         if self.mode == PROJECT_MODE:
             self._move_project_speaker(delta)
             return
+        if self.mode == QUALITY_MODE:
+            self._move_quality_person(delta)
+            return
         self._move_library_speaker(delta)
 
     def _move_sample(self, delta: int) -> None:
@@ -404,12 +473,18 @@ class _VoiceprintReviewBase:
         if self.mode == PROJECT_MODE:
             self._move_project_sample(delta)
             return
+        if self.mode == QUALITY_MODE:
+            self._move_quality_sample(delta)
+            return
         self._move_library_sample(delta)
 
     def _move_sample_page(self, delta: int) -> None:
         """Move the selected sample page in the active view."""
         if self.mode == PROJECT_MODE:
             self._move_project_sample_page(delta)
+            return
+        if self.mode == QUALITY_MODE:
+            self._move_quality_sample_page(delta)
             return
         self._move_library_sample_page(delta)
 
@@ -433,18 +508,24 @@ class _VoiceprintReviewBase:
         """Render the overview for the active view."""
         if self.mode == PROJECT_MODE:
             return self._project_overview_pane()
+        if self.mode == QUALITY_MODE:
+            return self._quality_overview_pane()
         return self._library_overview_pane()
 
     def _speaker_pane(self) -> str:
         """Render speakers for the active view."""
         if self.mode == PROJECT_MODE:
             return self._project_speaker_pane()
+        if self.mode == QUALITY_MODE:
+            return self._quality_speaker_pane()
         return self._library_speaker_pane()
 
     def _sample_pane(self) -> str:
         """Render samples for the active view."""
         if self.mode == PROJECT_MODE:
             return self._project_sample_pane()
+        if self.mode == QUALITY_MODE:
+            return self._quality_sample_pane()
         return self._library_sample_pane()
 
     def _project_overview_pane(self) -> str:
@@ -502,6 +583,26 @@ class _VoiceprintReviewBase:
         ]
         return "\n".join(lines)
 
+    def _quality_overview_pane(self) -> str:
+        """Render global voiceprint quality state."""
+        report = self.session.quality
+        person = self._quality_person()
+        sample = self._quality_selected_sample()
+        changed = len(quality_changed_statuses(report, self.quality_statuses))
+        lines = [
+            self._mode_line(),
+            f"{tr('[b]Store[/b]', '[b]库路径[/b]')}    {escape(str(report.db_path))}",
+            f"{tr('[b]Model[/b]', '[b]模型[/b]')}    {escape(report.model)}",
+            tr(
+                f"[b]Quality[/b] people {len(report.people)} | samples {report.sample_count} | suspicious {report.suspicious_count} | critical {report.critical_count}",
+                f"[b]质量[/b]     人员 {len(report.people)} | 样本 {report.sample_count} | 可疑 {report.suspicious_count} | 严重 {report.critical_count}",
+            ),
+            tr(f"[b]Focus[/b]    {escape(_quality_person_summary(person))}", f"[b]当前[/b]     {escape(_quality_person_summary(person))}"),
+            tr(f"[b]Sample[/b]   {escape(_quality_sample_summary(sample, self.quality_statuses))}", f"[b]样本[/b]     {escape(_quality_sample_summary(sample, self.quality_statuses))}"),
+            tr(f"[b]Changes[/b]  {changed} staged", f"[b]变更[/b]     已暂存 {changed} 个"),
+        ]
+        return "\n".join(lines)
+
     def _project_speaker_pane(self) -> str:
         """Render project speakers and selected sample counts."""
         lines = [self._pane_title(tr("Project candidates", "项目候选样本"), "speakers")]
@@ -542,6 +643,24 @@ class _VoiceprintReviewBase:
                 f"[cyan]样本 {speaker.sample_count}[/]  [green]embedding {embedded}[/]",
             )
             lines.append(self._current_row(label) if index == self.library_selected_speaker_index else label)
+        return "\n".join(lines)
+
+    def _quality_speaker_pane(self) -> str:
+        """Render quality people sorted by risk."""
+        lines = [self._pane_title(tr("Voiceprint quality", "声纹质量"), "speakers")]
+        if not self.session.quality.people:
+            lines.append(tr("[yellow]No embedded voiceprint samples.[/]", "[yellow]没有已 embedding 的声纹样本。[/]"))
+            return "\n".join(lines)
+        for index, person in enumerate(self.session.quality.people):
+            marker = "[bold yellow]>[/]" if index == self.quality_selected_person_index else "[dim] [/]"
+            style = quality_person_style(person)
+            mean = "-" if person.mean_score is None else f"{person.mean_score:.3f}"
+            label = (
+                f"{marker} [bold]{escape(person.speaker_name)}[/] [dim]{escape(person.speaker_public_id)}[/]  "
+                f"[cyan]mean={mean}[/]  suspicious={person.suspicious_count}/{person.sample_count}"
+            )
+            styled = f"[{style}]{label}[/]" if style else label
+            lines.append(self._current_row(styled) if index == self.quality_selected_person_index else styled)
         return "\n".join(lines)
 
     def _project_sample_pane(self) -> str:
@@ -585,6 +704,34 @@ class _VoiceprintReviewBase:
         lines.extend(["", self._library_sample_page_footer(speaker, page_start)])
         return "\n".join(lines)
 
+    def _quality_sample_pane(self) -> str:
+        """Render quality sample scores and staged statuses."""
+        person = self._quality_person()
+        title = tr("Quality samples", "质量样本") if person is None else tr(f"{person.speaker_name} quality samples", f"{person.speaker_name} 质量样本")
+        lines = [self._pane_title(title, "samples")]
+        if person is None:
+            lines.append(tr("[yellow]No person selected.[/]", "[yellow]未选择人员。[/]"))
+            return "\n".join(lines)
+        selected_index = self.quality_selected_sample_indices[person.speaker_public_id]
+        page_start, samples = self._visible_quality_samples(person)
+        for offset, sample in enumerate(samples):
+            index = page_start + offset
+            prefix = ">" if index == selected_index else " "
+            marker = "[bold yellow]>[/]" if prefix == ">" else "[dim] [/]"
+            status = self.quality_statuses[sample.sample_public_id]
+            score = "-" if sample.score is None else f"{sample.score:.3f}"
+            style = quality_sample_style(sample, status)
+            line = f"{marker} [cyan]#{index + 1}[/] {sample.sample_public_id} score={score} {sample.label} -> {status} | {self._quality_sample_time(sample)}"
+            rendered = f"[{style}]{escape(line)}[/]" if style else escape(line)
+            lines.append(self._current_row(rendered) if prefix == ">" else rendered)
+            if prefix == ">":
+                lines.append(f"  [dim]{escape(sample.reason)}[/]")
+                lines.append(f"  [dim]{escape(trim_text(sample.transcript_text, limit=120))}[/]")
+        if not samples:
+            lines.append(tr("[yellow]No samples for this person.[/]", "[yellow]当前人员没有样本。[/]"))
+        lines.extend(["", page_footer("Samples", len(person.samples), page_start, self._sample_page_size())])
+        return "\n".join(lines)
+
     def _play_active_sample(self) -> None:
         """Start playback for the selected sample in the active view."""
         if self.mode == PROJECT_MODE:
@@ -593,6 +740,13 @@ class _VoiceprintReviewBase:
                 self._set_status(tr("No project sample selected.", "未选择项目样本。"))
                 return
             self._play_project_sample(sample)
+            return
+        if self.mode == QUALITY_MODE:
+            sample = self._quality_selected_sample()
+            if sample is None:
+                self._set_status(tr("No quality sample selected.", "未选择质量样本。"))
+                return
+            self._play_quality_sample(sample)
             return
         sample = self._library_selected_sample()
         if sample is None:
@@ -619,6 +773,12 @@ class _VoiceprintReviewBase:
         self._stop_playback()
         self.playback_process = _start_player(build_voiceprint_play_command(sample.clip_path))
         self._set_status(tr(f"Playing {sample.speaker_name} sample {sample.public_id}.", f"正在播放 {sample.speaker_name} 的样本 {sample.public_id}。"))
+
+    def _play_quality_sample(self, sample: VoiceprintQualitySample) -> None:
+        """Start WAV playback for one quality-review sample."""
+        self._stop_playback()
+        self.playback_process = _start_player(build_voiceprint_play_command(sample.clip_path))
+        self._set_status(tr(f"Playing quality sample {sample.sample_public_id}.", f"正在播放质量样本 {sample.sample_public_id}。"))
 
     def _stop_playback(self) -> None:
         """Stop the current playback child process if it is still running."""
@@ -653,6 +813,14 @@ class _VoiceprintReviewBase:
         self.library_selected_speaker_index = (self.library_selected_speaker_index + delta) % total
         self._refresh()
 
+    def _move_quality_person(self, delta: int) -> None:
+        """Move the selected quality person index."""
+        total = len(self.session.quality.people)
+        if total == 0:
+            return
+        self.quality_selected_person_index = (self.quality_selected_person_index + delta) % total
+        self._refresh()
+
     def _move_project_sample(self, delta: int) -> None:
         """Move the selected project sample index."""
         speaker = self._project_speaker()
@@ -669,6 +837,15 @@ class _VoiceprintReviewBase:
             return
         target = speaker.selected_sample_index + delta
         speaker.selected_sample_index = clamp(target, 0, len(speaker.samples) - 1)
+        self._refresh()
+
+    def _move_quality_sample(self, delta: int) -> None:
+        """Move the selected quality sample index."""
+        person = self._quality_person()
+        if person is None or not person.samples:
+            return
+        current = self.quality_selected_sample_indices[person.speaker_public_id]
+        self.quality_selected_sample_indices[person.speaker_public_id] = clamp(current + delta, 0, len(person.samples) - 1)
         self._refresh()
 
     def _move_project_sample_page(self, delta: int) -> None:
@@ -693,6 +870,18 @@ class _VoiceprintReviewBase:
         speaker.selected_sample_index = clamp(current_start + delta * page_size, 0, last_start)
         self._refresh()
 
+    def _move_quality_sample_page(self, delta: int) -> None:
+        """Move the selected quality sample page."""
+        person = self._quality_person()
+        if person is None or not person.samples:
+            return
+        page_size = self._sample_page_size()
+        selected = self.quality_selected_sample_indices[person.speaker_public_id]
+        current_start = sample_page_start(selected, page_size)
+        last_start = last_sample_page_start(len(person.samples), page_size)
+        self.quality_selected_sample_indices[person.speaker_public_id] = clamp(current_start + delta * page_size, 0, last_start)
+        self._refresh()
+
     def _project_speaker(self) -> VoiceprintCaptureSpeakerEntry | None:
         """Return the selected project speaker, if any."""
         capture = self.session.capture
@@ -705,6 +894,12 @@ class _VoiceprintReviewBase:
         if not self.session.library.speakers:
             return None
         return self.session.library.speakers[self.library_selected_speaker_index]
+
+    def _quality_person(self) -> VoiceprintQualityPerson | None:
+        """Return the selected quality person, if any."""
+        if not self.session.quality.people:
+            return None
+        return self.session.quality.people[self.quality_selected_person_index]
 
     def _project_selected_sample(self) -> VoiceprintCaptureClipEntry | None:
         """Return the selected project sample, if any."""
@@ -719,6 +914,13 @@ class _VoiceprintReviewBase:
         if speaker is None or not speaker.samples:
             return None
         return speaker.samples[speaker.selected_sample_index]
+
+    def _quality_selected_sample(self) -> VoiceprintQualitySample | None:
+        """Return the selected quality sample, if any."""
+        person = self._quality_person()
+        if person is None or not person.samples:
+            return None
+        return person.samples[self.quality_selected_sample_indices[person.speaker_public_id]]
 
     def _visible_project_samples(
         self,
@@ -735,6 +937,63 @@ class _VoiceprintReviewBase:
         page_start = sample_page_start(speaker.selected_sample_index, page_size)
         return page_start, speaker.samples[page_start : page_start + page_size]
 
+    def _visible_quality_samples(self, person: VoiceprintQualityPerson) -> tuple[int, list[VoiceprintQualitySample]]:
+        """Return the current quality sample page start and rows."""
+        page_size = self._sample_page_size()
+        selected = self.quality_selected_sample_indices[person.speaker_public_id]
+        page_start = sample_page_start(selected, page_size)
+        return page_start, list(person.samples[page_start : page_start + page_size])
+
+    def _toggle_quality_sample(self) -> None:
+        """Toggle the selected quality sample active/quarantined."""
+        sample = self._quality_selected_sample()
+        if sample is None:
+            return
+        current = self.quality_statuses[sample.sample_public_id]
+        status = VOICEPRINT_SAMPLE_STATUS_ACTIVE
+        if current == VOICEPRINT_SAMPLE_STATUS_ACTIVE:
+            status = VOICEPRINT_SAMPLE_STATUS_QUARANTINED
+        self._set_quality_sample_status(sample, status)
+
+    def _mark_quality_sample(self, status: str) -> None:
+        """Set the selected quality sample lifecycle status."""
+        sample = self._quality_selected_sample()
+        if sample is None:
+            return
+        self._set_quality_sample_status(sample, status)
+
+    def _set_quality_sample_status(self, sample: VoiceprintQualitySample, status: str) -> None:
+        """Stage one quality sample status change."""
+        self.quality_statuses[sample.sample_public_id] = status
+        self._set_status(tr(f"Set {sample.sample_public_id} to {status}.", f"已把 {sample.sample_public_id} 标记为 {status}。"))
+        self._refresh()
+
+    def _save_quality_changes(self) -> None:
+        """Persist staged quality status changes and refresh scores."""
+        changes = quality_changed_statuses(self.session.quality, self.quality_statuses)
+        if not changes:
+            self._set_status(tr("No staged quality changes to save.", "没有待保存的声纹质量变更。"))
+            return
+        for sample_id, status in changes.items():
+            update_voiceprint_sample_status(sample_id, status, get_voiceprint_db_path(self.session.store_dir))
+        self._reload_quality(status=tr(f"Saved {len(changes)} quality change(s).", f"已保存 {len(changes)} 个质量变更。"))
+
+    def _reload_quality(self, *, status: str) -> None:
+        """Reload quality and library data while preserving the current person."""
+        previous_person_id = self._quality_person().speaker_public_id if self._quality_person() is not None else None
+        store_dir = self.session.store_dir
+        quality = analyze_voiceprint_quality(store_dir=store_dir, model=self.session.quality_model)
+        self.session = replace(
+            self.session,
+            quality=quality,
+            library=load_voiceprint_library_session(store_dir=store_dir, page_size=self.session.library.page_size),
+        )
+        self.quality_selected_person_index = quality_person_index(self.session.quality, previous_person_id)
+        self.quality_selected_sample_indices = {person.speaker_public_id: 0 for person in self.session.quality.people}
+        self.quality_statuses = quality_initial_statuses(self.session.quality)
+        self._refresh()
+        self._set_status(status)
+
     def _sample_page_size(self) -> int:
         """Return the number of sample rows that fit in the sample pane."""
         configured = self._configured_page_size()
@@ -749,6 +1008,8 @@ class _VoiceprintReviewBase:
         """Return the active view page-size override, if configured."""
         if self.mode == PROJECT_MODE and self.session.capture is not None:
             return self.session.capture.page_size
+        if self.mode == QUALITY_MODE:
+            return None
         return self.session.library.page_size
 
     def _project_sample_page_footer(self, speaker: VoiceprintCaptureSpeakerEntry, page_start: int) -> str:
@@ -758,6 +1019,12 @@ class _VoiceprintReviewBase:
     def _library_sample_page_footer(self, speaker: VoiceprintSpeakerEntry, page_start: int) -> str:
         """Render library sample pagination status."""
         return page_footer("Samples", len(speaker.samples), page_start, self._sample_page_size())
+
+    def _quality_sample_time(self, sample: VoiceprintQualitySample) -> str:
+        """Render a quality sample's source time range."""
+        start = format_ms_timestamp(sample.source_begin_time_ms)
+        end = format_ms_timestamp(sample.source_end_time_ms)
+        return f"{sample.project_id} {start}-{end}"
 
     def _pane_title(self, title: str, column: Column) -> str:
         """Render a pane title with focused-column state."""
@@ -784,12 +1051,17 @@ class _VoiceprintReviewBase:
         """Return the focused column for the active view."""
         if self.mode == PROJECT_MODE:
             return self.project_focused_column
+        if self.mode == QUALITY_MODE:
+            return self.quality_focused_column
         return self.library_focused_column
 
     def _set_focused_column(self, column: Column) -> None:
         """Set the focused column for the active view."""
         if self.mode == PROJECT_MODE:
             self.project_focused_column = column
+            return
+        if self.mode == QUALITY_MODE:
+            self.quality_focused_column = column
             return
         self.library_focused_column = column
 
@@ -814,6 +1086,8 @@ class _VoiceprintReviewBase:
         """Return a valid initial view for the session."""
         if session.initial_mode == PROJECT_MODE and session.capture is not None:
             return PROJECT_MODE
+        if session.initial_mode == QUALITY_MODE:
+            return QUALITY_MODE
         return LIBRARY_MODE
 
 
@@ -951,7 +1225,7 @@ class VoiceprintReviewScreen(_VoiceprintReviewBase, ModalScreen[VoiceprintReview
         """Refresh library state after the pending workflow is accepted."""
         self.workflow_summary = summary
         self.evaluation_summary = summary.evaluation
-        self._reload_library(summary.capture.store_dir)
+        self._reload_library_and_quality(summary.capture.store_dir)
         if self.on_complete is not None:
             self.on_complete(summary)
         self._set_status(compact_workflow_line(summary))
@@ -961,19 +1235,23 @@ class VoiceprintReviewScreen(_VoiceprintReviewBase, ModalScreen[VoiceprintReview
         """Refresh library state after the pending workflow is rolled back."""
         self.workflow_summary = None
         self.evaluation_summary = None
-        self._reload_library(summary.capture.store_dir)
+        self._reload_library_and_quality(summary.capture.store_dir)
         self._set_status(tr("Voiceprint changes rolled back; no new embeddings were kept.", "声纹变更已回滚；没有保留新的 embedding。"))
         self._refresh()
 
-    def _reload_library(self, store_dir: Path) -> None:
-        """Reload the global voiceprint library after accept or rollback."""
+    def _reload_library_and_quality(self, store_dir: Path) -> None:
+        """Reload the global library and quality report after workflow changes."""
+        resolved_store_dir = self.store_dir or store_dir
         self.session = replace(
             self.session,
             library=load_voiceprint_library_session(
-                store_dir=self.store_dir or store_dir,
+                store_dir=resolved_store_dir,
                 page_size=self.session.library.page_size,
             ),
+            quality=analyze_voiceprint_quality(store_dir=resolved_store_dir, model=self.session.quality_model),
+            store_dir=resolved_store_dir,
         )
+        self.quality_statuses = quality_initial_statuses(self.session.quality)
 
     def _show_processing(self) -> None:
         """Show a modal processing indicator for long-running work."""
@@ -1043,7 +1321,17 @@ def load_voiceprint_review_session(
             meeting_time=context.meeting_time,
         )
     library_session = load_voiceprint_library_session(store_dir=store_dir, page_size=page_size)
-    return VoiceprintReviewSession(capture=capture_session, library=library_session, return_hint=return_hint), planned
+    quality_report = analyze_voiceprint_quality(store_dir=store_dir)
+    return (
+        VoiceprintReviewSession(
+            capture=capture_session,
+            library=library_session,
+            quality=quality_report,
+            store_dir=store_dir,
+            return_hint=return_hint,
+        ),
+        planned,
+    )
 
 
 def run_voiceprint_review_tui(session: VoiceprintReviewSession) -> VoiceprintReviewDecision:
@@ -1058,6 +1346,22 @@ def run_voiceprint_review_tui(session: VoiceprintReviewSession) -> VoiceprintRev
     """
     result = VoiceprintReviewApp(session).run()
     return result or VoiceprintReviewDecision(False, frozenset())
+
+
+def _quality_person_summary(person: VoiceprintQualityPerson | None) -> str:
+    """Return compact quality person summary."""
+    if person is None:
+        return "-"
+    mean = "-" if person.mean_score is None else f"{person.mean_score:.3f}"
+    return f"{person.speaker_name} {person.speaker_public_id} | mean {mean} | suspicious {person.suspicious_count}"
+
+
+def _quality_sample_summary(sample: VoiceprintQualitySample | None, statuses: dict[str, str]) -> str:
+    """Return compact quality sample summary."""
+    if sample is None:
+        return "-"
+    score = "-" if sample.score is None else f"{sample.score:.3f}"
+    return f"{sample.sample_public_id} | score {score} | {sample.label} | status {statuses[sample.sample_public_id]}"
 
 
 def _start_player(command: list[str]) -> subprocess.Popen:
