@@ -41,6 +41,21 @@ meeting-asr project speakers preview PROJECT_ID
 
 ## 安装和配置
 
+普通用户直接从 PyPI 安装全局命令：
+
+```bash
+uv tool install meeting-asr --python 3.14
+meeting-asr --version
+meeting-asr completion install zsh
+```
+
+升级到 PyPI 最新版本：
+
+```bash
+uv tool install meeting-asr --python 3.14 --reinstall --refresh
+meeting-asr --version
+```
+
 开发环境：
 
 ```bash
@@ -50,12 +65,11 @@ uv run meeting-asr --help
 uv run pytest -q
 ```
 
-安装全局可执行命令（本地开发）：
+本地开发需要全局 editable 命令时再使用：
 
 ```bash
 scripts/install-tool.sh
 scripts/install-tool.sh --check
-meeting-asr completion install zsh
 ```
 
 配置遵循 XDG：
@@ -78,10 +92,10 @@ meeting-asr config set oss.endpoint "<oss-endpoint>"
 meeting-asr doctor --full
 ```
 
-本地声纹 embedding 默认使用 `local-speechbrain`，SpeechBrain/Torch 是标准依赖。全局命令缺依赖时重新运行：
+本地声纹 embedding 默认使用 `local-speechbrain`，SpeechBrain/Torch 是标准依赖。正式安装缺依赖或需要刷新 wheel 时重新安装 PyPI 包：
 
 ```bash
-scripts/install-tool.sh
+uv tool install meeting-asr --python 3.14 --reinstall --refresh
 ```
 
 `doctor` 发现配置或依赖问题时会输出 `Repair prompts`，可直接交给 agent 继续修复。

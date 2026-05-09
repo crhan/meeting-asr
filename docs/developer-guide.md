@@ -11,9 +11,22 @@ uv run pytest -q
 
 代码使用 `src` 布局，包入口是 `src/app`。本地开发和验证必须用 `uv run ...`，不要用全局 `meeting-asr` 验证刚改的代码。
 
-## 全局安装
+## 安装方式
 
-全局命令用独立脚本刷新，不做成业务 CLI 子命令：
+普通用户使用 PyPI 包：
+
+```bash
+uv tool install meeting-asr --python 3.14
+meeting-asr --version
+```
+
+升级或强制刷新 PyPI wheel：
+
+```bash
+uv tool install meeting-asr --python 3.14 --reinstall --refresh
+```
+
+本地开发需要全局命令时，用独立脚本刷新 editable 安装，不做成业务 CLI 子命令：
 
 ```bash
 scripts/install-tool.sh
@@ -28,6 +41,7 @@ uv tool install --python 3.14 --editable .
 
 关键原因：
 
+- 正式用户走 PyPI，开发者才走 editable。
 - `uv tool install` 可以使用 pyenv 的 Python，但必须显式指定 `--python 3.14`，否则可能选到不满足 `Python>=3.14` 的解释器。
 - 本地开发默认 editable，源码修改直接生效。
 - 本地声纹 `local-speechbrain` 是标准依赖，不再通过 extra 单独安装。
