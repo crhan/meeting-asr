@@ -84,8 +84,21 @@ def polish_command(
     ),
     lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
     from_original: bool = typer.Option(False, "--from-original", help="Polish from the original ASR transcript."),
+    legacy: bool = typer.Option(
+        False,
+        "--legacy-polish",
+        help="Use the legacy aggressive-rewrite polish prompt (pre-2026 behavior). "
+        "Default is the strict downstream-summary-friendly polish.",
+    ),
 ) -> None:
-    """Generate an AI transcript polish proposal for word order, repetitions, and obvious ASR wording issues."""
+    """Generate an AI transcript polish proposal.
+
+    Strict polish (default) cleans ASR noise (repetitions, fillers, restarts, emphasis)
+    and fixes obvious typos/terms while preserving fact-bearing modifiers (我觉得/可能/对吧/...)
+    that downstream summary agents rely on. Each kept change carries a change_type tag
+    (typo/term/case/punct/dup/filler/restart/emphasis) so `accept --types ...` can pick.
+    Use --legacy-polish for the older aggressive-rewrite behavior.
+    """
     paths, manifest, speaker_mapping = _load_command_context(project_dir, projects_dir)
     options = CorrectionEditOptions(
         open_editor=False,
@@ -96,6 +109,7 @@ def polish_command(
         use_ai=True,
         model=model,
         polish_concurrency=concurrency,
+        polish_legacy=legacy,
     )
     summary = run_with_cli_errors(
         lambda: prepare_transcript_polish(
@@ -324,9 +338,31 @@ def accept_command(
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     proposal: Optional[Path] = typer.Option(None, "--proposal", exists=True, dir_okay=False, file_okay=True),
     lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    select: Optional[str] = typer.Option(
+        None,
+        "--select",
+        help="Accept only the listed change indices (0-based). Comma/space separated, "
+        "supports ranges, e.g. '0,3,7-12'. Indices come from the proposal markdown.",
+    ),
+    types: Optional[str] = typer.Option(
+        None,
+        "--types",
+        help="Accept only changes whose primary change_type is in this list. "
+        "Comma separated, e.g. 'typo,term,case'. "
+        "Allowed: typo,term,case,punct,dup,filler,restart,emphasis.",
+    ),
 ) -> None:
-    """Accept the latest or specified transcript correction proposal."""
+    """Accept the latest or specified transcript correction proposal.
+
+    Without --select/--types, accepts all proposed changes. With either filter,
+    only the matching subset is applied — useful for accepting term corrections
+    while declining filler/restart cleanups, etc.
+    """
     paths, manifest, speaker_mapping = _load_command_context(project_dir, projects_dir)
+    correction_proposal = run_with_cli_errors(lambda: load_correction_proposal(paths, proposal))
+    selected_indices = run_with_cli_errors(
+        lambda: _resolve_selected_indices(correction_proposal.proposed_changes, select, types)
+    )
     summary = run_with_cli_errors(
         lambda: accept_correction_proposal(
             paths=paths,
@@ -334,6 +370,7 @@ def accept_command(
             speaker_mapping=speaker_mapping,
             proposal_path=proposal,
             lexicon_db=lexicon_db,
+            selected_change_indices=selected_indices,
         )
     )
     record_correction_outputs(paths.root, manifest, summary)
@@ -351,6 +388,75 @@ def diff_command(
     paths, _, _ = _load_command_context(project_dir, projects_dir)
     correction_proposal = run_with_cli_errors(lambda: load_correction_proposal(paths, proposal))
     typer.echo(correction_proposal.diff_path.read_text(encoding="utf-8"), nl=False)
+
+
+_POLISH_PRIMARY_TYPES = {"typo", "term", "case", "punct", "dup", "filler", "restart", "emphasis"}
+
+
+def _resolve_selected_indices(
+    changes,
+    select: str | None,
+    types: str | None,
+) -> tuple[int, ...] | None:
+    """
+    Resolve --select / --types into a tuple of accepted indices.
+
+    --select takes precedence as the explicit override; --types filters by the
+    primary change_type tag of each change. Returns None when both are absent
+    so the underlying accept path keeps its 'accept all' semantics.
+    """
+    if select is None and types is None:
+        return None
+    indices: set[int]
+    if select is not None:
+        indices = _parse_select_spec(select, len(changes))
+    else:
+        indices = set(range(len(changes)))
+    if types is not None:
+        wanted = _parse_types_spec(types)
+        indices = {i for i in indices if _primary_type_of(changes[i]) in wanted}
+    return tuple(sorted(indices))
+
+
+def _parse_select_spec(spec: str, total: int) -> set[int]:
+    """Parse a comma/space-separated list with ranges into a set of indices."""
+    out: set[int] = set()
+    for token in spec.replace(" ", ",").split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            lo_text, hi_text = token.split("-", 1)
+            lo, hi = int(lo_text), int(hi_text)
+            if lo > hi:
+                lo, hi = hi, lo
+            out.update(range(lo, hi + 1))
+        else:
+            out.add(int(token))
+    invalid = [i for i in out if i < 0 or i >= total]
+    if invalid:
+        raise ValueError(f"--select contains out-of-range indices for proposal of size {total}: {sorted(invalid)}")
+    return out
+
+
+def _parse_types_spec(spec: str) -> set[str]:
+    """Parse a comma-separated --types list and validate against allowed tags."""
+    wanted = {token.strip().lower() for token in spec.split(",") if token.strip()}
+    invalid = wanted - _POLISH_PRIMARY_TYPES
+    if invalid:
+        raise ValueError(f"--types contains unknown tags {sorted(invalid)}; allowed: {sorted(_POLISH_PRIMARY_TYPES)}")
+    return wanted
+
+
+def _primary_type_of(change) -> str:
+    """Return the leading change_type tag from a multi-tag string like 'dup|filler'."""
+    raw = (change.change_type or "").strip().lower()
+    if not raw:
+        return ""
+    for sep in ("|", ",", "+", "/", "&"):
+        if sep in raw:
+            return raw.split(sep, 1)[0].strip()
+    return raw
 
 
 def _load_command_context(

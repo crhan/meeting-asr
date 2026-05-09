@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import os
 import re
 import time
 from collections.abc import Callable
@@ -19,7 +20,9 @@ from app.correction_llm import (
     DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
     LlmCorrectionCandidate,
     LlmCorrectionSample,
+    LlmPolishItem,
     propose_transcript_polish,
+    propose_transcript_polish_strict,
     propose_vocabulary_corrections,
 )
 from app.core.progress import CliProgressReporter, emit_progress
@@ -730,16 +733,28 @@ def _propose_polish_changes(
         settings = load_settings(require_oss=False, require_dashscope=True)
         model = options.model or settings.dashscope_correction_model
         concurrency = _polish_concurrency(options.polish_concurrency, settings.dashscope_correction_concurrency)
-        changes = _ai_polish_changes(
-            paths,
-            manifest,
-            result,
-            speaker_mapping,
-            settings,
-            model,
-            progress,
-            concurrency=concurrency,
-        )
+        if _polish_use_legacy(options):
+            changes = _ai_polish_changes(
+                paths,
+                manifest,
+                result,
+                speaker_mapping,
+                settings,
+                model,
+                progress,
+                concurrency=concurrency,
+            )
+        else:
+            changes = _strict_ai_polish_changes(
+                paths,
+                manifest,
+                result,
+                speaker_mapping,
+                settings,
+                model,
+                progress,
+                concurrency=concurrency,
+            )
         return changes, model, None
     except Exception as exc:
         return [], options.model or "dashscope-correction", str(exc)
@@ -785,6 +800,448 @@ def _ai_polish_changes(
         )
         corrected_by_id.update(llm_result.corrected_text_by_id)
     return _changes_from_polish_result(result, candidates, corrected_by_id, speaker_mapping)
+
+
+def _polish_use_legacy(options: CorrectionEditOptions) -> bool:
+    """
+    Strict polish (downstream-summary friendly) is now the default. Users can
+    opt back into the legacy aggressive-rewrite polish via either:
+      - env var MEETING_ASR_POLISH_LEGACY=1
+      - options.polish_legacy=True (set by `--legacy-polish` CLI flag)
+    """
+    if getattr(options, "polish_legacy", False):
+        return True
+    return os.environ.get("MEETING_ASR_POLISH_LEGACY") == "1"
+
+
+_POLISH_STRICT_BATCH_SIZE = 12
+_POLISH_GUARD_MIN_LEN_RATIO = 0.3
+_POLISH_GUARD_BORROW_MIN_LEN = 6
+_POLISH_GUARD_MAX_LEN_DELTA = 30
+_POLISH_GUARD_ASCII_TYPO_MAX_DISTANCE = 3
+_POLISH_ALLOWED_TYPES = {"typo", "term", "case", "punct", "dup", "filler", "restart", "emphasis"}
+_POLISH_CHANGE_TYPE_SEP_RE = re.compile(r"[|,+/&\s]+")
+
+
+def _is_change_type_allowed(change_type: str) -> bool:
+    """
+    LLMs often emit multi-tag change_type like 'dup|restart' or 'filler,dup'.
+    Treat any part that matches an allowed type as legal.
+    """
+    if not change_type:
+        return False
+    parts = [p.strip().lower() for p in _POLISH_CHANGE_TYPE_SEP_RE.split(change_type) if p.strip()]
+    return any(part in _POLISH_ALLOWED_TYPES for part in parts)
+
+# Words that must NOT be deleted by polish — they are the fact-bearing
+# modifiers that downstream summary agents need in order to distinguish:
+#   - decision vs proposal (attitude/confidence words)
+#   - consensus vs unilateral statement (confirmation seekers)
+#   - decision verbs themselves
+# Order matters: longer phrases must be checked before shorter ones so that
+# '我觉得' is matched as a unit rather than being approved by '觉得'.
+_POLISH_PROTECTED_WORDS: tuple[str, ...] = (
+    # attitude / confidence
+    "我觉得", "我认为", "我感觉", "我个人觉得", "我个人认为",
+    "可能", "也许", "或许", "大概", "应该", "似乎", "估计", "好像",
+    # confirmation seekers
+    "对吧", "对吗", "是不是", "是吧", "你说呢", "你看呢", "你觉得呢",
+    "行不行", "好不好", "是吗",
+    # decision verbs (positive + negative)
+    "同意", "反对", "决定", "确认", "不同意", "不行", "可以", "不可以",
+)
+
+
+def _strict_ai_polish_changes(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    result: TranscriptResult,
+    speaker_mapping: dict[int, str],
+    settings: Settings,
+    model: str,
+    progress: CliProgressReporter | None,
+    *,
+    concurrency: int,
+) -> list[CorrectionChange]:
+    """Run strict polish: hard-whitelist prompt + deterministic guard, write sidecar."""
+    candidates = _all_llm_candidates(result, speaker_mapping)
+    if not candidates:
+        return []
+    batches = list(_batches(candidates, _POLISH_STRICT_BATCH_SIZE))
+    request_timeout = _strict_polish_request_timeout(model)
+    items_by_id: dict[str, LlmPolishItem] = {}
+    failed_batches: list[tuple[int, str]] = []
+    if concurrency > 1 and len(batches) > 1:
+        merged, failures = _run_strict_polish_batches_parallel(
+            batches,
+            settings=settings,
+            model=model,
+            progress=progress,
+            concurrency=concurrency,
+            request_timeout=request_timeout,
+        )
+        items_by_id.update(merged)
+        failed_batches.extend(failures)
+    else:
+        for index, batch in enumerate(batches, start=1):
+            try:
+                llm_result = propose_transcript_polish_strict(
+                    candidates=batch,
+                    settings=settings,
+                    model=model,
+                    request_timeout=request_timeout,
+                )
+            except Exception as exc:
+                failed_batches.append((index, str(exc)))
+                continue
+            for entry in llm_result.items:
+                items_by_id[entry.candidate_id] = entry
+            _emit_polish_progress(
+                progress,
+                completed=index,
+                total=len(batches),
+                concurrency=1,
+                active=0,
+                model=model,
+            )
+    return _strict_polish_changes_from_items(
+        paths=paths,
+        result=result,
+        candidates=candidates,
+        items_by_id=items_by_id,
+        speaker_mapping=speaker_mapping,
+        model=model,
+        failed_batches=failed_batches,
+        total_batches=len(batches),
+    )
+
+
+def _strict_polish_request_timeout(model: str) -> int:
+    """Larger MoE models like qwen3-235b need a more generous per-call timeout."""
+    if "235b" in model.lower() or "max" in model.lower():
+        return 300
+    return 180
+
+
+def _run_strict_polish_batches_parallel(
+    batches: list[list[LlmCorrectionCandidate]],
+    *,
+    settings: Settings,
+    model: str,
+    progress: CliProgressReporter | None,
+    concurrency: int,
+    request_timeout: int,
+) -> tuple[dict[str, LlmPolishItem], list[tuple[int, str]]]:
+    """Run strict polish batches concurrently. Failed batches are reported, not raised."""
+    max_workers = min(concurrency, len(batches))
+    items_by_id: dict[str, LlmPolishItem] = {}
+    failures: list[tuple[int, str]] = []
+    completed = 0
+    _emit_polish_progress(
+        progress,
+        completed=0,
+        total=len(batches),
+        concurrency=max_workers,
+        active=min(max_workers, len(batches)),
+        model=model,
+    )
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_by_index = {
+            executor.submit(
+                propose_transcript_polish_strict,
+                candidates=batch,
+                settings=settings,
+                model=model,
+                request_timeout=request_timeout,
+            ): index
+            for index, batch in enumerate(batches, start=1)
+        }
+        for future in future_by_index:
+            batch_index = future_by_index[future]
+            try:
+                llm_result = future.result()
+            except Exception as exc:
+                failures.append((batch_index, str(exc)))
+                completed += 1
+                _emit_polish_progress(
+                    progress,
+                    completed=completed,
+                    total=len(batches),
+                    concurrency=max_workers,
+                    active=min(max_workers, len(batches) - completed),
+                    model=model,
+                )
+                continue
+            for entry in llm_result.items:
+                items_by_id[entry.candidate_id] = entry
+            completed += 1
+            _emit_polish_progress(
+                progress,
+                completed=completed,
+                total=len(batches),
+                concurrency=max_workers,
+                active=min(max_workers, len(batches) - completed),
+                model=model,
+            )
+    return items_by_id, failures
+
+
+def _strict_polish_changes_from_items(
+    *,
+    paths: ProjectPaths,
+    result: TranscriptResult,
+    candidates: list[LlmCorrectionCandidate],
+    items_by_id: dict[str, LlmPolishItem],
+    speaker_mapping: dict[int, str],
+    model: str,
+    failed_batches: list[tuple[int, str]] | None = None,
+    total_batches: int = 0,
+) -> list[CorrectionChange]:
+    """Apply guard, build CorrectionChange list, write sidecar metadata."""
+    sentences = result.sentences
+    sentence_by_index = {f"c{idx}": (idx, sentence) for idx, sentence in enumerate(sentences)}
+    changes: list[CorrectionChange] = []
+    sidecar_rows: list[dict] = []
+    for candidate in candidates:
+        idx_pair = sentence_by_index.get(candidate.candidate_id)
+        if idx_pair is None:
+            continue
+        idx, sentence = idx_pair
+        original_text = sentence.text.strip()
+        item = items_by_id.get(candidate.candidate_id)
+        decision = "kept"
+        change_type = item.change_type if item is not None else ""
+        proposed_text = item.corrected_text if item is not None else original_text
+        reason = item.reason if item is not None else ""
+        if item is None:
+            decision = "no_change"
+        elif proposed_text == original_text:
+            decision = "no_change"
+        elif not _is_change_type_allowed(change_type):
+            decision = f"reject_unknown_type:{change_type}"
+        else:
+            verdict = _polish_guard(idx, sentences, original_text, proposed_text)
+            if verdict is not None:
+                decision = f"reject:{verdict}"
+        if decision == "kept" and proposed_text != original_text:
+            changes.append(
+                CorrectionChange(
+                    sentence_id=sentence.sentence_id,
+                    speaker_id=sentence.speaker_id,
+                    speaker_name=_speaker_name(sentence.speaker_id, speaker_mapping),
+                    begin_time_ms=sentence.begin_time_ms,
+                    end_time_ms=sentence.end_time_ms,
+                    original_text=original_text,
+                    corrected_text=proposed_text,
+                    replacements=[],
+                    change_type=change_type,
+                    reason=reason,
+                )
+            )
+        sidecar_rows.append(
+            {
+                "candidate_id": candidate.candidate_id,
+                "sentence_id": sentence.sentence_id,
+                "begin_time_ms": sentence.begin_time_ms,
+                "end_time_ms": sentence.end_time_ms,
+                "speaker_name": _speaker_name(sentence.speaker_id, speaker_mapping),
+                "original_text": original_text,
+                "proposed_text": proposed_text,
+                "change_type": change_type,
+                "reason": reason,
+                "decision": decision,
+            }
+        )
+    _write_strict_polish_sidecar(
+        paths, sidecar_rows, model,
+        failed_batches=failed_batches or [],
+        total_batches=total_batches,
+    )
+    return changes
+
+
+def _polish_guard(
+    sentence_index: int,
+    sentences: list[SentenceSegment],
+    original_text: str,
+    proposed_text: str,
+) -> str | None:
+    """
+    Deterministic post-LLM guard. Return None if accepted, else a short reason code.
+
+    Aggressive-polish era: we now allow deleting ASR noise of any kind
+    (long same-char runs, restart fragments, emphasis repeats, fillers).
+    The remaining hard rules are:
+      G1 length ratio: proposed must be at least 30% of original
+         (catch LLM compressing whole-sentence content into a fragment)
+      G2 length delta: |len(proposed) - len(original)| <= 30 chars
+         (catch candidate-id swaps where one sentence is replaced by another's text)
+      G3 ascii hallucination: any new ASCII token must be a typo-distance neighbor
+         of an original ASCII token (CRI->CLI OK; 猫提卡->Mattika NOT OK)
+      G4 protected-word deletion: must not strip any attitude/confirmation/
+         decision word that downstream summary agents rely on
+      G5 cross-sentence borrow: any inserted >=6-char Chinese chunk must not
+         appear in either neighbor sentence (defends timestamp-content contract)
+    """
+    orig_len = max(1, len(original_text))
+    new_len = len(proposed_text)
+    if new_len < orig_len * _POLISH_GUARD_MIN_LEN_RATIO:
+        return "len_ratio"
+    if abs(new_len - orig_len) > _POLISH_GUARD_MAX_LEN_DELTA:
+        return "len_delta"
+    ascii_verdict = _ascii_hallucination_check(original_text, proposed_text)
+    if ascii_verdict is not None:
+        return ascii_verdict
+    protected_verdict = _protected_word_deletion_check(original_text, proposed_text)
+    if protected_verdict is not None:
+        return protected_verdict
+    neighbor_text = _neighbor_text(sentence_index, sentences)
+    if neighbor_text and _has_cross_sentence_borrow(original_text, proposed_text, neighbor_text):
+        return "cross_sentence_borrow"
+    return None
+
+
+def _protected_word_deletion_check(original: str, proposed: str) -> str | None:
+    """
+    Reject when polish strips a protected attitude/confirmation/decision word
+    that the original sentence contained.
+
+    Counts per-word occurrences: 删 1 个就拒。我们不容忍弱化『决议 vs 提议』
+    『共识 vs 单方陈述』的分辨能力。
+    """
+    for word in _POLISH_PROTECTED_WORDS:
+        before = original.count(word)
+        if before == 0:
+            continue
+        if proposed.count(word) < before:
+            return f"protected_word_deleted:{word}"
+    return None
+
+
+def _extract_ascii_tokens(text: str) -> list[str]:
+    """Extract ASCII-only tokens (English words, identifiers, numbers) for retention check."""
+    return ASCII_TERM_RE.findall(text)
+
+
+def _ascii_hallucination_check(original: str, proposed: str) -> str | None:
+    """
+    Reject when the polish introduces an ASCII token that isn't plausibly a typo
+    fix of something already in the original.
+
+    Rationale: LLM 'Mattika' from Chinese '猫提卡' is a hallucination — there is no
+    ASCII source word to typo-fix from. But CRI -> CLI is a 1-edit fix from an
+    existing ASCII token, so it should pass.
+    """
+    orig_tokens = _extract_ascii_tokens(original)
+    new_tokens = _extract_ascii_tokens(proposed)
+    introduced = [token for token in new_tokens if token not in set(orig_tokens)]
+    if not introduced:
+        return None
+    if not orig_tokens:
+        # Polish invented ASCII out of nothing — almost always hallucination.
+        return "ascii_hallucination"
+    for token in introduced:
+        threshold = max(_POLISH_GUARD_ASCII_TYPO_MAX_DISTANCE, len(token) // 2)
+        if not any(_levenshtein(token.lower(), src.lower()) <= threshold for src in orig_tokens):
+            return "ascii_hallucination"
+    return None
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """Bounded Levenshtein distance between two short strings."""
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        curr = [i] + [0] * len(b)
+        for j, cb in enumerate(b, start=1):
+            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + (0 if ca == cb else 1))
+        prev = curr
+    return prev[-1]
+
+
+## NOTE: the previous _deletion_legality_check / _is_short_same_char_run_collapse
+## were removed when polish was retargeted at downstream-summary friendliness.
+## The conservative same-char-run heuristic is no longer wanted; deletion safety
+## is now enforced by _protected_word_deletion_check + length guards instead.
+
+
+def _neighbor_text(index: int, sentences: list[SentenceSegment]) -> str:
+    """Return the concatenated text of immediate neighbors for borrow detection."""
+    parts = []
+    if index - 1 >= 0:
+        parts.append(sentences[index - 1].text.strip())
+    if index + 1 < len(sentences):
+        parts.append(sentences[index + 1].text.strip())
+    return "\n".join(parts)
+
+
+_CJK_RUN_RE = re.compile(r"[一-鿿]+")
+
+
+def _has_cross_sentence_borrow(original: str, proposed: str, neighbor_text: str) -> bool:
+    """
+    True if any contiguous Chinese chunk in proposed (>= _POLISH_GUARD_BORROW_MIN_LEN)
+    is absent from original but present in either immediate neighbor.
+
+    Why this matters: the LLM sees the whole batch and is tempted to pull content
+    from the next sentence into the current one, which silently breaks the
+    timestamp-content contract. We scan windows directly rather than relying on
+    difflib's alignment, because difflib on mixed Chinese is easily fooled by
+    incidental same-character matches into chopping a contiguous insertion into
+    sub-threshold pieces (a previous attempt missed '第一次会议记录' that way).
+    """
+    if not neighbor_text:
+        return False
+    n = _POLISH_GUARD_BORROW_MIN_LEN
+    for run in _CJK_RUN_RE.findall(proposed):
+        if len(run) < n:
+            continue
+        for start in range(0, len(run) - n + 1):
+            window = run[start : start + n]
+            if window in original:
+                continue
+            if window in neighbor_text:
+                return True
+    return False
+
+
+def _write_strict_polish_sidecar(
+    paths: ProjectPaths,
+    rows: list[dict],
+    model: str,
+    *,
+    failed_batches: list[tuple[int, str]],
+    total_batches: int,
+) -> None:
+    """Persist per-candidate decisions for offline 4-dimension analysis."""
+    sidecar_dir = paths.root / "tmp" / REVIEW_DIR
+    sidecar_dir.mkdir(parents=True, exist_ok=True)
+    safe_model = model.replace("/", "_")
+    payload = {
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "model": model,
+        "guard": {
+            "len_ratio_min": _POLISH_GUARD_MIN_LEN_RATIO,
+            "len_delta_max": _POLISH_GUARD_MAX_LEN_DELTA,
+            "ascii_typo_max_distance": _POLISH_GUARD_ASCII_TYPO_MAX_DISTANCE,
+            "borrow_min_len": _POLISH_GUARD_BORROW_MIN_LEN,
+            "protected_words": list(_POLISH_PROTECTED_WORDS),
+            "allowed_types": sorted(_POLISH_ALLOWED_TYPES),
+        },
+        "batches": {
+            "total": total_batches,
+            "failed_count": len(failed_batches),
+            "failed": [{"index": idx, "error": err} for idx, err in failed_batches],
+        },
+        "items": rows,
+    }
+    path = sidecar_dir / f"polish_strict_meta_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{safe_model}.json"
+    safe_write_json(path, payload)
 
 
 def _polish_concurrency(option_value: int | None, configured_value: int) -> int:

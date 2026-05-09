@@ -511,9 +511,10 @@ def test_project_run_generates_default_transcript_polish_proposal(
             [SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2)],
         )
 
-    def fake_prepare_polish(project_dir, correction_model, polish_concurrency=None, progress=None):
+    def fake_prepare_polish(project_dir, correction_model, polish_concurrency=None, polish_legacy=False, progress=None):
         calls["model"] = correction_model
         calls["polish_concurrency"] = polish_concurrency
+        calls["polish_legacy"] = polish_legacy
         proposal_dir = project_dir / "tmp" / "corrections"
         proposal_dir.mkdir(parents=True, exist_ok=True)
         review_path = proposal_dir / "review_polish_test.md"
@@ -624,6 +625,7 @@ def test_project_run_polish_failure_prints_recovery_context(
             "--correction-model",
             "qwen-test",
             "--no-progress",
+            "--legacy-polish",
         ],
     )
     project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())

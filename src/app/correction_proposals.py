@@ -276,14 +276,54 @@ def _understanding_lines(understanding: list[CorrectionUnderstanding]) -> list[s
 
 
 def _change_lines(changes: list[CorrectionChange]) -> list[str]:
-    """Render proposed sentence-level changes."""
+    """
+    Render proposed sentence-level changes.
+
+    When any change carries a polish change_type tag (typo/term/case/punct/dup/
+    filler/restart/emphasis), group the rendered list by primary type so the
+    user (or downstream agent) can scan one category at a time.
+    """
     if not changes:
         return ["No sentence changes proposed."]
+    if any(change.change_type for change in changes):
+        return _change_lines_grouped(changes)
     lines = ["## Proposed Changes"]
-    for change in changes:
-        lines.extend(["", f"### sentence_id={change.sentence_id} speaker={change.speaker_name}"])
+    for index, change in enumerate(changes):
+        lines.extend(["", f"### [{index}] sentence_id={change.sentence_id} speaker={change.speaker_name}"])
         lines.extend([f"- Before: {change.original_text}", f"- After: {change.corrected_text}"])
     return lines
+
+
+def _change_lines_grouped(changes: list[CorrectionChange]) -> list[str]:
+    """Render changes grouped by primary change_type for polish proposals."""
+    groups: dict[str, list[tuple[int, CorrectionChange]]] = {}
+    for index, change in enumerate(changes):
+        primary = _primary_change_type(change.change_type) or "other"
+        groups.setdefault(primary, []).append((index, change))
+    lines = ["## Proposed Changes (grouped by change_type)"]
+    lines.append("")
+    lines.append("Counts: " + " / ".join(f"{ty}={len(items)}" for ty, items in sorted(groups.items())))
+    for ty in sorted(groups):
+        items = groups[ty]
+        lines.extend(["", f"### {ty} ({len(items)})"])
+        for index, change in items:
+            lines.append(
+                f"- [{index}] sentence_id={change.sentence_id} speaker={change.speaker_name}"
+                + (f" reason: {change.reason}" if change.reason else "")
+            )
+            lines.append(f"  - Before: {change.original_text}")
+            lines.append(f"  - After:  {change.corrected_text}")
+    return lines
+
+
+def _primary_change_type(change_type: str) -> str:
+    """Return the leading change_type tag from a multi-tag string like 'dup|filler'."""
+    if not change_type:
+        return ""
+    for sep in ("|", ",", "+", "/", "&"):
+        if sep in change_type:
+            return change_type.split(sep, 1)[0].strip().lower()
+    return change_type.strip().lower()
 
 
 def _hotword_lines(understanding: list[CorrectionUnderstanding]) -> list[str]:
@@ -305,6 +345,8 @@ def _change_payload(change: CorrectionChange) -> dict:
         "original_text": change.original_text,
         "corrected_text": change.corrected_text,
         "replacements": [asdict(replacement) for replacement in change.replacements],
+        "change_type": change.change_type,
+        "reason": change.reason,
     }
 
 
@@ -337,6 +379,8 @@ def _change_from_payload(payload: dict) -> CorrectionChange:
         original_text=str(payload.get("original_text") or ""),
         corrected_text=str(payload.get("corrected_text") or ""),
         replacements=_replacements_from_payload(payload.get("replacements")),
+        change_type=str(payload.get("change_type") or ""),
+        reason=str(payload.get("reason") or ""),
     )
 
 
