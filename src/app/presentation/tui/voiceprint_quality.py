@@ -15,6 +15,7 @@ from textual.widgets import Header, Static
 
 from app.presentation.tui.i18n import tr
 from app.utils import format_ms_timestamp
+from app.voiceprint_audio import voiceprint_playback_clip_path
 from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_quality import (
     VOICEPRINT_SAMPLE_STATUS_ACTIVE,
@@ -214,7 +215,8 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         if sample is None:
             return
         self._stop_playback()
-        command = build_voiceprint_play_command(sample.clip_path)
+        clip_path = voiceprint_playback_clip_path(sample.clip_path, store_dir=self.store_dir)
+        command = build_voiceprint_play_command(clip_path)
         self.playback_process = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,

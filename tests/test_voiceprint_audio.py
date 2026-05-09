@@ -10,6 +10,7 @@ from app.voiceprint_audio import (
     VOICEPRINT_AUDIO_PREPROCESS_VERSION,
     normalize_voiceprint_samples,
     normalized_voiceprint_sample_path,
+    voiceprint_playback_clip_path,
 )
 from app.voiceprint_store import (
     StoredVoiceprintSample,
@@ -75,6 +76,17 @@ def test_normalize_voiceprint_samples_rebuilds_stale_derived_clip(monkeypatch, t
     assert summary.processed_count == 1
     assert calls == [normalized_path]
     assert normalized_path.read_bytes() == b"fresh"
+
+
+def test_voiceprint_playback_prefers_normalized_clip_when_present(tmp_path: Path) -> None:
+    """Review playback should use normalized audio when it exists."""
+    store_dir = _store(tmp_path)
+    sample = list_all_voiceprint_samples(get_voiceprint_db_path(store_dir))[0]
+    normalized_path = normalized_voiceprint_sample_path(sample, store_dir=store_dir)
+    normalized_path.parent.mkdir(parents=True, exist_ok=True)
+    normalized_path.write_bytes(b"normalized")
+
+    assert voiceprint_playback_clip_path(sample.clip_path, store_dir=store_dir) == normalized_path
 
 
 def _store(tmp_path: Path) -> Path:

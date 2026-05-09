@@ -9,7 +9,7 @@ from textual.widgets import Static
 
 from app.presentation.tui import voiceprint_quality as quality_tui
 from app.presentation.tui.voiceprint_quality import VoiceprintQualityApp, VoiceprintQualityHelpScreen
-from app.voiceprint_quality import VoiceprintQualityReport, analyze_voiceprint_quality
+from app.voiceprint_quality import analyze_voiceprint_quality
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
     StoredVoiceprintSample,
@@ -71,7 +71,8 @@ def test_voiceprint_quality_tui_save_refreshes_scores_in_place(tmp_path: Path) -
 
 def test_voiceprint_quality_tui_space_toggles_playback(monkeypatch, tmp_path: Path) -> None:
     """Space should play and stop the selected suspicious WAV sample."""
-    report = analyze_voiceprint_quality(store_dir=_quality_store(tmp_path), speaker="Alice")
+    store_dir = _quality_store(tmp_path)
+    report = analyze_voiceprint_quality(store_dir=store_dir, speaker="Alice")
     process = _RunningFakeProcess()
     starts = 0
 
@@ -85,7 +86,7 @@ def test_voiceprint_quality_tui_space_toggles_playback(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(quality_tui.subprocess, "Popen", fake_popen)
 
     async def scenario() -> None:
-        async with VoiceprintQualityApp(report).run_test() as pilot:
+        async with VoiceprintQualityApp(report, store_dir=store_dir).run_test() as pilot:
             await pilot.press("space")
 
             assert starts == 1

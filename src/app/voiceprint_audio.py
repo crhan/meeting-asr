@@ -101,6 +101,40 @@ def normalized_voiceprint_sample_path(sample: VoiceprintSampleRow, *, store_dir:
     return normalized_voiceprint_dir(_resolve_store_dir(store_dir)) / sample.clip_rel_path
 
 
+def normalized_voiceprint_clip_path(clip_path: Path, *, store_dir: Path | None) -> Path:
+    """
+    Return the normalized path corresponding to an original voiceprint clip.
+
+    Args:
+        clip_path: Original stored clip path.
+        store_dir: Optional voiceprint store directory.
+
+    Returns:
+        Derived normalized WAV path.
+    """
+    resolved_store_dir = _resolve_store_dir(store_dir)
+    relative_path = clip_path.expanduser().resolve().relative_to(resolved_store_dir)
+    return normalized_voiceprint_dir(resolved_store_dir) / relative_path
+
+
+def voiceprint_playback_clip_path(clip_path: Path, *, store_dir: Path | None) -> Path:
+    """
+    Prefer normalized audio for review playback when it exists.
+
+    Args:
+        clip_path: Original stored clip path.
+        store_dir: Optional voiceprint store directory.
+
+    Returns:
+        Normalized clip path when available, otherwise the original clip path.
+    """
+    try:
+        normalized_path = normalized_voiceprint_clip_path(clip_path, store_dir=store_dir)
+    except ValueError:
+        return clip_path
+    return normalized_path if normalized_path.exists() else clip_path
+
+
 def normalized_voiceprint_dir(store_dir: Path | None) -> Path:
     """
     Return the normalized sample directory for the current preprocessing version.

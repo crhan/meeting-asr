@@ -68,6 +68,7 @@ from app.presentation.tui.voiceprint_review_workflow import (
 )
 from app.speaker_review import build_audio_preview_command
 from app.utils import format_ms_timestamp
+from app.voiceprint_audio import voiceprint_playback_clip_path
 from app.voiceprint_evaluation import VoiceprintEvaluationSummary, evaluate_voiceprint_embedding
 from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_quality import (
@@ -781,7 +782,8 @@ class _VoiceprintReviewBase:
     def _play_quality_sample(self, sample: VoiceprintQualitySample) -> None:
         """Start WAV playback for one quality-review sample."""
         self._stop_playback()
-        self.playback_process = _start_player(build_voiceprint_play_command(sample.clip_path))
+        clip_path = voiceprint_playback_clip_path(sample.clip_path, store_dir=self.session.store_dir)
+        self.playback_process = _start_player(build_voiceprint_play_command(clip_path))
         self._set_status(tr(f"Playing quality sample {sample.sample_public_id}.", f"正在播放质量样本 {sample.sample_public_id}。"))
 
     def _stop_playback(self) -> None:
