@@ -937,6 +937,7 @@ def test_retranscribe_invalidates_downstream_artifacts(tmp_path: Path) -> None:
     manifest.asr["summary_model"] = "qwen-test"
     manifest.speakers["matches"] = "speakers/speaker_matches.json"
     manifest.speakers["voiceprints"] = {"sample_count": 1}
+    manifest.meeting_keywords = ["旧关键字1", "旧关键字2"]
     manifest.outputs.update(
         {
             "meeting_summary": "exports/meeting_summary.md",
@@ -959,6 +960,7 @@ def test_retranscribe_invalidates_downstream_artifacts(tmp_path: Path) -> None:
     assert all(not path.exists() for path in stale_paths)
     assert "summary_model" not in manifest.asr
     assert not {"mapped", "matches", "voiceprints"} & set(manifest.speakers)
+    assert manifest.meeting_keywords == []
     assert not set(manifest.outputs) & {
         "meeting_summary",
         "meeting_summary_json",
@@ -1126,6 +1128,34 @@ def test_project_list_command_prints_json(tmp_path: Path) -> None:
     assert payload["projects"][0]["workflow"]["next_command_short"] == (
         f"transcribe {load_manifest(project_dir).project_id}"
     )
+    # Fresh projects have no keywords yet but the field is always present
+    # so scripts consuming --json can treat it as a stable schema.
+    assert payload["projects"][0]["meeting_keywords"] == []
+
+
+def test_project_list_json_includes_meeting_keywords(tmp_path: Path) -> None:
+    """Project list --json must expose summary keywords once a project has them."""
+    projects_dir = tmp_path / "projects"
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = projects_dir / "kw"
+    create_project(
+        source,
+        title="Demo",
+        projects_dir=projects_dir,
+        project_dir=project_dir,
+        meeting_time="2026-05-02T10:00:00+08:00",
+        hash_source=False,
+    )
+    manifest = load_manifest(project_dir)
+    manifest.meeting_keywords = ["飞轮POC本地跑通", "诊断准确率30%", "A3A6A8"]
+    save_manifest(project_dir, manifest)
+
+    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir), "--json"])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert payload["projects"][0]["meeting_keywords"] == ["飞轮POC本地跑通", "诊断准确率30%", "A3A6A8"]
 
 
 def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:

@@ -71,4 +71,5 @@ def _project_item_payload(project: ProjectListItem) -> dict[str, Any]:
         "updated_at": project.updated_at,
         "project_dir": project.project_dir,
         "directory": project.project_dir.name,
+        "meeting_keywords": list(project.meeting_keywords),
     }

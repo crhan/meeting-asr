@@ -1478,6 +1478,10 @@ def _invalidate_downstream_artifacts(paths: ProjectPaths, manifest: ProjectManif
     for key in DOWNSTREAM_SPEAKER_KEYS:
         manifest.speakers.pop(key, None)
     manifest.asr.pop("summary_model", None)
+    # Keywords are derived from the transcript; once the transcript is
+    # invalidated the keyword list is also stale and must not survive
+    # into the next project list render.
+    manifest.meeting_keywords = []
 
 def _unlink_project_file(project_root: Path, stored_path: str) -> None:
     """
