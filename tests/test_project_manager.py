@@ -741,8 +741,7 @@ def test_summarize_project_writes_summary_and_updates_auto_title(
         lambda result, settings, model: MeetingSummary(
             "AI 转型研讨",
             "讨论 AI 转型目标和落地路径。",
-            ["目标", "路径"],
-            ["补充方案"],
+            ["目标牵引", "路径收敛", "飞轮闭环", "里程碑518", "团队对齐"],
             "qwen-test",
         ),
     )
@@ -790,7 +789,7 @@ def test_summarize_project_replaces_existing_llm_title(
     save_manifest(project_dir, manifest)
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary("新自动标题", "回忆提示。", ["关键词"], [], "qwen-test"),
+        lambda result, settings, model: MeetingSummary("新自动标题", "回忆提示。", ["关键词1", "关键词2"], "qwen-test"),
     )
     monkeypatch.setattr("app.project_manager.load_settings", lambda require_oss=False: object())
 
@@ -822,7 +821,7 @@ def test_summarize_project_preserves_manual_title(
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], [], "qwen-test"),
+        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], "qwen-test"),
     )
     monkeypatch.setattr(
         "app.project_manager.load_settings",
@@ -862,7 +861,7 @@ def test_summarize_project_marks_legacy_custom_unknown_title_as_manual(
     save_manifest(project_dir, manifest)
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], [], "qwen-test"),
+        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], "qwen-test"),
     )
     monkeypatch.setattr("app.project_manager.load_settings", lambda require_oss=False: object())
 
@@ -1461,7 +1460,7 @@ def test_project_list_plain_prints_stable_rows(tmp_path: Path) -> None:
     result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir), "--plain"])
 
     assert result.exit_code == 0
-    assert result.output.splitlines()[0] == "project_id\tstate\tupdated\ttitle"
+    assert result.output.splitlines()[0] == "project_id\tstate\tupdated\ttitle\tkeywords"
     assert f"{manifest.project_id}\tCreated\t" in result.output
     assert "Plain Demo" in result.output
     assert "╭" not in result.output

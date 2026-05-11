@@ -1568,6 +1568,7 @@ def _record_meeting_summary(
     manifest.asr["summary_model"] = summary.model
     manifest.outputs["meeting_summary"] = _relative_path(paths.root, summary_path)
     manifest.outputs["meeting_summary_json"] = _relative_path(paths.root, json_path)
+    manifest.meeting_keywords = list(summary.keywords)
 
 def _can_replace_title(manifest: ProjectManifest, summary: MeetingSummary) -> bool:
     """
