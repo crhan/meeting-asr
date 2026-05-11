@@ -7,7 +7,6 @@ import re
 import wave
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 from app.cli import app
@@ -239,7 +238,6 @@ def test_voiceprint_play_dry_run_prints_clip_command(
     assert "clip_002.wav" in result.output
 
 
-@pytest.mark.requires_ffmpeg
 def test_voiceprint_embed_stores_sample_embeddings(
     monkeypatch,
     tmp_path: Path,

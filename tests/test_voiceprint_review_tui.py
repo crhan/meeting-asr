@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
 from textual.widgets import Static
 
 import app.presentation.tui.voiceprint_review as voiceprint_review
@@ -166,7 +165,6 @@ def test_voiceprint_review_tui_uses_colored_rows_and_checkmarks(tmp_path: Path) 
     assert "[green]x[/]" in sample_pane
 
 
-@pytest.mark.requires_audio_player
 def test_voiceprint_review_project_playback_shows_progress(monkeypatch, tmp_path: Path) -> None:
     """Playing a project sample should show a visible state and progress."""
     fake_process = _FakePlaybackProcess()
