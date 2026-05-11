@@ -52,8 +52,16 @@ def _echo_project_list_plain(projects: list[ProjectListItem]) -> None:
     rows = []
     for project in projects:
         workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
-        rows.append((project.project_id, workflow.state, _project_list_timestamp(project.updated_at), project.title))
-    echo_plain_table(("project_id", "state", "updated", "title"), rows)
+        rows.append(
+            (
+                project.project_id,
+                workflow.state,
+                _project_list_timestamp(project.updated_at),
+                project.title,
+                _project_keywords_plain(project),
+            )
+        )
+    echo_plain_table(("project_id", "state", "updated", "title", "keywords"), rows)
 
 
 def _project_list_table(projects: list[ProjectListItem]) -> Table:
@@ -64,6 +72,7 @@ def _project_list_table(projects: list[ProjectListItem]) -> Table:
     table.add_column("Meeting (Local)", no_wrap=True)
     table.add_column("Updated (Local)", no_wrap=True)
     table.add_column("Title")
+    table.add_column("Keywords", style="dim")
     for project in projects:
         workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
         table.add_row(
@@ -72,8 +81,23 @@ def _project_list_table(projects: list[ProjectListItem]) -> Table:
             _project_meeting_time(project),
             _project_list_timestamp(project.updated_at),
             project.title,
+            _project_keywords_display(project),
         )
     return table
+
+
+def _project_keywords_display(project: ProjectListItem) -> str:
+    """Return a compact keyword display for the Keywords column."""
+    if not project.meeting_keywords:
+        return "-"
+    return " / ".join(project.meeting_keywords)
+
+
+def _project_keywords_plain(project: ProjectListItem) -> str:
+    """Return a stable keyword payload for plain output."""
+    if not project.meeting_keywords:
+        return ""
+    return " | ".join(project.meeting_keywords)
 
 
 def _project_workflow_state_text(workflow: ProjectWorkflowSummary) -> str:
@@ -91,7 +115,7 @@ def _project_workflow_state_text(workflow: ProjectWorkflowSummary) -> str:
 
 def _project_table_console() -> Console:
     """Build the stdout console used for project tables."""
-    return cli_console(width=140)
+    return cli_console(width=200)
 
 
 def _project_list_timestamp(value: str, *, timezone: tzinfo | None = None) -> str:

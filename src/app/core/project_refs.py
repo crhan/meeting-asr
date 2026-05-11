@@ -41,6 +41,7 @@ def list_projects(projects_dir: Path | None) -> ProjectListResult:
                 manifest.status,
                 manifest.created_at,
                 manifest.updated_at,
+                tuple(manifest.meeting_keywords),
             )
         )
     projects.sort(key=_project_list_sort_key, reverse=True)

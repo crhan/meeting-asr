@@ -47,6 +47,7 @@ class ProjectManifest:
     runtime: dict[str, Any] = field(default_factory=dict)
     title_source: str = TITLE_SOURCE_UNKNOWN
     title_model: str | None = None
+    meeting_keywords: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the manifest to a JSON-ready dictionary."""
@@ -56,6 +57,8 @@ class ProjectManifest:
     def from_dict(cls, payload: dict[str, Any]) -> "ProjectManifest":
         """Build a manifest from JSON data."""
         source = ProjectSource(**payload["source"])
+        keywords_raw = payload.get("meeting_keywords") or []
+        keywords = [str(item) for item in keywords_raw if isinstance(item, str) and item.strip()]
         return cls(
             schema_version=int(payload.get("schema_version", SCHEMA_VERSION)),
             project_id=str(payload["project_id"]),
@@ -72,6 +75,7 @@ class ProjectManifest:
             outputs=dict(payload.get("outputs", {})),
             speakers=dict(payload.get("speakers", {})),
             runtime=dict(payload.get("runtime", {})),
+            meeting_keywords=keywords,
         )
 
 
@@ -118,6 +122,7 @@ class ProjectListItem:
     status: str
     created_at: str
     updated_at: str
+    meeting_keywords: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

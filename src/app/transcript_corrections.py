@@ -59,8 +59,17 @@ TIMESTAMP_LINE_RE = re.compile(r"^\[[^\]]+\]\s*(?P<label>.*?):\s*(?P<text>.*)$")
 WORD_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
 ASCII_TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_+.#-]*")
 REVIEW_DIR = "corrections"
-MAX_LLM_BATCH_SIZE = 80
+# Drives how many sentences ship to DashScope in one polish batch.
+# See https://github.com/crhan/meeting-asr/issues/4 for the planned
+# throughput retune; do not change this without coordinating with the
+# request timeout in correction_llm.py.
 POLISH_LLM_BATCH_SIZE = 30
+# Vocabulary correction only sends sentences containing a learned wrong
+# term, typically far fewer than the polish path. Kept as a separate
+# constant so the two paths can move independently; the previous code
+# reused POLISH_LLM_BATCH_SIZE for vocab correction, which was a naming
+# accident, not a deliberate share.
+VOCAB_CORRECTION_BATCH_SIZE = 30
 
 
 def prepare_editor_correction(
@@ -707,7 +716,7 @@ def _ai_rule_changes(
     if not candidates:
         return sample_changes
     corrected_by_id: dict[str, str] = {}
-    for batch in _batches(candidates, POLISH_LLM_BATCH_SIZE):
+    for batch in _batches(candidates, VOCAB_CORRECTION_BATCH_SIZE):
         llm_result = propose_vocabulary_corrections(
             samples=_llm_samples(sample_changes),
             candidates=batch,

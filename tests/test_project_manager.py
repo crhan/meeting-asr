@@ -743,8 +743,7 @@ def test_summarize_project_writes_summary_and_updates_auto_title(
         lambda result, settings, model: MeetingSummary(
             "AI 转型研讨",
             "讨论 AI 转型目标和落地路径。",
-            ["目标", "路径"],
-            ["补充方案"],
+            ["目标牵引", "路径收敛", "飞轮闭环", "里程碑518", "团队对齐"],
             "qwen-test",
         ),
     )
@@ -792,7 +791,7 @@ def test_summarize_project_replaces_existing_llm_title(
     save_manifest(project_dir, manifest)
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary("新自动标题", "回忆提示。", ["关键词"], [], "qwen-test"),
+        lambda result, settings, model: MeetingSummary("新自动标题", "回忆提示。", ["关键词1", "关键词2"], "qwen-test"),
     )
     monkeypatch.setattr("app.project_manager.load_settings", lambda require_oss=False: object())
 
@@ -824,7 +823,7 @@ def test_summarize_project_preserves_manual_title(
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], [], "qwen-test"),
+        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], "qwen-test"),
     )
     monkeypatch.setattr(
         "app.project_manager.load_settings",
@@ -864,7 +863,7 @@ def test_summarize_project_marks_legacy_custom_unknown_title_as_manual(
     save_manifest(project_dir, manifest)
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], [], "qwen-test"),
+        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], "qwen-test"),
     )
     monkeypatch.setattr("app.project_manager.load_settings", lambda require_oss=False: object())
 
@@ -940,6 +939,7 @@ def test_retranscribe_invalidates_downstream_artifacts(tmp_path: Path) -> None:
     manifest.asr["summary_model"] = "qwen-test"
     manifest.speakers["matches"] = "speakers/speaker_matches.json"
     manifest.speakers["voiceprints"] = {"sample_count": 1}
+    manifest.meeting_keywords = ["旧关键字1", "旧关键字2"]
     manifest.outputs.update(
         {
             "meeting_summary": "exports/meeting_summary.md",
@@ -962,6 +962,7 @@ def test_retranscribe_invalidates_downstream_artifacts(tmp_path: Path) -> None:
     assert all(not path.exists() for path in stale_paths)
     assert "summary_model" not in manifest.asr
     assert not {"mapped", "matches", "voiceprints"} & set(manifest.speakers)
+    assert manifest.meeting_keywords == []
     assert not set(manifest.outputs) & {
         "meeting_summary",
         "meeting_summary_json",
@@ -1129,6 +1130,34 @@ def test_project_list_command_prints_json(tmp_path: Path) -> None:
     assert payload["projects"][0]["workflow"]["next_command_short"] == (
         f"transcribe {load_manifest(project_dir).project_id}"
     )
+    # Fresh projects have no keywords yet but the field is always present
+    # so scripts consuming --json can treat it as a stable schema.
+    assert payload["projects"][0]["meeting_keywords"] == []
+
+
+def test_project_list_json_includes_meeting_keywords(tmp_path: Path) -> None:
+    """Project list --json must expose summary keywords once a project has them."""
+    projects_dir = tmp_path / "projects"
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = projects_dir / "kw"
+    create_project(
+        source,
+        title="Demo",
+        projects_dir=projects_dir,
+        project_dir=project_dir,
+        meeting_time="2026-05-02T10:00:00+08:00",
+        hash_source=False,
+    )
+    manifest = load_manifest(project_dir)
+    manifest.meeting_keywords = ["飞轮POC本地跑通", "诊断准确率30%", "A3A6A8"]
+    save_manifest(project_dir, manifest)
+
+    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir), "--json"])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert payload["projects"][0]["meeting_keywords"] == ["飞轮POC本地跑通", "诊断准确率30%", "A3A6A8"]
 
 
 def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:
@@ -1463,7 +1492,7 @@ def test_project_list_plain_prints_stable_rows(tmp_path: Path) -> None:
     result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir), "--plain"])
 
     assert result.exit_code == 0
-    assert result.output.splitlines()[0] == "project_id\tstate\tupdated\ttitle"
+    assert result.output.splitlines()[0] == "project_id\tstate\tupdated\ttitle\tkeywords"
     assert f"{manifest.project_id}\tCreated\t" in result.output
     assert "Plain Demo" in result.output
     assert "╭" not in result.output
