@@ -7,16 +7,24 @@
 
 ## [未发布]
 
+## [0.3.0] - 2026-05-09
+
 ### 新增
 
 - Project Review TUI 新增「时间轴视图」（`t` 键切换）：按 ASR 切分的真实时间顺序展示所有句子，便于边听边核对。
 - 在时间轴视图下按 `r` 可把当前句子重新指派给另一个 speaker。
 - 按 `s` 保存若存在归属变更，会自动跑后链路：写回 `asr/sentences.json` / `sentences_corrected.json`，重新生成命名 transcript 与字幕、匿名 `transcript_speakers.txt`，删除被归属变更覆盖的声纹样本，并重跑 voiceprint 匹配（`speaker_matches.json`）。
 - Voiceprint Review 播放样本时会在状态栏显示播放进度，并在当前 sample 行标记 `PLAY`。
+- Polish proposal 中每条改动会带上 `change_type`（typo / term / case / punct / dup / filler / restart / emphasis），并在 markdown 中按类型分组展示。
+- `project correct polish accept` 新增 `--select`（按编号或区间挑选）和 `--types`（按 change_type 过滤），可只接受需要的类别而不是全量。
+- Polish 每次运行会写出 `polish_strict_meta_<ts>_<model>.json` sidecar，包含所有候选的 LLM 输出、change_type 和 guard 判定，便于离线分析。
 
 ### 变更
 
 - 声纹采样默认勾选策略从“最高分前 N 个”调整为“分数达标后按时间分散选择”，降低单一说话状态过拟合的风险。
+- Polish 默认改为面向下游摘要 agent 的严格模式：聚焦 ASR 噪声（重复 / 语气词 / 重启 / 强调）和 typo/术语/大小写/标点修正，禁止跨句借用、ASCII 幻觉、以及删除 `我觉得` / `可能` / `或许` / `对吧` 等承载事实信号的修饰词。`project correct polish` 与 `project run` 都默认走严格 polish，可用 `--legacy-polish` 回退到旧版重写行为。
+- 严格 polish 在 LLM 之后增加确定性 guard：长度比 / 长度差 / ASCII 编辑距离幻觉 / 保护词删除 / 跨句借用直扫，全部失败时按旧路径抛出 `model_error`，部分批次失败时通过 `Model fallback` 信息提示用户。
+- Release workflow 默认安装 ffmpeg，发布构建环境与本地保持一致。
 
 ## [0.2.0] - 2026-05-09
 
@@ -52,6 +60,7 @@
 - 首个公开版本，提供基于 project 的 Meeting-ASR CLI。
 - 新增项目创建、会议转写、转写导出、speaker review、声纹匹配、词汇纠错 review，以及 GitHub Actions 发布基础能力。
 
-[未发布]: https://github.com/crhan/meeting-asr/compare/v0.2.0...HEAD
+[未发布]: https://github.com/crhan/meeting-asr/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/crhan/meeting-asr/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/crhan/meeting-asr/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/crhan/meeting-asr/releases/tag/v0.1.0
