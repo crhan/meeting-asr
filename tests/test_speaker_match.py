@@ -6,6 +6,7 @@ import json
 import wave
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from app.cli import app
@@ -16,6 +17,7 @@ from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 runner = CliRunner()
 
 
+@pytest.mark.requires_ffmpeg
 def test_project_speakers_match_writes_suggestions(
     monkeypatch,
     tmp_path: Path,
@@ -109,6 +111,7 @@ def test_project_speakers_match_keeps_below_threshold_best_candidate(
     ]
 
 
+@pytest.mark.requires_ffmpeg
 def test_project_speakers_match_can_apply_matches(
     monkeypatch,
     tmp_path: Path,
@@ -139,6 +142,7 @@ def test_project_speakers_match_can_apply_matches(
     assert all(str(value).startswith("vpp-") for value in person_map.values())
 
 
+@pytest.mark.requires_ffmpeg
 def test_project_speakers_match_reuses_project_probe_embedding_cache(
     monkeypatch,
     tmp_path: Path,
