@@ -170,8 +170,8 @@ def _load_review_transcript_result(asr_dir: Path) -> TranscriptResult:
     """Load the transcript version humans should review."""
     corrected = asr_dir / "sentences_corrected.json"
     if corrected.exists():
-        return load_transcript_result(corrected)
-    return load_transcript_result(asr_dir / "sentences.json")
+        return load_transcript_result(corrected, include_low_information=True)
+    return load_transcript_result(asr_dir / "sentences.json", include_low_information=True)
 
 
 def _segments_by_speaker(sentences: list[SentenceSegment]) -> dict[int, list[SentenceSegment]]:

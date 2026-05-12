@@ -842,7 +842,7 @@ def apply_project_speakers(
     """
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
-    result = load_transcript_result(paths.asr_dir / "sentences.json")
+    result = load_transcript_result(paths.asr_dir / "sentences.json", include_low_information=True)
     resolved_mapping = _merge_speaker_mapping(result, mappings)
     mapping_path = write_speaker_mapping(paths.speakers_dir / "speaker_map.json", resolved_mapping)
     if ignored_speaker_ids is not None:
@@ -908,7 +908,7 @@ def _load_corrected_result(paths: ProjectPaths) -> TranscriptResult | None:
     corrected_path = paths.asr_dir / "sentences_corrected.json"
     if not corrected_path.exists():
         return None
-    return load_transcript_result(corrected_path)
+    return load_transcript_result(corrected_path, include_low_information=True)
 
 
 def summarize_project(

@@ -1354,6 +1354,33 @@ def test_load_speaker_review_session_prefers_corrected_transcript(tmp_path: Path
     assert session.speakers[0].segments[0].text == "你好，我是修正后的欧丁。"
 
 
+def test_load_speaker_review_session_keeps_named_low_information_speakers(tmp_path: Path) -> None:
+    """Review must show a real attendee even when their track is mostly backchannels."""
+    project_dir, store_dir = _project_with_voiceprint_state(tmp_path)
+    transcript_path = project_dir / "asr" / "sentences.json"
+    transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+    transcript["detected_speakers"].append(2)
+    transcript["sentences"].append(
+        {
+            "begin_time_ms": 3600,
+            "end_time_ms": 3900,
+            "text": "嗯。",
+            "speaker_id": 2,
+            "sentence_id": 3,
+        }
+    )
+    transcript_path.write_text(json.dumps(transcript, ensure_ascii=False), encoding="utf-8")
+    (project_dir / "speakers" / "speaker_map.json").write_text(
+        json.dumps({"0": "欧丁", "1": "Speaker B", "2": "岳周"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    session = load_speaker_review_session(project_dir, store_dir=store_dir)
+
+    assert [speaker.label for speaker in session.speakers] == ["Speaker A", "Speaker B", "Speaker C"]
+    assert [speaker.current_name for speaker in session.speakers] == ["欧丁", "Speaker B", "岳周"]
+
+
 def test_save_summary_labels_empty_correction_as_no_changes() -> None:
     """A zero-change inline edit should not be shown as a ready proposal."""
     lines = _summary_lines(_correction_summary(accepted=False, no_proposal=True))

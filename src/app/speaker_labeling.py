@@ -25,19 +25,22 @@ class SpeakerSummary:
     sample_segments: list[SentenceSegment]
 
 
-def load_transcript_result(path: Path) -> TranscriptResult:
+def load_transcript_result(path: Path, *, include_low_information: bool = False) -> TranscriptResult:
     """
     Load normalized sentences.json.
 
     Args:
         path: Sentences JSON path.
+        include_low_information: Keep short backchannel-heavy speaker tracks
+            instead of applying the generic low-information filter.
 
     Returns:
         Transcript result.
     """
     payload = json.loads(path.read_text(encoding="utf-8"))
     sentences = [SentenceSegment(**item) for item in payload.get("sentences", [])]
-    sentences = filter_filler_speakers(sentences)
+    if not include_low_information:
+        sentences = filter_filler_speakers(sentences)
     full_text = "".join(sentence.text for sentence in sentences)
     result = TranscriptResult(full_text, sentences, [])
     result.detected_speakers = detect_speaker_ids(result)

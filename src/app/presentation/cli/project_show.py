@@ -464,7 +464,7 @@ def _active_speaker_ids(project_dir: Path) -> set[int] | None:
     try:
         from app.speaker_labeling import load_transcript_result
 
-        return set(load_transcript_result(path).detected_speakers)
+        return set(load_transcript_result(path, include_low_information=True).detected_speakers)
     except (OSError, ValueError, TypeError, KeyError):
         return None
 
