@@ -207,6 +207,8 @@ def render_speaker_summary(
     summary: SpeakerSummary,
     mapped_name: str | None = None,
     match_summary: str | None = None,
+    *,
+    ignored: bool = False,
 ) -> str:
     """
     Render one speaker summary.
@@ -215,6 +217,7 @@ def render_speaker_summary(
         summary: Speaker summary.
         mapped_name: Optional human speaker name.
         match_summary: Optional voiceprint match summary.
+        ignored: Whether the speaker was explicitly marked as ignored.
 
     Returns:
         Terminal text.
@@ -225,10 +228,14 @@ def render_speaker_summary(
         f"  First seen: {format_ms_timestamp(summary.first_begin_time_ms)}",
         "  Samples:",
     ]
-    if mapped_name:
-        lines.insert(1, _confirmed_name_line(mapped_name))
-    if match_summary:
-        insert_index = 2 if mapped_name else 1
+    insert_index = 1
+    if ignored:
+        lines.insert(insert_index, _ignored_status_line())
+        insert_index += 1
+    elif mapped_name:
+        lines.insert(insert_index, _confirmed_name_line(mapped_name))
+        insert_index += 1
+    if match_summary and not ignored:
         lines.insert(insert_index, f"  Voiceprint match: {match_summary}")
     for segment in summary.sample_segments:
         start = format_ms_timestamp(segment.begin_time_ms)
@@ -248,6 +255,11 @@ def _confirmed_name_line(mapped_name: str) -> str:
         Styled terminal text.
     """
     return typer.style(f"  Name: {mapped_name}", fg=typer.colors.GREEN, bold=True)
+
+
+def _ignored_status_line() -> str:
+    """Format the ignored speaker status line for terminal output."""
+    return typer.style("  Status: ignored", fg=typer.colors.CYAN, bold=True)
 
 
 def _find_first_segment_time_ms(sentences_json: Path, speaker_id: int) -> int:

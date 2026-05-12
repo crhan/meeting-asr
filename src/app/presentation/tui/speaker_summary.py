@@ -36,7 +36,9 @@ def render_speaker_review_summary(session: Any, *, speaker_only: bool = False) -
     unresolved_speakers = [
         speaker
         for speaker in session.speakers
-        if speaker.match is not None and voiceprint_match_status(speaker.match) != MATCH_STATUS_MATCHED
+        if speaker.match is not None
+        and not speaker.ignored
+        and voiceprint_match_status(speaker.match) != MATCH_STATUS_MATCHED
     ]
     if unresolved_speakers:
         project_ref = shlex.quote(session.overview.project_id)
@@ -102,7 +104,9 @@ def _voiceprint_status_line(speaker: Any) -> str:
 def _summary_line(speaker: Any) -> str:
     """Render one plain summary row."""
     status = speaker_status(speaker)
-    if speaker.match is None:
+    if speaker.ignored:
+        match = "ignored"
+    elif speaker.match is None:
         match = "-"
     elif voiceprint_match_status(speaker.match) == MATCH_STATUS_NO_CANDIDATE:
         match = "no-candidate"

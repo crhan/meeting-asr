@@ -88,16 +88,20 @@ from app.speaker_labeling import (
     SentenceReassignmentSpec,
     apply_sentence_reassignments,
     build_speaker_summaries,
+    load_project_ignored_speakers,
     load_transcript_result,
 )
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
+    MATCH_STATUS_IGNORED,
     MATCH_STATUS_MATCHED,
     MATCH_STATUS_NO_CANDIDATE,
     accepted_match_name,
     best_candidate_name,
     best_candidate_score,
+    effective_match_status,
     match_threshold,
+    speaker_id_from_match,
     voiceprint_match_status,
 )
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
@@ -1011,18 +1015,27 @@ def speakers_inspect(
         typer.echo("No detected speakers found in the transcript.")
         raise typer.Exit(code=1)
     speaker_mapping = run_with_cli_errors(lambda: _load_existing_speaker_mapping(resolved_project_dir))
-    speaker_matches = run_with_cli_errors(lambda: _load_speaker_match_summaries(resolved_project_dir, speaker_mapping))
+    ignored_speakers = run_with_cli_errors(lambda: load_project_ignored_speakers(resolved_project_dir))
+    speaker_matches = run_with_cli_errors(
+        lambda: _load_speaker_match_summaries(
+            resolved_project_dir,
+            speaker_mapping,
+            ignored_speaker_ids=ignored_speakers,
+        )
+    )
     for index, summary in enumerate(summaries):
         if index:
             typer.echo("")
+        is_ignored = summary.speaker_id in ignored_speakers
         typer.echo(
             render_speaker_summary(
                 summary,
-                mapped_name=speaker_mapping.get(summary.speaker_id),
-                match_summary=speaker_matches.get(summary.speaker_id),
+                mapped_name=None if is_ignored else speaker_mapping.get(summary.speaker_id),
+                match_summary=None if is_ignored else speaker_matches.get(summary.speaker_id),
+                ignored=is_ignored,
             )
         )
-    if _project_has_unresolved_match(resolved_project_dir):
+    if _project_has_unresolved_match(resolved_project_dir, ignored_speaker_ids=ignored_speakers):
         manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
         _echo_unresolved_speaker_next_steps(manifest.project_id, speaker_only=True)
 
@@ -1583,7 +1596,10 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
     manifest = load_manifest(project_dir)
     total_matches = len(summary.matches.matches)
     accepted_matches = len(summary.applied_mapping)
-    statuses = [voiceprint_match_status(match) for match in summary.matches.matches]
+    ignored_ids = load_project_ignored_speakers(project_dir)
+    statuses = [
+        effective_match_status(match, ignored_speaker_ids=ignored_ids) for match in summary.matches.matches
+    ]
     below_threshold_matches = statuses.count(MATCH_STATUS_BELOW_THRESHOLD)
     no_candidate_matches = statuses.count(MATCH_STATUS_NO_CANDIDATE)
     return ProjectRunSummaryView(
@@ -1600,7 +1616,11 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
         correction_summary=summary.correction_summary,
         lexicon_correction_summary=summary.lexicon_correction_summary,
         transcription=summary.transcription,
-        speaker_matches=speaker_match_rows(summary.matches.matches, default_threshold=summary.matches.threshold),
+        speaker_matches=speaker_match_rows(
+            summary.matches.matches,
+            default_threshold=summary.matches.threshold,
+            ignored_speaker_ids=ignored_ids,
+        ),
     )
 
 
@@ -1713,27 +1733,40 @@ def _echo_match_summary(summary: SpeakerMatchSummary) -> None:
     typer.echo(f"Provider: {summary.provider}")
     typer.echo(f"Model: {summary.model}")
     typer.echo(f"Threshold: {summary.threshold:.3f}")
+    project_dir = summary.match_path.parent.parent
+    ignored = load_project_ignored_speakers(project_dir)
     for match in summary.matches:
-        typer.echo(_voiceprint_match_cli_line(match, default_threshold=summary.threshold))
-    if any(voiceprint_match_status(match) != MATCH_STATUS_MATCHED for match in summary.matches):
+        typer.echo(_voiceprint_match_cli_line(match, default_threshold=summary.threshold, ignored_speaker_ids=ignored))
+    if any(
+        effective_match_status(match, ignored_speaker_ids=ignored) not in (MATCH_STATUS_MATCHED, MATCH_STATUS_IGNORED)
+        for match in summary.matches
+    ):
         _echo_unresolved_speaker_next_steps(_project_ref_from_match_path(summary.match_path), speaker_only=True)
 
 
-def _voiceprint_match_cli_line(match: object, *, default_threshold: float | None = None) -> str:
+def _voiceprint_match_cli_line(
+    match: object,
+    *,
+    default_threshold: float | None = None,
+    ignored_speaker_ids: set[int] | None = None,
+) -> str:
     """
     Format one voiceprint match line for CLI output.
 
     Args:
         match: Match dataclass or JSON-like mapping.
         default_threshold: Fallback threshold.
+        ignored_speaker_ids: Speaker ids the user has marked as ignored.
 
     Returns:
         Status-explicit CLI line.
     """
-    status = voiceprint_match_status(match)
+    status = effective_match_status(match, ignored_speaker_ids=ignored_speaker_ids)
     label = str(getattr(match, "label", None) or "Speaker")
     threshold = match_threshold(match, default_threshold)
     threshold_text = "" if threshold is None else f" threshold={threshold:.3f}"
+    if status == MATCH_STATUS_IGNORED:
+        return f"{label} status=ignored"
     if status == MATCH_STATUS_MATCHED:
         name = accepted_match_name(match) or "unknown"
         score = best_candidate_score(match)
@@ -2416,13 +2449,19 @@ def _load_speaker_match_defaults(project_dir: Path) -> dict[int, str]:
     }
 
 
-def _load_speaker_match_summaries(project_dir: Path, speaker_mapping: dict[int, str]) -> dict[int, str]:
+def _load_speaker_match_summaries(
+    project_dir: Path,
+    speaker_mapping: dict[int, str],
+    *,
+    ignored_speaker_ids: set[int] | None = None,
+) -> dict[int, str]:
     """
     Load speaker match results for inspect output.
 
     Args:
         project_dir: Project root.
         speaker_mapping: Existing confirmed speaker mapping.
+        ignored_speaker_ids: Speaker ids the user has marked as ignored.
 
     Returns:
         Speaker id to display-safe match summary.
@@ -2433,6 +2472,7 @@ def _load_speaker_match_summaries(project_dir: Path, speaker_mapping: dict[int, 
     payload = json.loads(match_path.read_text(encoding="utf-8"))
     matches = payload.get("matches", [])
     default_threshold = _safe_float(payload.get("threshold"))
+    ignored = ignored_speaker_ids or set()
     summaries: dict[int, str] = {}
     for item in matches:
         if not isinstance(item, dict) or "speaker_id" not in item:
@@ -2440,28 +2480,41 @@ def _load_speaker_match_summaries(project_dir: Path, speaker_mapping: dict[int, 
         if default_threshold is not None and item.get("threshold") is None:
             item = {**item, "threshold": default_threshold}
         speaker_id = int(item["speaker_id"])
+        if speaker_id in ignored:
+            continue
         summaries[speaker_id] = _speaker_match_summary(item, mapped_name=speaker_mapping.get(speaker_id))
     return summaries
 
 
-def _project_has_unresolved_match(project_dir: Path) -> bool:
+def _project_has_unresolved_match(
+    project_dir: Path,
+    *,
+    ignored_speaker_ids: set[int] | None = None,
+) -> bool:
     """
-    Return whether a project has any unresolved speaker match.
+    Return whether a project has any unresolved non-ignored speaker match.
 
     Args:
         project_dir: Project root.
+        ignored_speaker_ids: Speaker ids the user has marked as ignored.
 
     Returns:
-        True when at least one match row is not automatically matched.
+        True when at least one non-ignored match row is not automatically matched.
     """
     match_path = project_paths(project_dir).speakers_dir / "speaker_matches.json"
     if not match_path.exists():
         return False
     payload = json.loads(match_path.read_text(encoding="utf-8"))
-    return any(
-        isinstance(item, dict) and voiceprint_match_status(item) != MATCH_STATUS_MATCHED
-        for item in payload.get("matches", [])
-    )
+    ignored = ignored_speaker_ids or set()
+    for item in payload.get("matches", []):
+        if not isinstance(item, dict):
+            continue
+        speaker_id = speaker_id_from_match(item)
+        if speaker_id is not None and speaker_id in ignored:
+            continue
+        if voiceprint_match_status(item) != MATCH_STATUS_MATCHED:
+            return True
+    return False
 
 
 def _speaker_match_summary(item: dict[str, object], *, mapped_name: str | None = None) -> str:

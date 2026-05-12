@@ -150,6 +150,19 @@ def load_ignored_speakers(path: Path) -> set[int]:
     return {int(value) for value in payload.get("ignored_speakers", [])}
 
 
+def load_project_ignored_speakers(project_dir: Path) -> set[int]:
+    """
+    Load explicitly ignored project speaker ids from the standard location.
+
+    Args:
+        project_dir: Project root.
+
+    Returns:
+        Speaker ids deliberately kept anonymous for this project.
+    """
+    return load_ignored_speakers(project_dir / "speakers" / "speaker_ignore.json")
+
+
 def load_speaker_person_mapping(path: Path) -> dict[int, int | str]:
     """
     Load project speaker to voiceprint person id mapping.
