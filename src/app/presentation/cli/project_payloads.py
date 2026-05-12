@@ -189,9 +189,7 @@ def _speaker_status(
     if speaker_id in ignored_set:
         return MATCH_STATUS_IGNORED
     if match is not None:
-        status = effective_match_status(match, ignored_speaker_ids=ignored_set)
-        if status != "no-candidate":
-            return status
+        return effective_match_status(match, ignored_speaker_ids=ignored_set)
     if name and name != label:
         return "matched"
     return "unnamed"

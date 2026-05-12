@@ -9,7 +9,7 @@
 
 ### 新增
 
-- `meeting-asr project show --json` 新增 `ignored_speakers` 字段以及 `speakers[]` 数组（含 `speaker_id` / `label` / `name` / `status` / `sample_count` / `match`），下游 agent 可直接判断 speaker 是否被忽略，不必再读 `speakers/speaker_ignore.json`。
+- `meeting-asr project show --json` 新增 `ignored_speakers` 字段以及 `speakers[]` 数组（含 `speaker_id` / `label` / `name` / `status` / `sample_count` / `match`），`status` 取值为 `matched | below-threshold | no-candidate | ignored | unnamed`，下游 agent 可直接判断 speaker 是否被忽略，不必再读 `speakers/speaker_ignore.json`。
 - 共享 `effective_match_status` 与 `MATCH_STATUS_IGNORED`：CLI 渲染会把 `speaker_ignore.json` 中的 speaker 一律视为 `ignored`，不再误报为 below-threshold。
 
 ### 变更

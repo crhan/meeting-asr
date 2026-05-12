@@ -153,6 +153,60 @@ def test_project_show_json_exposes_ignored_speakers_and_status(tmp_path: Path) -
     assert speakers[2]["sample_count"] > 0
 
 
+def test_project_show_json_preserves_no_candidate_status(tmp_path: Path) -> None:
+    """Speakers with a no-candidate match row must keep their voiceprint state."""
+    project_dir = _sample_project(tmp_path)
+    _write_three_speaker_sentences(project_dir / "asr" / "sentences.json")
+    payload = {
+        "threshold": 0.75,
+        "matches": [
+            {
+                "speaker_id": 0,
+                "label": "Speaker A",
+                "name": None,
+                "score": 0.0,
+                "accepted": False,
+                "best_name": None,
+                "best_score": None,
+                "threshold": 0.75,
+            },
+            {
+                "speaker_id": 1,
+                "label": "Speaker B",
+                "name": None,
+                "score": 0.0,
+                "accepted": False,
+                "best_name": None,
+                "best_score": None,
+                "threshold": 0.75,
+            },
+        ],
+    }
+    (project_dir / "speakers" / "speaker_matches.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+    manifest = load_manifest(project_dir)
+    # Manually-named speaker should still expose the underlying voiceprint state.
+    manifest.speakers.update({"detected_ids": [0, 1, 2], "mapped": {"1": "敬悦"}})
+    from app.project_manager import save_manifest
+
+    save_manifest(project_dir, manifest)
+
+    result = runner.invoke(app, ["project", "show", str(project_dir), "--json"])
+
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.output)
+    speakers = {row["speaker_id"]: row for row in body["speakers"]}
+    # speaker_id=0 has no name and no candidate: still surfaces as no-candidate.
+    assert speakers[0]["status"] == "no-candidate"
+    # speaker_id=1 was manually named but voiceprint had no candidate; downstream
+    # agents need to see both signals (status + name), not a synthesized "matched".
+    assert speakers[1]["status"] == "no-candidate"
+    assert speakers[1]["name"] == "敬悦"
+    # speaker_id=2 has no match row at all: falls back to "unnamed".
+    assert speakers[2]["status"] == "unnamed"
+
+
 def test_project_show_json_marks_unnamed_speakers_when_no_match(tmp_path: Path) -> None:
     """Speakers without matches and without names should report ``status=unnamed``."""
     project_dir = _sample_project(tmp_path)
