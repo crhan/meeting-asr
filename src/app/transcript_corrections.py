@@ -1000,33 +1000,46 @@ def _run_strict_polish_batches_parallel(
             ): index
             for index, batch in enumerate(batches, start=1)
         }
-        for future in future_by_index:
-            batch_index = future_by_index[future]
-            try:
-                llm_result = future.result()
-            except Exception as exc:
-                failures.append((batch_index, str(exc)))
+        pending = set(future_by_index)
+        while pending:
+            done, pending = wait(pending, timeout=30.0, return_when=FIRST_COMPLETED)
+            if not done:
+                _emit_polish_progress(
+                    progress,
+                    completed=completed,
+                    total=len(batches),
+                    concurrency=max_workers,
+                    active=min(max_workers, len(pending)),
+                    model=model,
+                )
+                continue
+            for future in done:
+                batch_index = future_by_index[future]
+                try:
+                    llm_result = future.result()
+                except Exception as exc:
+                    failures.append((batch_index, str(exc)))
+                    completed += 1
+                    _emit_polish_progress(
+                        progress,
+                        completed=completed,
+                        total=len(batches),
+                        concurrency=max_workers,
+                        active=min(max_workers, len(pending)),
+                        model=model,
+                    )
+                    continue
+                for entry in llm_result.items:
+                    items_by_id[entry.candidate_id] = entry
                 completed += 1
                 _emit_polish_progress(
                     progress,
                     completed=completed,
                     total=len(batches),
                     concurrency=max_workers,
-                    active=min(max_workers, len(batches) - completed),
+                    active=min(max_workers, len(pending)),
                     model=model,
                 )
-                continue
-            for entry in llm_result.items:
-                items_by_id[entry.candidate_id] = entry
-            completed += 1
-            _emit_polish_progress(
-                progress,
-                completed=completed,
-                total=len(batches),
-                concurrency=max_workers,
-                active=min(max_workers, len(batches) - completed),
-                model=model,
-            )
     return items_by_id, failures
 
 

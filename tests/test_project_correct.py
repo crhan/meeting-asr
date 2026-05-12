@@ -15,13 +15,14 @@ from app.commands import project as project_commands
 from app.commands import project_correct as project_correct_commands
 from app.cli import app
 from app.config import Settings
+from app.core.progress import CliProgressEvent
 from app.correction_llm import (
     LlmCorrectionResult,
     LlmPolishItem,
     LlmReplacementRule,
     LlmStrictPolishResult,
 )
-from app.correction_types import CorrectionEditOptions
+from app.correction_types import CorrectionEditOptions, CorrectionEditSummary
 from app.project_manager import create_project, load_manifest, project_paths
 from app.speaker_tui import SentenceCorrectionEdit, SpeakerReviewDecision
 
@@ -365,6 +366,52 @@ def test_project_correct_polish_reports_batch_progress(tmp_path: Path, monkeypat
     assert polish_events[-1].completed == 3
     assert "batches 3/3" in polish_events[-1].description
     assert "active 0" in polish_events[-1].description
+
+
+def test_project_correct_polish_command_wires_progress_reporter(tmp_path: Path, monkeypatch) -> None:
+    """The standalone polish command should not drop batch progress events."""
+    project_dir = _sample_project_with_text(tmp_path, "这个句子需要润色。")
+    events = []
+
+    def fake_run_with_progress(operation, **kwargs):
+        assert kwargs["description"] == "Generating transcript polish proposal"
+        assert kwargs["enabled"] is True
+        assert kwargs["structured_log"] is False
+        return operation(events.append)
+
+    def fake_prepare_transcript_polish(**kwargs):
+        progress = kwargs["progress"]
+        progress(CliProgressEvent("Generating transcript polish proposal | batches 0/1"))
+        return CorrectionEditSummary(
+            review_path=project_dir / "tmp" / "corrections" / "review_polish_test.md",
+            proposal_path=None,
+            proposal_diff_path=None,
+            proposal_json_path=None,
+            change_count=0,
+            sample_change_count=0,
+            proposed_change_count=0,
+            learned_count=0,
+            accepted=False,
+            model="qwen-test",
+            model_error=None,
+            understanding=[],
+            corrected_sentences_path=None,
+            corrected_transcript_path=None,
+            corrected_named_transcript_path=None,
+            corrected_srt_path=None,
+            hotwords_path=None,
+            applied_path=None,
+            lexicon_db=None,
+        )
+
+    monkeypatch.setattr(project_correct_commands, "run_with_progress", fake_run_with_progress)
+    monkeypatch.setattr(project_correct_commands, "prepare_transcript_polish", fake_prepare_transcript_polish)
+
+    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+
+    assert result.exit_code == 0
+    assert events
+    assert "batches 0/1" in events[0].description
 
 
 def test_project_correct_polish_default_uses_strict_path_and_records_change_type(

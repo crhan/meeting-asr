@@ -15,6 +15,7 @@ from app.core.project_models import ProjectManifest
 from app.core.project_refs import resolve_project_ref
 from app.correction_proposals import load_correction_proposal
 from app.presentation.cli.errors import run_with_cli_errors
+from app.presentation.cli.progress import run_with_progress
 from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.project_manager import load_manifest, project_paths, save_manifest
 from app.speaker_labeling import build_default_mapping, load_transcript_result
@@ -90,6 +91,12 @@ def polish_command(
         help="Use the legacy aggressive-rewrite polish prompt (pre-2026 behavior). "
         "Default is the strict downstream-summary-friendly polish.",
     ),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    agent_log: bool = typer.Option(
+        False,
+        "--agent-log",
+        help="Print structured polish stage and heartbeat logs; combine with --no-progress for clean logs.",
+    ),
 ) -> None:
     """Generate an AI transcript polish proposal.
 
@@ -111,13 +118,17 @@ def polish_command(
         polish_concurrency=concurrency,
         polish_legacy=legacy,
     )
-    summary = run_with_cli_errors(
-        lambda: prepare_transcript_polish(
+    summary = run_with_progress(
+        lambda reporter: prepare_transcript_polish(
             paths=paths,
             manifest=manifest,
             speaker_mapping=speaker_mapping,
             options=options,
-        )
+            progress=reporter,
+        ),
+        description="Generating transcript polish proposal",
+        enabled=progress,
+        structured_log=agent_log,
     )
     _finish_correction_edit(paths, manifest, speaker_mapping, summary, lexicon_db, yes, auto_accept=True)
 
