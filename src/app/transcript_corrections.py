@@ -891,6 +891,8 @@ def _strict_ai_polish_changes(
     if concurrency > 1 and len(batches) > 1:
         merged, failures = _run_strict_polish_batches_parallel(
             batches,
+            paths=paths,
+            manifest=manifest,
             settings=settings,
             model=model,
             progress=progress,
@@ -970,6 +972,8 @@ def _strict_polish_request_timeout(model: str) -> int:
 def _run_strict_polish_batches_parallel(
     batches: list[list[LlmCorrectionCandidate]],
     *,
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
     settings: Settings,
     model: str,
     progress: CliProgressReporter | None,
@@ -981,13 +985,19 @@ def _run_strict_polish_batches_parallel(
     items_by_id: dict[str, LlmPolishItem] = {}
     failures: list[tuple[int, str]] = []
     completed = 0
-    _emit_polish_progress(
+    input_file = manifest.source.original_path or manifest.source.path
+    _emit_strict_polish_parallel_state(
         progress,
+        paths,
+        manifest,
+        input_file,
+        model=model,
         completed=0,
         total=len(batches),
         concurrency=max_workers,
         active=min(max_workers, len(batches)),
-        model=model,
+        elapsed_seconds=0.0,
+        last_success=f"submitted 0/{len(batches)} strict polish batches",
     )
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_by_index = {
@@ -1000,17 +1010,23 @@ def _run_strict_polish_batches_parallel(
             ): index
             for index, batch in enumerate(batches, start=1)
         }
+        started_at = time.monotonic()
         pending = set(future_by_index)
         while pending:
             done, pending = wait(pending, timeout=30.0, return_when=FIRST_COMPLETED)
             if not done:
-                _emit_polish_progress(
+                _emit_strict_polish_parallel_state(
                     progress,
+                    paths,
+                    manifest,
+                    input_file,
+                    model=model,
                     completed=completed,
                     total=len(batches),
                     concurrency=max_workers,
                     active=min(max_workers, len(pending)),
-                    model=model,
+                    elapsed_seconds=time.monotonic() - started_at,
+                    last_success=f"{completed}/{len(batches)} strict polish batches complete",
                 )
                 continue
             for future in done:
@@ -1020,27 +1036,74 @@ def _run_strict_polish_batches_parallel(
                 except Exception as exc:
                     failures.append((batch_index, str(exc)))
                     completed += 1
-                    _emit_polish_progress(
+                    _emit_strict_polish_parallel_state(
                         progress,
+                        paths,
+                        manifest,
+                        input_file,
+                        model=model,
                         completed=completed,
                         total=len(batches),
                         concurrency=max_workers,
                         active=min(max_workers, len(pending)),
-                        model=model,
+                        elapsed_seconds=time.monotonic() - started_at,
+                        last_success=f"{completed}/{len(batches)} strict polish batches complete",
                     )
                     continue
                 for entry in llm_result.items:
                     items_by_id[entry.candidate_id] = entry
                 completed += 1
-                _emit_polish_progress(
+                _emit_strict_polish_parallel_state(
                     progress,
+                    paths,
+                    manifest,
+                    input_file,
+                    model=model,
                     completed=completed,
                     total=len(batches),
                     concurrency=max_workers,
                     active=min(max_workers, len(pending)),
-                    model=model,
+                    elapsed_seconds=time.monotonic() - started_at,
+                    last_success=f"{completed}/{len(batches)} strict polish batches complete",
                 )
     return items_by_id, failures
+
+
+def _emit_strict_polish_parallel_state(
+    progress: CliProgressReporter | None,
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    input_file: str,
+    *,
+    model: str,
+    completed: int,
+    total: int,
+    concurrency: int,
+    active: int,
+    elapsed_seconds: float,
+    last_success: str,
+) -> None:
+    """Record and emit one strict polish parallel batch state."""
+    fields = {"model": model, "batch": f"{completed}/{total}", "concurrency": concurrency}
+    _record_polish_runtime(paths, manifest, "polish", input_file, fields, last_success)
+    _emit_polish_heartbeat(
+        progress,
+        manifest,
+        paths,
+        input_file,
+        elapsed_seconds=elapsed_seconds,
+        last_success=last_success,
+        next_action="waiting for parallel strict polish batches",
+        fields=fields,
+    )
+    _emit_polish_progress(
+        progress,
+        completed=completed,
+        total=total,
+        concurrency=concurrency,
+        active=active,
+        model=model,
+    )
 
 
 def _strict_polish_changes_from_items(

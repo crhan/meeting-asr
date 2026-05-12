@@ -414,6 +414,52 @@ def test_project_correct_polish_command_wires_progress_reporter(tmp_path: Path, 
     assert "batches 0/1" in events[0].description
 
 
+def test_project_correct_polish_strict_reports_agent_log_batches(tmp_path: Path, monkeypatch) -> None:
+    """Strict polish should expose batch state to structured agent logs."""
+    texts = [f"第 {index} 句话需要清理。" for index in range(1, 25)]
+    project_dir = _sample_project_with_sentences(tmp_path, texts)
+    events = []
+
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(
+            dashscope_api_key="key",
+            dashscope_base_url=None,
+            dashscope_correction_model="qwen-test",
+            dashscope_correction_concurrency=2,
+        ),
+    )
+
+    def fake_strict(**kwargs):
+        first = kwargs["candidates"][0]
+        return LlmStrictPolishResult(
+            "清噪",
+            [LlmPolishItem(first.candidate_id, first.text + " 已清理。", "filler", "测试")],
+            kwargs["model"],
+        )
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish_strict", fake_strict)
+
+    project_correct_commands.prepare_transcript_polish_for_review(
+        paths=project_paths(project_dir),
+        manifest=load_manifest(project_dir),
+        speaker_mapping={0: "敬悦"},
+        options=CorrectionEditOptions(
+            open_editor=False,
+            open_proposal=False,
+            category="polish",
+            model="qwen-test",
+            polish_concurrency=2,
+        ),
+        progress=events.append,
+    )
+
+    heartbeat_events = [event for event in events if event.log_kind == "heartbeat" and event.stage == "polish"]
+    assert heartbeat_events
+    assert dict(heartbeat_events[0].log_fields)["batch"] == "0/2"
+    assert dict(heartbeat_events[-1].log_fields)["batch"] == "2/2"
+
+
 def test_project_correct_polish_default_uses_strict_path_and_records_change_type(
     tmp_path: Path, monkeypatch
 ) -> None:
