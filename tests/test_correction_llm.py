@@ -14,6 +14,7 @@ from app.correction_llm import (
     LlmCorrectionSample,
     infer_vocabulary_replacements,
     propose_transcript_polish,
+    propose_transcript_polish_strict,
     propose_vocabulary_corrections,
 )
 
@@ -139,3 +140,103 @@ def test_propose_transcript_polish_does_not_retry_read_timeout(monkeypatch) -> N
         )
 
     assert calls == 1
+
+
+def _polish_strict_response(content: str) -> SimpleNamespace:
+    """Build a DashScope-style response wrapping a raw content string."""
+    return SimpleNamespace(status_code=200, output={"choices": [{"message": {"content": content}}]})
+
+
+def _polish_strict_candidates(count: int) -> list[LlmCorrectionCandidate]:
+    """Build N strict-polish candidates with stable ids c0..c{N-1}."""
+    return [
+        LlmCorrectionCandidate(f"c{index}", index, "speaker", f"待修正句子{index}。")
+        for index in range(count)
+    ]
+
+
+def test_load_json_object_tolerates_unescaped_control_chars(monkeypatch) -> None:
+    """qwen sometimes emits a literal newline inside a string value; strict=False parses it."""
+
+    # Literal \n inside corrected_text is the most common malformed-JSON we see.
+    content = (
+        '{"understanding":"修字",'
+        '"corrections":[{"id":"c0","corrected_text":"第一行\n第二行","change_type":"typo","reason":"x"}]}'
+    )
+    monkeypatch.setattr("app.correction_llm.Generation.call", lambda **_: _polish_strict_response(content))
+    settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
+
+    result = propose_transcript_polish_strict(
+        candidates=_polish_strict_candidates(1),
+        settings=settings,
+        model="qwen-test",
+    )
+
+    assert [item.candidate_id for item in result.items] == ["c0"]
+    assert result.items[0].corrected_text == "第一行\n第二行"
+
+
+def test_load_json_object_salvages_items_when_response_is_truncated(monkeypatch) -> None:
+    """Truncated mid-array response should still surface every complete item."""
+
+    # Two complete items, then a half-written third item (mid-key). Real
+    # symptom is `Expecting ',' delimiter: line N column 6` at max_tokens.
+    content = (
+        '{"understanding":"修字","corrections":['
+        '{"id":"c0","corrected_text":"OK0","change_type":"typo","reason":"r0"},'
+        '{"id":"c1","corrected_text":"OK1","change_type":"typo","reason":"r1"},'
+        '{"id":"c2","corrected_text":"OK'
+    )
+    monkeypatch.setattr("app.correction_llm.Generation.call", lambda **_: _polish_strict_response(content))
+    settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
+
+    result = propose_transcript_polish_strict(
+        candidates=_polish_strict_candidates(3),
+        settings=settings,
+        model="qwen-test",
+    )
+
+    # Two intact items kept, half-written third dropped — better than losing the batch.
+    assert {item.candidate_id for item in result.items} == {"c0", "c1"}
+    assert {item.corrected_text for item in result.items} == {"OK0", "OK1"}
+
+
+def test_load_json_object_salvages_around_one_bad_item(monkeypatch) -> None:
+    """A single item with unescaped quote should not poison the surrounding items."""
+
+    # Middle item has an unescaped " inside corrected_text — JSON parse fails
+    # at that record but the others are intact JSON objects.
+    bad_inner = '{"id":"c1","corrected_text":"含"号的句子","change_type":"typo","reason":"r1"}'
+    content = (
+        '{"understanding":"修字","corrections":['
+        '{"id":"c0","corrected_text":"OK0","change_type":"typo","reason":"r0"},'
+        f'{bad_inner},'
+        '{"id":"c2","corrected_text":"OK2","change_type":"typo","reason":"r2"}]}'
+    )
+    monkeypatch.setattr("app.correction_llm.Generation.call", lambda **_: _polish_strict_response(content))
+    settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
+
+    result = propose_transcript_polish_strict(
+        candidates=_polish_strict_candidates(3),
+        settings=settings,
+        model="qwen-test",
+    )
+
+    assert {item.candidate_id for item in result.items} == {"c0", "c2"}
+
+
+def test_load_json_object_raises_when_no_json_present(monkeypatch) -> None:
+    """If the model returns prose with no usable JSON object, surface a clear error."""
+
+    monkeypatch.setattr(
+        "app.correction_llm.Generation.call",
+        lambda **_: _polish_strict_response("Sorry, I cannot help with that."),
+    )
+    settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
+
+    with pytest.raises(RuntimeError, match="was not JSON"):
+        propose_transcript_polish_strict(
+            candidates=_polish_strict_candidates(1),
+            settings=settings,
+            model="qwen-test",
+        )

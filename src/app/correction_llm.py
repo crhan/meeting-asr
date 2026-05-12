@@ -583,7 +583,26 @@ def _parse_replacement_rules(text: str) -> list[LlmReplacementRule]:
 
 def _load_json_object(text: str) -> dict[str, Any]:
     """
-    Load a JSON object from raw model text.
+    Load a JSON object from raw model text, with best-effort repair when the
+    response is mildly malformed.
+
+    Failure modes seen on real DashScope traffic (qwen-plus correction model):
+
+    * ``strict`` JSON rejecting unescaped control characters (literal ``\\n``
+      inside a ``corrected_text`` value).
+    * Output truncated mid-array because generation hit ``max_tokens`` before
+      the model could close ``]}``.
+    * One correction item has an unescaped quote or missing comma; the rest
+      of the batch is structurally fine.
+
+    Strategy:
+
+    1. ``json.loads(strict=False)`` — handles unescaped control chars without
+       any other relaxation.
+    2. If that fails, walk the text with ``JSONDecoder.raw_decode`` looking for
+       any individually-valid ``{...}`` object. A salvaged ``{"understanding":
+       "", "corrections": [...]}`` payload lets the caller keep all complete
+       items rather than dropping the whole batch.
 
     Args:
         text: Raw model output.
@@ -596,15 +615,52 @@ def _load_json_object(text: str) -> dict[str, Any]:
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
         cleaned = re.sub(r"\s*```$", "", cleaned)
     try:
-        payload = json.loads(cleaned)
+        payload = json.loads(cleaned, strict=False)
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", cleaned, flags=re.S)
-        if match is None:
-            raise RuntimeError(f"DashScope correction response was not JSON: {text}") from None
-        payload = json.loads(match.group(0))
+        payload = _salvage_json_object(cleaned, original=text)
     if not isinstance(payload, dict):
         raise RuntimeError("DashScope correction response JSON must be an object.")
     return payload
+
+
+def _salvage_json_object(text: str, *, original: str) -> dict[str, Any]:
+    """
+    Recover a usable JSON object from a partially-malformed model response.
+
+    Walks ``text`` with ``JSONDecoder.raw_decode``: if any ``{...}`` is itself
+    valid JSON we keep it. If we find a dict that already looks like the
+    expected root (carries ``corrections`` or ``replacements``) we return it
+    directly. Otherwise we collect every standalone item that carries an
+    ``id`` (correction items always do) and return them under a synthetic
+    ``corrections`` key so the caller's normal filtering still applies.
+
+    Args:
+        text: Cleaned model output (code fences stripped).
+        original: Raw model output retained only for the no-JSON error message.
+
+    Returns:
+        Parsed dict, possibly synthesized from individually-valid items.
+    """
+    decoder = json.JSONDecoder(strict=False)
+    items: list[dict[str, Any]] = []
+    index = 0
+    while index < len(text):
+        next_brace = text.find("{", index)
+        if next_brace == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(text, next_brace)
+        except json.JSONDecodeError:
+            index = next_brace + 1
+            continue
+        if isinstance(obj, dict) and ("corrections" in obj or "replacements" in obj):
+            return obj
+        if isinstance(obj, dict) and "id" in obj:
+            items.append(obj)
+        index = end
+    if not items:
+        raise RuntimeError(f"DashScope correction response was not JSON: {original}")
+    return {"understanding": "", "corrections": items}
 
 
 def _parse_corrections(value: object, candidate_ids: set[str]) -> dict[str, str]:
