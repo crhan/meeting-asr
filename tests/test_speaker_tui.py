@@ -65,8 +65,6 @@ from app.speaker_labeling import (
 from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
 from app.presentation.tui.speaker_timeline import (
     SpeakerPickScreen,
-    build_timeline_rows,
-    render_timeline_pane,
 )
 from app.presentation.tui.speaker_save import (
     SentenceReassignmentChange,
@@ -1862,6 +1860,43 @@ def test_timeline_reassign_moves_segment_and_records_change() -> None:
             assert change.sentence_id == 2
             assert change.original_speaker_id == 1
             assert change.new_speaker_id == 0
+
+    asyncio.run(scenario())
+
+
+def test_speaker_view_reassigns_sample_to_new_speaker() -> None:
+    """Grouped Project Review samples should reassign directly without timeline mode."""
+
+    app = SpeakerReviewApp(_timeline_session())
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("right")
+            await pilot.press("r")
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, SpeakerPickScreen)
+
+            # Existing non-current speaker is preselected; move to the new speaker row.
+            await pilot.press("down")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            speakers = pilot.app.session.speakers
+            assert [speaker.speaker_id for speaker in speakers] == [0, 1, 2]
+            assert speakers[2].label == "Speaker C"
+            assert speakers[2].current_name == "Speaker C"
+            assert any(seg.sentence_id == 1 for seg in speakers[2].segments)
+            assert all(seg.sentence_id != 1 for seg in speakers[0].segments)
+            assert pilot.app.view_mode == "speakers"
+            assert "reassigned" in pilot.app._sample_pane()
+
+            decision = pilot.app._decision()
+            assert len(decision.sentence_reassignments) == 1
+            change = decision.sentence_reassignments[0]
+            assert change.sentence_id == 1
+            assert change.original_speaker_id == 0
+            assert change.new_speaker_id == 2
 
     asyncio.run(scenario())
 

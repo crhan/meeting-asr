@@ -15,6 +15,7 @@ from textual.worker import Worker, WorkerState
 from textual.widgets import Header, Static
 
 from app.models import SentenceSegment
+from app.postprocess import speaker_id_to_label
 from app.speaker_match_status import best_candidate_name
 from app.speaker_review import build_audio_preview_command
 from app.voiceprint_embedding import VoiceprintEmbedSummary, embed_voiceprint_samples
@@ -58,6 +59,7 @@ from app.presentation.tui.speaker_save import (
 )
 from app.presentation.tui.speaker_session import load_speaker_review_session, load_voiceprint_review_progress
 from app.presentation.tui.speaker_timeline import (
+    SpeakerPickOption,
     SpeakerPickScreen,
     TimelineRow,
     build_timeline_rows,
@@ -518,29 +520,20 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self._refresh()
 
     def action_reassign_speaker(self) -> None:
-        """Reassign the timeline-selected sentence to a different speaker."""
-        if self.view_mode != VIEW_MODE_TIMELINE:
-            self._set_status(
-                tr(
-                    "Press t to enter timeline view before reassigning speakers.",
-                    "请先按 t 进入时间轴视图，再重新指派 speaker。",
-                )
-            )
-            return
-        rows = self._timeline_rows()
-        if not rows:
+        """Reassign the selected sentence to a different or new speaker."""
+        segment = self._reassignment_segment()
+        if segment is None:
             self._set_status(tr("No sentences to reassign.", "没有可改的句子。"))
             return
-        self.timeline_selected_index = max(0, min(self.timeline_selected_index, len(rows) - 1))
-        row = rows[self.timeline_selected_index]
-        options = speaker_pick_options(self.session.speakers)
+        source = self._speaker_for_segment(segment)
+        options = _speaker_pick_options_with_new(self.session.speakers)
         self.push_screen(
             SpeakerPickScreen(
-                sentence_text=row.segment.text,
-                current_speaker_id=row.speaker_id,
+                sentence_text=segment.text,
+                current_speaker_id=source.speaker_id,
                 options=options,
             ),
-            lambda choice: self._handle_speaker_reassignment(row, choice),
+            lambda choice: self._handle_speaker_reassignment(segment, source.speaker_id, choice),
         )
 
     def action_quit_review(self) -> None:
@@ -610,33 +603,38 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def _handle_speaker_reassignment(
         self,
-        row: TimelineRow,
+        segment: SentenceSegment,
+        source_speaker_id: int,
         new_speaker_id: int | None,
     ) -> None:
         """Move a sentence to another speaker after the picker resolves."""
         if new_speaker_id is None:
             self._set_status(tr("Speaker reassignment canceled.", "已取消 speaker 重新指派。"))
             return
-        if new_speaker_id == row.speaker_id:
+        if new_speaker_id == source_speaker_id:
             self._set_status(tr("Same speaker chosen; no change.", "选择的还是当前 speaker，不做改动。"))
             return
-        source = speaker_by_id(self.session.speakers, row.speaker_id)
+        source = speaker_by_id(self.session.speakers, source_speaker_id)
         target = speaker_by_id(self.session.speakers, new_speaker_id)
-        if source is None or target is None:
+        if source is None:
             self._set_status(tr("Reassignment target unavailable.", "无法找到重新指派的目标 speaker。"))
             return
-        if not move_segment_between_speakers(source, target, row.segment):
+        if target is None:
+            target = _new_review_speaker(new_speaker_id)
+            self.session.speakers.append(target)
+        if not move_segment_between_speakers(source, target, segment):
             self._set_status(tr("Sentence not found on its current speaker.", "未在当前 speaker 中找到该句子。"))
             return
         target.ignored = False
         if not target.current_name.strip():
             target.current_name = target.label
-        self._retarget_correction_edits(row.segment, row.speaker_id, target.speaker_id)
-        self._sync_timeline_to_segment(row.segment)
+        self._retarget_correction_edits(segment, source_speaker_id, target.speaker_id)
+        self._sync_timeline_to_segment(segment)
+        self.selected_speaker_index = self.session.speakers.index(target)
         self._set_status(
             tr(
-                f"Moved sentence {_segment_time_range(row.segment)} to {target.label} {target.current_name}.",
-                f"已把 {_segment_time_range(row.segment)} 的句子改到 {target.label} {target.current_name}。",
+                f"Moved sentence {_segment_time_range(segment)} to {target.label} {target.current_name}.",
+                f"已把 {_segment_time_range(segment)} 的句子改到 {target.label} {target.current_name}。",
             )
         )
         self._refresh()
@@ -833,6 +831,19 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             return rows[self.timeline_selected_index].segment
         return self._selected_sample()
 
+    def _reassignment_segment(self) -> SentenceSegment | None:
+        """Return the sentence currently targeted for speaker reassignment."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            rows = self._timeline_rows()
+            if not rows:
+                return None
+            self.timeline_selected_index = max(0, min(self.timeline_selected_index, len(rows) - 1))
+            return rows[self.timeline_selected_index].segment
+        speaker = self._speaker()
+        if not speaker.segments:
+            return None
+        return self._selected_sample()
+
     def _speaker_for_segment(self, segment: SentenceSegment) -> ReviewSpeaker:
         """Return the review speaker that currently owns a segment."""
         for speaker in self.session.speakers:
@@ -881,6 +892,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             sample_line = f"{prefix} [cyan]{time_range}[/] {escape(text)}"
             if self._has_correction_edit(segment):
                 sample_line += " [yellow]edited[/]"
+            if segment_key(segment) in self._reassigned_segment_keys():
+                sample_line += " [yellow]reassigned[/]"
             if index == speaker.selected_sample_index:
                 sample_line = f"[reverse]{sample_line}[/]"
             lines.append(sample_line)
@@ -1344,6 +1357,41 @@ def _speaker_index_by_id(speakers: list[ReviewSpeaker], speaker_id: int) -> int:
     return 0
 
 
+def _speaker_pick_options_with_new(speakers: list[ReviewSpeaker]) -> list[SpeakerPickOption]:
+    """Return existing speaker picker options plus one anonymous new speaker."""
+    options = speaker_pick_options(speakers)
+    new_speaker_id = _next_review_speaker_id(speakers)
+    label = speaker_id_to_label(new_speaker_id)
+    options.append(
+        SpeakerPickOption(
+            speaker_id=new_speaker_id,
+            label=label,
+            name=tr("new speaker", "新 speaker"),
+            ignored=False,
+        )
+    )
+    return options
+
+
+def _next_review_speaker_id(speakers: list[ReviewSpeaker]) -> int:
+    """Return the next unused project speaker id."""
+    if not speakers:
+        return 0
+    return max(speaker.speaker_id for speaker in speakers) + 1
+
+
+def _new_review_speaker(speaker_id: int) -> ReviewSpeaker:
+    """Create an empty anonymous Project Review speaker."""
+    label = speaker_id_to_label(speaker_id)
+    return ReviewSpeaker(
+        speaker_id=speaker_id,
+        label=label,
+        segments=[],
+        current_name=label,
+        match=None,
+    )
+
+
 def _identity_snapshot(speakers: list[ReviewSpeaker]) -> dict[int, tuple[str, bool, int | None, str | None]]:
     """Return the current in-TUI speaker identity state."""
     return {
@@ -1392,5 +1440,3 @@ def _trim_sample_text(text: str, *, limit: int = 90) -> str:
     if len(preview) <= limit:
         return preview
     return preview[: limit - 3] + "..."
-
-

@@ -14,12 +14,12 @@ def browse_status() -> str:
         (
             "Browse: h/l or left/right choose column | j/k or up/down move | "
             "PgUp/PgDn page samples | Space play/stop | p project | / name | e edit text | "
-            "t timeline | v capture | m rematch | b embed | ? help | s save"
+            "r reassign | t timeline | v capture | m rematch | b embed | ? help | s save"
         ),
         (
             "浏览：h/l 或 ←/→ 切列 | j/k 或 ↑/↓ 移动 | PgUp/PgDn 翻页 | "
             "Space 播放/停止 | p 切项目 | / 改人名 | e 改文字 | "
-            "t 时间轴视图 | v 声纹采样 | m 重新匹配 | b 生成 embedding | ? 帮助 | s 保存"
+            "r 改归属 | t 时间轴视图 | v 声纹采样 | m 重新匹配 | b 生成 embedding | ? 帮助 | s 保存"
         ),
     )
 
@@ -76,7 +76,7 @@ i                    Ignore this speaker: keep anonymous and skip capture
 e                    Edit selected transcript text inside this TUI
 c                    Same as e
 t                    Toggle between Speakers (grouped) and Timeline (chronological) view
-r                    In Timeline view, reassign the selected sentence to another speaker
+r                    Reassign the selected sentence to another or new speaker
 v                    Open voiceprint review: project candidates and global library
 m                    Rematch speakers against the current global voiceprint library
 b                    Embed captured voiceprint samples
@@ -125,7 +125,7 @@ i                    忽略当前 speaker：保持匿名，并跳过声纹采样
 e                    在 TUI 内编辑当前转写句子
 c                    等同于 e
 t                    在「分组视图」与「时间轴视图」之间切换
-r                    在时间轴视图下，把当前句子改给另一个 speaker
+r                    把当前句子改给另一个或新的 speaker
 v                    打开声纹 Review：项目候选样本和全局声纹库
 m                    使用当前全局声纹库重新匹配 speaker
 b                    为已采集声纹样本生成 embedding
