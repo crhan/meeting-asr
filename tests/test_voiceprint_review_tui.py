@@ -127,6 +127,36 @@ def test_voiceprint_review_tui_excludes_current_speaker_samples(tmp_path: Path) 
     asyncio.run(scenario())
 
 
+def test_voiceprint_review_reassigns_sample_to_new_speaker(tmp_path: Path) -> None:
+    """Project samples can be moved to a new anonymous speaker before save."""
+    app = VoiceprintReviewApp(_review_session(tmp_path))
+
+    async def scenario() -> None:
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.press("right")
+            await pilot.press("r")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            capture = app.session.capture
+            assert capture is not None
+            assert [speaker.speaker_id for speaker in capture.speakers] == [0, 1]
+            assert len(capture.speakers[0].clips) == 1
+            assert len(capture.speakers[1].clips) == 1
+            moved = capture.speakers[1].clips[0]
+            assert moved.text == "project sample one"
+            assert moved.included is False
+            assert "reassigned" in app._sample_pane()
+
+    asyncio.run(scenario())
+
+    reassignments = app._sentence_reassignments()
+    assert len(reassignments) == 1
+    assert reassignments[0].original_speaker_id == 0
+    assert reassignments[0].new_speaker_id == 1
+
+
 def test_voiceprint_review_defaults_high_score_matches_unchecked_and_shows_score(tmp_path: Path) -> None:
     """High-score project matches should not be captured again by default."""
     app = VoiceprintReviewApp(

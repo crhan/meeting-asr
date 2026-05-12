@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.presentation.tui import voiceprint_review_workflow
+from app.speaker_labeling import SentenceReassignmentSpec
 from app.voiceprint_embedding import VoiceprintEmbedSummary
 from app.voiceprint_evaluation import VoiceprintEvaluationSummary, VoiceprintProjectEvaluation, VoiceprintScoreChange
 from app.voiceprints import VoiceprintCaptureSummary, VoiceprintClip, VoiceprintSpeaker
@@ -54,6 +55,57 @@ def test_voiceprint_review_workflow_can_roll_back_pending_files(monkeypatch, tmp
     assert manifest_path.read_text(encoding="utf-8") == "old manifest"
     assert match_path.read_text(encoding="utf-8") == "old match"
     assert not summary.transaction.backup_dir.exists()
+
+
+def test_voiceprint_review_workflow_rolls_back_sentence_outputs(monkeypatch, tmp_path: Path) -> None:
+    """Rejecting reassignment changes should restore transcript artifacts too."""
+    project_dir = tmp_path / "project"
+    store_dir = tmp_path / "voiceprints"
+    db_path = store_dir / "voiceprints.sqlite"
+    clip_path = store_dir / "clips" / "project-1" / "speaker_0" / "clip_001.wav"
+    sentence_path = project_dir / "asr" / "sentences.json"
+    corrected_path = project_dir / "asr" / "sentences_corrected.json"
+    transcript_path = project_dir / "exports" / "transcript_speakers.txt"
+    _write_file(sentence_path, "old sentences")
+    _write_file(corrected_path, "old corrected")
+    _write_file(transcript_path, "old transcript")
+    planned = _planned_capture(store_dir, db_path, clip_path)
+
+    def fake_reassign(*args, **kwargs) -> None:
+        _write_file(sentence_path, "new sentences")
+        _write_file(corrected_path, "new corrected")
+        _write_file(transcript_path, "new transcript")
+
+    monkeypatch.setattr(voiceprint_review_workflow, "apply_project_sentence_reassignments", fake_reassign)
+    monkeypatch.setattr(voiceprint_review_workflow, "embed_voiceprint_samples", _fake_embed)
+    monkeypatch.setattr(voiceprint_review_workflow, "evaluate_voiceprint_embedding", _fake_evaluation)
+
+    summary = voiceprint_review_workflow.run_voiceprint_review_workflow(
+        project_dir=project_dir,
+        planned=planned,
+        selected_clip_rel_paths=frozenset(),
+        store_dir=store_dir,
+        reassignments=(
+            SentenceReassignmentSpec(
+                sentence_id=None,
+                begin_time_ms=1000,
+                end_time_ms=2000,
+                new_speaker_id=1,
+                original_speaker_id=0,
+            ),
+        ),
+    )
+
+    assert summary.capture.sample_count == 0
+    assert sentence_path.read_text(encoding="utf-8") == "new sentences"
+    assert corrected_path.read_text(encoding="utf-8") == "new corrected"
+    assert transcript_path.read_text(encoding="utf-8") == "new transcript"
+
+    summary.transaction.rollback()
+
+    assert sentence_path.read_text(encoding="utf-8") == "old sentences"
+    assert corrected_path.read_text(encoding="utf-8") == "old corrected"
+    assert transcript_path.read_text(encoding="utf-8") == "old transcript"
 
 
 def test_historical_risks_show_severity_project_id_and_review_command() -> None:

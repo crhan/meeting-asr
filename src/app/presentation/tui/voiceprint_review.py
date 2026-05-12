@@ -27,7 +27,9 @@ from app.presentation.tui.voiceprint_capture import (
     VoiceprintCaptureClipEntry,
     VoiceprintCaptureReviewSession,
     VoiceprintCaptureSpeakerEntry,
+    create_capture_speaker,
     load_voiceprint_capture_review_session,
+    next_capture_speaker_id,
 )
 from app.presentation.tui.i18n import tr
 from app.presentation.tui.voiceprint_review_context import (
@@ -59,6 +61,8 @@ from app.presentation.tui.voiceprint_quality import (
     _sample_style as quality_sample_style,
 )
 from app.presentation.tui.speaker_matches import load_match_candidates
+from app.presentation.tui.speaker_timeline import SpeakerPickOption, SpeakerPickScreen
+from app.speaker_labeling import SentenceReassignmentSpec
 from app.presentation.tui.voiceprint_review_text import help_text, quality_reason_text, status_text
 from app.presentation.tui.voiceprint_review_workflow import (
     VoiceprintReviewProcessingScreen,
@@ -83,7 +87,7 @@ from app.voiceprint_quality import (
     analyze_voiceprint_quality,
 )
 from app.voiceprint_store import VoiceprintSampleRow, get_voiceprint_db_path, update_voiceprint_sample_status
-from app.voiceprints import VoiceprintCaptureSummary, plan_voiceprint_capture
+from app.voiceprints import VoiceprintCaptureSummary, VoiceprintClip, VoiceprintSpeaker, plan_voiceprint_capture
 
 Mode = Literal["project", "library", "quality"]
 Column = Literal["speakers", "samples"]
@@ -228,7 +232,7 @@ class _VoiceprintReviewBase:
         Binding("x", "toggle_sample", "Include/exclude"),
         Binding("a", "toggle_speaker", "Toggle speaker"),
         Binding("d", "exclude_speaker", "Exclude speaker"),
-        Binding("r", "mark_quality_quarantined", "Quarantine", show=False),
+        Binding("r", "reassign_sample", "Reassign sample"),
         Binding("v", "mark_quality_verified", "Verify sample", show=False),
         Binding("s", "save", "Save selected"),
         Binding("u", "refresh_quality", "Refresh quality"),
@@ -379,6 +383,29 @@ class _VoiceprintReviewBase:
         self._set_status(tr(f"Excluded all samples for {speaker.name}.", f"已取消 {speaker.name} 的全部样本。"))
         self._refresh()
 
+    def action_reassign_sample(self) -> None:
+        """Move the selected project sample to another speaker."""
+        if self.mode == QUALITY_MODE:
+            self._mark_quality_sample(VOICEPRINT_SAMPLE_STATUS_QUARANTINED)
+            return
+        if self.mode != PROJECT_MODE:
+            self._set_status(tr("Sentence reassignment only applies to project candidates.", "句子改 speaker 只适用于项目候选样本。"))
+            return
+        capture = self.session.capture
+        source = self._project_speaker()
+        sample = self._project_selected_sample()
+        if capture is None or source is None or sample is None:
+            self._set_status(tr("No project sample selected.", "未选择项目样本。"))
+            return
+        self.app.push_screen(
+            SpeakerPickScreen(
+                sentence_text=sample.text,
+                current_speaker_id=source.speaker_id,
+                options=self._reassign_options(capture.speakers),
+            ),
+            lambda choice: self._handle_sample_reassignment(source.speaker_id, sample, choice),
+        )
+
     def action_mark_quality_quarantined(self) -> None:
         """Mark the selected quality sample as quarantined."""
         if self.mode != QUALITY_MODE:
@@ -417,8 +444,9 @@ class _VoiceprintReviewBase:
             self._set_status(tr("No project candidates to capture in this session.", "当前会话没有可采集的项目候选样本。"))
             return
         selected = self._selected_clip_rel_paths()
-        if not selected:
-            self._set_status(tr("No samples selected. Toggle at least one sample before capture.", "没有选中样本。采集前至少选中一个样本。"))
+        reassignments = self._sentence_reassignments()
+        if not selected and not reassignments:
+            self._set_status(tr("No samples selected or reassigned. Toggle or move at least one sample before saving.", "没有选中或改归属的样本。保存前至少选中或移动一个样本。"))
             return
         self._save_selected_clip_paths(frozenset(selected))
 
@@ -564,6 +592,7 @@ class _VoiceprintReviewBase:
             )
         selected = len(self._selected_clip_rel_paths())
         total = sum(len(speaker.clips) for speaker in capture.speakers)
+        reassigned = len(self._sentence_reassignments())
         speaker = self._project_speaker()
         sample = self._project_selected_sample()
         title = trim_text(capture.project_title or capture.project_id, limit=72)
@@ -582,6 +611,7 @@ class _VoiceprintReviewBase:
                 "[b]目标[/b]     确认样本，按 s 采集、生成 embedding 并评测",
             ),
             tr(f"[b]Selected[/b] {selected}/{total} candidate sample(s)", f"[b]已选[/b]     {selected}/{total} 个候选样本"),
+            tr(f"[b]Reassign[/b] {reassigned} staged sentence(s)", f"[b]改归属[/b]   已暂存 {reassigned} 条句子"),
             tr(f"[b]Focus[/b]    {escape(project_speaker_summary(speaker))}", f"[b]当前[/b]     {escape(project_speaker_summary(speaker))}"),
             tr(f"[b]Sample[/b]   {escape(project_sample_summary(sample))}", f"[b]样本[/b]     {escape(project_sample_summary(sample))}"),
         ]
@@ -704,7 +734,8 @@ class _VoiceprintReviewBase:
             checked = "[green]x[/]" if sample.included else "[dim] [/]"
             marker = "[bold yellow]>[/]" if prefix == ">" else "[dim] [/]"
             playing = "[bold magenta]PLAY[/]" if self._playing_key(PROJECT_MODE) == sample.rel_path else "[dim]    [/]"
-            line = f"{marker} {checked} {playing} [cyan]#{index + 1}[/] {escape(project_sample_line(sample))}"
+            reassigned = " [yellow]reassigned[/]" if sample.original_speaker_id not in {None, speaker.speaker_id} else ""
+            line = f"{marker} {checked} {playing} [cyan]#{index + 1}[/] {escape(project_sample_line(sample))}{reassigned}"
             lines.append(self._current_row(line) if prefix == ">" else line)
         if not samples:
             lines.append(tr("[yellow]No samples for this speaker.[/]", "[yellow]当前 speaker 没有样本。[/]"))
@@ -1083,6 +1114,65 @@ class _VoiceprintReviewBase:
         self._set_status(tr(f"Set {sample.sample_public_id} to {status}.", f"已把 {sample.sample_public_id} 标记为 {status}。"))
         self._refresh()
 
+    def _reassign_options(self, speakers: list[VoiceprintCaptureSpeakerEntry]) -> list[SpeakerPickOption]:
+        """Return existing speakers plus one new anonymous target."""
+        options = [
+            SpeakerPickOption(
+                speaker_id=speaker.speaker_id,
+                label=f"Speaker {speaker.speaker_id}",
+                name=speaker.name or f"Speaker {speaker.speaker_id}",
+                ignored=False,
+            )
+            for speaker in sorted(speakers, key=lambda item: item.speaker_id)
+        ]
+        new_id = next_capture_speaker_id(speakers)
+        new_speaker = create_capture_speaker(new_id)
+        options.append(
+            SpeakerPickOption(
+                speaker_id=new_id,
+                label=new_speaker.name,
+                name=tr("new speaker", "新 speaker"),
+                ignored=False,
+            )
+        )
+        return options
+
+    def _handle_sample_reassignment(
+        self,
+        source_speaker_id: int,
+        sample: VoiceprintCaptureClipEntry,
+        target_speaker_id: int | None,
+    ) -> None:
+        """Move a project sample after the picker resolves."""
+        capture = self.session.capture
+        if capture is None or target_speaker_id is None:
+            self._set_status(tr("Speaker reassignment canceled.", "已取消 speaker 重新指派。"))
+            return
+        if target_speaker_id == source_speaker_id:
+            self._set_status(tr("Same speaker chosen; no change.", "选择的还是当前 speaker，不做改动。"))
+            return
+        source = _capture_speaker_by_id(capture.speakers, source_speaker_id)
+        target = _capture_speaker_by_id(capture.speakers, target_speaker_id)
+        if source is None:
+            self._set_status(tr("Original speaker unavailable.", "找不到原 speaker。"))
+            return
+        if target is None:
+            target = create_capture_speaker(target_speaker_id)
+            capture.speakers.append(target)
+        if not _move_capture_sample(source, target, sample):
+            self._set_status(tr("Sentence not found on its current speaker.", "未在当前 speaker 中找到该句子。"))
+            return
+        if sample.original_speaker_id != target.speaker_id and target.person_public_id is None:
+            sample.included = False
+        self.project_selected_speaker_index = capture.speakers.index(target)
+        self._set_status(
+            tr(
+                f"Moved sample {project_sample_time_range(sample)} to {target.name}.",
+                f"已把 {project_sample_time_range(sample)} 的样本改到 {target.name}。",
+            )
+        )
+        self._refresh()
+
     def _save_quality_changes(self) -> None:
         """Persist staged quality status changes and refresh scores."""
         changes = quality_changed_statuses(self.session.quality, self.quality_statuses)
@@ -1196,6 +1286,76 @@ class _VoiceprintReviewBase:
             if clip.included
         }
 
+    def _sentence_reassignments(self) -> tuple[SentenceReassignmentSpec, ...]:
+        """Build staged sentence reassignments from moved project samples."""
+        capture = self.session.capture
+        if capture is None:
+            return ()
+        specs: list[SentenceReassignmentSpec] = []
+        for speaker in capture.speakers:
+            for clip in speaker.clips:
+                if clip.original_speaker_id in {None, speaker.speaker_id}:
+                    continue
+                specs.append(
+                    SentenceReassignmentSpec(
+                        sentence_id=None,
+                        begin_time_ms=clip.source_begin_time_ms,
+                        end_time_ms=clip.source_end_time_ms,
+                        new_speaker_id=speaker.speaker_id,
+                        original_speaker_id=clip.original_speaker_id,
+                    )
+                )
+        return tuple(specs)
+
+    def _current_capture_plan(self) -> tuple[VoiceprintCaptureSummary | None, frozenset[str]]:
+        """Build a capture plan that reflects current TUI speaker assignment."""
+        capture = self.session.capture
+        if capture is None:
+            return None, frozenset()
+        selected: set[str] = set()
+        speakers: list[VoiceprintSpeaker] = []
+        for speaker in capture.speakers:
+            clips: list[VoiceprintClip] = []
+            for index, clip in enumerate(speaker.clips, start=1):
+                rel_path = f"clips/{capture.project_id}/speaker_{speaker.speaker_id}/clip_{index:03d}.wav"
+                planned = VoiceprintClip(
+                    path=capture.store_dir / rel_path,
+                    rel_path=rel_path,
+                    source_begin_time_ms=clip.source_begin_time_ms,
+                    source_end_time_ms=clip.source_end_time_ms,
+                    clip_begin_time_ms=clip.clip_begin_time_ms,
+                    clip_end_time_ms=clip.clip_end_time_ms,
+                    text=clip.text,
+                    selection_score=clip.selection_score,
+                    selection_reason=clip.selection_reason,
+                    audio_score=clip.audio_score,
+                    audio_reason=clip.audio_reason,
+                    recommended=clip.recommended,
+                )
+                clips.append(planned)
+                if clip.included:
+                    selected.add(rel_path)
+            if clips:
+                speakers.append(
+                    VoiceprintSpeaker(
+                        speaker_id=speaker.speaker_id,
+                        name=speaker.name,
+                        person_id=None,
+                        person_public_id=speaker.person_public_id,
+                        clips=clips,
+                    )
+                )
+        return (
+            VoiceprintCaptureSummary(
+                store_dir=capture.store_dir,
+                db_path=capture.db_path,
+                clip_dir=capture.store_dir / "clips",
+                speakers=speakers,
+                dry_run=True,
+            ),
+            frozenset(selected),
+        )
+
     @staticmethod
     def _initial_mode(session: VoiceprintReviewSession) -> Mode:
         """Return a valid initial view for the session."""
@@ -1267,13 +1427,18 @@ class VoiceprintReviewScreen(_VoiceprintReviewBase, ModalScreen[VoiceprintReview
         if self.project_dir is None or self.planned is None:
             self._finish(VoiceprintReviewDecision(True, selected_clip_rel_paths))
             return
+        current_planned, current_selected = self._current_capture_plan()
+        planned = replace(current_planned, target_sample_count=self.planned.target_sample_count) if current_planned is not None else self.planned
+        selected = current_selected if current_planned is not None else selected_clip_rel_paths
+        reassignments = self._sentence_reassignments()
         self._show_processing()
         self.run_worker(
             lambda: run_voiceprint_review_workflow(
                 project_dir=self.project_dir,
-                planned=self.planned,
-                selected_clip_rel_paths=selected_clip_rel_paths,
+                planned=planned,
+                selected_clip_rel_paths=selected,
                 store_dir=self.store_dir,
+                reassignments=reassignments,
             ),
             group="voiceprint-review-workflow",
             name="capture-embed-evaluate",
@@ -1502,3 +1667,46 @@ def _format_duration(seconds: float) -> str:
     total = max(0, int(seconds))
     minutes, remainder = divmod(total, 60)
     return f"{minutes}:{remainder:02d}"
+
+
+def _capture_speaker_by_id(
+    speakers: list[VoiceprintCaptureSpeakerEntry],
+    speaker_id: int,
+) -> VoiceprintCaptureSpeakerEntry | None:
+    """Return a capture speaker by project speaker id."""
+    for speaker in speakers:
+        if speaker.speaker_id == speaker_id:
+            return speaker
+    return None
+
+
+def _move_capture_sample(
+    source: VoiceprintCaptureSpeakerEntry,
+    target: VoiceprintCaptureSpeakerEntry,
+    sample: VoiceprintCaptureClipEntry,
+) -> bool:
+    """Move a capture sample between speaker rows in timeline order."""
+    key = (sample.source_begin_time_ms, sample.source_end_time_ms, sample.text)
+    for index, owned in enumerate(source.clips):
+        owned_key = (owned.source_begin_time_ms, owned.source_end_time_ms, owned.text)
+        if owned is sample or owned_key == key:
+            source.clips.pop(index)
+            if source.selected_clip_index >= len(source.clips):
+                source.selected_clip_index = max(0, len(source.clips) - 1)
+            insert_at = _capture_sample_insert_position(target.clips, sample)
+            target.clips.insert(insert_at, sample)
+            target.selected_clip_index = insert_at
+            return True
+    return False
+
+
+def _capture_sample_insert_position(
+    samples: list[VoiceprintCaptureClipEntry],
+    sample: VoiceprintCaptureClipEntry,
+) -> int:
+    """Return the time-sorted insertion index for a capture sample."""
+    target = (sample.source_begin_time_ms, sample.source_end_time_ms)
+    for index, existing in enumerate(samples):
+        if (existing.source_begin_time_ms, existing.source_end_time_ms) > target:
+            return index
+    return len(samples)

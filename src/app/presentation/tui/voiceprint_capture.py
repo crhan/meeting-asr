@@ -16,6 +16,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Header, Static
 
 from app.presentation.tui.i18n import tr
+from app.postprocess import speaker_id_to_label
 from app.speaker_match_status import (
     MATCH_STATUS_MATCHED,
     best_candidate_score,
@@ -109,6 +110,7 @@ class VoiceprintCaptureClipEntry:
     audio_reason: str = "-"
     recommended: bool = True
     included: bool = True
+    original_speaker_id: int | None = None
 
     @property
     def duration_seconds(self) -> float:
@@ -128,6 +130,38 @@ class VoiceprintCaptureSpeakerEntry:
     match_threshold: float | None = None
     match_status: str | None = None
     selected_clip_index: int = 0
+
+
+def next_capture_speaker_id(speakers: list[VoiceprintCaptureSpeakerEntry]) -> int:
+    """Return the next unused project speaker id.
+
+    Args:
+        speakers: Current capture speakers.
+
+    Returns:
+        Smallest speaker id greater than all current ids.
+    """
+    if not speakers:
+        return 0
+    return max(speaker.speaker_id for speaker in speakers) + 1
+
+
+def create_capture_speaker(speaker_id: int) -> VoiceprintCaptureSpeakerEntry:
+    """Create an anonymous capture speaker row.
+
+    Args:
+        speaker_id: Project speaker id.
+
+    Returns:
+        Empty capture speaker with the default anonymous label.
+    """
+    label = speaker_id_to_label(speaker_id)
+    return VoiceprintCaptureSpeakerEntry(
+        speaker_id=speaker_id,
+        name=label,
+        person_public_id=None,
+        clips=[],
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -668,6 +702,7 @@ def _speaker_entry(speaker, match: Any | None = None) -> VoiceprintCaptureSpeake
                 audio_reason=clip.audio_reason,
                 recommended=clip.recommended,
                 included=included and clip.recommended,
+                original_speaker_id=speaker.speaker_id,
             )
             for clip in speaker.clips
         ],

@@ -10,11 +10,11 @@ def status_text() -> str:
     return tr(
         (
             "Voiceprint: Tab switch Project/Global/Quality | p project | g global | y quality | h/l columns | "
-            "j/k rows | Space play/stop | x include/quarantine | v verify | s save/refresh | u refresh quality | e evaluate | ? help | q back/quit"
+            "j/k rows | Space play/stop | x include/quarantine | r reassign/quarantine | v verify | s save/refresh | u refresh quality | e evaluate | ? help | q back/quit"
         ),
         (
             "声纹：Tab 切项目/全局/质量 | p 项目 | g 全局 | y 质量 | h/l 切列 | j/k 移动 | "
-            "Space 播放/停止 | x 选择/隔离 | v 人工确认 | s 保存/刷新 | u 刷新质量 | e 评测 | ? 帮助 | q 返回/退出"
+            "Space 播放/停止 | x 选择/隔离 | r 改归属/隔离 | v 人工确认 | s 保存/刷新 | u 刷新质量 | e 评测 | ? 帮助 | q 返回/退出"
         ),
     )
 
@@ -41,6 +41,7 @@ PageUp/PageDown      Previous/next sample page
 [b]Project Actions[/b]
 space                Play or stop selected source-media sample
 x                    Include/exclude selected planned sample
+r                    Reassign selected planned sample to another speaker
 a                    Include/exclude all planned samples for the selected speaker
 d                    Exclude all planned samples for the selected speaker
 s                    Save checked samples; from Project Review it also embeds and evaluates score impact
@@ -81,6 +82,7 @@ PageUp/PageDown      上一页/下一页 sample
 [b]项目操作[/b]
 space                播放或停止当前源媒体 sample
 x                    选中/排除当前计划样本
+r                    把当前计划样本改给其他 speaker
 a                    选中/排除当前 speaker 的全部计划样本
 d                    取消当前 speaker 的全部计划样本
 s                    保存勾选样本；从 Project Review 进入时会同时生成 embedding 并评测分数影响

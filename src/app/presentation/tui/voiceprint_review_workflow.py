@@ -14,6 +14,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from app.presentation.tui.i18n import tr
+from app.sentence_reassignment import apply_project_sentence_reassignments
+from app.speaker_labeling import SentenceReassignmentSpec
 from app.voiceprint_embedding import VoiceprintEmbedSummary, embed_voiceprint_samples
 from app.voiceprint_evaluation import VoiceprintEvaluationSummary, evaluate_voiceprint_embedding
 from app.voiceprints import VoiceprintCaptureSummary, persist_voiceprint_capture_selection
@@ -37,6 +39,7 @@ class VoiceprintReviewTransaction:
     match_path: Path
     match_backup_path: Path
     match_existed: bool
+    sentence_backups: tuple[tuple[Path, Path, bool], ...]
     clip_backups: tuple[tuple[Path, Path, bool], ...]
 
     def accept(self) -> None:
@@ -48,6 +51,8 @@ class VoiceprintReviewTransaction:
         _restore_file(self.db_path, self.db_backup_path, self.db_existed)
         _restore_file(self.project_manifest_path, self.project_manifest_backup_path, self.project_manifest_existed)
         _restore_file(self.match_path, self.match_backup_path, self.match_existed)
+        for path, backup_path, existed in self.sentence_backups:
+            _restore_file(path, backup_path, existed)
         for clip_path, backup_path, existed in self.clip_backups:
             _restore_file(clip_path, backup_path, existed)
             _remove_empty_parents(clip_path.parent, stop_at=self.db_path.parent)
@@ -153,6 +158,7 @@ def run_voiceprint_review_workflow(
     planned: VoiceprintCaptureSummary,
     selected_clip_rel_paths: frozenset[str],
     store_dir: Path | None,
+    reassignments: tuple[SentenceReassignmentSpec, ...] = (),
 ) -> VoiceprintReviewWorkflowSummary:
     """
     Capture selected clips, embed them, and evaluate matching scores.
@@ -162,17 +168,34 @@ def run_voiceprint_review_workflow(
         planned: Dry-run capture plan.
         selected_clip_rel_paths: Accepted clip relative paths.
         store_dir: Optional voiceprint store directory.
+        reassignments: Sentence speaker reassignments staged in the TUI.
 
     Returns:
         Completed workflow summary.
     """
     transaction = _begin_transaction(project_dir, planned, selected_clip_rel_paths)
     try:
-        capture = persist_voiceprint_capture_selection(
-            project_dir,
-            planned=planned,
-            selected_clip_rel_paths=selected_clip_rel_paths,
+        if reassignments:
+            apply_project_sentence_reassignments(
+                project_dir,
+                reassignments,
+                store_dir=store_dir or planned.store_dir,
+                rematch=True,
+            )
+        capture = VoiceprintCaptureSummary(
+            planned.store_dir,
+            planned.db_path,
+            planned.clip_dir,
+            [],
+            False,
+            planned.target_sample_count,
         )
+        if selected_clip_rel_paths:
+            capture = persist_voiceprint_capture_selection(
+                project_dir,
+                planned=planned,
+                selected_clip_rel_paths=selected_clip_rel_paths,
+            )
         embedding = embed_voiceprint_samples(
             store_dir=store_dir or capture.store_dir,
             provider=None,
@@ -369,8 +392,23 @@ def _begin_transaction(
         match_path=project_root / "speakers" / "speaker_matches.json",
         match_backup_path=backup_dir / "speaker_matches.json",
         match_existed=_backup_file(project_root / "speakers" / "speaker_matches.json", backup_dir / "speaker_matches.json"),
+        sentence_backups=_backup_sentence_outputs(backup_dir, project_root),
         clip_backups=_backup_clips(backup_dir, planned, selected_clip_rel_paths),
     )
+
+
+def _backup_sentence_outputs(backup_dir: Path, project_root: Path) -> tuple[tuple[Path, Path, bool], ...]:
+    """Back up transcript artifacts rewritten by sentence reassignment."""
+    paths = (
+        project_root / "asr" / "sentences.json",
+        project_root / "asr" / "sentences_corrected.json",
+        project_root / "exports" / "transcript_speakers.txt",
+    )
+    backups: list[tuple[Path, Path, bool]] = []
+    for path in paths:
+        backup_path = backup_dir / "sentence-artifacts" / path.relative_to(project_root)
+        backups.append((path, backup_path, _backup_file(path, backup_path)))
+    return tuple(backups)
 
 
 def _backup_clips(
