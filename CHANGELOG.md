@@ -7,15 +7,25 @@
 
 ## [未发布]
 
+## [0.4.0] - 2026-05-12
+
 ### 新增
 
 - `meeting-asr project show --json` 新增 `ignored_speakers` 字段以及 `speakers[]` 数组（含 `speaker_id` / `label` / `name` / `status` / `sample_count` / `match`），`status` 取值为 `matched | below-threshold | no-candidate | ignored | unnamed`，下游 agent 可直接判断 speaker 是否被忽略，不必再读 `speakers/speaker_ignore.json`。
 - 共享 `effective_match_status` 与 `MATCH_STATUS_IGNORED`：CLI 渲染会把 `speaker_ignore.json` 中的 speaker 一律视为 `ignored`，不再误报为 below-threshold。
+- Project Review TUI 时间轴视图支持对当前 sample 执行 speaker 归属重指派，保存后会同步刷新命名 transcript、字幕和 voiceprint 匹配状态。
 
 ### 变更
 
 - `project speakers inspect` 对 ignored speaker 显示 `Status: ignored`，并跳过 voiceprint match 行；只在仍有非 ignored 的 below-threshold / no-candidate speaker 时才输出 “Recommended next step”。
 - `project speakers review --summary`、`project speakers match`、`project run` 的 unresolved 计数与下一步推荐都会跳过 ignored speaker。
+- Project Review TUI 会保留已命名的低信息 speaker，避免 review 入口把真实短反馈 speaker 直接隐藏。
+- `apply_project_speakers()` 生成命名 transcript、字幕和 manifest 时继续过滤低信息 speaker，避免低信息 speaker 重新污染普通输出。
+- Strict polish 批处理恢复可见进度，并在批次运行时持续写入 heartbeat，长任务不再表现为静默卡住。
+
+### 修复
+
+- DashScope strict polish 部分批次失败时会保留已经通过 guard 的修正结果，不再因为单个批次失败丢弃整轮可用输出。
 
 ## [0.3.0] - 2026-05-09
 
@@ -70,7 +80,8 @@
 - 首个公开版本，提供基于 project 的 Meeting-ASR CLI。
 - 新增项目创建、会议转写、转写导出、speaker review、声纹匹配、词汇纠错 review，以及 GitHub Actions 发布基础能力。
 
-[未发布]: https://github.com/crhan/meeting-asr/compare/v0.3.0...HEAD
+[未发布]: https://github.com/crhan/meeting-asr/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/crhan/meeting-asr/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/crhan/meeting-asr/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/crhan/meeting-asr/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/crhan/meeting-asr/releases/tag/v0.1.0
