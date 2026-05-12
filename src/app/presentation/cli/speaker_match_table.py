@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -11,13 +12,14 @@ from rich.table import Table
 from app.postprocess import speaker_id_to_label
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
+    MATCH_STATUS_IGNORED,
     MATCH_STATUS_MATCHED,
     MATCH_STATUS_NO_CANDIDATE,
     accepted_match_name,
     best_candidate_name,
     best_candidate_score,
+    effective_match_status,
     match_threshold,
-    voiceprint_match_status,
 )
 
 
@@ -32,18 +34,28 @@ class SpeakerMatchRow:
     threshold: float | None
 
 
-def speaker_match_rows(matches: Iterable[object], *, default_threshold: float | None = None) -> tuple[SpeakerMatchRow, ...]:
+def speaker_match_rows(
+    matches: Iterable[object],
+    *,
+    default_threshold: float | None = None,
+    ignored_speaker_ids: Collection[int] | None = None,
+) -> tuple[SpeakerMatchRow, ...]:
     """
     Convert raw match objects into presentation rows.
 
     Args:
         matches: Dataclass or JSON-like match rows.
         default_threshold: Fallback threshold from the match payload.
+        ignored_speaker_ids: Speaker ids the user has marked as ignored.
 
     Returns:
         Display rows in input order.
     """
-    return tuple(_speaker_match_row(match, default_threshold=default_threshold) for match in matches)
+    ignored_set = set(ignored_speaker_ids or ())
+    return tuple(
+        _speaker_match_row(match, default_threshold=default_threshold, ignored_speaker_ids=ignored_set)
+        for match in matches
+    )
 
 
 def render_speaker_match_table(rows: tuple[SpeakerMatchRow, ...]) -> Table | None:
@@ -94,10 +106,20 @@ def voiceprint_threshold_text(rows: tuple[SpeakerMatchRow, ...]) -> str:
     return f"per speaker: {ordered}"
 
 
-def _speaker_match_row(match: object, *, default_threshold: float | None) -> SpeakerMatchRow:
+def _speaker_match_row(
+    match: object,
+    *,
+    default_threshold: float | None,
+    ignored_speaker_ids: Collection[int] | None = None,
+) -> SpeakerMatchRow:
     """Convert one raw match object into a display row."""
-    status = voiceprint_match_status(match)
-    candidate = accepted_match_name(match) if status == MATCH_STATUS_MATCHED else best_candidate_name(match)
+    status = effective_match_status(match, ignored_speaker_ids=ignored_speaker_ids)
+    if status == MATCH_STATUS_MATCHED:
+        candidate = accepted_match_name(match)
+    elif status == MATCH_STATUS_IGNORED:
+        candidate = None
+    else:
+        candidate = best_candidate_name(match)
     threshold = match_threshold(match, default_threshold)
     return SpeakerMatchRow(
         label=_match_label(match),
@@ -141,6 +163,7 @@ def _status_text(status: str) -> str:
         MATCH_STATUS_MATCHED: "green",
         MATCH_STATUS_BELOW_THRESHOLD: "yellow",
         MATCH_STATUS_NO_CANDIDATE: "red",
+        MATCH_STATUS_IGNORED: "cyan",
     }
     return f"[{styles.get(status, 'white')}]{status}[/]"
 
@@ -151,6 +174,8 @@ def _candidate_text(row: SpeakerMatchRow) -> str:
         return f"accepted: {row.candidate or 'unknown'}"
     if row.status == MATCH_STATUS_BELOW_THRESHOLD:
         return f"best: {row.candidate or 'unknown'}"
+    if row.status == MATCH_STATUS_IGNORED:
+        return "ignored"
     return "-"
 
 

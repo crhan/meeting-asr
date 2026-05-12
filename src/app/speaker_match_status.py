@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any
 
 MATCH_STATUS_MATCHED = "matched"
 MATCH_STATUS_BELOW_THRESHOLD = "below-threshold"
 MATCH_STATUS_NO_CANDIDATE = "no-candidate"
+MATCH_STATUS_IGNORED = "ignored"
 
 
 def voiceprint_match_status(match: object) -> str:
@@ -28,6 +29,42 @@ def voiceprint_match_status(match: object) -> str:
     if score is not None and score > 0:
         return MATCH_STATUS_BELOW_THRESHOLD
     return MATCH_STATUS_NO_CANDIDATE
+
+
+def effective_match_status(match: object, *, ignored_speaker_ids: Collection[int] | None = None) -> str:
+    """
+    Return the user-facing match status after merging explicit ignore state.
+
+    Args:
+        match: Match dataclass or JSON-like mapping.
+        ignored_speaker_ids: Speaker ids the user has marked as ignored.
+
+    Returns:
+        ``"ignored"`` when the row belongs to an ignored speaker, otherwise the
+        voiceprint match status.
+    """
+    if ignored_speaker_ids and speaker_id_from_match(match) in set(ignored_speaker_ids):
+        return MATCH_STATUS_IGNORED
+    return voiceprint_match_status(match)
+
+
+def speaker_id_from_match(match: object) -> int | None:
+    """
+    Return the integer speaker id stored on a match row.
+
+    Args:
+        match: Match dataclass or JSON-like mapping.
+
+    Returns:
+        Integer speaker id, or ``None`` when the row lacks one.
+    """
+    value = _field(match, "speaker_id")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def accepted_match_name(match: object) -> str | None:
