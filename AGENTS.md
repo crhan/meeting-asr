@@ -18,6 +18,7 @@
 - Filler-only speaker removal happens in `src/app/postprocess.py` during `parse_transcription_result()`.
 - It only affects newly normalized ASR output. Existing project artifacts keep old `asr/sentences.json` and `project.json` speaker IDs until reprocessed from `asr/raw_result.json` or retranscribed.
 - Backchannel-heavy tracks can contain short fragments like `对对对` or `就是可以再理一下了`; treat them as low-information tracks instead of requiring every sentence to match the exact filler word list.
+- A real attendee may appear only as short backchannel utterances. Before declaring that a person is absent after rerun, compare `asr/raw_result.json` speaker IDs against normalized `asr/sentences.json`; `load_transcript_result()` and `project show` can still hide a raw speaker through the low-information filter.
 
 ## Project TUI Notes
 
