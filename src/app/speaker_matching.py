@@ -298,7 +298,6 @@ def _match_speaker_groups(
     progress: CliProgressReporter | None,
 ) -> list[SpeakerMatch]:
     """Match all speakers in a project transcript."""
-    matches: list[SpeakerMatch] = []
     speaker_groups = sorted(_segments_by_speaker(segments).items())
     emit_progress(progress, "Matching project speakers", total=len(speaker_groups), completed=0)
     if not known:

@@ -86,7 +86,6 @@ from app.sentence_reassignment import (
 )
 from app.speaker_labeling import (
     SentenceReassignmentSpec,
-    apply_sentence_reassignments,
     build_speaker_summaries,
     load_project_ignored_speakers,
     load_transcript_result,
