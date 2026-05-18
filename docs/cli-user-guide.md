@@ -20,6 +20,7 @@ meeting-asr doctor --full --json
 meeting-asr config set dashscope.api_key "<dashscope-api-key>"
 meeting-asr config set dashscope.summary_model qwen-plus
 meeting-asr config set dashscope.correction_model qwen-plus
+meeting-asr config set dashscope.model_endpoints '{"qwen3.6-*":"multimodal"}'
 meeting-asr config set oss.access_key_id "<oss-access-key-id>"
 meeting-asr config set oss.access_key_secret "<oss-access-key-secret>"
 meeting-asr config set oss.bucket_name "<bucket>"
@@ -35,6 +36,15 @@ XDG 默认路径：
 ~/.local/share/meeting-asr/projects
 ~/.local/share/meeting-asr/voiceprints
 ~/.local/share/meeting-asr/metrics/runtime.sqlite
+```
+
+`dashscope.model_endpoints` 用于覆盖模型到调用端点的路由，值是 JSON 对象。支持的端点是
+`generation`、`multimodal`、`compatible`；key 可以是精确模型名或通配符。内置路由已覆盖
+`qwen3.6-plus`、`qwen3.6-flash`、`qwen3.5-plus`、`qwen-vl-*` 等多模态模型，一般不需要手工配置。
+如果希望所有 Qwen3.6 调用都走 OpenAI-compatible，可以设置：
+
+```bash
+meeting-asr config set dashscope.model_endpoints '{"qwen3.6-*":"compatible"}'
 ```
 
 要临时使用另一套项目库，设置 XDG 数据目录：

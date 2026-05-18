@@ -36,6 +36,7 @@ class Settings:
     dashscope_base_url: str
     dashscope_summary_model: str = DEFAULT_DASHSCOPE_SUMMARY_MODEL
     dashscope_correction_model: str = DEFAULT_DASHSCOPE_CORRECTION_MODEL
+    dashscope_model_endpoints: dict[str, str] | None = None
     dashscope_correction_concurrency: int = DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY
     dashscope_asr_vocabulary_id: str | None = None
     oss_access_key_id: str | None = None
@@ -61,6 +62,11 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "dashscope_correction_model",
         "DASHSCOPE_CORRECTION_MODEL",
         default=DEFAULT_DASHSCOPE_CORRECTION_MODEL,
+    ),
+    ConfigKey(
+        "dashscope.model_endpoints",
+        "dashscope_model_endpoints",
+        "DASHSCOPE_MODEL_ENDPOINTS",
     ),
     ConfigKey(
         "dashscope.correction_concurrency",
@@ -239,6 +245,7 @@ def load_settings(*, require_oss: bool = False, require_dashscope: bool = True) 
         dashscope_correction_model=(
             _read_value(values, "dashscope.correction_model", required=False) or DEFAULT_DASHSCOPE_CORRECTION_MODEL
         ),
+        dashscope_model_endpoints=_read_json_mapping(values, "dashscope.model_endpoints"),
         dashscope_correction_concurrency=_read_int_value(
             values,
             "dashscope.correction_concurrency",
@@ -346,6 +353,20 @@ def _read_int_value(config_values: dict[str, str], key: str, *, minimum: int, ma
     if parsed < minimum or parsed > maximum:
         raise ValueError(f"Config value {key} must be between {minimum} and {maximum}, got {parsed}")
     return parsed
+
+
+def _read_json_mapping(config_values: dict[str, str], key: str) -> dict[str, str]:
+    """Read and validate one string-to-string JSON mapping config value."""
+    value = _read_value(config_values, key, required=False)
+    if value is None:
+        return {}
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Config value {key} must be a JSON object, got {value!r}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Config value {key} must be a JSON object, got {value!r}")
+    return {str(raw_key): str(raw_value).strip() for raw_key, raw_value in payload.items() if str(raw_value).strip()}
 
 
 def _xdg_base_dir(env_name: str, fallback: Path) -> Path:

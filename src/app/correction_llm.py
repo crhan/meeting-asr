@@ -7,15 +7,11 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-import dashscope
-import requests
-from dashscope import Generation, MultiModalConversation
-
 from app.config import Settings
+from app.dashscope_chat import generate_chat_text
 from app.utils import retry
 
 DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS = 120
-DASHSCOPE_COMPATIBLE_CHAT_COMPLETIONS_PATH = "/compatible-mode/v1/chat/completions"
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,11 +90,10 @@ def propose_vocabulary_corrections(
     Returns:
         Structured correction proposal.
     """
-    _configure_dashscope(settings)
     prompt = _build_prompt(samples, candidates)
 
     def _call() -> str:
-        return _generate_text(
+        return generate_chat_text(
             settings=settings,
             model=model,
             messages=[
@@ -107,6 +102,7 @@ def propose_vocabulary_corrections(
             ],
             request_timeout=DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
             temperature=0.1,
+            enable_thinking=False,
         )
 
     content = retry(_call, attempts=3, delay_seconds=1.0)
@@ -130,11 +126,10 @@ def propose_transcript_polish(
     Returns:
         Structured sentence-level polish proposal.
     """
-    _configure_dashscope(settings)
     prompt = _build_polish_prompt(candidates)
 
     def _call() -> str:
-        return _generate_text(
+        return generate_chat_text(
             settings=settings,
             model=model,
             messages=[
@@ -143,6 +138,7 @@ def propose_transcript_polish(
             ],
             request_timeout=DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
             temperature=0.1,
+            enable_thinking=False,
         )
 
     content = retry(_call, attempts=1, delay_seconds=1.0)
@@ -171,11 +167,10 @@ def propose_transcript_polish_strict(
     Returns:
         Per-item strict polish result.
     """
-    _configure_dashscope(settings)
     prompt = _build_polish_strict_prompt(candidates)
 
     def _call() -> str:
-        return _generate_text(
+        return generate_chat_text(
             settings=settings,
             model=model,
             messages=[
@@ -184,6 +179,7 @@ def propose_transcript_polish_strict(
             ],
             request_timeout=request_timeout,
             temperature=0.0,
+            enable_thinking=False,
         )
 
     content = retry(_call, attempts=attempts, delay_seconds=2.0)
@@ -207,11 +203,10 @@ def infer_vocabulary_replacements(
     Returns:
         Validated term-level replacement rules.
     """
-    _configure_dashscope(settings)
     prompt = _build_replacement_prompt(samples)
 
     def _call() -> str:
-        return _generate_text(
+        return generate_chat_text(
             settings=settings,
             model=model,
             messages=[
@@ -220,159 +215,11 @@ def infer_vocabulary_replacements(
             ],
             request_timeout=DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
             temperature=0.1,
+            enable_thinking=False,
         )
 
     content = retry(_call, attempts=3, delay_seconds=1.0)
     return _parse_replacement_rules(content)
-
-
-def _configure_dashscope(settings: Settings) -> None:
-    """
-    Configure DashScope SDK globals.
-
-    Args:
-        settings: Runtime settings.
-
-    Returns:
-        None.
-    """
-    dashscope.api_key = settings.dashscope_api_key
-    if settings.dashscope_base_url:
-        for attr in ("base_http_api_url", "base_url"):
-            if hasattr(dashscope, attr):
-                setattr(dashscope, attr, settings.dashscope_base_url)
-
-
-def _generate_text(
-    *,
-    settings: Settings,
-    model: str,
-    messages: list[dict[str, str]],
-    request_timeout: int,
-    temperature: float,
-) -> str:
-    """Generate text through the right DashScope endpoint for the chosen model."""
-    response = Generation.call(
-        model=model,
-        api_key=settings.dashscope_api_key,
-        messages=messages,
-        result_format="message",
-        request_timeout=request_timeout,
-        temperature=temperature,
-    )
-    if not _is_endpoint_url_error(response):
-        _raise_for_generation_error(response)
-        return _extract_generation_text(response)
-
-    multimodal_response = _generate_text_multimodal_native(
-        settings=settings,
-        model=model,
-        messages=messages,
-        request_timeout=request_timeout,
-        temperature=temperature,
-    )
-    if not _is_endpoint_url_error(multimodal_response):
-        _raise_for_generation_error(multimodal_response)
-        return _extract_generation_text(multimodal_response)
-
-    return _generate_text_compatible(
-        settings=settings,
-        model=model,
-        messages=messages,
-        request_timeout=request_timeout,
-        temperature=temperature,
-    )
-
-
-def _is_endpoint_url_error(response: Any) -> bool:
-    """Return whether DashScope rejected the model/API endpoint combination."""
-    status_code = getattr(response, "status_code", None)
-    code = str(getattr(response, "code", "") or "")
-    message = str(getattr(response, "message", "") or "")
-    return int(status_code or 0) == 400 and code == "InvalidParameter" and "url error" in message.lower()
-
-
-def _generate_text_multimodal_native(
-    *,
-    settings: Settings,
-    model: str,
-    messages: list[dict[str, str]],
-    request_timeout: int,
-    temperature: float,
-) -> Any:
-    """Call DashScope native multimodal conversation for Qwen3.6-style models."""
-    return MultiModalConversation.call(
-        model=model,
-        api_key=settings.dashscope_api_key,
-        messages=_multimodal_messages(messages),
-        result_format="message",
-        request_timeout=request_timeout,
-        temperature=temperature,
-        enable_thinking=False,
-    )
-
-
-def _multimodal_messages(messages: list[dict[str, str]]) -> list[dict[str, object]]:
-    """Convert text-generation messages to DashScope multimodal message parts."""
-    return [{"role": item["role"], "content": [{"text": item["content"]}]} for item in messages]
-
-
-def _generate_text_compatible(
-    *,
-    settings: Settings,
-    model: str,
-    messages: list[dict[str, str]],
-    request_timeout: int,
-    temperature: float,
-) -> str:
-    """Call DashScope's OpenAI-compatible chat completion endpoint."""
-    response = requests.post(
-        _compatible_chat_completions_url(settings.dashscope_base_url),
-        headers={
-            "Authorization": f"Bearer {settings.dashscope_api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-        },
-        timeout=request_timeout,
-    )
-    payload = _compatible_json_payload(response)
-    if response.status_code >= 400:
-        error = payload.get("error") if isinstance(payload, dict) else None
-        raise RuntimeError(f"DashScope compatible correction failed: HTTP {response.status_code} {error or payload}")
-    choices = payload.get("choices") if isinstance(payload, dict) else None
-    if not choices:
-        raise RuntimeError("DashScope compatible correction response did not contain choices.")
-    content = ((choices[0] or {}).get("message") or {}).get("content")
-    if not content:
-        raise RuntimeError("DashScope compatible correction response did not contain generated text.")
-    return str(content)
-
-
-def _compatible_json_payload(response: requests.Response) -> dict[str, Any]:
-    """Decode a DashScope-compatible JSON response."""
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise RuntimeError(f"DashScope compatible correction returned non-JSON: {response.text[:200]}") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError("DashScope compatible correction returned non-object JSON.")
-    return payload
-
-
-def _compatible_chat_completions_url(base_url: str | None) -> str:
-    """Return the OpenAI-compatible chat completions URL for a DashScope base URL."""
-    root = (base_url or "https://dashscope.aliyuncs.com/api/v1").rstrip("/")
-    if root.endswith("/chat/completions"):
-        return root
-    if root.endswith("/compatible-mode/v1"):
-        return f"{root}/chat/completions"
-    if root.endswith("/api/v1"):
-        return f"{root[:-len('/api/v1')]}{DASHSCOPE_COMPATIBLE_CHAT_COMPLETIONS_PATH}"
-    return f"{root}{DASHSCOPE_COMPATIBLE_CHAT_COMPLETIONS_PATH}"
 
 
 def _system_prompt() -> str:
@@ -588,60 +435,6 @@ def _candidate_payload(candidate: LlmCorrectionCandidate) -> dict[str, object]:
     }
 
 
-def _raise_for_generation_error(response: Any) -> None:
-    """
-    Raise when DashScope returns an error response.
-
-    Args:
-        response: DashScope response object.
-
-    Returns:
-        None.
-    """
-    status_code = getattr(response, "status_code", None)
-    if status_code and int(status_code) >= 400:
-        message = getattr(response, "message", None) or getattr(response, "code", None) or response
-        raise RuntimeError(f"DashScope correction failed: HTTP {status_code} {message}")
-
-
-def _extract_generation_text(response: Any) -> str:
-    """
-    Extract text from common DashScope generation response shapes.
-
-    Args:
-        response: DashScope generation response.
-
-    Returns:
-        Generated text.
-    """
-    output = getattr(response, "output", None)
-    text = _field(output, "text")
-    if text:
-        return str(text)
-    choices = _field(output, "choices") or []
-    if choices:
-        message = _field(choices[0], "message")
-        content = _field(message, "content")
-        if content:
-            return _message_content_text(content)
-    raise RuntimeError("DashScope correction response did not contain generated text.")
-
-
-def _message_content_text(content: Any) -> str:
-    """Extract assistant text from text-generation or multimodal message content."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        chunks = []
-        for item in content:
-            text = _field(item, "text")
-            if text:
-                chunks.append(str(text))
-        if chunks:
-            return "".join(chunks)
-    return str(content)
-
-
 def _parse_result(text: str, *, model: str, candidate_ids: set[str]) -> LlmCorrectionResult:
     """
     Parse model JSON into a validated correction result.
@@ -833,9 +626,3 @@ def _parse_corrections(value: object, candidate_ids: set[str]) -> dict[str, str]
             parsed[candidate_id] = corrected_text
     return parsed
 
-
-def _field(value: Any, name: str) -> Any:
-    """Return an attribute or mapping field from SDK response objects."""
-    if isinstance(value, dict):
-        return value.get(name)
-    return getattr(value, name, None)

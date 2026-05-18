@@ -64,6 +64,7 @@ def test_load_settings_reads_global_config(monkeypatch: pytest.MonkeyPatch, tmp_
     assert settings.dashscope_base_url == "https://dashscope.aliyuncs.com/api/v1"
     assert settings.dashscope_summary_model == DEFAULT_DASHSCOPE_SUMMARY_MODEL
     assert settings.dashscope_correction_model == DEFAULT_DASHSCOPE_CORRECTION_MODEL
+    assert settings.dashscope_model_endpoints == {}
     assert settings.dashscope_correction_concurrency == DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY
     assert settings.dashscope_asr_vocabulary_id is None
 
@@ -81,6 +82,21 @@ def test_ui_editor_config_is_supported(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert settings.ui_editor == "code --wait"
     assert "ui.editor" in keys_result.output
     assert "ui.editor=code --wait" in show_result.output
+
+
+def test_model_endpoint_routes_can_be_configured(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Model endpoint routing should be configurable through XDG config."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _clear_runtime_env(monkeypatch)
+    set_config_value("dashscope.api_key", "config-key")
+    set_config_value("dashscope.model_endpoints", '{"qwen3.6-*":"compatible","qwen-plus":"generation"}')
+
+    settings = load_settings()
+
+    assert settings.dashscope_model_endpoints == {
+        "qwen3.6-*": "compatible",
+        "qwen-plus": "generation",
+    }
 
 
 def test_config_show_prints_masked_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -158,6 +174,7 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "DASHSCOPE_API_KEY",
         "DASHSCOPE_BASE_URL",
         "DASHSCOPE_CORRECTION_MODEL",
+        "DASHSCOPE_MODEL_ENDPOINTS",
         "DASHSCOPE_CORRECTION_CONCURRENCY",
         "DASHSCOPE_ASR_VOCABULARY_ID",
         "OSS_ACCESS_KEY_ID",

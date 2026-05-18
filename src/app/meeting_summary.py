@@ -11,10 +11,8 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
-import dashscope
-from dashscope import Generation
-
 from app.config import Settings
+from app.dashscope_chat import generate_chat_text
 from app.models import TranscriptResult
 from app.postprocess import render_speaker_text
 from app.utils import retry
@@ -63,7 +61,6 @@ def generate_meeting_summary(
         Lightweight meeting memory index.
     """
     resolved_model = model or settings.dashscope_summary_model
-    _configure_dashscope(settings)
     raw = _call_generation(
         model=resolved_model,
         settings=settings,
@@ -96,33 +93,23 @@ def render_meeting_summary_markdown(summary: MeetingSummary) -> str:
     return "\n".join(lines)
 
 
-def _configure_dashscope(settings: Settings) -> None:
-    """Set DashScope API key and optional base URL."""
-    dashscope.api_key = settings.dashscope_api_key
-    if settings.dashscope_base_url:
-        for attr in ("base_http_api_url", "base_url"):
-            if hasattr(dashscope, attr):
-                setattr(dashscope, attr, settings.dashscope_base_url)
-
-
 def _call_generation(*, model: str, settings: Settings, system_prompt: str, prompt: str) -> str:
     """Call DashScope text generation and return message content."""
 
-    def _call() -> Any:
-        response = Generation.call(
+    def _call() -> str:
+        return generate_chat_text(
+            settings=settings,
             model=model,
-            api_key=settings.dashscope_api_key,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            result_format="message",
+            request_timeout=120,
             temperature=0.2,
+            enable_thinking=False,
         )
-        _raise_for_generation_error(response)
-        return response
 
-    return _extract_generation_text(retry(_call, attempts=3, delay_seconds=1.0))
+    return retry(_call, attempts=3, delay_seconds=1.0)
 
 
 def _memory_system_prompt() -> str:
@@ -175,29 +162,6 @@ def _bound_transcript(transcript: str) -> str:
     # Multi-hour pathological case: keep head and tail, mark drop explicitly.
     half = TRANSCRIPT_HARD_LIMIT_CHARS // 2
     return transcript[:half] + "\n\n[中段超长已省略]\n\n" + transcript[-half:]
-
-
-def _raise_for_generation_error(response: Any) -> None:
-    """Raise when DashScope returns a failed response."""
-    status_code = getattr(response, "status_code", None)
-    if status_code and int(status_code) >= 400:
-        message = getattr(response, "message", None) or getattr(response, "code", None) or response
-        raise RuntimeError(f"DashScope summary failed: HTTP {status_code} {message}")
-
-
-def _extract_generation_text(response: Any) -> str:
-    """Extract text from common DashScope generation response shapes."""
-    output = getattr(response, "output", None)
-    text = _field(output, "text")
-    if text:
-        return str(text)
-    choices = _field(output, "choices") or []
-    if choices:
-        message = _field(choices[0], "message")
-        content = _field(message, "content")
-        if content:
-            return str(content)
-    raise RuntimeError("DashScope summary response did not contain generated text.")
 
 
 def _parse_summary_text(text: str, *, model: str) -> MeetingSummary:
@@ -259,9 +223,3 @@ def _bullet_lines(items: list[str]) -> list[str]:
     """Render a list as Markdown bullets."""
     return [f"- {item}" for item in items] if items else ["- 无"]
 
-
-def _field(value: Any, key: str) -> Any:
-    """Read a field from a dict-like or object-like value."""
-    if isinstance(value, dict):
-        return value.get(key)
-    return getattr(value, key, None)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from app.config import Settings
 from app.meeting_summary import _parse_summary_text, generate_meeting_summary, render_meeting_summary_markdown
 from app.models import SentenceSegment, TranscriptResult
@@ -66,24 +64,13 @@ def test_generate_meeting_summary_uses_single_full_transcript_call(monkeypatch) 
         # The full transcript must be in the prompt so title generation is grounded.
         assert "会议转写" in prompt
         assert "很长的转写正文" in prompt
-        return SimpleNamespace(
-            status_code=200,
-            output={
-                "choices": [
-                    {
-                        "message": {
-                            "content": (
-                                '{"title":"维修样板间目标对齐",'
-                                '"summary":"讨论维修样板间目标对齐和后续处理节奏。",'
-                                '"keywords":["飞轮POC本地跑通","518里程碑","诊断准确率30%","钉钉工作形态","LMVK知识图谱"]}'
-                            )
-                        }
-                    }
-                ]
-            },
+        return (
+            '{"title":"维修样板间目标对齐",'
+            '"summary":"讨论维修样板间目标对齐和后续处理节奏。",'
+            '"keywords":["飞轮POC本地跑通","518里程碑","诊断准确率30%","钉钉工作形态","LMVK知识图谱"]}'
         )
 
-    monkeypatch.setattr("app.meeting_summary.Generation.call", fake_call)
+    monkeypatch.setattr("app.meeting_summary.generate_chat_text", fake_call)
     result = TranscriptResult(
         "很长的转写正文",
         [SentenceSegment(0, 1000, "很长的转写正文", 0, 1)],
@@ -99,6 +86,7 @@ def test_generate_meeting_summary_uses_single_full_transcript_call(monkeypatch) 
     # Title is no longer derived from a second hop; one call covers everything.
     assert len(calls) == 1
     assert calls[0]["model"] == "qwen-test"
+    assert calls[0]["enable_thinking"] is False
     assert summary.title == "维修样板间目标对齐"
     assert summary.summary == "讨论维修样板间目标对齐和后续处理节奏。"
     assert summary.keywords == [

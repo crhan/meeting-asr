@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 import requests
 
@@ -25,10 +23,9 @@ def test_propose_vocabulary_corrections_parses_dashscope_json(monkeypatch) -> No
 
     def fake_call(**kwargs):
         calls.update(kwargs)
-        content = '{"understanding":"艾赛应为 iSee","corrections":[{"id":"c1","corrected_text":"我们看 iSee 系统。"}]}'
-        return SimpleNamespace(status_code=200, output={"choices": [{"message": {"content": content}}]})
+        return '{"understanding":"艾赛应为 iSee","corrections":[{"id":"c1","corrected_text":"我们看 iSee 系统。"}]}'
 
-    monkeypatch.setattr("app.correction_llm.Generation.call", fake_call)
+    monkeypatch.setattr("app.correction_llm.generate_chat_text", fake_call)
     settings = Settings(dashscope_api_key="key", dashscope_base_url="https://dashscope.example.com")
 
     result = propose_vocabulary_corrections(
@@ -46,6 +43,7 @@ def test_propose_vocabulary_corrections_parses_dashscope_json(monkeypatch) -> No
 
     assert calls["model"] == "qwen-test"
     assert calls["request_timeout"] == DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS
+    assert calls["enable_thinking"] is False
     assert result.understanding == "艾赛应为 iSee"
     assert result.corrected_text_by_id == {"c1": "我们看 iSee 系统。"}
 
@@ -57,13 +55,12 @@ def test_infer_vocabulary_replacements_parses_term_level_rules(monkeypatch) -> N
 
     def fake_call(**kwargs):
         calls.update(kwargs)
-        content = (
+        return (
             '{"replacements":[{"wrong_text":"云原声","corrected_text":"云原生",'
             '"left_context":"建设","right_context":"平台","reason":"系统术语"}]}'
         )
-        return SimpleNamespace(status_code=200, output={"choices": [{"message": {"content": content}}]})
 
-    monkeypatch.setattr("app.correction_llm.Generation.call", fake_call)
+    monkeypatch.setattr("app.correction_llm.generate_chat_text", fake_call)
     settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
 
     rules = infer_vocabulary_replacements(
@@ -90,13 +87,12 @@ def test_propose_transcript_polish_parses_dashscope_json(monkeypatch) -> None:
 
     def fake_call(**kwargs):
         calls.update(kwargs)
-        content = (
+        return (
             '{"understanding":"修复入参/出参语序",'
             '"corrections":[{"id":"c1","corrected_text":"入参和出参需要记录起来。"}]}'
         )
-        return SimpleNamespace(status_code=200, output={"choices": [{"message": {"content": content}}]})
 
-    monkeypatch.setattr("app.correction_llm.Generation.call", fake_call)
+    monkeypatch.setattr("app.correction_llm.generate_chat_text", fake_call)
     settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
 
     result = propose_transcript_polish(
@@ -129,7 +125,7 @@ def test_propose_transcript_polish_does_not_retry_read_timeout(monkeypatch) -> N
         calls += 1
         raise requests.Timeout("read timeout")
 
-    monkeypatch.setattr("app.correction_llm.Generation.call", fake_call)
+    monkeypatch.setattr("app.correction_llm.generate_chat_text", fake_call)
     settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
 
     with pytest.raises(RuntimeError, match="Operation failed after 1 retryable attempts"):
@@ -140,115 +136,6 @@ def test_propose_transcript_polish_does_not_retry_read_timeout(monkeypatch) -> N
         )
 
     assert calls == 1
-
-
-def test_propose_transcript_polish_strict_uses_native_multimodal_on_generation_url_error(monkeypatch) -> None:
-    """Qwen3.6 rejects Generation.call but works through DashScope multimodal."""
-    generation_calls = []
-    multimodal_calls = []
-
-    def fake_generation_call(**kwargs):
-        generation_calls.append(kwargs)
-        return SimpleNamespace(status_code=400, code="InvalidParameter", message="url error, please check url！")
-
-    def fake_multimodal_call(**kwargs):
-        multimodal_calls.append(kwargs)
-        content = (
-            '{"understanding":"修字",'
-            '"corrections":[{"id":"c0","corrected_text":"然后用这个CLI。",'
-            '"change_type":"dup","reason":"去重复"}]}'
-        )
-        return SimpleNamespace(
-            status_code=200,
-            output={"choices": [{"message": {"content": [{"text": content}]}}]},
-        )
-
-    def unexpected_post(*args, **kwargs):
-        raise AssertionError("OpenAI-compatible fallback should not run when native multimodal works.")
-
-    monkeypatch.setattr("app.correction_llm.Generation.call", fake_generation_call)
-    monkeypatch.setattr("app.correction_llm.MultiModalConversation.call", fake_multimodal_call)
-    monkeypatch.setattr("app.correction_llm.requests.post", unexpected_post)
-    settings = Settings(
-        dashscope_api_key="key",
-        dashscope_base_url="https://dashscope.aliyuncs.com/api/v1",
-    )
-
-    result = propose_transcript_polish_strict(
-        candidates=[LlmCorrectionCandidate("c0", 0, "speaker", "然后用用这个CLI。")],
-        settings=settings,
-        model="qwen3.6-plus",
-    )
-
-    assert generation_calls[0]["model"] == "qwen3.6-plus"
-    assert multimodal_calls[0]["messages"][0]["content"][0]["text"] == generation_calls[0]["messages"][0]["content"]
-    assert multimodal_calls[0]["enable_thinking"] is False
-    assert result.items[0].corrected_text == "然后用这个CLI。"
-
-
-def test_propose_transcript_polish_strict_falls_back_to_compatible_chat_after_multimodal_url_error(
-    monkeypatch,
-) -> None:
-    """OpenAI-compatible chat is the last fallback when native endpoints reject a model."""
-    generation_calls = []
-    multimodal_calls = []
-    compatible_calls = []
-
-    def fake_generation_call(**kwargs):
-        generation_calls.append(kwargs)
-        return SimpleNamespace(status_code=400, code="InvalidParameter", message="url error, please check url！")
-
-    def fake_multimodal_call(**kwargs):
-        multimodal_calls.append(kwargs)
-        return SimpleNamespace(status_code=400, code="InvalidParameter", message="url error, please check url！")
-
-    class FakeResponse:
-        status_code = 200
-        text = ""
-
-        def json(self):
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": (
-                                '{"understanding":"修字",'
-                                '"corrections":[{"id":"c0","corrected_text":"然后用这个CLI。",'
-                                '"change_type":"dup","reason":"去重复"}]}'
-                            )
-                        }
-                    }
-                ]
-            }
-
-    def fake_post(url, **kwargs):
-        compatible_calls.append((url, kwargs))
-        return FakeResponse()
-
-    monkeypatch.setattr("app.correction_llm.Generation.call", fake_generation_call)
-    monkeypatch.setattr("app.correction_llm.MultiModalConversation.call", fake_multimodal_call)
-    monkeypatch.setattr("app.correction_llm.requests.post", fake_post)
-    settings = Settings(
-        dashscope_api_key="key",
-        dashscope_base_url="https://dashscope.aliyuncs.com/api/v1",
-    )
-
-    result = propose_transcript_polish_strict(
-        candidates=[LlmCorrectionCandidate("c0", 0, "speaker", "然后用用这个CLI。")],
-        settings=settings,
-        model="qwen3.6-plus",
-    )
-
-    assert generation_calls[0]["model"] == "qwen3.6-plus"
-    assert multimodal_calls[0]["model"] == "qwen3.6-plus"
-    assert compatible_calls[0][0] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-    assert compatible_calls[0][1]["json"]["model"] == "qwen3.6-plus"
-    assert result.items[0].corrected_text == "然后用这个CLI。"
-
-
-def _polish_strict_response(content: str) -> SimpleNamespace:
-    """Build a DashScope-style response wrapping a raw content string."""
-    return SimpleNamespace(status_code=200, output={"choices": [{"message": {"content": content}}]})
 
 
 def _polish_strict_candidates(count: int) -> list[LlmCorrectionCandidate]:
@@ -267,7 +154,7 @@ def test_load_json_object_tolerates_unescaped_control_chars(monkeypatch) -> None
         '{"understanding":"修字",'
         '"corrections":[{"id":"c0","corrected_text":"第一行\n第二行","change_type":"typo","reason":"x"}]}'
     )
-    monkeypatch.setattr("app.correction_llm.Generation.call", lambda **_: _polish_strict_response(content))
+    monkeypatch.setattr("app.correction_llm.generate_chat_text", lambda **_: content)
     settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
 
     result = propose_transcript_polish_strict(
@@ -291,7 +178,7 @@ def test_load_json_object_salvages_items_when_response_is_truncated(monkeypatch)
         '{"id":"c1","corrected_text":"OK1","change_type":"typo","reason":"r1"},'
         '{"id":"c2","corrected_text":"OK'
     )
-    monkeypatch.setattr("app.correction_llm.Generation.call", lambda **_: _polish_strict_response(content))
+    monkeypatch.setattr("app.correction_llm.generate_chat_text", lambda **_: content)
     settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
 
     result = propose_transcript_polish_strict(
@@ -317,7 +204,7 @@ def test_load_json_object_salvages_around_one_bad_item(monkeypatch) -> None:
         f'{bad_inner},'
         '{"id":"c2","corrected_text":"OK2","change_type":"typo","reason":"r2"}]}'
     )
-    monkeypatch.setattr("app.correction_llm.Generation.call", lambda **_: _polish_strict_response(content))
+    monkeypatch.setattr("app.correction_llm.generate_chat_text", lambda **_: content)
     settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
 
     result = propose_transcript_polish_strict(
@@ -333,8 +220,8 @@ def test_load_json_object_raises_when_no_json_present(monkeypatch) -> None:
     """If the model returns prose with no usable JSON object, surface a clear error."""
 
     monkeypatch.setattr(
-        "app.correction_llm.Generation.call",
-        lambda **_: _polish_strict_response("Sorry, I cannot help with that."),
+        "app.correction_llm.generate_chat_text",
+        lambda **_: "Sorry, I cannot help with that.",
     )
     settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
 
