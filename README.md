@@ -108,6 +108,7 @@ meeting-asr project review PROJECT_ID
 meeting-asr project transcript show PROJECT_ID --kind auto
 meeting-asr project correct diff PROJECT_ID
 meeting-asr project correct accept PROJECT_ID
+meeting-asr project correct eval-polish
 meeting-asr voiceprint review PROJECT_ID
 meeting-asr voiceprint review
 meeting-asr voiceprint quality --review
@@ -118,6 +119,15 @@ meeting-asr voiceprint quality --review
 ```bash
 meeting-asr project show PROJECT_ID
 ```
+
+Transcript polish 有独立评测集，不再只看 proposal diff 多少。改 prompt、模型或 guard 前后先跑：
+
+```bash
+uv run meeting-asr project correct eval-polish
+uv run meeting-asr project correct eval-polish --model qwen3.6-plus
+```
+
+评测集说明见 [docs/polish-eval.md](docs/polish-eval.md)。
 
 删除项目默认进 trash，不会直接物理删除：
 

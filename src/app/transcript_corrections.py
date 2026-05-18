@@ -307,6 +307,7 @@ def accept_correction_proposal(
         raise RuntimeError(f"Correction proposal belongs to another project: {proposal.project_id}")
     source = _load_source_path(paths, proposal.source_path)
     accepted_changes = _selected_changes(proposal.proposed_changes, selected_change_indices)
+    _ensure_proposal_changes_fresh(source.result, accepted_changes)
     understanding = _selected_understanding(proposal.understanding, accepted_changes)
     corrected = _apply_changes(source.result, accepted_changes)
     outputs = _write_corrected_outputs(paths, corrected, speaker_mapping, accepted_changes)
@@ -362,6 +363,29 @@ def _selected_changes(
         return changes
     selected = set(selected_indices)
     return [change for index, change in enumerate(changes) if index in selected]
+
+
+def _ensure_proposal_changes_fresh(result: TranscriptResult, changes: list[CorrectionChange]) -> None:
+    """Reject accepted changes when the proposal no longer matches its source transcript."""
+    if not changes:
+        return
+    sentence_by_key = {_sentence_change_key(sentence): sentence for sentence in result.sentences}
+    stale: list[tuple[CorrectionChange, str]] = []
+    for change in changes:
+        key = _change_key(change)
+        sentence = sentence_by_key.get(key)
+        if sentence is None:
+            stale.append((change, "missing sentence"))
+            continue
+        current_text = sentence.text.strip()
+        if current_text != change.original_text:
+            stale.append((change, f"current text changed to {current_text!r}"))
+    if stale:
+        first_change, reason = stale[0]
+        raise RuntimeError(
+            "Correction proposal is stale; regenerate it before accepting. "
+            f"stale_changes={len(stale)} first_sentence_id={first_change.sentence_id} reason={reason}"
+        )
 
 
 def _selected_understanding(

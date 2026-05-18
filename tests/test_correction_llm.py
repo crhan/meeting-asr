@@ -142,6 +142,110 @@ def test_propose_transcript_polish_does_not_retry_read_timeout(monkeypatch) -> N
     assert calls == 1
 
 
+def test_propose_transcript_polish_strict_uses_native_multimodal_on_generation_url_error(monkeypatch) -> None:
+    """Qwen3.6 rejects Generation.call but works through DashScope multimodal."""
+    generation_calls = []
+    multimodal_calls = []
+
+    def fake_generation_call(**kwargs):
+        generation_calls.append(kwargs)
+        return SimpleNamespace(status_code=400, code="InvalidParameter", message="url error, please check url！")
+
+    def fake_multimodal_call(**kwargs):
+        multimodal_calls.append(kwargs)
+        content = (
+            '{"understanding":"修字",'
+            '"corrections":[{"id":"c0","corrected_text":"然后用这个CLI。",'
+            '"change_type":"dup","reason":"去重复"}]}'
+        )
+        return SimpleNamespace(
+            status_code=200,
+            output={"choices": [{"message": {"content": [{"text": content}]}}]},
+        )
+
+    def unexpected_post(*args, **kwargs):
+        raise AssertionError("OpenAI-compatible fallback should not run when native multimodal works.")
+
+    monkeypatch.setattr("app.correction_llm.Generation.call", fake_generation_call)
+    monkeypatch.setattr("app.correction_llm.MultiModalConversation.call", fake_multimodal_call)
+    monkeypatch.setattr("app.correction_llm.requests.post", unexpected_post)
+    settings = Settings(
+        dashscope_api_key="key",
+        dashscope_base_url="https://dashscope.aliyuncs.com/api/v1",
+    )
+
+    result = propose_transcript_polish_strict(
+        candidates=[LlmCorrectionCandidate("c0", 0, "speaker", "然后用用这个CLI。")],
+        settings=settings,
+        model="qwen3.6-plus",
+    )
+
+    assert generation_calls[0]["model"] == "qwen3.6-plus"
+    assert multimodal_calls[0]["messages"][0]["content"][0]["text"] == generation_calls[0]["messages"][0]["content"]
+    assert multimodal_calls[0]["enable_thinking"] is False
+    assert result.items[0].corrected_text == "然后用这个CLI。"
+
+
+def test_propose_transcript_polish_strict_falls_back_to_compatible_chat_after_multimodal_url_error(
+    monkeypatch,
+) -> None:
+    """OpenAI-compatible chat is the last fallback when native endpoints reject a model."""
+    generation_calls = []
+    multimodal_calls = []
+    compatible_calls = []
+
+    def fake_generation_call(**kwargs):
+        generation_calls.append(kwargs)
+        return SimpleNamespace(status_code=400, code="InvalidParameter", message="url error, please check url！")
+
+    def fake_multimodal_call(**kwargs):
+        multimodal_calls.append(kwargs)
+        return SimpleNamespace(status_code=400, code="InvalidParameter", message="url error, please check url！")
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"understanding":"修字",'
+                                '"corrections":[{"id":"c0","corrected_text":"然后用这个CLI。",'
+                                '"change_type":"dup","reason":"去重复"}]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(url, **kwargs):
+        compatible_calls.append((url, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr("app.correction_llm.Generation.call", fake_generation_call)
+    monkeypatch.setattr("app.correction_llm.MultiModalConversation.call", fake_multimodal_call)
+    monkeypatch.setattr("app.correction_llm.requests.post", fake_post)
+    settings = Settings(
+        dashscope_api_key="key",
+        dashscope_base_url="https://dashscope.aliyuncs.com/api/v1",
+    )
+
+    result = propose_transcript_polish_strict(
+        candidates=[LlmCorrectionCandidate("c0", 0, "speaker", "然后用用这个CLI。")],
+        settings=settings,
+        model="qwen3.6-plus",
+    )
+
+    assert generation_calls[0]["model"] == "qwen3.6-plus"
+    assert multimodal_calls[0]["model"] == "qwen3.6-plus"
+    assert compatible_calls[0][0] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    assert compatible_calls[0][1]["json"]["model"] == "qwen3.6-plus"
+    assert result.items[0].corrected_text == "然后用这个CLI。"
+
+
 def _polish_strict_response(content: str) -> SimpleNamespace:
     """Build a DashScope-style response wrapping a raw content string."""
     return SimpleNamespace(status_code=200, output={"choices": [{"message": {"content": content}}]})

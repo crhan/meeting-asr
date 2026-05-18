@@ -13,7 +13,15 @@ import typer
 
 from app.core.project_models import ProjectManifest
 from app.core.project_refs import resolve_project_ref
+from app.config import load_settings
+from app.correction_llm import propose_transcript_polish_strict
 from app.correction_proposals import load_correction_proposal
+from app.polish_evaluation import (
+    cases_to_llm_candidates,
+    default_polish_eval_path,
+    evaluate_polish_cases,
+    load_polish_eval_cases,
+)
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.progress import run_with_progress
 from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
@@ -305,6 +313,62 @@ def prepare_inline_corrections_for_review(
         correction_edits=correction_edits,
         options=inline_options,
     )
+
+
+@app.command("eval-polish")
+def eval_polish_command(
+    cases: Optional[Path] = typer.Option(
+        None,
+        "--cases",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="JSONL polish eval cases. Defaults to the repository eval set.",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Run a live DashScope strict-polish model against change/no-change cases.",
+    ),
+    show_passed: bool = typer.Option(False, "--show-passed", help="Print passing cases as well as failures."),
+) -> None:
+    """Evaluate transcript polish behavior against checked-in cases.
+
+    Without --model, this runs a deterministic offline eval using each case's
+    proposed_text. With --model, change/no-change cases are sent to the strict
+    polish model and adversarial reject cases still exercise deterministic guards.
+    """
+    case_path = cases or default_polish_eval_path()
+    loaded_cases = run_with_cli_errors(lambda: load_polish_eval_cases(case_path))
+    proposed_items = None
+    if model:
+        proposed_items = run_with_cli_errors(lambda: _run_live_polish_eval(loaded_cases, model))
+    summary = evaluate_polish_cases(loaded_cases, proposed_items)
+    typer.echo(f"Polish eval: {summary.passed}/{summary.total} passed ({case_path})")
+    for result in summary.results:
+        if result.passed and not show_passed:
+            continue
+        status = "PASS" if result.passed else "FAIL"
+        typer.echo(
+            f"{status} {result.case_id} [{result.category}] "
+            f"expected={result.expected_decision} actual={result.actual_decision} reason={result.reason}"
+        )
+        if not result.passed:
+            typer.echo(f"  expected: {result.expected_text}")
+            typer.echo(f"  actual:   {result.actual_text}")
+    if not summary.success:
+        raise typer.Exit(1)
+
+
+def _run_live_polish_eval(loaded_cases, model: str):
+    """Run the strict polish model for model-backed eval cases."""
+    settings = load_settings(require_oss=False, require_dashscope=True)
+    llm_result = propose_transcript_polish_strict(
+        candidates=cases_to_llm_candidates(loaded_cases),
+        settings=settings,
+        model=model,
+    )
+    return {item.candidate_id: item for item in llm_result.items}
 
 
 def accept_correction_for_review(

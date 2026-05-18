@@ -681,6 +681,34 @@ def test_project_correct_accept_rejects_unknown_type_token(tmp_path: Path, monke
     assert "bogus" in accept_result.output
 
 
+def test_project_correct_accept_rejects_stale_proposal(tmp_path: Path, monkeypatch) -> None:
+    """Accept should fail if the source transcript changed after proposal generation."""
+    project_dir = _sample_project_with_text(tmp_path, "用codekex这个嘛。")
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+    monkeypatch.setattr(
+        "app.transcript_corrections.propose_transcript_polish_strict",
+        lambda **kwargs: LlmStrictPolishResult(
+            "x",
+            [LlmPolishItem(kwargs["candidates"][0].candidate_id, "用Codex这个嘛。", "term", "")],
+            kwargs["model"],
+        ),
+    )
+    runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
+    source_path = project_dir / "asr" / "sentences.json"
+    payload = json.loads(source_path.read_text(encoding="utf-8"))
+    payload["sentences"][0]["text"] = "这句话已经被别人改过。"
+    source_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    accept_result = runner.invoke(app, ["project", "correct", "accept", str(project_dir)])
+
+    assert accept_result.exit_code != 0
+    assert "Correction proposal is stale" in accept_result.output
+    assert not (project_dir / "asr" / "sentences_corrected.json").exists()
+
+
 def test_project_correct_polish_proposal_markdown_groups_by_change_type(
     tmp_path: Path, monkeypatch
 ) -> None:

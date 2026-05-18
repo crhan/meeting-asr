@@ -8,12 +8,14 @@ from dataclasses import dataclass
 from typing import Any
 
 import dashscope
-from dashscope import Generation
+import requests
+from dashscope import Generation, MultiModalConversation
 
 from app.config import Settings
 from app.utils import retry
 
 DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS = 120
+DASHSCOPE_COMPATIBLE_CHAT_COMPLETIONS_PATH = "/compatible-mode/v1/chat/completions"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,22 +97,19 @@ def propose_vocabulary_corrections(
     _configure_dashscope(settings)
     prompt = _build_prompt(samples, candidates)
 
-    def _call() -> Any:
-        response = Generation.call(
+    def _call() -> str:
+        return _generate_text(
+            settings=settings,
             model=model,
-            api_key=settings.dashscope_api_key,
             messages=[
                 {"role": "system", "content": _system_prompt()},
                 {"role": "user", "content": prompt},
             ],
-            result_format="message",
             request_timeout=DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
             temperature=0.1,
         )
-        _raise_for_generation_error(response)
-        return response
 
-    content = _extract_generation_text(retry(_call, attempts=3, delay_seconds=1.0))
+    content = retry(_call, attempts=3, delay_seconds=1.0)
     return _parse_result(content, model=model, candidate_ids={item.candidate_id for item in candidates})
 
 
@@ -134,22 +133,19 @@ def propose_transcript_polish(
     _configure_dashscope(settings)
     prompt = _build_polish_prompt(candidates)
 
-    def _call() -> Any:
-        response = Generation.call(
+    def _call() -> str:
+        return _generate_text(
+            settings=settings,
             model=model,
-            api_key=settings.dashscope_api_key,
             messages=[
                 {"role": "system", "content": _polish_system_prompt()},
                 {"role": "user", "content": prompt},
             ],
-            result_format="message",
             request_timeout=DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
             temperature=0.1,
         )
-        _raise_for_generation_error(response)
-        return response
 
-    content = _extract_generation_text(retry(_call, attempts=1, delay_seconds=1.0))
+    content = retry(_call, attempts=1, delay_seconds=1.0)
     return _parse_result(content, model=model, candidate_ids={item.candidate_id for item in candidates})
 
 
@@ -178,22 +174,19 @@ def propose_transcript_polish_strict(
     _configure_dashscope(settings)
     prompt = _build_polish_strict_prompt(candidates)
 
-    def _call() -> Any:
-        response = Generation.call(
+    def _call() -> str:
+        return _generate_text(
+            settings=settings,
             model=model,
-            api_key=settings.dashscope_api_key,
             messages=[
                 {"role": "system", "content": _polish_strict_system_prompt()},
                 {"role": "user", "content": prompt},
             ],
-            result_format="message",
             request_timeout=request_timeout,
             temperature=0.0,
         )
-        _raise_for_generation_error(response)
-        return response
 
-    content = _extract_generation_text(retry(_call, attempts=attempts, delay_seconds=2.0))
+    content = retry(_call, attempts=attempts, delay_seconds=2.0)
     return _parse_strict_polish(content, model=model, candidate_ids={item.candidate_id for item in candidates})
 
 
@@ -217,22 +210,19 @@ def infer_vocabulary_replacements(
     _configure_dashscope(settings)
     prompt = _build_replacement_prompt(samples)
 
-    def _call() -> Any:
-        response = Generation.call(
+    def _call() -> str:
+        return _generate_text(
+            settings=settings,
             model=model,
-            api_key=settings.dashscope_api_key,
             messages=[
                 {"role": "system", "content": _system_prompt()},
                 {"role": "user", "content": prompt},
             ],
-            result_format="message",
             request_timeout=DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
             temperature=0.1,
         )
-        _raise_for_generation_error(response)
-        return response
 
-    content = _extract_generation_text(retry(_call, attempts=3, delay_seconds=1.0))
+    content = retry(_call, attempts=3, delay_seconds=1.0)
     return _parse_replacement_rules(content)
 
 
@@ -251,6 +241,138 @@ def _configure_dashscope(settings: Settings) -> None:
         for attr in ("base_http_api_url", "base_url"):
             if hasattr(dashscope, attr):
                 setattr(dashscope, attr, settings.dashscope_base_url)
+
+
+def _generate_text(
+    *,
+    settings: Settings,
+    model: str,
+    messages: list[dict[str, str]],
+    request_timeout: int,
+    temperature: float,
+) -> str:
+    """Generate text through the right DashScope endpoint for the chosen model."""
+    response = Generation.call(
+        model=model,
+        api_key=settings.dashscope_api_key,
+        messages=messages,
+        result_format="message",
+        request_timeout=request_timeout,
+        temperature=temperature,
+    )
+    if not _is_endpoint_url_error(response):
+        _raise_for_generation_error(response)
+        return _extract_generation_text(response)
+
+    multimodal_response = _generate_text_multimodal_native(
+        settings=settings,
+        model=model,
+        messages=messages,
+        request_timeout=request_timeout,
+        temperature=temperature,
+    )
+    if not _is_endpoint_url_error(multimodal_response):
+        _raise_for_generation_error(multimodal_response)
+        return _extract_generation_text(multimodal_response)
+
+    return _generate_text_compatible(
+        settings=settings,
+        model=model,
+        messages=messages,
+        request_timeout=request_timeout,
+        temperature=temperature,
+    )
+
+
+def _is_endpoint_url_error(response: Any) -> bool:
+    """Return whether DashScope rejected the model/API endpoint combination."""
+    status_code = getattr(response, "status_code", None)
+    code = str(getattr(response, "code", "") or "")
+    message = str(getattr(response, "message", "") or "")
+    return int(status_code or 0) == 400 and code == "InvalidParameter" and "url error" in message.lower()
+
+
+def _generate_text_multimodal_native(
+    *,
+    settings: Settings,
+    model: str,
+    messages: list[dict[str, str]],
+    request_timeout: int,
+    temperature: float,
+) -> Any:
+    """Call DashScope native multimodal conversation for Qwen3.6-style models."""
+    return MultiModalConversation.call(
+        model=model,
+        api_key=settings.dashscope_api_key,
+        messages=_multimodal_messages(messages),
+        result_format="message",
+        request_timeout=request_timeout,
+        temperature=temperature,
+        enable_thinking=False,
+    )
+
+
+def _multimodal_messages(messages: list[dict[str, str]]) -> list[dict[str, object]]:
+    """Convert text-generation messages to DashScope multimodal message parts."""
+    return [{"role": item["role"], "content": [{"text": item["content"]}]} for item in messages]
+
+
+def _generate_text_compatible(
+    *,
+    settings: Settings,
+    model: str,
+    messages: list[dict[str, str]],
+    request_timeout: int,
+    temperature: float,
+) -> str:
+    """Call DashScope's OpenAI-compatible chat completion endpoint."""
+    response = requests.post(
+        _compatible_chat_completions_url(settings.dashscope_base_url),
+        headers={
+            "Authorization": f"Bearer {settings.dashscope_api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+        },
+        timeout=request_timeout,
+    )
+    payload = _compatible_json_payload(response)
+    if response.status_code >= 400:
+        error = payload.get("error") if isinstance(payload, dict) else None
+        raise RuntimeError(f"DashScope compatible correction failed: HTTP {response.status_code} {error or payload}")
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not choices:
+        raise RuntimeError("DashScope compatible correction response did not contain choices.")
+    content = ((choices[0] or {}).get("message") or {}).get("content")
+    if not content:
+        raise RuntimeError("DashScope compatible correction response did not contain generated text.")
+    return str(content)
+
+
+def _compatible_json_payload(response: requests.Response) -> dict[str, Any]:
+    """Decode a DashScope-compatible JSON response."""
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"DashScope compatible correction returned non-JSON: {response.text[:200]}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("DashScope compatible correction returned non-object JSON.")
+    return payload
+
+
+def _compatible_chat_completions_url(base_url: str | None) -> str:
+    """Return the OpenAI-compatible chat completions URL for a DashScope base URL."""
+    root = (base_url or "https://dashscope.aliyuncs.com/api/v1").rstrip("/")
+    if root.endswith("/chat/completions"):
+        return root
+    if root.endswith("/compatible-mode/v1"):
+        return f"{root}/chat/completions"
+    if root.endswith("/api/v1"):
+        return f"{root[:-len('/api/v1')]}{DASHSCOPE_COMPATIBLE_CHAT_COMPLETIONS_PATH}"
+    return f"{root}{DASHSCOPE_COMPATIBLE_CHAT_COMPLETIONS_PATH}"
 
 
 def _system_prompt() -> str:
@@ -396,6 +518,16 @@ def _build_polish_strict_prompt(candidates: list[LlmCorrectionCandidate]) -> str
         "  5. 禁止删除上面【必须保留】列表里的任何词\n"
         "  6. 不确定就不要返回该条；宁可漏修不要错改\n"
         "\n"
+        "【标尺样例 — 按这个尺度改，不要自由发挥】\n"
+        "  - 『我们就好像好像没什么要说的，我想想』→『我们好像没什么要说的，我想想』\n"
+        "    只删重复和失败启动，不删仍然承载主语/事实的『我们』。\n"
+        "  - 『我可以让我A键读到就行』→『我可以让 AI 读到就行』\n"
+        "    A键 是 AI 的 ASR 错误，中文和英文术语之间保留空格。\n"
+        "  - 『把IC这边维修平台』→『把 iSee 这边维修平台』\n"
+        "    专有名词修正后，中文和英文术语之间保留空格。\n"
+        "  - 『这个就是action，好的，对吧』→『这就是 action，对吧？』\n"
+        "    删除无意义口头确认『好的』，但必须保留『对吧』这种共识探询词。\n"
+        "\n"
         "【输出格式】\n"
         "  {\n"
         "    \"understanding\": \"本批次主修了哪些类型\",\n"
@@ -491,8 +623,23 @@ def _extract_generation_text(response: Any) -> str:
         message = _field(choices[0], "message")
         content = _field(message, "content")
         if content:
-            return str(content)
+            return _message_content_text(content)
     raise RuntimeError("DashScope correction response did not contain generated text.")
+
+
+def _message_content_text(content: Any) -> str:
+    """Extract assistant text from text-generation or multimodal message content."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        chunks = []
+        for item in content:
+            text = _field(item, "text")
+            if text:
+                chunks.append(str(text))
+        if chunks:
+            return "".join(chunks)
+    return str(content)
 
 
 def _parse_result(text: str, *, model: str, candidate_ids: set[str]) -> LlmCorrectionResult:
