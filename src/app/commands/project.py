@@ -110,6 +110,14 @@ from app.speaker_match_status import (
     voiceprint_match_status,
 )
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
+from app.speaker_sample_matching import (
+    DEFAULT_IDENTITY_AMBIGUOUS_MARGIN,
+    DEFAULT_IDENTITY_CONFLICT_MARGIN,
+    DEFAULT_SAMPLE_IDENTITY_THRESHOLD,
+    SpeakerSampleMatchSummary,
+    match_project_speaker_samples,
+    speaker_sample_match_payload,
+)
 from app.speaker_review import (
     build_audio_preview_command,
     build_preview_command,
@@ -1560,6 +1568,46 @@ def speakers_match(
         typer.echo("Applied accepted speaker matches.")
 
 
+@speakers_app.command("sample-match")
+def speakers_sample_match(
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
+    threshold: float = typer.Option(DEFAULT_SAMPLE_IDENTITY_THRESHOLD, "--threshold", min=0.0, max=1.0),
+    conflict_margin: float = typer.Option(DEFAULT_IDENTITY_CONFLICT_MARGIN, "--conflict-margin", min=0.0, max=1.0),
+    ambiguous_margin: float = typer.Option(DEFAULT_IDENTITY_AMBIGUOUS_MARGIN, "--ambiguous-margin", min=0.0, max=1.0),
+    max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
+    padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
+    write_report: bool = typer.Option(True, "--write-report/--no-write-report"),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+) -> None:
+    """Match each transcript sample against the assigned speaker's voiceprint identity."""
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    summary = run_with_progress(
+        lambda reporter: match_project_speaker_samples(
+            resolved_project_dir,
+            store_dir=store_dir,
+            provider=None,
+            model=model,
+            threshold=threshold,
+            conflict_margin=conflict_margin,
+            ambiguous_margin=ambiguous_margin,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+            write_report=write_report,
+            progress=reporter,
+        ),
+        description="Matching project speaker samples",
+        enabled=progress and not json_output,
+    )
+    if json_output:
+        emit_json(speaker_sample_match_payload(summary))
+        return
+    _echo_sample_match_summary(summary)
+
+
 @speakers_app.command("cluster")
 def speakers_cluster(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
@@ -1855,6 +1903,52 @@ def _echo_cluster_quality_summary(summary: SpeakerClusterQualitySummary) -> None
             left = speaker_id_to_label(pair.left_speaker_id)
             right = speaker_id_to_label(pair.right_speaker_id)
             typer.echo(f"  {left} <-> {right} score={pair.score:.3f}")
+
+
+def _echo_sample_match_summary(summary: SpeakerSampleMatchSummary) -> None:
+    """
+    Print per-sample speaker identity diagnostics.
+
+    Args:
+        summary: Sample identity match summary.
+    """
+    typer.echo(f"Sample match report: {summary.report_path}")
+    typer.echo(f"Provider: {summary.provider}")
+    typer.echo(f"Model: {summary.model}")
+    typer.echo(
+        "Thresholds: "
+        f"match={summary.threshold:.3f} "
+        f"conflict-margin={summary.conflict_margin:.3f} "
+        f"ambiguous-margin={summary.ambiguous_margin:.3f}"
+    )
+    typer.echo(f"Verdict: {summary.verdict}")
+    for report in summary.reports:
+        typer.echo(_sample_match_cli_line(report))
+
+
+def _sample_match_cli_line(report: object) -> str:
+    """
+    Format one speaker sample identity diagnostic line.
+
+    Args:
+        report: Speaker sample match report dataclass.
+
+    Returns:
+        Single-line human-readable diagnostic.
+    """
+    counts = getattr(report, "status_counts")
+    assigned_name = getattr(report, "assigned_name")
+    assigned = "-" if assigned_name is None else str(assigned_name)
+    return (
+        f"{getattr(report, 'label')} assigned={assigned} "
+        f"samples={getattr(report, 'sample_count')} "
+        f"ok={counts.get('identity-ok', 0)} "
+        f"conflict={counts.get('identity-conflict', 0)} "
+        f"ambiguous={counts.get('identity-ambiguous', 0)} "
+        f"weak={counts.get('identity-weak', 0)} "
+        f"low-info={counts.get('low-info', 0)} "
+        f"no-assignment={counts.get('no-assignment', 0)}"
+    )
 
 
 def _speaker_cluster_cli_line(report: object) -> str:

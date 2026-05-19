@@ -26,6 +26,7 @@ from app.presentation.tui.speaker_models import (
     SpeakerClusterDiagnostic,
     SpeakerClusterSampleScore,
     SpeakerReviewSession,
+    SpeakerSampleIdentityScore,
 )
 from app.presentation.tui.speaker_people import load_existing_person_mapping, load_people
 from app.presentation.tui.speaker_status import SpeakerReviewOverview, VoiceprintReviewProgress
@@ -67,6 +68,7 @@ def load_speaker_review_session(
     ignore_path = paths.speakers_dir / "speaker_ignore.json"
     match_path = paths.speakers_dir / "speaker_matches.json"
     cluster_path = paths.speakers_dir / "speaker_cluster_quality.json"
+    sample_match_path = paths.speakers_dir / "speaker_sample_matches.json"
     mapping = _load_existing_mapping(mapping_path)
     ignored_speaker_ids = load_ignored_speakers(ignore_path)
     matches = load_match_candidates(match_path)
@@ -103,6 +105,7 @@ def load_speaker_review_session(
         store_dir=store_dir,
         projects_dir=paths.root.parent,
         cluster_diagnostics=_load_cluster_diagnostics(cluster_path),
+        sample_identity_scores=_load_sample_identity_scores(sample_match_path),
     )
 
 
@@ -270,6 +273,60 @@ def _cluster_sample_scores(value: object) -> list[SpeakerClusterSampleScore]:
     return rows
 
 
+def _load_sample_identity_scores(path: Path) -> dict[int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]]:
+    """Load optional per-sample identity match diagnostics."""
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    speakers = payload.get("speakers") if isinstance(payload, dict) else None
+    if not isinstance(speakers, list):
+        return {}
+    scores: dict[int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]] = {}
+    for item in speakers:
+        if not isinstance(item, dict):
+            continue
+        try:
+            speaker_id = int(item["speaker_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        rows = _sample_identity_score_rows(item.get("samples"))
+        scores[speaker_id] = {row.key: row for row in rows}
+    return scores
+
+
+def _sample_identity_score_rows(value: object) -> list[SpeakerSampleIdentityScore]:
+    """Convert serialized sample identity rows into TUI rows."""
+    rows: list[SpeakerSampleIdentityScore] = []
+    for item in _list_values(value):
+        if not isinstance(item, dict):
+            continue
+        try:
+            begin = int(item["begin_time_ms"])
+            end = int(item["end_time_ms"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        sentence_id = item.get("sentence_id")
+        rows.append(
+            SpeakerSampleIdentityScore(
+                sentence_id=None if sentence_id is None else _optional_int(sentence_id),
+                begin_time_ms=begin,
+                end_time_ms=end,
+                assigned_score=_optional_float(item.get("assigned_score")),
+                best_name=_optional_string(item.get("best_name")),
+                best_score=_optional_float(item.get("best_score")),
+                best_other_name=_optional_string(item.get("best_other_name")),
+                best_other_score=_optional_float(item.get("best_other_score")),
+                margin_score=_optional_float(item.get("margin_score")),
+                status=str(item.get("status") or "unknown"),
+                text=str(item.get("text") or ""),
+            )
+        )
+    return rows
+
+
 def _list_values(value: object) -> list[object]:
     """Return a JSON list payload as a list, or an empty list."""
     return value if isinstance(value, list) else []
@@ -283,6 +340,14 @@ def _optional_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_string(value: object) -> str | None:
+    """Convert a JSON scalar to a non-empty string."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _optional_int(value: object) -> int:

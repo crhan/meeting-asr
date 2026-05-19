@@ -36,6 +36,28 @@ class SpeakerClusterSampleScore:
 
 
 @dataclass(frozen=True, slots=True)
+class SpeakerSampleIdentityScore:
+    """One sample-level voiceprint identity score."""
+
+    sentence_id: int | None
+    begin_time_ms: int
+    end_time_ms: int
+    assigned_score: float | None
+    best_name: str | None
+    best_score: float | None
+    best_other_name: str | None
+    best_other_score: float | None
+    margin_score: float | None
+    status: str
+    text: str = ""
+
+    @property
+    def key(self) -> SegmentScoreKey:
+        """Return the transcript segment key this score belongs to."""
+        return (self.sentence_id, self.begin_time_ms, self.end_time_ms)
+
+
+@dataclass(frozen=True, slots=True)
 class SpeakerClusterDiagnostic:
     """Cluster quality diagnostics for one detected speaker."""
 
@@ -105,6 +127,7 @@ class SpeakerReviewSession:
     store_dir: Path | None = None
     projects_dir: Path | None = None
     cluster_diagnostics: dict[int, SpeakerClusterDiagnostic] = field(default_factory=dict)
+    sample_identity_scores: dict[int, dict[SegmentScoreKey, SpeakerSampleIdentityScore]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

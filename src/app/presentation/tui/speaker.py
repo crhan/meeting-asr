@@ -44,6 +44,7 @@ from app.presentation.tui.speaker_models import (
     SpeakerClusterSampleScore,
     SpeakerReviewDecision,
     SpeakerReviewSession,
+    SpeakerSampleIdentityScore,
 )
 from app.presentation.tui.speaker_people import (
     KnownPerson,
@@ -924,6 +925,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             sample_line = (
                 f"{prefix} {playing} [cyan]{time_range}[/] "
                 f"{_sample_cluster_badge(self._cluster_sample_score(speaker, segment))} "
+                f"{_sample_identity_badge(self._sample_identity_score(speaker, segment))} "
                 f"{escape(text)}"
             )
             if self._has_correction_edit(segment):
@@ -1307,6 +1309,14 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             return None
         return diagnostic.samples.get(segment_key(segment))
 
+    def _sample_identity_score(
+        self,
+        speaker: ReviewSpeaker,
+        segment: SentenceSegment,
+    ) -> SpeakerSampleIdentityScore | None:
+        """Return optional sample-level identity match score for one visible row."""
+        return self.session.sample_identity_scores.get(speaker.speaker_id, {}).get(segment_key(segment))
+
     def _replace_segment_text(self, edit: SentenceCorrectionEdit) -> None:
         """Update the in-memory sample text after a TUI correction."""
         for speaker in self.session.speakers:
@@ -1461,6 +1471,27 @@ def _sample_cluster_badge(score: SpeakerClusterSampleScore | None) -> str:
     return f"[{style}]fit={value} {escape(score.status)}[/]"
 
 
+def _sample_identity_badge(score: SpeakerSampleIdentityScore | None) -> str:
+    """Render one sample-to-voiceprint identity score badge."""
+    if score is None:
+        return "[dim]id=-[/]"
+    assigned = _format_optional_score(score.assigned_score)
+    style = _identity_score_style(score.status)
+    if score.status == "identity-conflict" and score.best_name:
+        best = escape(score.best_name)
+        margin = _format_optional_score(score.margin_score)
+        return f"[{style}]id={assigned} sep={margin} best={best} conflict[/]"
+    if score.status == "identity-ambiguous":
+        margin = _format_optional_score(score.margin_score)
+        return f"[{style}]id={assigned} sep={margin} ambiguous[/]"
+    if score.status == "identity-weak":
+        return f"[{style}]id={assigned} weak[/]"
+    if score.status in {"low-info", "no-assignment"}:
+        label = "low" if score.status == "low-info" else "unassigned"
+        return f"[{style}]id={label}[/]"
+    return f"[{style}]id={assigned} ok[/]"
+
+
 def _cluster_status_style(status: str) -> str:
     """Return Rich style for a speaker cluster status."""
     return {
@@ -1481,6 +1512,18 @@ def _sample_score_style(status: str) -> str:
         "warning": "yellow",
         "critical": "bold red",
         "low-info": "dim",
+    }.get(status, "dim")
+
+
+def _identity_score_style(status: str) -> str:
+    """Return Rich style for one sample identity status."""
+    return {
+        "identity-ok": "green",
+        "identity-ambiguous": "yellow",
+        "identity-weak": "yellow",
+        "identity-conflict": "bold red",
+        "low-info": "dim",
+        "no-assignment": "dim",
     }.get(status, "dim")
 
 

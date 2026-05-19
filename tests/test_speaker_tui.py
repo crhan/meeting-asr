@@ -75,6 +75,7 @@ from app.presentation.tui.speaker_models import (
     SentenceReassignment,
     SpeakerClusterDiagnostic,
     SpeakerClusterSampleScore,
+    SpeakerSampleIdentityScore,
 )
 from app.voiceprint_store import (
     StoredVoiceprintSample,
@@ -140,7 +141,13 @@ def test_speaker_review_tui_shows_project_workflow_status() -> None:
 
 def test_speaker_review_tui_shows_cluster_scores() -> None:
     """Project Review should expose speaker-level and sample-level cluster scores."""
-    app = SpeakerReviewApp(replace(_session(page_size=10), cluster_diagnostics=_cluster_diagnostics()))
+    app = SpeakerReviewApp(
+        replace(
+            _session(page_size=10),
+            cluster_diagnostics=_cluster_diagnostics(),
+            sample_identity_scores=_sample_identity_scores(),
+        )
+    )
 
     speaker_pane = app._speaker_pane()
     sample_pane = app._sample_pane()
@@ -149,7 +156,9 @@ def test_speaker_review_tui_shows_cluster_scores() -> None:
     assert "centroid-fit ok" in sample_pane
     assert "mean=0.840" in sample_pane
     assert "fit=0.910 ok" in sample_pane
+    assert "id=0.930 ok" in sample_pane
     assert "fit=0.550 sep=-0.120 vs=Speaker B conflict" in sample_pane
+    assert "id=0.410 sep=-0.350 best=Speaker B conflict" in sample_pane
 
 
 def test_speaker_review_tui_uses_chinese_language() -> None:
@@ -1425,6 +1434,7 @@ def test_load_speaker_review_session_builds_project_overview_from_disk(tmp_path:
     """Session loading should combine project files, match files, and voiceprint DB state."""
     project_dir, store_dir = _project_with_voiceprint_state(tmp_path)
     _write_cluster_report(project_dir)
+    _write_sample_match_report(project_dir)
 
     session = load_speaker_review_session(project_dir, store_dir=store_dir)
     overview = session.overview
@@ -1445,6 +1455,10 @@ def test_load_speaker_review_session_builds_project_overview_from_disk(tmp_path:
     assert diagnostic.status == "ok"
     assert diagnostic.centroid_mean == 0.88
     assert diagnostic.samples[(1, 0, 1500)].score == 0.92
+    identity = session.sample_identity_scores[0][(1, 0, 1500)]
+    assert identity.assigned_score == 0.91
+    assert identity.best_name == "欧丁"
+    assert identity.status == "identity-ok"
 
 
 def test_load_speaker_review_session_prefers_corrected_transcript(tmp_path: Path) -> None:
@@ -1738,6 +1752,40 @@ def _cluster_diagnostics() -> dict[int, SpeakerClusterDiagnostic]:
     }
 
 
+def _sample_identity_scores() -> dict[int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]]:
+    """Build sample identity diagnostics for TUI rendering tests."""
+    return {
+        0: {
+            (1, 0, 1000): SpeakerSampleIdentityScore(
+                1,
+                0,
+                1000,
+                0.93,
+                "Speaker A",
+                0.93,
+                "Speaker B",
+                0.22,
+                0.71,
+                "identity-ok",
+                "第一句",
+            ),
+            (2, 2000, 2500): SpeakerSampleIdentityScore(
+                2,
+                2000,
+                2500,
+                0.41,
+                "Speaker B",
+                0.76,
+                "Speaker B",
+                0.76,
+                -0.35,
+                "identity-conflict",
+                "第二句",
+            ),
+        }
+    }
+
+
 def _correction_summary(
     *,
     accepted: bool,
@@ -1912,6 +1960,46 @@ def _write_cluster_report(project_dir: Path) -> None:
         ]
     }
     (project_dir / "speakers" / "speaker_cluster_quality.json").write_text(
+        json.dumps(report, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _write_sample_match_report(project_dir: Path) -> None:
+    """Write a persisted speaker sample identity match fixture."""
+    report = {
+        "speakers": [
+            {
+                "speaker_id": 0,
+                "label": "Speaker A",
+                "assigned_person_id": 7,
+                "assigned_name": "欧丁",
+                "sample_count": 1,
+                "status_counts": {"identity-ok": 1},
+                "samples": [
+                    {
+                        "speaker_id": 0,
+                        "sentence_id": 1,
+                        "begin_time_ms": 0,
+                        "end_time_ms": 1500,
+                        "text": "你好，我是欧丁。",
+                        "assigned_person_id": 7,
+                        "assigned_name": "欧丁",
+                        "assigned_score": 0.91,
+                        "best_person_id": 7,
+                        "best_name": "欧丁",
+                        "best_score": 0.91,
+                        "best_other_person_id": 8,
+                        "best_other_name": "敬悦",
+                        "best_other_score": 0.22,
+                        "margin_score": 0.69,
+                        "status": "identity-ok",
+                    }
+                ],
+            }
+        ]
+    }
+    (project_dir / "speakers" / "speaker_sample_matches.json").write_text(
         json.dumps(report, ensure_ascii=False),
         encoding="utf-8",
     )
