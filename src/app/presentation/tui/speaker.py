@@ -1451,7 +1451,13 @@ def _sample_cluster_badge(score: SpeakerClusterSampleScore | None) -> str:
     if score is None:
         return "[dim]fit=-[/]"
     value = _format_optional_score(score.score)
+    margin = _format_optional_score(score.margin_score)
     style = _sample_score_style(score.status)
+    if score.nearest_speaker_id is not None and score.status in {"conflict", "ambiguous"}:
+        label = speaker_id_to_label(score.nearest_speaker_id)
+        return f"[{style}]fit={value} sep={margin} vs={escape(label)} {escape(score.status)}[/]"
+    if score.margin_score is not None and score.status == "weak-fit":
+        return f"[{style}]fit={value} sep={margin} {escape(score.status)}[/]"
     return f"[{style}]fit={value} {escape(score.status)}[/]"
 
 
@@ -1467,7 +1473,15 @@ def _cluster_status_style(status: str) -> str:
 
 def _sample_score_style(status: str) -> str:
     """Return Rich style for one sample cluster status."""
-    return {"ok": "green", "warning": "yellow", "critical": "bold red", "low-info": "dim"}.get(status, "dim")
+    return {
+        "ok": "green",
+        "ambiguous": "yellow",
+        "weak-fit": "yellow",
+        "conflict": "bold red",
+        "warning": "yellow",
+        "critical": "bold red",
+        "low-info": "dim",
+    }.get(status, "dim")
 
 
 def _format_optional_score(value: float | None) -> str:

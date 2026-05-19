@@ -149,7 +149,7 @@ def test_speaker_review_tui_shows_cluster_scores() -> None:
     assert "centroid-fit ok" in sample_pane
     assert "mean=0.840" in sample_pane
     assert "fit=0.910 ok" in sample_pane
-    assert "fit=0.550 critical" in sample_pane
+    assert "fit=0.550 sep=-0.120 vs=Speaker B conflict" in sample_pane
 
 
 def test_speaker_review_tui_uses_chinese_language() -> None:
@@ -1708,7 +1708,17 @@ def _cluster_diagnostics() -> dict[int, SpeakerClusterDiagnostic]:
     """Build speaker cluster diagnostics for TUI rendering tests."""
     samples = {
         (1, 0, 1000): SpeakerClusterSampleScore(1, 0, 1000, 0.91, "ok", "第一句"),
-        (2, 2000, 2500): SpeakerClusterSampleScore(2, 2000, 2500, 0.55, "critical", "第二句"),
+        (2, 2000, 2500): SpeakerClusterSampleScore(
+            2,
+            2000,
+            2500,
+            0.55,
+            "conflict",
+            "第二句",
+            nearest_speaker_id=1,
+            nearest_score=0.67,
+            margin_score=-0.12,
+        ),
     }
     return {
         0: SpeakerClusterDiagnostic(
@@ -1722,7 +1732,7 @@ def _cluster_diagnostics() -> dict[int, SpeakerClusterDiagnostic]:
             critical_clip_count=1,
             component_count=1,
             component_sizes=(2,),
-            warnings=("critical_centroid_outlier",),
+            warnings=("conflict_candidate",),
             samples=samples,
         )
     }

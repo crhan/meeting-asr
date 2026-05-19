@@ -262,6 +262,9 @@ def _cluster_sample_scores(value: object) -> list[SpeakerClusterSampleScore]:
                 score=_optional_float(item.get("centroid_score")),
                 status=str(item.get("status") or "unknown"),
                 text=str(item.get("text") or ""),
+                nearest_speaker_id=_optional_int_or_none(item.get("nearest_speaker_id")),
+                nearest_score=_optional_float(item.get("nearest_score")),
+                margin_score=_optional_float(item.get("margin_score")),
             )
         )
     return rows
@@ -288,6 +291,16 @@ def _optional_int(value: object) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _optional_int_or_none(value: object) -> int | None:
+    """Convert a JSON scalar to int, preserving missing values."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _build_review_speakers(

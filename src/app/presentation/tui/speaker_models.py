@@ -25,6 +25,9 @@ class SpeakerClusterSampleScore:
     score: float | None
     status: str
     text: str = ""
+    nearest_speaker_id: int | None = None
+    nearest_score: float | None = None
+    margin_score: float | None = None
 
     @property
     def key(self) -> SegmentScoreKey:

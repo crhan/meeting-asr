@@ -38,6 +38,8 @@ SPEAKER_CRITICAL_RATIO_LIMIT = 0.10
 SPEAKER_WARNING_CRITICAL_RATIO_LIMIT = 0.05
 SPEAKER_MIXED_INTERNAL_MEAN = 0.40
 SPEAKER_WARNING_INTERNAL_MEAN = 0.50
+SAMPLE_CONFLICT_MARGIN = -0.03
+SAMPLE_AMBIGUOUS_MARGIN = 0.05
 TEXT_TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]", re.UNICODE)
 FILLER_PHRASES = (
     "然后",
@@ -96,7 +98,7 @@ class SpeakerClusterReport:
 
 @dataclass(frozen=True, slots=True)
 class SpeakerClusterSampleScore:
-    """One clip score against its speaker centroid."""
+    """One clip score against project speaker centroids."""
 
     index: int
     sentence_id: int | None
@@ -104,6 +106,9 @@ class SpeakerClusterSampleScore:
     end_time_ms: int
     text: str
     centroid_score: float | None
+    nearest_speaker_id: int | None
+    nearest_score: float | None
+    margin_score: float | None
     status: str
 
 
@@ -595,11 +600,11 @@ def _speaker_report(
     scores = _pairwise_scores([clip.vector for clip in anchor_clips])
     components = _connected_components(anchor_clips, same_speaker_threshold)
     nearest_id, nearest_score = _nearest_other_speaker(speaker_id, centroids)
-    anchor_scores = _clip_centroid_score_rows(anchor_clips, centroids.get(speaker_id), warning_score, critical_score)
-    sample_scores = _clip_centroid_score_rows(score_clips, centroids.get(speaker_id), warning_score, critical_score)
+    anchor_scores = _clip_centroid_score_rows(anchor_clips, speaker_id, centroids, warning_score, critical_score)
+    sample_scores = _clip_centroid_score_rows(score_clips, speaker_id, centroids, warning_score, critical_score)
     centroid_scores = [score.centroid_score for score in anchor_scores if score.centroid_score is not None]
-    warning_count = sum(1 for score in centroid_scores if critical_score <= score < warning_score)
-    critical_count = sum(1 for score in centroid_scores if score < critical_score)
+    warning_count = sum(1 for score in anchor_scores if score.status in {"ambiguous", "weak-fit"})
+    critical_count = sum(1 for score in anchor_scores if score.status == "conflict")
     centroid_mean = _mean(centroid_scores) if centroid_scores else None
     centroid_min = min(centroid_scores) if centroid_scores else None
     warnings = _speaker_warnings(
@@ -633,14 +638,18 @@ def _speaker_report(
 
 def _clip_centroid_score_rows(
     clips: list[SpeakerClusterClip],
-    centroid: list[float] | None,
+    speaker_id: int,
+    centroids: dict[int, list[float]],
     warning_score: float,
     critical_score: float,
 ) -> list[SpeakerClusterSampleScore]:
-    """Return each clip's score against its own speaker centroid."""
+    """Return each clip's own score and nearest-other separation."""
     rows: list[SpeakerClusterSampleScore] = []
+    centroid = centroids.get(speaker_id)
     for clip in clips:
         score = None if centroid is None else _cosine(clip.vector, centroid)
+        nearest_id, nearest_score = _nearest_other_centroid(clip.vector, speaker_id, centroids)
+        margin_score = None if score is None or nearest_score is None else score - nearest_score
         low_information = _is_low_information_clip(clip)
         rows.append(
             SpeakerClusterSampleScore(
@@ -650,7 +659,17 @@ def _clip_centroid_score_rows(
                 clip.end_time_ms,
                 clip.text,
                 score,
-                _sample_score_status(score, warning_score, critical_score, low_information=low_information),
+                nearest_id,
+                nearest_score,
+                margin_score,
+                _sample_score_status(
+                    score,
+                    nearest_score,
+                    margin_score,
+                    warning_score,
+                    critical_score,
+                    low_information=low_information,
+                ),
             )
         )
     return rows
@@ -664,6 +683,8 @@ def _is_low_information_clip(clip: SpeakerClusterClip) -> bool:
 
 def _sample_score_status(
     score: float | None,
+    nearest_score: float | None,
+    margin_score: float | None,
     warning_score: float,
     critical_score: float,
     *,
@@ -674,10 +695,15 @@ def _sample_score_status(
         return "low-info"
     if score is None:
         return "unknown"
+    if nearest_score is not None and margin_score is not None and nearest_score >= critical_score:
+        if margin_score <= SAMPLE_CONFLICT_MARGIN:
+            return "conflict"
+        if margin_score < SAMPLE_AMBIGUOUS_MARGIN:
+            return "ambiguous"
     if score < critical_score:
-        return "critical"
+        return "weak-fit"
     if score < warning_score:
-        return "warning"
+        return "weak-fit"
     return "ok"
 
 
@@ -722,6 +748,28 @@ def _nearest_other_speaker(
     return max(candidates, key=lambda item: item[1])
 
 
+def _nearest_other_centroid(
+    vector: list[float],
+    speaker_id: int,
+    centroids: dict[int, list[float]],
+) -> tuple[int | None, float | None]:
+    """
+    Return the nearest speaker centroid that is not the clip's current speaker.
+
+    Args:
+        vector: Normalized clip embedding vector.
+        speaker_id: Current project speaker id.
+        centroids: Speaker centroid vectors keyed by speaker id.
+
+    Returns:
+        Nearest other speaker id and cosine score.
+    """
+    candidates = [(other_id, _cosine(vector, centroid)) for other_id, centroid in centroids.items() if other_id != speaker_id]
+    if not candidates:
+        return None, None
+    return max(candidates, key=lambda item: item[1])
+
+
 def _speaker_warnings(
     clips: list[SpeakerClusterClip],
     scores: list[float],
@@ -742,13 +790,13 @@ def _speaker_warnings(
     elif centroid_mean is not None and centroid_mean < SPEAKER_OK_MEAN_SCORE:
         warnings.append("borderline_centroid_mean")
     if critical_ratio >= SPEAKER_CRITICAL_RATIO_LIMIT:
-        warnings.append("high_critical_ratio")
+        warnings.append("high_conflict_ratio")
     elif critical_ratio > SPEAKER_WARNING_CRITICAL_RATIO_LIMIT:
-        warnings.append("critical_centroid_outlier")
+        warnings.append("conflict_candidate")
     if warning_ratio > SPEAKER_WARNING_RATIO_LIMIT:
-        warnings.append("high_warning_ratio")
+        warnings.append("high_weak_fit_ratio")
     elif warning_count:
-        warnings.append("warning_centroid_outlier")
+        warnings.append("weak_fit_sample")
     component_sizes = sorted((len(component) for component in components), reverse=True)
     if len(component_sizes) > 1 and component_sizes[1] >= 2:
         warnings.append("multi_component")
@@ -769,7 +817,7 @@ def _speaker_status(warnings: list[str]) -> str:
         return "ok"
     if warnings == ["too_few_clips"]:
         return "insufficient"
-    if any(item in warnings for item in {"low_centroid_mean", "high_critical_ratio", "multi_component", "low_internal_mean"}):
+    if any(item in warnings for item in {"low_centroid_mean", "high_conflict_ratio", "multi_component", "low_internal_mean"}):
         return "mixed"
     return "warning"
 
@@ -856,6 +904,9 @@ def _sample_score_payload(sample: SpeakerClusterSampleScore) -> dict[str, object
         "end_time_ms": sample.end_time_ms,
         "text": sample.text,
         "centroid_score": sample.centroid_score,
+        "nearest_speaker_id": sample.nearest_speaker_id,
+        "nearest_score": sample.nearest_score,
+        "margin_score": sample.margin_score,
         "status": sample.status,
     }
 

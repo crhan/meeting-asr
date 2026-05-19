@@ -11,7 +11,13 @@ from typer.testing import CliRunner
 from app.cli import app
 from app.models import SentenceSegment
 from app.project_manager import create_project
-from app.speaker_cluster_quality import _audio_quality_ok, _select_segments, _speaker_status, _speaker_warnings
+from app.speaker_cluster_quality import (
+    _audio_quality_ok,
+    _sample_score_status,
+    _select_segments,
+    _speaker_status,
+    _speaker_warnings,
+)
 
 runner = CliRunner()
 
@@ -55,7 +61,8 @@ def test_project_speakers_cluster_flags_mixed_speaker(
     assert "multi_component" in speaker_a["warnings"]
     assert speaker_a["samples"][0]["sentence_id"] == 1
     assert speaker_a["samples"][0]["centroid_score"] is not None
-    assert speaker_a["samples"][0]["status"] in {"ok", "warning", "critical"}
+    assert speaker_a["samples"][0]["margin_score"] is not None
+    assert speaker_a["samples"][0]["status"] in {"ok", "ambiguous", "conflict", "weak-fit", "low-info"}
 
 
 def test_project_speakers_cluster_can_score_all_segments(
@@ -118,6 +125,29 @@ def test_cluster_audio_quality_uses_voiced_duration_not_silence_ratio(tmp_path: 
     _write_wav(padded, [0] * 80_000 + [1800] * 16_000 + [0] * 80_000)
 
     assert _audio_quality_ok(padded) is True
+
+
+def test_sample_status_requires_other_bucket_evidence_for_conflict() -> None:
+    """Low own fit alone should not be treated as a wrong-bucket proof."""
+    weak = _sample_score_status(
+        0.47,
+        0.20,
+        0.27,
+        0.70,
+        0.60,
+        low_information=False,
+    )
+    conflict = _sample_score_status(
+        0.47,
+        0.66,
+        -0.19,
+        0.70,
+        0.60,
+        low_information=False,
+    )
+
+    assert weak == "weak-fit"
+    assert conflict == "conflict"
 
 
 def test_speaker_status_uses_ratios_instead_of_single_outlier() -> None:

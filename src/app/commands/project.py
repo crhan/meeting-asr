@@ -1878,8 +1878,8 @@ def _speaker_cluster_cli_line(report: object) -> str:
         f"pair_mean={_optional_score(getattr(report, 'intra_mean'))} "
         f"components={getattr(report, 'component_count')} "
         f"sizes={getattr(report, 'component_sizes')} "
-        f"outliers=warn:{getattr(report, 'warning_clip_count')} "
-        f"critical:{getattr(report, 'critical_clip_count')} "
+        f"samples=weak:{getattr(report, 'warning_clip_count')} "
+        f"conflict:{getattr(report, 'critical_clip_count')} "
         f"nearest={nearest} score={_optional_score(nearest_score)} "
         f"warnings={','.join(getattr(report, 'warnings')) or '-'}"
     )
