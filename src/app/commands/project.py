@@ -59,6 +59,7 @@ from app.core.project_models import (
 from app.core.project_refs import list_projects, resolve_project_ref
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
+from app.postprocess import speaker_id_to_label
 from app.project_manager import (
     apply_project_speakers,
     create_or_reuse_project,
@@ -90,6 +91,11 @@ from app.speaker_labeling import (
     load_project_ignored_speakers,
     load_transcript_result,
 )
+from app.speaker_cluster_quality import (
+    SpeakerClusterQualitySummary,
+    analyze_project_speaker_clusters,
+    speaker_cluster_quality_payload,
+)
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
     MATCH_STATUS_IGNORED,
@@ -119,6 +125,7 @@ from app.presentation.tui.speaker_save import SpeakerReviewSaveOutcome
 from app.presentation.tui.speaker_summary import render_speaker_review_summary
 from app.srt_compare import build_report, parse_srt
 from app.utils import configure_logging, format_ms_timestamp, safe_write_text
+from app.voiceprint_quality import DEFAULT_CRITICAL_SCORE, DEFAULT_WARNING_SCORE
 
 app = MeetingAsrTyper(
     add_completion=False,
@@ -1538,6 +1545,48 @@ def speakers_match(
         typer.echo("Applied accepted speaker matches.")
 
 
+@speakers_app.command("cluster")
+def speakers_cluster(
+    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
+    sample_count: int = typer.Option(8, "--sample-count", min=2, max=40),
+    max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
+    padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
+    same_speaker_threshold: float = typer.Option(0.60, "--same-speaker-threshold", min=0.0, max=1.0),
+    merge_threshold: float = typer.Option(0.82, "--merge-threshold", min=0.0, max=1.0),
+    warning_score: float = typer.Option(DEFAULT_WARNING_SCORE, "--warning-score", min=0.0, max=1.0),
+    critical_score: float = typer.Option(DEFAULT_CRITICAL_SCORE, "--critical-score", min=0.0, max=1.0),
+    write_report: bool = typer.Option(True, "--write-report/--no-write-report"),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+) -> None:
+    """Diagnose whether detected speaker groups are acoustically coherent."""
+    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    summary = run_with_progress(
+        lambda reporter: analyze_project_speaker_clusters(
+            resolved_project_dir,
+            provider=None,
+            model=model,
+            sample_count=sample_count,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+            same_speaker_threshold=same_speaker_threshold,
+            merge_speaker_threshold=merge_threshold,
+            warning_score=warning_score,
+            critical_score=critical_score,
+            write_report=write_report,
+            progress=reporter,
+        ),
+        description="Analyzing speaker clusters",
+        enabled=progress and not json_output,
+    )
+    if json_output:
+        emit_json(speaker_cluster_quality_payload(summary))
+        return
+    _echo_cluster_quality_summary(summary)
+
+
 @speakers_app.command("compare-srt")
 def speakers_compare_srt(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
@@ -1759,6 +1808,67 @@ def _relative_project_output(project_dir: Path, output_path: Path) -> str:
         return str(output_path.resolve())
 
 
+def _echo_cluster_quality_summary(summary: SpeakerClusterQualitySummary) -> None:
+    """
+    Print speaker cluster quality diagnostics.
+
+    Args:
+        summary: Cluster quality summary.
+    """
+    typer.echo(f"Cluster report: {summary.report_path}")
+    typer.echo(f"Provider: {summary.provider}")
+    typer.echo(f"Model: {summary.model}")
+    typer.echo(
+        "Thresholds: "
+        f"same-speaker={summary.same_speaker_threshold:.3f} "
+        f"merge={summary.merge_speaker_threshold:.3f} "
+        f"warning={summary.warning_score:.3f} "
+        f"critical={summary.critical_score:.3f}"
+    )
+    typer.echo(f"Verdict: {summary.verdict}")
+    for report in summary.reports:
+        typer.echo(_speaker_cluster_cli_line(report))
+    if summary.close_pairs:
+        typer.echo("Close speaker centroids:")
+        for pair in summary.close_pairs:
+            left = speaker_id_to_label(pair.left_speaker_id)
+            right = speaker_id_to_label(pair.right_speaker_id)
+            typer.echo(f"  {left} <-> {right} score={pair.score:.3f}")
+
+
+def _speaker_cluster_cli_line(report: object) -> str:
+    """
+    Format one speaker cluster diagnostic line.
+
+    Args:
+        report: Speaker cluster report dataclass.
+
+    Returns:
+        Single-line human-readable diagnostic.
+    """
+    nearest_id = getattr(report, "nearest_speaker_id", None)
+    nearest_score = getattr(report, "nearest_score", None)
+    nearest = "-" if nearest_id is None else speaker_id_to_label(nearest_id)
+    return (
+        f"{getattr(report, 'label')} status={getattr(report, 'status')} "
+        f"clips={getattr(report, 'clip_count')}/{getattr(report, 'segment_count')} "
+        f"centroid_mean={_optional_score(getattr(report, 'centroid_mean'))} "
+        f"centroid_min={_optional_score(getattr(report, 'centroid_min'))} "
+        f"pair_mean={_optional_score(getattr(report, 'intra_mean'))} "
+        f"components={getattr(report, 'component_count')} "
+        f"sizes={getattr(report, 'component_sizes')} "
+        f"outliers=warn:{getattr(report, 'warning_clip_count')} "
+        f"critical:{getattr(report, 'critical_clip_count')} "
+        f"nearest={nearest} score={_optional_score(nearest_score)} "
+        f"warnings={','.join(getattr(report, 'warnings')) or '-'}"
+    )
+
+
+def _optional_score(value: object) -> str:
+    """Format an optional float score."""
+    return "-" if value is None else f"{float(value):.3f}"
+
+
 def _echo_match_summary(summary: SpeakerMatchSummary) -> None:
     """
     Print speaker match results.
@@ -1854,6 +1964,7 @@ def _echo_unresolved_speaker_next_steps(project_ref: str, *, speaker_only: bool)
     typer.echo("")
     typer.echo("Diagnostic/read-only:")
     typer.echo(f"  meeting-asr project speakers inspect {quoted_ref} --sample-count 5")
+    typer.echo(f"  meeting-asr project speakers cluster {quoted_ref} --sample-count 8")
     typer.echo("")
     typer.echo("Advanced/scripted alternative (not the recommended human path):")
     typer.echo(f"  meeting-asr project speakers apply {quoted_ref} --map 0=Name")
