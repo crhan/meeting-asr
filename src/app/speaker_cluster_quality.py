@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+import wave
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,16 @@ from app.voiceprint_quality import DEFAULT_CRITICAL_SCORE, DEFAULT_WARNING_SCORE
 MIN_ANCHOR_DURATION_MS = 1500
 MIN_ANCHOR_TEXT_CHARS = 8
 LOW_INFO_TEXT_CHARS = 4
+MIN_AUDIO_RMS = 0.006
+MAX_AUDIO_SILENCE_RATIO = 0.80
+MAX_AUDIO_CLIPPING_RATIO = 0.01
+SPEAKER_OK_MEAN_SCORE = 0.75
+SPEAKER_WARNING_MEAN_SCORE = 0.68
+SPEAKER_WARNING_RATIO_LIMIT = 0.20
+SPEAKER_CRITICAL_RATIO_LIMIT = 0.10
+SPEAKER_WARNING_CRITICAL_RATIO_LIMIT = 0.05
+SPEAKER_MIXED_INTERNAL_MEAN = 0.40
+SPEAKER_WARNING_INTERNAL_MEAN = 0.50
 TEXT_TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]", re.UNICODE)
 FILLER_PHRASES = (
     "然后",
@@ -236,7 +247,7 @@ def _embed_speaker_clips(
     clips_by_speaker: dict[int, tuple[list[SpeakerClusterClip], list[SpeakerClusterClip]]] = {}
     cache = _read_embedding_cache(context.project_root)
     for speaker_id, segments in speaker_items:
-        selected = _select_segments(segments, sample_count)
+        selected = _select_segments(segments, sample_count * 3)
         anchor_clips = _embed_selected_segments(
             context,
             speaker_id,
@@ -244,7 +255,36 @@ def _embed_speaker_clips(
             max_seconds=max_seconds,
             padding_seconds=padding_seconds,
             cache=cache,
+            max_clips=sample_count,
+            require_audio_quality=True,
         )
+        if len(anchor_clips) < min(sample_count, len(selected)):
+            anchor_clips = _embed_selected_segments(
+                context,
+                speaker_id,
+                selected,
+                max_seconds=max_seconds,
+                padding_seconds=padding_seconds,
+                cache=cache,
+                max_clips=sample_count,
+                require_audio_quality=False,
+            )
+        selected_segments = [_clip_segment(clip) for clip in anchor_clips]
+        if not selected_segments:
+            selected_segments = _select_segments(segments, sample_count)
+            anchor_clips = _embed_selected_segments(
+                context,
+                speaker_id,
+                selected_segments,
+                max_seconds=max_seconds,
+                padding_seconds=padding_seconds,
+                cache=cache,
+                max_clips=sample_count,
+                require_audio_quality=False,
+            )
+        else:
+            selected_segments = [_clip_segment(clip) for clip in anchor_clips]
+            anchor_clips = _reindex_clips(anchor_clips)
         score_segments = segments if score_all_segments else selected
         score_clips = anchor_clips
         if score_all_segments:
@@ -255,6 +295,8 @@ def _embed_speaker_clips(
                 max_seconds=max_seconds,
                 padding_seconds=padding_seconds,
                 cache=cache,
+                max_clips=None,
+                require_audio_quality=False,
             )
         clips_by_speaker[speaker_id] = (anchor_clips, score_clips)
         emit_progress(progress, f"Embedded {speaker_id_to_label(speaker_id)} cluster probes", advance=1)
@@ -270,19 +312,47 @@ def _embed_selected_segments(
     max_seconds: float,
     padding_seconds: float,
     cache: dict[str, list[float]],
+    max_clips: int | None,
+    require_audio_quality: bool,
 ) -> list[SpeakerClusterClip]:
     """Build embedded probe clips for selected segments."""
     clips: list[SpeakerClusterClip] = []
     for index, segment in enumerate(segments, start=1):
         key = _clip_cache_key(context, speaker_id, segment, max_seconds, padding_seconds)
+        clip_path = _clip_path(context.project_root, speaker_id, index)
+        if key not in cache or require_audio_quality:
+            _write_clip(context.source, clip_path, segment, max_seconds, padding_seconds)
+        if require_audio_quality and not _audio_quality_ok(clip_path):
+            continue
         vector = cache.get(key)
         if vector is None:
-            clip_path = _clip_path(context.project_root, speaker_id, index)
-            _write_clip(context.source, clip_path, segment, max_seconds, padding_seconds)
             vector = _normalize(embed_audio_file(clip_path, provider=context.provider))
             cache[key] = vector
         clips.append(_cluster_clip(speaker_id, index, segment, vector))
+        if max_clips is not None and len(clips) >= max_clips:
+            break
     return clips
+
+
+def _clip_segment(clip: SpeakerClusterClip) -> SentenceSegment:
+    """Return a segment-shaped view of one cluster clip."""
+    return SentenceSegment(clip.begin_time_ms, clip.end_time_ms, clip.text, clip.speaker_id, clip.sentence_id)
+
+
+def _reindex_clips(clips: list[SpeakerClusterClip]) -> list[SpeakerClusterClip]:
+    """Renumber selected anchor clips after quality filtering."""
+    return [
+        SpeakerClusterClip(
+            clip.speaker_id,
+            index,
+            clip.sentence_id,
+            clip.begin_time_ms,
+            clip.end_time_ms,
+            clip.text,
+            clip.vector,
+        )
+        for index, clip in enumerate(clips, start=1)
+    ]
 
 
 def _cluster_clip(
@@ -399,6 +469,40 @@ def _write_clip(
     extract_audio_clip(source, output, start_seconds=start_ms / 1000, duration_seconds=(end_ms - start_ms) / 1000)
 
 
+def _audio_quality_ok(path: Path) -> bool:
+    """Return whether a WAV clip is usable as a cluster anchor."""
+    try:
+        with wave.open(str(path), "rb") as reader:
+            width = reader.getsampwidth()
+            frames = reader.readframes(reader.getnframes())
+    except (OSError, wave.Error):
+        return False
+    if width != 2 or not frames:
+        return True
+    sample_count = len(frames) // 2
+    if sample_count == 0:
+        return False
+    total_square = 0.0
+    silent = 0
+    clipped = 0
+    for offset in range(0, len(frames), 2):
+        value = int.from_bytes(frames[offset : offset + 2], "little", signed=True) / 32768.0
+        absolute = abs(value)
+        total_square += value * value
+        if absolute < 0.01:
+            silent += 1
+        if absolute > 0.98:
+            clipped += 1
+    rms = math.sqrt(total_square / sample_count)
+    silence_ratio = silent / sample_count
+    clipping_ratio = clipped / sample_count
+    return (
+        rms >= MIN_AUDIO_RMS
+        and silence_ratio <= MAX_AUDIO_SILENCE_RATIO
+        and clipping_ratio <= MAX_AUDIO_CLIPPING_RATIO
+    )
+
+
 def _cache_path(project_root: Path) -> Path:
     """Return the project-local cluster embedding cache path."""
     return project_root / "tmp" / "speaker_cluster" / "clip_embeddings.json"
@@ -506,14 +610,23 @@ def _speaker_report(
     centroid_scores = [score.centroid_score for score in anchor_scores if score.centroid_score is not None]
     warning_count = sum(1 for score in centroid_scores if critical_score <= score < warning_score)
     critical_count = sum(1 for score in centroid_scores if score < critical_score)
-    warnings = _speaker_warnings(anchor_clips, scores, components, warning_count, critical_count)
+    centroid_mean = _mean(centroid_scores) if centroid_scores else None
+    centroid_min = min(centroid_scores) if centroid_scores else None
+    warnings = _speaker_warnings(
+        anchor_clips,
+        scores,
+        components,
+        warning_count,
+        critical_count,
+        centroid_mean,
+    )
     return SpeakerClusterReport(
         speaker_id,
         speaker_id_to_label(speaker_id),
         len(all_segments),
         len(anchor_clips),
-        _mean(centroid_scores) if centroid_scores else None,
-        min(centroid_scores) if centroid_scores else None,
+        centroid_mean,
+        centroid_min,
         warning_count,
         critical_count,
         _mean(scores) if scores else None,
@@ -625,21 +738,37 @@ def _speaker_warnings(
     components: list[list[SpeakerClusterClip]],
     warning_count: int,
     critical_count: int,
+    centroid_mean: float | None,
 ) -> list[str]:
     """Return warning labels for one speaker cluster."""
     warnings: list[str] = []
     if len(clips) < 2:
         return ["too_few_clips"]
-    if critical_count:
+    clip_count = len(clips)
+    warning_ratio = warning_count / clip_count
+    critical_ratio = critical_count / clip_count
+    if centroid_mean is not None and centroid_mean < SPEAKER_WARNING_MEAN_SCORE:
+        warnings.append("low_centroid_mean")
+    elif centroid_mean is not None and centroid_mean < SPEAKER_OK_MEAN_SCORE:
+        warnings.append("borderline_centroid_mean")
+    if critical_ratio >= SPEAKER_CRITICAL_RATIO_LIMIT:
+        warnings.append("high_critical_ratio")
+    elif critical_ratio > SPEAKER_WARNING_CRITICAL_RATIO_LIMIT:
         warnings.append("critical_centroid_outlier")
+    if warning_ratio > SPEAKER_WARNING_RATIO_LIMIT:
+        warnings.append("high_warning_ratio")
     elif warning_count:
         warnings.append("warning_centroid_outlier")
     component_sizes = sorted((len(component) for component in components), reverse=True)
     if len(component_sizes) > 1 and component_sizes[1] >= 2:
         warnings.append("multi_component")
-    if scores and _mean(scores) < 0.55:
+    elif len(component_sizes) > 1:
+        warnings.append("singleton_component")
+    if scores and _mean(scores) < SPEAKER_MIXED_INTERNAL_MEAN:
         warnings.append("low_internal_mean")
-    if scores and min(scores) < 0.25:
+    elif scores and _mean(scores) < SPEAKER_WARNING_INTERNAL_MEAN:
+        warnings.append("borderline_internal_mean")
+    if scores and min(scores) < 0.20:
         warnings.append("very_low_internal_min")
     return warnings
 
@@ -650,7 +779,7 @@ def _speaker_status(warnings: list[str]) -> str:
         return "ok"
     if warnings == ["too_few_clips"]:
         return "insufficient"
-    if any(item in warnings for item in {"critical_centroid_outlier", "multi_component", "low_internal_mean"}):
+    if any(item in warnings for item in {"low_centroid_mean", "high_critical_ratio", "multi_component", "low_internal_mean"}):
         return "mixed"
     return "warning"
 

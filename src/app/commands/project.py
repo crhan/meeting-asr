@@ -1574,7 +1574,7 @@ def speakers_cluster(
         help="Score every transcript segment against high-information cluster anchors.",
     ),
     same_speaker_threshold: float = typer.Option(0.60, "--same-speaker-threshold", min=0.0, max=1.0),
-    merge_threshold: float = typer.Option(0.82, "--merge-threshold", min=0.0, max=1.0),
+    merge_threshold: float = typer.Option(0.62, "--merge-threshold", min=0.0, max=1.0),
     warning_score: float = typer.Option(DEFAULT_WARNING_SCORE, "--warning-score", min=0.0, max=1.0),
     critical_score: float = typer.Option(DEFAULT_CRITICAL_SCORE, "--critical-score", min=0.0, max=1.0),
     write_report: bool = typer.Option(True, "--write-report/--no-write-report"),

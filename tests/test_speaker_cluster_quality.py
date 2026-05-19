@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 from app.cli import app
 from app.models import SentenceSegment
 from app.project_manager import create_project
-from app.speaker_cluster_quality import _select_segments
+from app.speaker_cluster_quality import _audio_quality_ok, _select_segments, _speaker_status, _speaker_warnings
 
 runner = CliRunner()
 
@@ -104,6 +104,40 @@ def test_cluster_sample_selection_prefers_informative_text() -> None:
     assert [segment.sentence_id for segment in selected] == [2, 3]
 
 
+def test_cluster_audio_quality_rejects_silent_anchor(tmp_path: Path) -> None:
+    """Silent WAV clips should not become cluster anchors."""
+    silent = tmp_path / "silent.wav"
+    _write_wav(silent, [0] * 1600)
+
+    assert _audio_quality_ok(silent) is False
+
+
+def test_speaker_status_uses_ratios_instead_of_single_outlier() -> None:
+    """One singleton outlier should warn, not mark a large speaker bucket mixed."""
+    clips = [object() for _ in range(40)]
+    components = [clips[:39], clips[39:]]
+
+    warnings = _speaker_warnings(
+        clips,
+        [0.65] * 10,
+        components,
+        warning_count=0,
+        critical_count=1,
+        centroid_mean=0.82,
+    )
+    severe = _speaker_warnings(
+        clips,
+        [0.65] * 10,
+        [clips],
+        warning_count=0,
+        critical_count=5,
+        centroid_mean=0.82,
+    )
+
+    assert _speaker_status(warnings) == "warning"
+    assert _speaker_status(severe) == "mixed"
+
+
 def test_project_speakers_cluster_can_emit_json_without_writing_report(
     monkeypatch,
     tmp_path: Path,
@@ -188,6 +222,16 @@ def _fake_extract_audio_clip(
         writer.setframerate(16000)
         writer.writeframes((1000).to_bytes(2, "little", signed=True) * 160)
     return output_path
+
+
+def _write_wav(path: Path, samples: list[int]) -> None:
+    """Write a mono 16 kHz s16 WAV fixture."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(16000)
+        writer.writeframes(b"".join(sample.to_bytes(2, "little", signed=True) for sample in samples))
 
 
 def _fake_embed_audio_file(path: Path, *, provider: str | None) -> list[float]:
