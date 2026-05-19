@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import wave
 
 import app.voiceprint_audio as voiceprint_audio
 from app.voiceprint_audio import (
     VOICEPRINT_AUDIO_PREPROCESS_VERSION,
+    embedding_audio_stats,
     normalize_voiceprint_samples,
     normalized_voiceprint_sample_path,
+    trim_embedding_audio_silence,
     voiceprint_playback_clip_path,
 )
 from app.voiceprint_store import (
@@ -48,10 +51,13 @@ def test_normalize_voiceprint_samples_keeps_original_and_skips_existing(monkeypa
     second = normalize_voiceprint_samples(store_dir=store_dir, rebuild=False)
 
     sample = list_all_voiceprint_samples(get_voiceprint_db_path(store_dir))[0]
+    expected_output = normalized_voiceprint_sample_path(sample, store_dir=store_dir)
+    expected_temp = expected_output.with_name(f"{expected_output.stem}.norm-tmp{expected_output.suffix}")
     assert first.processed_count == 1
     assert second.skipped_count == 1
     assert sample.clip_path.read_bytes() == b"original"
-    assert calls == [(sample.clip_path, normalized_voiceprint_sample_path(sample, store_dir=store_dir))]
+    assert calls == [(sample.clip_path, expected_temp)]
+    assert expected_output.read_bytes() == b"normalized"
 
 
 def test_normalize_voiceprint_samples_rebuilds_stale_derived_clip(monkeypatch, tmp_path: Path) -> None:
@@ -73,9 +79,26 @@ def test_normalize_voiceprint_samples_rebuilds_stale_derived_clip(monkeypatch, t
 
     summary = normalize_voiceprint_samples(store_dir=store_dir, rebuild=False)
 
+    expected_temp = normalized_path.with_name(f"{normalized_path.stem}.norm-tmp{normalized_path.suffix}")
     assert summary.processed_count == 1
-    assert calls == [normalized_path]
+    assert calls == [expected_temp]
     assert normalized_path.read_bytes() == b"fresh"
+
+
+def test_trim_embedding_audio_silence_removes_boundaries(tmp_path: Path) -> None:
+    """Embedding audio preparation should remove leading and trailing silence."""
+    source = tmp_path / "source.wav"
+    output = tmp_path / "output.wav"
+    _write_wav(source, [0] * 16000 + [1200] * 8000 + [0] * 16000)
+
+    trim_embedding_audio_silence(source, output)
+
+    source_stats = embedding_audio_stats(source)
+    output_stats = embedding_audio_stats(output)
+    assert source_stats is not None
+    assert output_stats is not None
+    assert output_stats.duration_seconds < source_stats.duration_seconds
+    assert output_stats.voiced_duration_seconds == source_stats.voiced_duration_seconds
 
 
 def test_voiceprint_playback_prefers_normalized_clip_when_present(tmp_path: Path) -> None:
@@ -117,3 +140,13 @@ def _store(tmp_path: Path) -> Path:
         get_voiceprint_db_path(store_dir),
     )
     return store_dir
+
+
+def _write_wav(path: Path, samples: list[int]) -> None:
+    """Write a mono 16 kHz s16 WAV fixture."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(16000)
+        writer.writeframes(b"".join(sample.to_bytes(2, "little", signed=True) for sample in samples))

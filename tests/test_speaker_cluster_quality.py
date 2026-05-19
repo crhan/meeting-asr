@@ -112,6 +112,14 @@ def test_cluster_audio_quality_rejects_silent_anchor(tmp_path: Path) -> None:
     assert _audio_quality_ok(silent) is False
 
 
+def test_cluster_audio_quality_uses_voiced_duration_not_silence_ratio(tmp_path: Path) -> None:
+    """Long boundary silence should not reject an otherwise usable utterance."""
+    padded = tmp_path / "padded.wav"
+    _write_wav(padded, [0] * 80_000 + [1800] * 16_000 + [0] * 80_000)
+
+    assert _audio_quality_ok(padded) is True
+
+
 def test_speaker_status_uses_ratios_instead_of_single_outlier() -> None:
     """One singleton outlier should warn, not mark a large speaker bucket mixed."""
     clips = [object() for _ in range(40)]

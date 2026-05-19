@@ -1414,23 +1414,23 @@ def _segment_time_range(segment: SentenceSegment) -> str:
 def _cluster_badge(diagnostic: SpeakerClusterDiagnostic | None) -> str:
     """Render one compact speaker cluster badge."""
     if diagnostic is None:
-        return "[dim]cluster=-[/]"
+        return "[dim]fit=-[/]"
     score = _format_optional_score(diagnostic.centroid_mean)
     style = _cluster_status_style(diagnostic.status)
-    return f"[{style}]cluster={score} {escape(diagnostic.status)}[/]"
+    return f"[{style}]fit={score} {escape(diagnostic.status)}[/]"
 
 
 def _cluster_detail(diagnostic: SpeakerClusterDiagnostic | None) -> str:
     """Render selected speaker cluster detail."""
     if diagnostic is None:
-        return "[dim]cluster report=-[/]"
+        return "[dim]centroid-fit report=-[/]"
     mean = _format_optional_score(diagnostic.centroid_mean)
     minimum = _format_optional_score(diagnostic.centroid_min)
     style = _cluster_status_style(diagnostic.status)
     counts = f"{diagnostic.clip_count}/{diagnostic.segment_count}"
     components = ",".join(str(value) for value in diagnostic.component_sizes) or "-"
     return (
-        f"[{style}]cluster {escape(diagnostic.status)}[/] "
+        f"[{style}]centroid-fit {escape(diagnostic.status)}[/] "
         f"mean={mean} min={minimum} clips={counts} "
         f"components={diagnostic.component_count} sizes={components}"
     )
@@ -1439,10 +1439,10 @@ def _cluster_detail(diagnostic: SpeakerClusterDiagnostic | None) -> str:
 def _sample_cluster_badge(score: SpeakerClusterSampleScore | None) -> str:
     """Render one sample-to-centroid score badge."""
     if score is None:
-        return "[dim]cluster=-[/]"
+        return "[dim]fit=-[/]"
     value = _format_optional_score(score.score)
     style = _sample_score_style(score.status)
-    return f"[{style}]cluster={value} {escape(score.status)}[/]"
+    return f"[{style}]fit={value} {escape(score.status)}[/]"
 
 
 def _cluster_status_style(status: str) -> str:

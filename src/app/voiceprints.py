@@ -17,6 +17,7 @@ from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
 from app.project_manager import ensure_project_dirs, load_manifest, resolve_project_source_path, save_manifest
 from app.speaker_labeling import load_transcript_result
+from app.voiceprint_audio import trim_embedding_audio_silence
 from app.voiceprint_embedding import embed_audio_file
 from app.voiceprint_store import (
     StoredVoiceprintSample,
@@ -856,7 +857,9 @@ def _rank_clips_by_embedding_centrality(clips: list[VoiceprintClip]) -> list[tup
     vectors: list[tuple[VoiceprintClip, list[float]]] = []
     for clip in clips:
         try:
-            vectors.append((clip, _normalize_vector(embed_audio_file(clip.path, provider=None))))
+            embedding_path = clip.path.with_name(f"{clip.path.stem}_embedding.wav")
+            trim_embedding_audio_silence(clip.path, embedding_path)
+            vectors.append((clip, _normalize_vector(embed_audio_file(embedding_path, provider=None))))
         except Exception:
             return []
     centroid = _normalize_vector([sum(values) / len(vectors) for values in zip(*(vector for _clip, vector in vectors))])

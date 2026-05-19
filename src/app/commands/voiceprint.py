@@ -27,7 +27,7 @@ from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.completion_helpers import complete_voiceprint_model
 from app.core.project_refs import resolve_project_ref
 from app.utils import format_ms_timestamp
-from app.voiceprint_audio import normalize_voiceprint_samples
+from app.voiceprint_audio import VOICEPRINT_AUDIO_PREPROCESS_VERSION, normalize_voiceprint_samples
 from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_people import (
     create_voiceprint_person,
@@ -480,7 +480,7 @@ def embed_command(
     typer.echo(f"Database: {summary.db_path}")
     typer.echo(f"Provider: {summary.provider}")
     typer.echo(f"Model: {summary.model}")
-    typer.echo("Audio preprocessing: audio-norm-v1")
+    typer.echo(f"Audio preprocessing: {VOICEPRINT_AUDIO_PREPROCESS_VERSION}")
     typer.echo(f"Embedded: {summary.embedded_count}")
     typer.echo(f"Skipped: {summary.skipped_count}")
 

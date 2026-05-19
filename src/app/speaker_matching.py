@@ -25,6 +25,7 @@ from app.project_manager import (
 from app.speaker_match_status import voiceprint_match_status
 from app.speaker_labeling import load_transcript_result
 from app.utils import safe_write_json
+from app.voiceprint_audio import VOICEPRINT_AUDIO_PREPROCESS_VERSION, trim_embedding_audio_silence
 from app.voiceprint_embedding import embed_audio_file, resolve_voiceprint_embedding_options
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
 
@@ -492,7 +493,9 @@ def _probe_speaker_vector(
     for index, segment in enumerate(selected_segments, start=1):
         clip_path = _probe_clip_path(project_root, speaker_id, index)
         _write_probe_clip(source, clip_path, segment, max_seconds, padding_seconds)
-        vectors.append(embed_audio_file(clip_path, provider=provider))
+        embedding_path = _probe_embedding_clip_path(project_root, speaker_id, index)
+        trim_embedding_audio_silence(clip_path, embedding_path)
+        vectors.append(embed_audio_file(embedding_path, provider=provider))
     vector = _normalize(_mean_vector(vectors))
     with cache_lock:
         _write_probe_cache(project_root, cache_key, vector)
@@ -510,10 +513,11 @@ def _probe_cache_key(
 ) -> str:
     """Return a stable cache key for one project speaker probe embedding."""
     payload = {
-        "version": 1,
+        "version": 2,
         "speaker_id": speaker_id,
         "provider": provider,
         "model": model,
+        "audio_preprocess": VOICEPRINT_AUDIO_PREPROCESS_VERSION,
         "max_seconds": max_seconds,
         "padding_seconds": padding_seconds,
         "segments": [
@@ -592,6 +596,11 @@ def _select_segments(segments: list[SentenceSegment], sample_count: int) -> list
 def _probe_clip_path(project_root: Path, speaker_id: int, index: int) -> Path:
     """Return a deterministic temporary probe clip path."""
     return project_root / "tmp" / "voiceprint_match" / f"speaker_{speaker_id}" / f"clip_{index:03d}.wav"
+
+
+def _probe_embedding_clip_path(project_root: Path, speaker_id: int, index: int) -> Path:
+    """Return the preprocessed probe clip path used for embedding."""
+    return project_root / "tmp" / "voiceprint_match" / f"speaker_{speaker_id}" / f"clip_{index:03d}_embedding.wav"
 
 
 def _write_probe_clip(

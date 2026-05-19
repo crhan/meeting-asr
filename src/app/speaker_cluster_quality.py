@@ -6,7 +6,6 @@ import hashlib
 import json
 import math
 import re
-import wave
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +17,12 @@ from app.postprocess import speaker_id_to_label
 from app.project_manager import load_manifest, project_paths, resolve_project_source_path
 from app.speaker_labeling import load_transcript_result
 from app.utils import safe_write_json
+from app.voiceprint_audio import (
+    MIN_EMBEDDING_VOICED_SECONDS,
+    VOICEPRINT_AUDIO_PREPROCESS_VERSION,
+    embedding_audio_stats,
+    trim_embedding_audio_silence,
+)
 from app.voiceprint_embedding import embed_audio_file, resolve_voiceprint_embedding_options
 from app.voiceprint_quality import DEFAULT_CRITICAL_SCORE, DEFAULT_WARNING_SCORE
 
@@ -25,7 +30,6 @@ MIN_ANCHOR_DURATION_MS = 1500
 MIN_ANCHOR_TEXT_CHARS = 8
 LOW_INFO_TEXT_CHARS = 4
 MIN_AUDIO_RMS = 0.006
-MAX_AUDIO_SILENCE_RATIO = 0.80
 MAX_AUDIO_CLIPPING_RATIO = 0.01
 SPEAKER_OK_MEAN_SCORE = 0.75
 SPEAKER_WARNING_MEAN_SCORE = 0.68
@@ -326,7 +330,9 @@ def _embed_selected_segments(
             continue
         vector = cache.get(key)
         if vector is None:
-            vector = _normalize(embed_audio_file(clip_path, provider=context.provider))
+            embedding_path = _embedding_clip_path(clip_path)
+            trim_embedding_audio_silence(clip_path, embedding_path)
+            vector = _normalize(embed_audio_file(embedding_path, provider=context.provider))
             cache[key] = vector
         clips.append(_cluster_clip(speaker_id, index, segment, vector))
         if max_clips is not None and len(clips) >= max_clips:
@@ -434,9 +440,10 @@ def _clip_cache_key(
 ) -> str:
     """Return a stable embedding cache key for one probe clip."""
     payload = {
-        "version": 1,
+        "version": 2,
         "provider": context.provider,
         "model": context.model,
+        "audio_preprocess": VOICEPRINT_AUDIO_PREPROCESS_VERSION,
         "speaker_id": speaker_id,
         "sentence_id": segment.sentence_id,
         "begin_time_ms": segment.begin_time_ms,
@@ -452,6 +459,11 @@ def _clip_cache_key(
 def _clip_path(project_root: Path, speaker_id: int, index: int) -> Path:
     """Return a deterministic cluster probe clip path."""
     return project_root / "tmp" / "speaker_cluster" / f"speaker_{speaker_id}" / f"clip_{index:03d}.wav"
+
+
+def _embedding_clip_path(clip_path: Path) -> Path:
+    """Return the preprocessed embedding clip path for a raw probe clip."""
+    return clip_path.with_name(f"{clip_path.stem}_embedding.wav")
 
 
 def _write_clip(
@@ -471,35 +483,13 @@ def _write_clip(
 
 def _audio_quality_ok(path: Path) -> bool:
     """Return whether a WAV clip is usable as a cluster anchor."""
-    try:
-        with wave.open(str(path), "rb") as reader:
-            width = reader.getsampwidth()
-            frames = reader.readframes(reader.getnframes())
-    except (OSError, wave.Error):
+    stats = embedding_audio_stats(path)
+    if stats is None:
         return False
-    if width != 2 or not frames:
-        return True
-    sample_count = len(frames) // 2
-    if sample_count == 0:
-        return False
-    total_square = 0.0
-    silent = 0
-    clipped = 0
-    for offset in range(0, len(frames), 2):
-        value = int.from_bytes(frames[offset : offset + 2], "little", signed=True) / 32768.0
-        absolute = abs(value)
-        total_square += value * value
-        if absolute < 0.01:
-            silent += 1
-        if absolute > 0.98:
-            clipped += 1
-    rms = math.sqrt(total_square / sample_count)
-    silence_ratio = silent / sample_count
-    clipping_ratio = clipped / sample_count
     return (
-        rms >= MIN_AUDIO_RMS
-        and silence_ratio <= MAX_AUDIO_SILENCE_RATIO
-        and clipping_ratio <= MAX_AUDIO_CLIPPING_RATIO
+        stats.rms >= MIN_AUDIO_RMS
+        and stats.voiced_duration_seconds >= MIN_EMBEDDING_VOICED_SECONDS
+        and stats.clipping_ratio <= MAX_AUDIO_CLIPPING_RATIO
     )
 
 

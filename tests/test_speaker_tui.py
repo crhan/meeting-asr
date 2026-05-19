@@ -144,11 +144,11 @@ def test_speaker_review_tui_shows_cluster_scores() -> None:
     speaker_pane = app._speaker_pane()
     sample_pane = app._sample_pane()
 
-    assert "cluster=0.840 ok" in speaker_pane
-    assert "cluster ok" in sample_pane
+    assert "fit=0.840 ok" in speaker_pane
+    assert "centroid-fit ok" in sample_pane
     assert "mean=0.840" in sample_pane
-    assert "cluster=0.910 ok" in sample_pane
-    assert "cluster=0.550 critical" in sample_pane
+    assert "fit=0.910 ok" in sample_pane
+    assert "fit=0.550 critical" in sample_pane
 
 
 def test_speaker_review_tui_uses_chinese_language() -> None:

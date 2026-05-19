@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import subprocess
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.voiceprint_models import VoiceprintSampleRow
 from app.voiceprint_store import get_voiceprint_db_path, list_all_voiceprint_samples
 
-VOICEPRINT_AUDIO_PREPROCESS_VERSION = "audio-norm-v1"
+VOICEPRINT_AUDIO_PREPROCESS_VERSION = "audio-norm-v2"
 VOICEPRINT_NORMALIZED_DIR = "normalized"
+EMBEDDING_SILENCE_THRESHOLD = 0.01
+EMBEDDING_SILENCE_PADDING_MS = 80
+MIN_EMBEDDING_VOICED_SECONDS = 0.75
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +25,17 @@ class VoiceprintNormalizeSummary:
     normalized_dir: Path
     processed_count: int
     skipped_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingAudioStats:
+    """Audio stats for one voice embedding input clip."""
+
+    duration_seconds: float
+    voiced_duration_seconds: float
+    rms: float
+    silence_ratio: float
+    clipping_ratio: float
 
 
 def normalize_voiceprint_samples(*, store_dir: Path | None, rebuild: bool) -> VoiceprintNormalizeSummary:
@@ -66,8 +81,93 @@ def normalize_voiceprint_sample(sample: VoiceprintSampleRow, *, store_dir: Path 
     """
     output_path = normalized_voiceprint_sample_path(sample, store_dir=store_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    _run_ffmpeg(_normalize_command(sample.clip_path, output_path))
+    temp_path = output_path.with_name(f"{output_path.stem}.norm-tmp{output_path.suffix}")
+    try:
+        _run_ffmpeg(_normalize_command(sample.clip_path, temp_path))
+        trim_embedding_audio_silence(temp_path, output_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
     return output_path
+
+
+def trim_embedding_audio_silence(source: Path, output: Path) -> Path:
+    """
+    Trim leading and trailing silence from a WAV clip used for voice embeddings.
+
+    Args:
+        source: Mono 16 kHz s16 WAV clip.
+        output: Trimmed WAV output path.
+
+    Returns:
+        Output path. If the source cannot be trimmed safely, a byte-for-byte
+        copy is written instead.
+    """
+    source = source.expanduser().resolve()
+    output = output.expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        params, frames = _read_wav_frames(source)
+    except (EOFError, OSError, wave.Error):
+        output.write_bytes(source.read_bytes())
+        return output
+    if params.sampwidth != 2 or params.nchannels != 1 or not frames:
+        output.write_bytes(source.read_bytes())
+        return output
+    sample_count = len(frames) // 2
+    first, last = _voiced_sample_bounds(frames)
+    if first is None or last is None:
+        output.write_bytes(source.read_bytes())
+        return output
+    padding = round(params.framerate * EMBEDDING_SILENCE_PADDING_MS / 1000)
+    start = max(0, first - padding)
+    end = min(sample_count, last + padding + 1)
+    if start == 0 and end == sample_count:
+        output.write_bytes(source.read_bytes())
+        return output
+    _write_wav_frames(output, params, frames[start * 2 : end * 2])
+    return output
+
+
+def embedding_audio_stats(path: Path) -> EmbeddingAudioStats | None:
+    """
+    Return audio stats for a WAV clip used in voice embeddings.
+
+    Args:
+        path: Mono 16 kHz s16 WAV clip.
+
+    Returns:
+        Audio stats, or ``None`` when the clip cannot be analyzed.
+    """
+    try:
+        params, frames = _read_wav_frames(path)
+    except (EOFError, OSError, wave.Error):
+        return None
+    if params.sampwidth != 2 or params.nchannels != 1 or not frames:
+        return None
+    sample_count = len(frames) // 2
+    if sample_count == 0:
+        return None
+    total_square = 0.0
+    silent = 0
+    clipped = 0
+    voiced = 0
+    for offset in range(0, len(frames), 2):
+        value = int.from_bytes(frames[offset : offset + 2], "little", signed=True) / 32768.0
+        absolute = abs(value)
+        total_square += value * value
+        if absolute < EMBEDDING_SILENCE_THRESHOLD:
+            silent += 1
+        else:
+            voiced += 1
+        if absolute > 0.98:
+            clipped += 1
+    return EmbeddingAudioStats(
+        duration_seconds=sample_count / params.framerate,
+        voiced_duration_seconds=voiced / params.framerate,
+        rms=(total_square / sample_count) ** 0.5,
+        silence_ratio=silent / sample_count,
+        clipping_ratio=clipped / sample_count,
+    )
 
 
 def ensure_normalized_voiceprint_sample(sample: VoiceprintSampleRow, *, store_dir: Path | None) -> Path:
@@ -180,6 +280,37 @@ def _normalize_command(source: Path, output: Path) -> list[str]:
         "loudnorm=I=-23:TP=-2:LRA=11:linear=true,alimiter=limit=0.95",
         str(output),
     ]
+
+
+def _read_wav_frames(path: Path) -> tuple[wave._wave_params, bytes]:
+    """Read WAV params and frames."""
+    with wave.open(str(path), "rb") as reader:
+        params = reader.getparams()
+        frames = reader.readframes(reader.getnframes())
+    return params, frames
+
+
+def _write_wav_frames(path: Path, params: wave._wave_params, frames: bytes) -> None:
+    """Write WAV frames with existing params."""
+    with wave.open(str(path), "wb") as writer:
+        writer.setnchannels(params.nchannels)
+        writer.setsampwidth(params.sampwidth)
+        writer.setframerate(params.framerate)
+        writer.writeframes(frames)
+
+
+def _voiced_sample_bounds(frames: bytes) -> tuple[int | None, int | None]:
+    """Return first and last sample indices above the silence threshold."""
+    first: int | None = None
+    last: int | None = None
+    for index, offset in enumerate(range(0, len(frames), 2)):
+        value = int.from_bytes(frames[offset : offset + 2], "little", signed=True) / 32768.0
+        if abs(value) < EMBEDDING_SILENCE_THRESHOLD:
+            continue
+        if first is None:
+            first = index
+        last = index
+    return first, last
 
 
 def _run_ffmpeg(command: list[str]) -> None:
