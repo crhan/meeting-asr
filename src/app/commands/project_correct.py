@@ -818,10 +818,16 @@ def _record_accepted_polish_runtime(
     summary: CorrectionEditSummary,
 ) -> None:
     """Record accepted transcript polish state in project runtime metadata."""
+    updated_at = datetime.now().astimezone().isoformat(timespec="seconds")
     runtime = dict(manifest.runtime)
+    runtime["current_stage"] = "complete"
+    runtime["stage_started_at"] = updated_at
+    runtime["last_heartbeat_at"] = updated_at
+    runtime["last_success"] = "transcript polish accepted"
+    runtime.pop("last_error", None)
     runtime["polish"] = {
         "status": "accepted",
-        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "updated_at": updated_at,
         "model": summary.model,
         "error": summary.model_error,
         "proposed_changes": summary.proposed_change_count,

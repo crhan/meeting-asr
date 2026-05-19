@@ -23,7 +23,7 @@ from app.correction_llm import (
     LlmStrictPolishResult,
 )
 from app.correction_types import CorrectionEditOptions, CorrectionEditSummary
-from app.project_manager import create_project, load_manifest, project_paths
+from app.project_manager import create_project, load_manifest, project_paths, save_manifest
 from app.speaker_tui import SentenceCorrectionEdit, SpeakerReviewDecision
 
 runner = CliRunner()
@@ -498,6 +498,42 @@ def test_project_correct_polish_default_uses_strict_path_and_records_change_type
     # Sentence containing protected words ("我觉得"/"可能") was not proposed by LLM,
     # so it must remain absent from the proposal entirely.
     assert all("我觉得" not in c["original_text"] for c in changes)
+
+
+def test_project_correct_polish_yes_marks_runtime_complete(tmp_path: Path, monkeypatch) -> None:
+    """Accepting polish should not leave the project runtime stuck in the polish stage."""
+    project_dir = _sample_project_with_text(tmp_path, "然后用用这个CLI去拿。")
+    manifest = load_manifest(project_dir)
+    manifest.runtime = {
+        "current_stage": "polish",
+        "last_error": {"stage": "polish", "message": "old timeout"},
+    }
+    save_manifest(project_dir, manifest)
+    monkeypatch.setattr(
+        "app.transcript_corrections.load_settings",
+        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+    )
+
+    def fake_strict(**kwargs):
+        candidate = kwargs["candidates"][0]
+        return LlmStrictPolishResult(
+            "清理同字重复",
+            [LlmPolishItem(candidate.candidate_id, "然后用这个CLI去拿。", "dup", "ASR 同字重复")],
+            kwargs["model"],
+        )
+
+    monkeypatch.setattr("app.transcript_corrections.propose_transcript_polish_strict", fake_strict)
+
+    result = runner.invoke(app, ["project", "correct", "polish", str(project_dir), "--yes"])
+
+    assert result.exit_code == 0, result.output
+    updated = load_manifest(project_dir)
+    assert updated.status == "corrected"
+    assert updated.runtime["current_stage"] == "complete"
+    assert updated.runtime["last_success"] == "transcript polish accepted"
+    assert "last_error" not in updated.runtime
+    assert updated.runtime["polish"]["status"] == "accepted"
+    assert updated.runtime["polish"]["accepted_changes"] == 1
 
 
 def test_project_correct_polish_strict_surfaces_total_failure(tmp_path: Path, monkeypatch) -> None:
