@@ -44,8 +44,19 @@ def list_projects(projects_dir: Path | None) -> ProjectListResult:
                 tuple(manifest.meeting_keywords),
             )
         )
+    projects = _dedupe_projects_by_id(projects)
     projects.sort(key=_project_list_sort_key, reverse=True)
     return ProjectListResult(parent, projects)
+
+
+def _dedupe_projects_by_id(projects: list[ProjectListItem]) -> list[ProjectListItem]:
+    """Keep the best visible project when older bugs left duplicate ids on disk."""
+    best_by_id: dict[str, ProjectListItem] = {}
+    for project in projects:
+        existing = best_by_id.get(project.project_id)
+        if existing is None or _project_reuse_rank(project) > _project_reuse_rank(existing):
+            best_by_id[project.project_id] = project
+    return list(best_by_id.values())
 
 
 def _project_list_sort_key(project: ProjectListItem) -> tuple[int, float, str, str]:
@@ -118,6 +129,7 @@ def find_project_by_source(
     projects_dir: Path | None,
     *,
     source_sha256: str | None = None,
+    variant: str | None = None,
 ) -> Path | None:
     """
     Find an existing project created from a source file.
@@ -126,6 +138,7 @@ def find_project_by_source(
         input_path: Source media path.
         projects_dir: Optional projects parent directory.
         source_sha256: Optional source content hash.
+        variant: Optional explicit experiment variant.
 
     Returns:
         Matching project path or None.
@@ -134,7 +147,7 @@ def find_project_by_source(
     matches = []
     for project in list_projects(projects_dir).projects:
         manifest = _load_manifest_or_none(project.project_dir)
-        if manifest and _source_manifest_matches(source_path, source_sha256, manifest):
+        if manifest and _source_manifest_matches(source_path, source_sha256, variant, manifest):
             matches.append(project)
     if not matches:
         return None
@@ -176,8 +189,15 @@ def _resolve_project_path(path: Path) -> Path:
     raise FileNotFoundError(f"Project manifest does not exist: {manifest_path}")
 
 
-def _source_manifest_matches(source: Path, source_sha256: str | None, manifest: ProjectManifest) -> bool:
+def _source_manifest_matches(
+    source: Path,
+    source_sha256: str | None,
+    variant: str | None,
+    manifest: ProjectManifest,
+) -> bool:
     """Return whether a manifest belongs to a source file."""
+    if (manifest.source.variant or None) != (variant or None):
+        return False
     if _same_original_source_path(source, manifest.source.original_path):
         return True
     return bool(source_sha256 and manifest.source.sha256 and manifest.source.sha256 == source_sha256)

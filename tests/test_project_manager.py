@@ -1487,6 +1487,59 @@ def test_project_create_command_reuses_existing_source(
     assert f"meeting-asr project review {load_manifest(project_dirs[0]).project_id}" in second.output
 
 
+def test_project_create_explicit_dir_does_not_duplicate_existing_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An explicit project dir must not bypass source-based reuse."""
+    data_home = tmp_path / "data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"same video")
+    projects_dir = data_home / "meeting-asr" / "projects"
+    duplicate_dir = projects_dir / "duplicate"
+
+    first = runner.invoke(app, ["project", "create", str(source), "--title", "Demo"])
+    second = runner.invoke(
+        app,
+        ["project", "create", str(source), "--project-dir", str(duplicate_dir), "--title", "Duplicate"],
+    )
+
+    project_dirs = [path for path in projects_dir.iterdir() if path.is_dir()]
+    manifest = load_manifest(project_dirs[0])
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert len(project_dirs) == 1
+    assert not duplicate_dir.exists()
+    assert "Project already exists; reusing it." in second.output
+    assert manifest.title == "Duplicate"
+
+
+def test_project_create_variant_gets_distinct_project_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Experiment variants should be explicit and have separate project ids."""
+    data_home = tmp_path / "data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"same video")
+
+    base = runner.invoke(app, ["project", "create", str(source), "--title", "Base"])
+    variant = runner.invoke(app, ["project", "create", str(source), "--variant", "spk5", "--title", "SPK5"])
+
+    projects = list_projects(data_home / "meeting-asr" / "projects").projects
+    manifests = [load_manifest(project.project_dir) for project in projects]
+    ids = {manifest.project_id for manifest in manifests}
+    variants = {manifest.source.variant for manifest in manifests}
+    assert base.exit_code == 0
+    assert variant.exit_code == 0
+    assert len(projects) == 2
+    assert len(ids) == 2
+    assert variants == {None, "spk5"}
+    assert any(project_id.endswith("-v-spk5") for project_id in ids)
+
+
 def test_project_create_reuse_applies_explicit_manual_title(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

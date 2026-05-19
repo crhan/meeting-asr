@@ -26,6 +26,7 @@ class ProjectSource:
     sha256: str | None = None
     meeting_time: str | None = None
     original_path: str | None = None
+    variant: str | None = None
 
 
 @dataclass(slots=True)

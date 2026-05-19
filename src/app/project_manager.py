@@ -130,6 +130,7 @@ def create_project(
     project_dir: Path | None,
     meeting_time: str | None,
     hash_source: bool,
+    variant: str | None = None,
     source_sha256: str | None = None,
     progress: CliProgressReporter | None = None,
 ) -> ProjectManifest:
@@ -143,6 +144,7 @@ def create_project(
         project_dir: Explicit project directory.
         meeting_time: Optional meeting start time string.
         hash_source: Deprecated compatibility flag. Source identity is always hashed.
+        variant: Optional explicit experiment variant.
         source_sha256: Optional precomputed source SHA-256.
         progress: Optional progress reporter.
 
@@ -156,7 +158,8 @@ def create_project(
     resolved_title = _title_with_meeting_time(resolved_title, meeting_time)
     created_at = _now_iso()
     resolved_sha256 = source_sha256 or _sha256_file(source, progress)
-    root = _resolve_project_root(source, projects_dir, project_dir, resolved_sha256)
+    resolved_variant = _normalize_project_variant(variant)
+    root = _resolve_project_root(source, projects_dir, project_dir, resolved_sha256, resolved_variant)
     if (root / "project.json").exists():
         raise FileExistsError(f"Project already exists: {root}")
     _create_project_dirs(root)
@@ -170,6 +173,7 @@ def create_project(
         created_at,
         meeting_time,
         resolved_sha256,
+        resolved_variant,
         progress,
     )
     safe_write_text(root / "source" / "original.path", str(source) + "\n")
@@ -222,6 +226,7 @@ def create_or_reuse_project(
     project_dir: Path | None,
     meeting_time: str | None,
     hash_source: bool,
+    variant: str | None = None,
     progress: CliProgressReporter | None = None,
 ) -> ProjectCreateSummary:
     """
@@ -231,26 +236,38 @@ def create_or_reuse_project(
         input_path: Local source media file.
         title: Optional human title for new projects.
         projects_dir: Optional parent directory used when project_dir is omitted.
-        project_dir: Explicit project directory. Explicit paths always create that path.
+        project_dir: Explicit project directory for a new project.
         meeting_time: Optional meeting start time string for new projects.
         hash_source: Deprecated compatibility flag. Source identity is always hashed.
+        variant: Optional explicit experiment variant. Variants get distinct project ids.
         progress: Optional progress reporter.
 
     Returns:
         Project creation summary.
     """
-    if project_dir is None:
-        existing = find_project_by_source(input_path, projects_dir)
-        if existing is not None:
-            emit_progress(progress, "Using existing project", total=1, completed=1)
-            return ProjectCreateSummary(existing, _load_reused_manifest(existing, title), False)
+    resolved_variant = _normalize_project_variant(variant)
+    existing = _find_existing_project_for_create(
+        input_path,
+        projects_dir,
+        project_dir,
+        source_sha256=None,
+        variant=resolved_variant,
+    )
+    if existing is not None:
+        emit_progress(progress, "Using existing project", total=1, completed=1)
+        return ProjectCreateSummary(existing, _load_reused_manifest(existing, title), False)
     source = input_path.expanduser().resolve()
     source_sha256 = _sha256_file(source, progress)
-    if project_dir is None:
-        existing = find_project_by_source(input_path, projects_dir, source_sha256=source_sha256)
-        if existing is not None:
-            emit_progress(progress, "Using existing project", total=1, completed=1)
-            return ProjectCreateSummary(existing, _load_reused_manifest(existing, title), False)
+    existing = _find_existing_project_for_create(
+        input_path,
+        projects_dir,
+        project_dir,
+        source_sha256=source_sha256,
+        variant=resolved_variant,
+    )
+    if existing is not None:
+        emit_progress(progress, "Using existing project", total=1, completed=1)
+        return ProjectCreateSummary(existing, _load_reused_manifest(existing, title), False)
     manifest = create_project(
         input_path,
         title=title,
@@ -258,11 +275,38 @@ def create_or_reuse_project(
         project_dir=project_dir,
         meeting_time=meeting_time,
         hash_source=hash_source,
+        variant=resolved_variant,
         source_sha256=source_sha256,
         progress=progress,
     )
-    project_root = _resolve_project_root(source, projects_dir, project_dir, source_sha256)
+    project_root = _resolve_project_root(source, projects_dir, project_dir, source_sha256, resolved_variant)
     return ProjectCreateSummary(project_root, manifest, True)
+
+
+def _find_existing_project_for_create(
+    input_path: Path,
+    projects_dir: Path | None,
+    project_dir: Path | None,
+    *,
+    source_sha256: str | None,
+    variant: str | None,
+) -> Path | None:
+    """Find an existing project across the normal parent and explicit path parent."""
+    for parent in _project_reuse_parents(projects_dir, project_dir):
+        existing = find_project_by_source(input_path, parent, source_sha256=source_sha256, variant=variant)
+        if existing is not None:
+            return existing
+    return None
+
+
+def _project_reuse_parents(projects_dir: Path | None, project_dir: Path | None) -> tuple[Path | None, ...]:
+    """Return project parent directories that define the reuse namespace."""
+    parents: list[Path | None] = [projects_dir]
+    if project_dir is not None:
+        explicit_parent = project_dir.expanduser().resolve().parent
+        if projects_dir is None or explicit_parent != projects_dir.expanduser().resolve():
+            parents.append(explicit_parent)
+    return tuple(parents)
 
 
 def _load_reused_manifest(project_dir: Path, title: str | None) -> ProjectManifest:
@@ -1074,13 +1118,14 @@ def _initial_manifest(
     created_at: str,
     meeting_time: str | None,
     source_sha256: str,
+    variant: str | None,
     progress: CliProgressReporter | None,
 ) -> ProjectManifest:
     """Build the initial project manifest."""
     stat = source.stat()
     return ProjectManifest(
         schema_version=SCHEMA_VERSION,
-        project_id=_build_project_id(source_sha256),
+        project_id=_build_project_id(source_sha256, variant),
         title=title,
         title_source=title_source,
         title_model=None,
@@ -1095,6 +1140,7 @@ def _initial_manifest(
             sha256=source_sha256,
             meeting_time=meeting_time,
             original_path=str(original_source),
+            variant=variant,
         ),
         speakers={"detected_ids": [], "mapped": {}},
     )
@@ -1139,12 +1185,13 @@ def _resolve_project_root(
     projects_dir: Path | None,
     project_dir: Path | None,
     source_sha256: str,
+    variant: str | None,
 ) -> Path:
     """Resolve the directory for a new project."""
     if project_dir is not None:
         return project_dir.expanduser().resolve()
     base_dir = _projects_parent_dir(projects_dir)
-    return (base_dir / _build_project_id(source_sha256)).resolve()
+    return (base_dir / _build_project_id(source_sha256, variant)).resolve()
 
 def _create_project_dirs(root: Path) -> None:
     """Create the project root and standard child directories."""
@@ -1152,9 +1199,23 @@ def _create_project_dirs(root: Path) -> None:
     for name in PROJECT_DIRS:
         ensure_directory(root / name)
 
-def _build_project_id(source_sha256: str) -> str:
+def _build_project_id(source_sha256: str, variant: str | None = None) -> str:
     """Build a stable project id from source content."""
-    return f"p-{source_sha256[:16]}"
+    base_id = f"p-{source_sha256[:16]}"
+    return base_id if variant is None else f"{base_id}-v-{variant}"
+
+
+def _normalize_project_variant(variant: str | None) -> str | None:
+    """Normalize an optional experiment variant into a project-id-safe suffix."""
+    if variant is None:
+        return None
+    cleaned = variant.strip()
+    if not cleaned:
+        raise ValueError("Project variant must not be empty.")
+    slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", cleaned.lower()).strip("-._")
+    if not slug:
+        raise ValueError("Project variant must contain ASCII letters or numbers.")
+    return slug[:40]
 
 def _slugify(value: str) -> str:
     """Convert a title into a filesystem-safe slug while preserving CJK text."""

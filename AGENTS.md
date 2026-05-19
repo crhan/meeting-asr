@@ -28,7 +28,8 @@
 ## Project Identity Notes
 
 - Do not build new project identity from creation date or title. That created duplicate projects for the same video and made IDs change across runs.
-- Project IDs are content-based (`p-<sha16>`) and default project directories use the same string. `project create` / `project run` should reuse an existing project for the same source video when no explicit `--project-dir` is provided.
+- Project IDs are content-based (`p-<sha16>`) and default project directories use the same string. `project create` / `project run` must reuse an existing project for the same source video even when an explicit `--project-dir` is provided; `--project-dir` is only the desired path for a brand-new source.
+- For deliberate same-source experiments, use `--variant <name>` so the project id becomes `p-<sha16>-v-<name>`. Do not create multiple directories with the same `project_id` to compare ASR settings.
 - `project_id` is the only project identity printed by `project list` and generated next-step commands. Do not add numeric project list shortcuts back.
 
 ## Install And Verification Notes

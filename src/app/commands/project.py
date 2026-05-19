@@ -215,6 +215,11 @@ def create(
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     project_dir: Optional[Path] = typer.Option(None, "--project-dir", file_okay=False, dir_okay=True),
     meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
+    variant: Optional[str] = typer.Option(
+        None,
+        "--variant",
+        help="Create/reuse a separate experiment variant for the same source media.",
+    ),
     hash_source: bool = typer.Option(
         False,
         "--hash-source/--no-hash-source",
@@ -231,6 +236,7 @@ def create(
             project_dir=project_dir,
             meeting_time=meeting_time,
             hash_source=hash_source,
+            variant=variant,
             progress=reporter,
         ),
         description="Creating project",
@@ -341,6 +347,11 @@ def run(
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
     project_dir: Optional[Path] = typer.Option(None, "--project-dir", file_okay=False, dir_okay=True),
     meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
+    variant: Optional[str] = typer.Option(
+        None,
+        "--variant",
+        help="Create/reuse a separate experiment variant for the same source media.",
+    ),
     speaker_count: Optional[int] = typer.Option(None, "--speaker-count", min=1),
     language: Optional[str] = typer.Option("zh,en", "--language"),
     model: str = typer.Option("fun-asr", "--model", autocompletion=complete_model),
@@ -409,6 +420,7 @@ def run(
             projects_dir=projects_dir,
             project_dir=project_dir,
             meeting_time=meeting_time,
+            variant=variant,
             options=options,
             store_dir=store_dir,
             voiceprint_model=voiceprint_model,
@@ -554,6 +566,7 @@ def _run_project_workflow(
     projects_dir: Path | None,
     project_dir: Path | None,
     meeting_time: str | None,
+    variant: str | None,
     options: ProjectTranscribeOptions,
     store_dir: Path | None,
     voiceprint_model: str | None,
@@ -576,6 +589,7 @@ def _run_project_workflow(
         projects_dir: Optional parent directory.
         project_dir: Optional explicit project directory.
         meeting_time: Optional meeting start time string.
+        variant: Optional explicit experiment variant.
         options: Project transcription options.
         store_dir: Optional voiceprint store directory.
         voiceprint_model: Optional voiceprint model override.
@@ -606,6 +620,7 @@ def _run_project_workflow(
         project_dir=project_dir,
         meeting_time=meeting_time,
         hash_source=False,
+        variant=variant,
         progress=progress,
     )
     _record_and_emit_run_stage(
