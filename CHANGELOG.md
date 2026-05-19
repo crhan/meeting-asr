@@ -7,6 +7,19 @@
 
 ## [未发布]
 
+## [0.5.0] - 2026-05-19
+
+### 新增
+
+- 新增 transcript polish 评测命令与评测用例集，覆盖 Qwen3.6 适配效果。
+- 新增统一 DashScope chat 调用层，按模型配置路由不同端点。
+- `project run` 支持通过配置自动接受 transcript polish 结果。
+
+### 变更
+
+- `project list` 输出更精简，并规范会议标题中的时间前缀，减少重复和不可区分标题。
+- polish 接受后的项目运行状态会正确刷新，避免后续流程继续看到过期状态。
+
 ## [0.4.0] - 2026-05-12
 
 ### 新增
@@ -80,7 +93,8 @@
 - 首个公开版本，提供基于 project 的 Meeting-ASR CLI。
 - 新增项目创建、会议转写、转写导出、speaker review、声纹匹配、词汇纠错 review，以及 GitHub Actions 发布基础能力。
 
-[未发布]: https://github.com/crhan/meeting-asr/compare/v0.4.0...HEAD
+[未发布]: https://github.com/crhan/meeting-asr/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/crhan/meeting-asr/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/crhan/meeting-asr/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/crhan/meeting-asr/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/crhan/meeting-asr/compare/v0.1.0...v0.2.0
