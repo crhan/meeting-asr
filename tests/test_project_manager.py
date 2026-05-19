@@ -883,6 +883,41 @@ def test_summarize_project_writes_summary_and_updates_auto_title(
     assert "待办" not in rendered
 
 
+def test_summarize_project_prefixes_auto_title_with_meeting_time(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """LLM-generated meeting titles should keep the meeting time prefix."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "project"
+    create_project(
+        source,
+        title=None,
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time="2026-05-02T10:00:00+08:00",
+        hash_source=False,
+    )
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    monkeypatch.setattr(
+        "app.project_manager.generate_meeting_summary",
+        lambda result, settings, model: MeetingSummary(
+            "AI 转型研讨",
+            "讨论 AI 转型目标和落地路径。",
+            ["目标牵引", "路径收敛", "飞轮闭环", "里程碑518", "团队对齐"],
+            "qwen-test",
+        ),
+    )
+    monkeypatch.setattr("app.project_manager.load_settings", lambda require_oss=False: object())
+
+    summarize_project(project_dir, model=None, update_title=True)
+    manifest = load_manifest(project_dir)
+
+    assert manifest.title == "2026-05-02 10:00 AI 转型研讨"
+    assert manifest.title_source == "llm"
+
+
 def test_summarize_project_replaces_existing_llm_title(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1153,7 +1188,11 @@ def test_project_list_order_follows_meeting_time_desc(tmp_path: Path) -> None:
 
     projects = list_projects(projects_dir).projects
 
-    assert [project.title for project in projects] == ["Late Meeting", "Early Meeting", "Untimed Project"]
+    assert [project.title for project in projects] == [
+        "2026-05-03 10:00 Late Meeting",
+        "2026-05-02 10:00 Early Meeting",
+        "Untimed Project",
+    ]
 
 
 def test_project_list_command_reads_default_projects_dir(
@@ -1182,10 +1221,9 @@ def test_project_list_command_reads_default_projects_dir(
     assert f"Projects: {projects_dir.resolve()}" in result.output
     assert "Use Project ID or Directory" in result.output
     assert "meeting-asr project show PROJECT_ID" in result.output
-    assert "Times shown in local timezone." in result.output
     assert "Project ID" in result.output
-    assert "Meeting (Local)" in result.output
-    assert "Updated (Local)" in result.output
+    assert "Meeting (Local)" not in result.output
+    assert "Updated (Local)" not in result.output
     assert project_id in result.output
     assert "No." not in result.output
     assert "State" in result.output
@@ -1194,8 +1232,8 @@ def test_project_list_command_reads_default_projects_dir(
     assert "transcribe 1" not in result.output
 
 
-def test_project_list_command_shows_meeting_time(tmp_path: Path) -> None:
-    """Human project list should expose the meeting time when present."""
+def test_project_list_command_keeps_time_in_title_only(tmp_path: Path) -> None:
+    """Human project list should avoid redundant meeting/update columns."""
     projects_dir = tmp_path / "projects"
     source = tmp_path / "meeting.mp4"
     source.write_bytes(b"fake video")
@@ -1211,9 +1249,9 @@ def test_project_list_command_shows_meeting_time(tmp_path: Path) -> None:
     result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
 
     assert result.exit_code == 0
-    assert "Meeting (Local)" in result.output
-    assert "2026-05-02" in result.output
-    assert "Timed Demo" in result.output
+    assert "Meeting (Local)" not in result.output
+    assert "Updated (Local)" not in result.output
+    assert "2026-05-02 10:00 Timed Demo" in result.output
 
 
 def test_project_list_command_prints_json(tmp_path: Path) -> None:
@@ -1237,7 +1275,7 @@ def test_project_list_command_prints_json(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert payload["projects_dir"] == str(projects_dir.resolve())
     assert payload["count"] == 1
-    assert payload["projects"][0]["title"] == "Demo"
+    assert payload["projects"][0]["title"] == "2026-05-02 10:00 Demo"
     assert payload["projects"][0]["meeting_time"] == "2026-05-02T10:00:00+08:00"
     assert payload["projects"][0]["project_dir"] == str(project_dir.resolve())
     assert payload["projects"][0]["status"] == "created"
@@ -1338,11 +1376,41 @@ def test_project_update_command_changes_title_and_meeting_time(tmp_path: Path) -
 
     assert result.exit_code == 0
     assert "Project updated." in result.output
-    assert "Title: New Title" in result.output
-    assert manifest.title == "New Title"
+    assert "Title: 2026-05-02 10:00 New Title" in result.output
+    assert manifest.title == "2026-05-02 10:00 New Title"
     assert manifest.title_source == "manual"
     assert manifest.title_model is None
     assert manifest.source.meeting_time == "2026-05-02T10:00:00+08:00"
+
+
+def test_project_update_command_refreshes_title_time_prefix(tmp_path: Path) -> None:
+    """Updating only meeting time should repair the title time prefix."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(
+        tmp_path,
+        projects_dir=projects_dir,
+        title="2026-05-01 Old Meeting",
+        meeting_time="2026-05-01T09:00:00+08:00",
+    )
+    manifest = load_manifest(project_dir)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "update",
+            manifest.project_id,
+            "--projects-dir",
+            str(projects_dir),
+            "--meeting-time",
+            "2026-05-02T10:30:00+08:00",
+        ],
+    )
+    manifest = load_manifest(project_dir)
+
+    assert result.exit_code == 0
+    assert manifest.title == "2026-05-02 10:30 Old Meeting"
+    assert manifest.source.meeting_time == "2026-05-02T10:30:00+08:00"
 
 
 def test_project_update_requires_a_field(tmp_path: Path) -> None:
@@ -1499,7 +1567,7 @@ def test_project_status_command_reads_manifest(tmp_path: Path) -> None:
     result = runner.invoke(app, ["project", "status", str(project_dir)])
 
     assert result.exit_code == 0
-    assert "Title: Demo" in result.output
+    assert "Title: 2026-05-02 10:00 Demo" in result.output
     assert "Meeting time: 2026-05-02T10:00:00+08:00" in result.output
     assert "State: Created" in result.output
     assert "Next: transcribe" in result.output
@@ -1518,7 +1586,7 @@ def test_project_status_command_prints_json(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert payload["project"] == str(project_dir.resolve())
     assert payload["project_id"] == manifest.project_id
-    assert payload["title"] == "Demo"
+    assert payload["title"] == "2026-05-02 10:00 Demo"
     assert payload["meeting_time"] == "2026-05-02T10:00:00+08:00"
     assert payload["workflow"]["state"] == "Created"
     assert payload["source"] == "source/meeting.mp4"

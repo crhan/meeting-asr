@@ -43,7 +43,6 @@ def _echo_project_list(projects_dir: Path, projects: list[ProjectListItem]) -> N
         return
     typer.echo("Use Project ID or Directory with PROJECT commands.")
     typer.echo("Start with: meeting-asr project show PROJECT_ID")
-    typer.echo("Times shown in local timezone.")
     _project_table_console().print(_project_list_table(projects))
 
 
@@ -69,8 +68,6 @@ def _project_list_table(projects: list[ProjectListItem]) -> Table:
     table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
     table.add_column("Project ID", no_wrap=True, style="bold cyan")
     table.add_column("State", no_wrap=True)
-    table.add_column("Meeting (Local)", no_wrap=True)
-    table.add_column("Updated (Local)", no_wrap=True)
     table.add_column("Title")
     table.add_column("Keywords", style="dim")
     for project in projects:
@@ -78,8 +75,6 @@ def _project_list_table(projects: list[ProjectListItem]) -> Table:
         table.add_row(
             project.project_id,
             _project_workflow_state_text(workflow),
-            _project_meeting_time(project),
-            _project_list_timestamp(project.updated_at),
             project.title,
             _project_keywords_display(project),
         )
@@ -121,10 +116,3 @@ def _project_table_console() -> Console:
 def _project_list_timestamp(value: str, *, timezone: tzinfo | None = None) -> str:
     """Return a compact timestamp for project list rows."""
     return format_local_minute(value, timezone=timezone)
-
-
-def _project_meeting_time(project: ProjectListItem) -> str:
-    """Return a compact meeting time for a project list row."""
-    if not project.meeting_time:
-        return "-"
-    return _project_list_timestamp(project.meeting_time)

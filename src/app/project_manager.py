@@ -119,6 +119,7 @@ DOWNSTREAM_ARTIFACT_PATHS = (
 DOWNSTREAM_SPEAKER_KEYS = ("mapped", "person_map", "matches", "voiceprints")
 
 LOGGER = logging.getLogger(__name__)
+_TITLE_TIME_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?\b\s*")
 
 
 def create_project(
@@ -152,6 +153,7 @@ def create_project(
     if not source.exists():
         raise FileNotFoundError(f"Input media file does not exist: {source}")
     resolved_title, title_source = _resolve_initial_title(source, title)
+    resolved_title = _title_with_meeting_time(resolved_title, meeting_time)
     created_at = _now_iso()
     resolved_sha256 = source_sha256 or _sha256_file(source, progress)
     root = _resolve_project_root(source, projects_dir, project_dir, resolved_sha256)
@@ -184,6 +186,32 @@ def _resolve_initial_title(source: Path, title: str | None) -> tuple[str, str]:
     if not cleaned_title:
         raise ValueError("Project title must not be empty.")
     return cleaned_title, TITLE_SOURCE_MANUAL
+
+
+def _title_with_meeting_time(title: str, meeting_time: str | None) -> str:
+    """Return a project title prefixed with ``YYYY-MM-DD HH:MM`` when meeting time is known."""
+    cleaned_title = title.strip()
+    prefix = _meeting_title_prefix(meeting_time)
+    if prefix is None:
+        return cleaned_title
+    body = _TITLE_TIME_PREFIX_RE.sub("", cleaned_title, count=1).strip()
+    return f"{prefix} {body}" if body else prefix
+
+
+def _meeting_title_prefix(meeting_time: str | None) -> str | None:
+    """Parse a meeting timestamp into the title prefix format."""
+    if meeting_time is None:
+        return None
+    cleaned_time = meeting_time.strip()
+    if not cleaned_time:
+        return None
+    try:
+        return datetime.fromisoformat(cleaned_time).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        match = re.match(r"^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})", cleaned_time)
+        if match:
+            return f"{match.group(1)} {match.group(2)}"
+    return None
 
 
 def create_or_reuse_project(
@@ -245,9 +273,10 @@ def _load_reused_manifest(project_dir: Path, title: str | None) -> ProjectManife
     cleaned_title = title.strip()
     if not cleaned_title:
         raise ValueError("Project title must not be empty.")
-    if manifest.title == cleaned_title and manifest.title_source == TITLE_SOURCE_MANUAL:
+    normalized_title = _title_with_meeting_time(cleaned_title, manifest.source.meeting_time)
+    if manifest.title == normalized_title and manifest.title_source == TITLE_SOURCE_MANUAL:
         return manifest
-    manifest.title = cleaned_title
+    manifest.title = normalized_title
     manifest.title_source = TITLE_SOURCE_MANUAL
     manifest.title_model = None
     save_manifest(project_dir, manifest)
@@ -495,15 +524,19 @@ def update_project_metadata(
         raise ValueError("Nothing to update. Pass --title or --meeting-time.")
     paths = project_paths(project_dir)
     manifest = load_manifest(paths.root)
+    updated_meeting_time = manifest.source.meeting_time
+    if meeting_time is not None:
+        updated_meeting_time = meeting_time.strip() or None
+        manifest.source.meeting_time = updated_meeting_time
     if title is not None:
         cleaned_title = title.strip()
         if not cleaned_title:
             raise ValueError("Project title must not be empty.")
-        manifest.title = cleaned_title
+        manifest.title = _title_with_meeting_time(cleaned_title, updated_meeting_time)
         manifest.title_source = TITLE_SOURCE_MANUAL
         manifest.title_model = None
-    if meeting_time is not None:
-        manifest.source.meeting_time = meeting_time.strip() or None
+    elif meeting_time is not None:
+        manifest.title = _title_with_meeting_time(manifest.title, updated_meeting_time)
     save_manifest(paths.root, manifest)
     return ProjectUpdateSummary(paths.root, manifest)
 
@@ -971,7 +1004,7 @@ def summarize_project(
     summary_path = safe_write_text(paths.exports_dir / "meeting_summary.md", render_meeting_summary_markdown(summary))
     title_updated = bool(update_title and _can_replace_title(manifest, summary))
     if title_updated:
-        manifest.title = summary.title
+        manifest.title = _title_with_meeting_time(summary.title, manifest.source.meeting_time)
         manifest.title_source = TITLE_SOURCE_LLM
         manifest.title_model = summary.model
     elif _looks_like_legacy_custom_title(manifest):

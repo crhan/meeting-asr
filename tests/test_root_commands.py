@@ -129,7 +129,7 @@ def test_localized_help_leads_with_examples_and_translated_options() -> None:
     assert "示例" in run_result.output
     assert "meeting-asr project run ~/Downloads/meeting.mp4" in run_result.output
     assert "指定回忆索引使用的" in run_result.output
-    assert "ASR 后生成转写润色建议" in run_result.output
+    assert "ASR 后运行转写润色" in run_result.output
     assert "指定转写润色使用的" in run_result.output
     assert "--agent-log" in run_result.output
     assert "输出给 Agent/日志系统使用的" in run_result.output

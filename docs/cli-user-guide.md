@@ -106,7 +106,7 @@ meeting-asr project show PROJECT_ID
 meeting-asr project status PROJECT_ID
 ```
 
-`project list` 只做列表。项目阶段、下一步、产物、runtime 状态、错误恢复命令看 `project show`。
+`project list` 只做列表，默认只显示 Project ID、状态、标题和关键词；会议时间会规范化进标题，不再单独显示 meeting/update 时间列。项目阶段、下一步、产物、runtime 状态、错误恢复命令看 `project show`。
 
 更新元数据：
 
@@ -114,6 +114,8 @@ meeting-asr project status PROJECT_ID
 meeting-asr project update PROJECT_ID --title "新的会议标题"
 meeting-asr project update PROJECT_ID --meeting-time "2026-05-02T10:00:00+08:00"
 ```
+
+带 meeting time 的项目标题会统一成 `YYYY-MM-DD HH:MM 标题`。
 
 删除和恢复：
 
