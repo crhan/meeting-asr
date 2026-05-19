@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,28 @@ from app.speaker_labeling import load_transcript_result
 from app.utils import safe_write_json
 from app.voiceprint_embedding import embed_audio_file, resolve_voiceprint_embedding_options
 from app.voiceprint_quality import DEFAULT_CRITICAL_SCORE, DEFAULT_WARNING_SCORE
+
+MIN_ANCHOR_DURATION_MS = 1500
+MIN_ANCHOR_TEXT_CHARS = 8
+LOW_INFO_TEXT_CHARS = 4
+TEXT_TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]", re.UNICODE)
+FILLER_PHRASES = (
+    "然后",
+    "就是",
+    "这个",
+    "那个",
+    "其实",
+    "反正",
+    "可能",
+    "应该",
+    "还是",
+    "也是",
+    "呃",
+    "嗯",
+    "啊",
+    "哦",
+    "好",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +112,7 @@ class SpeakerClusterQualitySummary:
     merge_speaker_threshold: float
     warning_score: float
     critical_score: float
+    score_all_segments: bool
     reports: list[SpeakerClusterReport]
     close_pairs: list[SpeakerCentroidPair]
     verdict: str
@@ -102,6 +126,7 @@ def analyze_project_speaker_clusters(
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
+    score_all_segments: bool,
     same_speaker_threshold: float,
     merge_speaker_threshold: float,
     write_report: bool,
@@ -119,6 +144,7 @@ def analyze_project_speaker_clusters(
         sample_count: Maximum probe clips per speaker.
         max_seconds: Maximum clip duration.
         padding_seconds: Context padding around each segment.
+        score_all_segments: Whether to score every transcript segment against the anchor centroid.
         same_speaker_threshold: Edge threshold for same-speaker components.
         merge_speaker_threshold: Speaker centroid score considered too close.
         warning_score: Clip-to-centroid score below which a clip is suspicious.
@@ -135,11 +161,13 @@ def analyze_project_speaker_clusters(
         sample_count=sample_count,
         max_seconds=max_seconds,
         padding_seconds=padding_seconds,
+        score_all_segments=score_all_segments,
         progress=progress,
     )
     summary = _build_quality_summary(
         context,
         clips_by_speaker,
+        score_all_segments=score_all_segments,
         same_speaker_threshold=same_speaker_threshold,
         merge_speaker_threshold=merge_speaker_threshold,
         warning_score=warning_score,
@@ -199,16 +227,17 @@ def _embed_speaker_clips(
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
+    score_all_segments: bool,
     progress: CliProgressReporter | None,
-) -> dict[int, list[SpeakerClusterClip]]:
+) -> dict[int, tuple[list[SpeakerClusterClip], list[SpeakerClusterClip]]]:
     """Extract and embed selected clips for each project speaker."""
     speaker_items = sorted(context.segments_by_speaker.items())
     emit_progress(progress, "Embedding speaker cluster probes", total=len(speaker_items), completed=0)
-    clips_by_speaker: dict[int, list[SpeakerClusterClip]] = {}
+    clips_by_speaker: dict[int, tuple[list[SpeakerClusterClip], list[SpeakerClusterClip]]] = {}
     cache = _read_embedding_cache(context.project_root)
     for speaker_id, segments in speaker_items:
         selected = _select_segments(segments, sample_count)
-        clips_by_speaker[speaker_id] = _embed_selected_segments(
+        anchor_clips = _embed_selected_segments(
             context,
             speaker_id,
             selected,
@@ -216,6 +245,18 @@ def _embed_speaker_clips(
             padding_seconds=padding_seconds,
             cache=cache,
         )
+        score_segments = segments if score_all_segments else selected
+        score_clips = anchor_clips
+        if score_all_segments:
+            score_clips = _embed_selected_segments(
+                context,
+                speaker_id,
+                score_segments,
+                max_seconds=max_seconds,
+                padding_seconds=padding_seconds,
+                cache=cache,
+            )
+        clips_by_speaker[speaker_id] = (anchor_clips, score_clips)
         emit_progress(progress, f"Embedded {speaker_id_to_label(speaker_id)} cluster probes", advance=1)
     _write_embedding_cache(context.project_root, cache)
     return clips_by_speaker
@@ -263,9 +304,55 @@ def _cluster_clip(
 
 
 def _select_segments(segments: list[SentenceSegment], sample_count: int) -> list[SentenceSegment]:
-    """Select long segments and restore timeline order."""
-    longest = sorted(segments, key=lambda item: item.end_time_ms - item.begin_time_ms, reverse=True)[:sample_count]
-    return sorted(longest, key=lambda item: item.begin_time_ms)
+    """Select high-information speaker anchors and restore timeline order."""
+    ranked = sorted(segments, key=_segment_selection_score, reverse=True)
+    selected = [segment for segment in ranked if not _is_low_information_segment(segment)][:sample_count]
+    if len(selected) < min(sample_count, len(segments)):
+        selected_keys = {_segment_identity(segment) for segment in selected}
+        for segment in ranked:
+            if _segment_identity(segment) in selected_keys:
+                continue
+            selected.append(segment)
+            selected_keys.add(_segment_identity(segment))
+            if len(selected) >= sample_count:
+                break
+    return sorted(selected, key=lambda item: item.begin_time_ms)
+
+
+def _segment_selection_score(segment: SentenceSegment) -> tuple[float, int, int]:
+    """Return a quality-first sort key for speaker anchor selection."""
+    chars = _content_chars(segment.text)
+    duration_ms = segment.end_time_ms - segment.begin_time_ms
+    length_score = min(len(chars) / 24, 1.0)
+    duration_score = min(duration_ms / 8000, 1.0)
+    diversity_score = len(set(chars)) / len(chars) if chars else 0.0
+    low_info_penalty = 1.0 if _is_low_information_segment(segment) else 0.0
+    quality = length_score * 0.50 + duration_score * 0.35 + diversity_score * 0.15 - low_info_penalty
+    return quality, duration_ms, len(chars)
+
+
+def _is_low_information_segment(segment: SentenceSegment) -> bool:
+    """Return whether a segment is too short to trust as a cluster anchor."""
+    chars = _content_chars(segment.text)
+    duration_ms = segment.end_time_ms - segment.begin_time_ms
+    if len(chars) <= LOW_INFO_TEXT_CHARS:
+        return True
+    if len(chars) < MIN_ANCHOR_TEXT_CHARS and duration_ms < MIN_ANCHOR_DURATION_MS:
+        return True
+    return len(set(chars)) <= 2 and len(chars) < 16
+
+
+def _content_chars(text: str) -> list[str]:
+    """Return text characters that carry lexical information."""
+    normalized = text.lower()
+    for phrase in FILLER_PHRASES:
+        normalized = normalized.replace(phrase, "")
+    return TEXT_TOKEN_RE.findall(normalized)
+
+
+def _segment_identity(segment: SentenceSegment) -> tuple[int | None, int, int]:
+    """Return a stable identity for one transcript segment."""
+    return (segment.sentence_id, segment.begin_time_ms, segment.end_time_ms)
 
 
 def _clip_cache_key(
@@ -350,27 +437,30 @@ def _write_embedding_cache(project_root: Path, cache: dict[str, list[float]]) ->
 
 def _build_quality_summary(
     context: _ClusterContext,
-    clips_by_speaker: dict[int, list[SpeakerClusterClip]],
+    clips_by_speaker: dict[int, tuple[list[SpeakerClusterClip], list[SpeakerClusterClip]]],
     *,
+    score_all_segments: bool,
     same_speaker_threshold: float,
     merge_speaker_threshold: float,
     warning_score: float,
     critical_score: float,
 ) -> SpeakerClusterQualitySummary:
     """Build the full cluster quality summary."""
-    centroids = _speaker_centroids(clips_by_speaker)
+    anchor_clips_by_speaker = {speaker_id: clips[0] for speaker_id, clips in clips_by_speaker.items()}
+    centroids = _speaker_centroids(anchor_clips_by_speaker)
     close_pairs = _close_centroid_pairs(centroids, merge_speaker_threshold)
     reports = [
         _speaker_report(
             speaker_id,
             context.segments_by_speaker[speaker_id],
-            clips,
+            anchor_clips,
+            score_clips,
             centroids,
             same_speaker_threshold,
             warning_score,
             critical_score,
         )
-        for speaker_id, clips in sorted(clips_by_speaker.items())
+        for speaker_id, (anchor_clips, score_clips) in sorted(clips_by_speaker.items())
     ]
     verdict = _summary_verdict(reports, close_pairs)
     return SpeakerClusterQualitySummary(
@@ -381,6 +471,7 @@ def _build_quality_summary(
         merge_speaker_threshold,
         warning_score,
         critical_score,
+        score_all_segments,
         reports,
         close_pairs,
         verdict,
@@ -399,26 +490,28 @@ def _speaker_centroids(clips_by_speaker: dict[int, list[SpeakerClusterClip]]) ->
 def _speaker_report(
     speaker_id: int,
     all_segments: list[SentenceSegment],
-    clips: list[SpeakerClusterClip],
+    anchor_clips: list[SpeakerClusterClip],
+    score_clips: list[SpeakerClusterClip],
     centroids: dict[int, list[float]],
     same_speaker_threshold: float,
     warning_score: float,
     critical_score: float,
 ) -> SpeakerClusterReport:
     """Build one speaker quality report."""
-    scores = _pairwise_scores([clip.vector for clip in clips])
-    components = _connected_components(clips, same_speaker_threshold)
+    scores = _pairwise_scores([clip.vector for clip in anchor_clips])
+    components = _connected_components(anchor_clips, same_speaker_threshold)
     nearest_id, nearest_score = _nearest_other_speaker(speaker_id, centroids)
-    sample_scores = _clip_centroid_score_rows(clips, centroids.get(speaker_id), warning_score, critical_score)
-    centroid_scores = [score.centroid_score for score in sample_scores if score.centroid_score is not None]
+    anchor_scores = _clip_centroid_score_rows(anchor_clips, centroids.get(speaker_id), warning_score, critical_score)
+    sample_scores = _clip_centroid_score_rows(score_clips, centroids.get(speaker_id), warning_score, critical_score)
+    centroid_scores = [score.centroid_score for score in anchor_scores if score.centroid_score is not None]
     warning_count = sum(1 for score in centroid_scores if critical_score <= score < warning_score)
     critical_count = sum(1 for score in centroid_scores if score < critical_score)
-    warnings = _speaker_warnings(clips, scores, components, warning_count, critical_count)
+    warnings = _speaker_warnings(anchor_clips, scores, components, warning_count, critical_count)
     return SpeakerClusterReport(
         speaker_id,
         speaker_id_to_label(speaker_id),
         len(all_segments),
-        len(clips),
+        len(anchor_clips),
         _mean(centroid_scores) if centroid_scores else None,
         min(centroid_scores) if centroid_scores else None,
         warning_count,
@@ -445,6 +538,7 @@ def _clip_centroid_score_rows(
     rows: list[SpeakerClusterSampleScore] = []
     for clip in clips:
         score = None if centroid is None else _cosine(clip.vector, centroid)
+        low_information = _is_low_information_clip(clip)
         rows.append(
             SpeakerClusterSampleScore(
                 clip.index,
@@ -453,14 +547,28 @@ def _clip_centroid_score_rows(
                 clip.end_time_ms,
                 clip.text,
                 score,
-                _sample_score_status(score, warning_score, critical_score),
+                _sample_score_status(score, warning_score, critical_score, low_information=low_information),
             )
         )
     return rows
 
 
-def _sample_score_status(score: float | None, warning_score: float, critical_score: float) -> str:
+def _is_low_information_clip(clip: SpeakerClusterClip) -> bool:
+    """Return whether a scored clip is too short for strong interpretation."""
+    segment = SentenceSegment(clip.begin_time_ms, clip.end_time_ms, clip.text, clip.speaker_id, clip.sentence_id)
+    return _is_low_information_segment(segment)
+
+
+def _sample_score_status(
+    score: float | None,
+    warning_score: float,
+    critical_score: float,
+    *,
+    low_information: bool,
+) -> str:
     """Return a stable status for one sample-to-centroid score."""
+    if low_information:
+        return "low-info"
     if score is None:
         return "unknown"
     if score < critical_score:
@@ -587,6 +695,7 @@ def _summary_payload(summary: SpeakerClusterQualitySummary) -> dict[str, object]
         "merge_speaker_threshold": summary.merge_speaker_threshold,
         "warning_score": summary.warning_score,
         "critical_score": summary.critical_score,
+        "scoring_mode": "all-segments" if summary.score_all_segments else "sampled",
         "verdict": summary.verdict,
         "speakers": [_report_payload(report) for report in summary.reports],
         "close_pairs": [

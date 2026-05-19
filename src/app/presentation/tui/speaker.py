@@ -1457,7 +1457,7 @@ def _cluster_status_style(status: str) -> str:
 
 def _sample_score_style(status: str) -> str:
     """Return Rich style for one sample cluster status."""
-    return {"ok": "green", "warning": "yellow", "critical": "bold red"}.get(status, "dim")
+    return {"ok": "green", "warning": "yellow", "critical": "bold red", "low-info": "dim"}.get(status, "dim")
 
 
 def _format_optional_score(value: float | None) -> str:

@@ -9,7 +9,9 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from app.cli import app
+from app.models import SentenceSegment
 from app.project_manager import create_project
+from app.speaker_cluster_quality import _select_segments
 
 runner = CliRunner()
 
@@ -54,6 +56,52 @@ def test_project_speakers_cluster_flags_mixed_speaker(
     assert speaker_a["samples"][0]["sentence_id"] == 1
     assert speaker_a["samples"][0]["centroid_score"] is not None
     assert speaker_a["samples"][0]["status"] in {"ok", "warning", "critical"}
+
+
+def test_project_speakers_cluster_can_score_all_segments(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """All-segment scoring should not force all segments into centroid anchors."""
+    project_dir = _sample_project(tmp_path)
+    _write_cluster_inputs(project_dir)
+    _patch_cluster_embedding(monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "speakers",
+            "cluster",
+            str(project_dir),
+            "--sample-count",
+            "2",
+            "--all-segments",
+            "--no-progress",
+        ],
+    )
+
+    payload = json.loads((project_dir / "speakers" / "speaker_cluster_quality.json").read_text(encoding="utf-8"))
+    speaker_a = payload["speakers"][0]
+    assert result.exit_code == 0
+    assert payload["scoring_mode"] == "all-segments"
+    assert speaker_a["clip_count"] == 2
+    assert len(speaker_a["samples"]) == 4
+
+
+def test_cluster_sample_selection_prefers_informative_text() -> None:
+    """Anchor selection should avoid low-information utterances when better text exists."""
+    segments = [
+        SentenceSegment(0, 12_000, "嗯嗯嗯嗯嗯嗯嗯嗯嗯嗯嗯", 0, 1),
+        SentenceSegment(13_000, 16_000, "这个方案需要重新设计验证路径", 0, 2),
+        SentenceSegment(17_000, 20_000, "我们先看日志再确认根因", 0, 3),
+        SentenceSegment(21_000, 22_000, "好", 0, 4),
+        SentenceSegment(23_000, 28_000, "那个几个事情啊就是", 0, 5),
+    ]
+
+    selected = _select_segments(segments, 2)
+
+    assert [segment.sentence_id for segment in selected] == [2, 3]
 
 
 def test_project_speakers_cluster_can_emit_json_without_writing_report(
