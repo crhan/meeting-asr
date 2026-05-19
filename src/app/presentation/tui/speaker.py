@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from rich.markup import escape
 from textual.app import App, ComposeResult
@@ -37,6 +39,8 @@ from app.presentation.tui.speaker_matches import SpeakerMatchCandidate
 from app.presentation.tui.speaker_models import (
     ReviewSpeaker,
     SentenceReassignment,
+    SpeakerClusterDiagnostic,
+    SpeakerClusterSampleScore,
     SpeakerReviewDecision,
     SpeakerReviewSession,
 )
@@ -98,6 +102,18 @@ UNFOCUSED_PANE_CLASS = "unfocused-pane"
 
 VIEW_MODE_SPEAKERS = "speakers"
 VIEW_MODE_TIMELINE = "timeline"
+
+
+@dataclass(frozen=True, slots=True)
+class PlaybackState:
+    """Current sample playback state for visible Project Review progress."""
+
+    key: tuple[int | None, int, int]
+    label: str
+    text: str
+    started_at: float
+    duration_seconds: float | None
+
 
 __all__ = [
     "FOCUSED_PANE_CLASS",
@@ -234,6 +250,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.selected_speaker_index = 0
         self.focused_column = "speakers"
         self.playback_process: subprocess.Popen | None = None
+        self.playback_state: PlaybackState | None = None
+        self.playback_timer: Any | None = None
         self.known_people = list(session.people)
         self.correction_edits: list[SentenceCorrectionEdit] = []
         self.identity_baseline = _identity_snapshot(session.speakers)
@@ -317,6 +335,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         if self._is_playing():
             self._stop_playback()
             self._set_status(tr("Stopped sample playback.", "已停止 sample 播放。"))
+            self._refresh()
             return
         try:
             self._play_sample(self._active_segment())
@@ -874,22 +893,36 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         for index, speaker in enumerate(self.session.speakers):
             marker = ">" if index == self.selected_speaker_index else " "
             style = status_style(speaker_status(speaker))
-            label = f"{marker} {status_icon(speaker)} {speaker.label}  {speaker.current_name}  {match_badge(speaker)}"
-            lines.append(f"[{style}]{escape(label)}[/]")
+            identity = f"{marker} {status_icon(speaker)} {speaker.label}  {speaker.current_name}"
+            line = (
+                f"[{style}]{escape(identity)}[/]  "
+                f"{escape(match_badge(speaker))}  "
+                f"{_cluster_badge(self._cluster_diagnostic(speaker))}"
+            )
+            lines.append(line)
         return "\n".join(lines)
 
     def _sample_pane(self) -> str:
         """Render the selected speaker samples."""
         speaker = self._speaker()
         lines = [self._pane_title(tr(f"{speaker.label} samples", f"{speaker.label} samples"), "samples")]
-        lines.append(render_selected_speaker_line(speaker))
+        lines.append(
+            render_selected_speaker_line(speaker)
+            + " | "
+            + _cluster_detail(self._cluster_diagnostic(speaker))
+        )
         page_start, segments = self._visible_segments(speaker)
         for offset, segment in enumerate(segments):
             index = page_start + offset
             prefix = ">" if index == speaker.selected_sample_index else " "
             time_range = _segment_time_range(segment)
             text = _trim_sample_text(segment.text)
-            sample_line = f"{prefix} [cyan]{time_range}[/] {escape(text)}"
+            playing = "[bold magenta]PLAY[/]" if self._playing_segment_key() == segment_key(segment) else "[dim]    [/]"
+            sample_line = (
+                f"{prefix} {playing} [cyan]{time_range}[/] "
+                f"{_sample_cluster_badge(self._cluster_sample_score(speaker, segment))} "
+                f"{escape(text)}"
+            )
             if self._has_correction_edit(segment):
                 sample_line += " [yellow]edited[/]"
             if segment_key(segment) in self._reassigned_segment_keys():
@@ -917,10 +950,47 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self._set_status(tr(f"Playing selected sample: {_segment_time_range(segment)}.", f"正在播放当前 sample：{_segment_time_range(segment)}。"))
+        self.playback_state = PlaybackState(
+            segment_key(segment),
+            _segment_time_range(segment),
+            _trim_sample_text(segment.text, limit=80),
+            time.monotonic(),
+            duration_seconds,
+        )
+        self._restart_playback_timer()
+        self._refresh_playback_status()
+        self._refresh()
+
+    def _restart_playback_timer(self) -> None:
+        """Restart the UI timer used to update playback progress."""
+        self._stop_playback_timer()
+        self.playback_timer = self.set_interval(0.5, self._refresh_playback_status)
+
+    def _stop_playback_timer(self) -> None:
+        """Stop the playback progress timer if it exists."""
+        timer = self.playback_timer
+        self.playback_timer = None
+        if timer is not None:
+            timer.stop()
+
+    def _refresh_playback_status(self) -> None:
+        """Refresh playback progress in the status bar and sample pane."""
+        state = self.playback_state
+        if state is None:
+            return
+        if not self._is_playing():
+            label = state.label
+            self.playback_state = None
+            self._stop_playback_timer()
+            self._set_status(tr(f"Finished playing sample {label}.", f"已播放完成：{label}。"))
+            self._refresh()
+            return
+        self._set_status(_playback_status_text(state))
 
     def _stop_playback(self) -> None:
         """Stop the current playback child process if it is still running."""
+        self._stop_playback_timer()
+        self.playback_state = None
         process = self.playback_process
         self.playback_process = None
         if process is None or process.poll() is not None:
@@ -935,6 +1005,13 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Return whether a playback child process is still running."""
         process = self.playback_process
         return process is not None and process.poll() is None
+
+    def _playing_segment_key(self) -> tuple[int | None, int, int] | None:
+        """Return the currently playing segment key, if playback is active."""
+        state = self.playback_state
+        if state is None or not self._is_playing():
+            return None
+        return state.key
 
     def _mapping(self) -> dict[int, str]:
         """Return the current speaker mapping."""
@@ -1205,6 +1282,21 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         speaker = self._speaker()
         return speaker.segments[speaker.selected_sample_index]
 
+    def _cluster_diagnostic(self, speaker: ReviewSpeaker) -> SpeakerClusterDiagnostic | None:
+        """Return optional cluster diagnostics for one speaker."""
+        return self.session.cluster_diagnostics.get(speaker.speaker_id)
+
+    def _cluster_sample_score(
+        self,
+        speaker: ReviewSpeaker,
+        segment: SentenceSegment,
+    ) -> SpeakerClusterSampleScore | None:
+        """Return optional sample-to-cluster score for one visible row."""
+        diagnostic = self._cluster_diagnostic(speaker)
+        if diagnostic is None:
+            return None
+        return diagnostic.samples.get(segment_key(segment))
+
     def _replace_segment_text(self, edit: SentenceCorrectionEdit) -> None:
         """Update the in-memory sample text after a TUI correction."""
         for speaker in self.session.speakers:
@@ -1317,6 +1409,84 @@ def _segment_time_range(segment: SentenceSegment) -> str:
     start = format_ms_timestamp(segment.begin_time_ms)
     end = format_ms_timestamp(segment.end_time_ms)
     return f"{start}-{end}"
+
+
+def _cluster_badge(diagnostic: SpeakerClusterDiagnostic | None) -> str:
+    """Render one compact speaker cluster badge."""
+    if diagnostic is None:
+        return "[dim]cluster=-[/]"
+    score = _format_optional_score(diagnostic.centroid_mean)
+    style = _cluster_status_style(diagnostic.status)
+    return f"[{style}]cluster={score} {escape(diagnostic.status)}[/]"
+
+
+def _cluster_detail(diagnostic: SpeakerClusterDiagnostic | None) -> str:
+    """Render selected speaker cluster detail."""
+    if diagnostic is None:
+        return "[dim]cluster report=-[/]"
+    mean = _format_optional_score(diagnostic.centroid_mean)
+    minimum = _format_optional_score(diagnostic.centroid_min)
+    style = _cluster_status_style(diagnostic.status)
+    counts = f"{diagnostic.clip_count}/{diagnostic.segment_count}"
+    components = ",".join(str(value) for value in diagnostic.component_sizes) or "-"
+    return (
+        f"[{style}]cluster {escape(diagnostic.status)}[/] "
+        f"mean={mean} min={minimum} clips={counts} "
+        f"components={diagnostic.component_count} sizes={components}"
+    )
+
+
+def _sample_cluster_badge(score: SpeakerClusterSampleScore | None) -> str:
+    """Render one sample-to-centroid score badge."""
+    if score is None:
+        return "[dim]cluster=-[/]"
+    value = _format_optional_score(score.score)
+    style = _sample_score_style(score.status)
+    return f"[{style}]cluster={value} {escape(score.status)}[/]"
+
+
+def _cluster_status_style(status: str) -> str:
+    """Return Rich style for a speaker cluster status."""
+    return {
+        "ok": "green",
+        "insufficient": "yellow",
+        "warning": "yellow",
+        "mixed": "bold red",
+    }.get(status, "dim")
+
+
+def _sample_score_style(status: str) -> str:
+    """Return Rich style for one sample cluster status."""
+    return {"ok": "green", "warning": "yellow", "critical": "bold red"}.get(status, "dim")
+
+
+def _format_optional_score(value: float | None) -> str:
+    """Format an optional diagnostic score."""
+    return "-" if value is None else f"{value:.3f}"
+
+
+def _playback_status_text(state: PlaybackState) -> str:
+    """Render a human-readable playback progress line."""
+    elapsed = max(0.0, time.monotonic() - state.started_at)
+    duration = state.duration_seconds if state.duration_seconds and state.duration_seconds > 0 else None
+    text = _trim_sample_text(state.text, limit=56)
+    if duration is None:
+        return tr(
+            f"Playing {state.label} | elapsed {_format_duration(elapsed)} | {text} | Space stops playback.",
+            f"正在播放 {state.label} | 已播放 {_format_duration(elapsed)} | {text} | Space 停止播放。",
+        )
+    progress = min(1.0, elapsed / duration)
+    return tr(
+        f"Playing {state.label} | {_format_duration(elapsed)}/{_format_duration(duration)} | {progress:.0%} | {text} | Space stops playback.",
+        f"正在播放 {state.label} | {_format_duration(elapsed)}/{_format_duration(duration)} | {progress:.0%} | {text} | Space 停止播放。",
+    )
+
+
+def _format_duration(seconds: float) -> str:
+    """Format seconds as compact mm:ss progress."""
+    total = max(0, int(round(seconds)))
+    minutes, remainder = divmod(total, 60)
+    return f"{minutes:02d}:{remainder:02d}"
 
 
 def _same_sentence(segment: SentenceSegment, edit: SentenceCorrectionEdit) -> bool:

@@ -53,6 +53,20 @@ class SpeakerClusterReport:
     nearest_score: float | None
     status: str
     warnings: list[str]
+    samples: list["SpeakerClusterSampleScore"]
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerClusterSampleScore:
+    """One clip score against its speaker centroid."""
+
+    index: int
+    sentence_id: int | None
+    begin_time_ms: int
+    end_time_ms: int
+    text: str
+    centroid_score: float | None
+    status: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,7 +409,8 @@ def _speaker_report(
     scores = _pairwise_scores([clip.vector for clip in clips])
     components = _connected_components(clips, same_speaker_threshold)
     nearest_id, nearest_score = _nearest_other_speaker(speaker_id, centroids)
-    centroid_scores = _clip_centroid_scores(clips, centroids.get(speaker_id))
+    sample_scores = _clip_centroid_score_rows(clips, centroids.get(speaker_id), warning_score, critical_score)
+    centroid_scores = [score.centroid_score for score in sample_scores if score.centroid_score is not None]
     warning_count = sum(1 for score in centroid_scores if critical_score <= score < warning_score)
     critical_count = sum(1 for score in centroid_scores if score < critical_score)
     warnings = _speaker_warnings(clips, scores, components, warning_count, critical_count)
@@ -416,17 +431,43 @@ def _speaker_report(
         nearest_score,
         _speaker_status(warnings),
         warnings,
+        sample_scores,
     )
 
 
-def _clip_centroid_scores(
+def _clip_centroid_score_rows(
     clips: list[SpeakerClusterClip],
     centroid: list[float] | None,
-) -> list[float]:
+    warning_score: float,
+    critical_score: float,
+) -> list[SpeakerClusterSampleScore]:
     """Return each clip's score against its own speaker centroid."""
-    if centroid is None:
-        return []
-    return [_cosine(clip.vector, centroid) for clip in clips]
+    rows: list[SpeakerClusterSampleScore] = []
+    for clip in clips:
+        score = None if centroid is None else _cosine(clip.vector, centroid)
+        rows.append(
+            SpeakerClusterSampleScore(
+                clip.index,
+                clip.sentence_id,
+                clip.begin_time_ms,
+                clip.end_time_ms,
+                clip.text,
+                score,
+                _sample_score_status(score, warning_score, critical_score),
+            )
+        )
+    return rows
+
+
+def _sample_score_status(score: float | None, warning_score: float, critical_score: float) -> str:
+    """Return a stable status for one sample-to-centroid score."""
+    if score is None:
+        return "unknown"
+    if score < critical_score:
+        return "critical"
+    if score < warning_score:
+        return "warning"
+    return "ok"
 
 
 def _pairwise_scores(vectors: list[list[float]]) -> list[float]:
@@ -574,6 +615,20 @@ def _report_payload(report: SpeakerClusterReport) -> dict[str, object]:
         "nearest_score": report.nearest_score,
         "status": report.status,
         "warnings": report.warnings,
+        "samples": [_sample_score_payload(sample) for sample in report.samples],
+    }
+
+
+def _sample_score_payload(sample: SpeakerClusterSampleScore) -> dict[str, object]:
+    """Return a JSON-safe sample score payload."""
+    return {
+        "index": sample.index,
+        "sentence_id": sample.sentence_id,
+        "begin_time_ms": sample.begin_time_ms,
+        "end_time_ms": sample.end_time_ms,
+        "text": sample.text,
+        "centroid_score": sample.centroid_score,
+        "status": sample.status,
     }
 
 

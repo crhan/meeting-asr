@@ -12,6 +12,44 @@ from app.presentation.tui.speaker_people import KnownPerson
 from app.presentation.tui.speaker_status import SpeakerReviewOverview
 
 
+SegmentScoreKey = tuple[int | None, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerClusterSampleScore:
+    """One sample score from speaker cluster diagnostics."""
+
+    sentence_id: int | None
+    begin_time_ms: int
+    end_time_ms: int
+    score: float | None
+    status: str
+    text: str = ""
+
+    @property
+    def key(self) -> SegmentScoreKey:
+        """Return the transcript segment key this score belongs to."""
+        return (self.sentence_id, self.begin_time_ms, self.end_time_ms)
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerClusterDiagnostic:
+    """Cluster quality diagnostics for one detected speaker."""
+
+    speaker_id: int
+    status: str
+    centroid_mean: float | None
+    centroid_min: float | None
+    clip_count: int
+    segment_count: int
+    warning_clip_count: int
+    critical_clip_count: int
+    component_count: int
+    component_sizes: tuple[int, ...]
+    warnings: tuple[str, ...]
+    samples: dict[SegmentScoreKey, SpeakerClusterSampleScore] = field(default_factory=dict)
+
+
 @dataclass(slots=True)
 class ReviewSpeaker:
     """Mutable review state for one project speaker."""
@@ -63,6 +101,7 @@ class SpeakerReviewSession:
     people: tuple[KnownPerson, ...] = ()
     store_dir: Path | None = None
     projects_dir: Path | None = None
+    cluster_diagnostics: dict[int, SpeakerClusterDiagnostic] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

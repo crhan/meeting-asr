@@ -70,7 +70,11 @@ from app.presentation.tui.speaker_save import (
     SentenceReassignmentChange,
     sentence_reassignment_changes,
 )
-from app.presentation.tui.speaker_models import SentenceReassignment
+from app.presentation.tui.speaker_models import (
+    SentenceReassignment,
+    SpeakerClusterDiagnostic,
+    SpeakerClusterSampleScore,
+)
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
@@ -131,6 +135,20 @@ def test_speaker_review_tui_shows_project_workflow_status() -> None:
             assert "score avg 0.875, best 0.950" in overview
 
     asyncio.run(scenario())
+
+
+def test_speaker_review_tui_shows_cluster_scores() -> None:
+    """Project Review should expose speaker-level and sample-level cluster scores."""
+    app = SpeakerReviewApp(replace(_session(page_size=10), cluster_diagnostics=_cluster_diagnostics()))
+
+    speaker_pane = app._speaker_pane()
+    sample_pane = app._sample_pane()
+
+    assert "cluster=0.840 ok" in speaker_pane
+    assert "cluster ok" in sample_pane
+    assert "mean=0.840" in sample_pane
+    assert "cluster=0.910 ok" in sample_pane
+    assert "cluster=0.550 critical" in sample_pane
 
 
 def test_speaker_review_tui_uses_chinese_language() -> None:
@@ -1261,6 +1279,10 @@ def test_speaker_review_tui_space_stops_running_sample(monkeypatch) -> None:
 
             assert starts == 1
             assert pilot.app.playback_process is process
+            assert "PLAY" in pilot.app._sample_pane()
+            status = str(pilot.app.query_one("#status", Static).render())
+            assert "Playing 00:00:00.000-00:00:01.000" in status
+            assert "第一句" in status
 
             await pilot.press("space")
 
@@ -1318,6 +1340,7 @@ def test_speaker_review_tui_pages_samples() -> None:
 def test_load_speaker_review_session_builds_project_overview_from_disk(tmp_path: Path) -> None:
     """Session loading should combine project files, match files, and voiceprint DB state."""
     project_dir, store_dir = _project_with_voiceprint_state(tmp_path)
+    _write_cluster_report(project_dir)
 
     session = load_speaker_review_session(project_dir, store_dir=store_dir)
     overview = session.overview
@@ -1334,6 +1357,10 @@ def test_load_speaker_review_session_builds_project_overview_from_disk(tmp_path:
     assert session.people[0].person_id == session.speakers[0].person_id
     assert [speaker.current_name for speaker in session.speakers] == ["欧丁", "Speaker B"]
     assert [speaker.ignored for speaker in session.speakers] == [False, True]
+    diagnostic = session.cluster_diagnostics[0]
+    assert diagnostic.status == "ok"
+    assert diagnostic.centroid_mean == 0.88
+    assert diagnostic.samples[(1, 0, 1500)].score == 0.92
 
 
 def test_load_speaker_review_session_prefers_corrected_transcript(tmp_path: Path) -> None:
@@ -1593,6 +1620,30 @@ def _overview(*, with_status: bool) -> SpeakerReviewOverview:
     )
 
 
+def _cluster_diagnostics() -> dict[int, SpeakerClusterDiagnostic]:
+    """Build speaker cluster diagnostics for TUI rendering tests."""
+    samples = {
+        (1, 0, 1000): SpeakerClusterSampleScore(1, 0, 1000, 0.91, "ok", "第一句"),
+        (2, 2000, 2500): SpeakerClusterSampleScore(2, 2000, 2500, 0.55, "critical", "第二句"),
+    }
+    return {
+        0: SpeakerClusterDiagnostic(
+            speaker_id=0,
+            status="ok",
+            centroid_mean=0.84,
+            centroid_min=0.55,
+            clip_count=2,
+            segment_count=2,
+            warning_clip_count=0,
+            critical_clip_count=1,
+            component_count=1,
+            component_sizes=(2,),
+            warnings=("critical_centroid_outlier",),
+            samples=samples,
+        )
+    }
+
+
 def _correction_summary(
     *,
     accepted: bool,
@@ -1729,6 +1780,45 @@ def _write_project_review_files(project_dir: Path) -> None:
     }
     paths.speakers_dir.joinpath("speaker_matches.json").write_text(
         json.dumps(matches, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _write_cluster_report(project_dir: Path) -> None:
+    """Write a persisted speaker cluster report fixture."""
+    report = {
+        "speakers": [
+            {
+                "speaker_id": 0,
+                "label": "Speaker A",
+                "segment_count": 1,
+                "clip_count": 1,
+                "centroid_mean": 0.88,
+                "centroid_min": 0.88,
+                "warning_clip_count": 0,
+                "critical_clip_count": 0,
+                "component_count": 1,
+                "component_sizes": [1],
+                "nearest_speaker_id": 1,
+                "nearest_score": 0.21,
+                "status": "ok",
+                "warnings": [],
+                "samples": [
+                    {
+                        "index": 1,
+                        "sentence_id": 1,
+                        "begin_time_ms": 0,
+                        "end_time_ms": 1500,
+                        "text": "你好，我是欧丁。",
+                        "centroid_score": 0.92,
+                        "status": "ok",
+                    }
+                ],
+            }
+        ]
+    }
+    (project_dir / "speakers" / "speaker_cluster_quality.json").write_text(
+        json.dumps(report, ensure_ascii=False),
         encoding="utf-8",
     )
 

@@ -21,7 +21,12 @@ from app.presentation.tui.speaker_matches import (
     accepted_review_person_public_id,
     load_match_candidates,
 )
-from app.presentation.tui.speaker_models import ReviewSpeaker, SpeakerReviewSession
+from app.presentation.tui.speaker_models import (
+    ReviewSpeaker,
+    SpeakerClusterDiagnostic,
+    SpeakerClusterSampleScore,
+    SpeakerReviewSession,
+)
 from app.presentation.tui.speaker_people import load_existing_person_mapping, load_people
 from app.presentation.tui.speaker_status import SpeakerReviewOverview, VoiceprintReviewProgress
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
@@ -61,6 +66,7 @@ def load_speaker_review_session(
     mapping_path = paths.speakers_dir / "speaker_map.json"
     ignore_path = paths.speakers_dir / "speaker_ignore.json"
     match_path = paths.speakers_dir / "speaker_matches.json"
+    cluster_path = paths.speakers_dir / "speaker_cluster_quality.json"
     mapping = _load_existing_mapping(mapping_path)
     ignored_speaker_ids = load_ignored_speakers(ignore_path)
     matches = load_match_candidates(match_path)
@@ -96,6 +102,7 @@ def load_speaker_review_session(
         people=tuple(people),
         store_dir=store_dir,
         projects_dir=paths.root.parent,
+        cluster_diagnostics=_load_cluster_diagnostics(cluster_path),
     )
 
 
@@ -189,6 +196,98 @@ def _load_existing_mapping(path: Path) -> dict[int, str]:
         return {}
     payload = json.loads(path.read_text(encoding="utf-8"))
     return {int(key): str(value) for key, value in payload.items()}
+
+
+def _load_cluster_diagnostics(path: Path) -> dict[int, SpeakerClusterDiagnostic]:
+    """Load optional project speaker cluster diagnostics for review display."""
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    speakers = payload.get("speakers") if isinstance(payload, dict) else None
+    if not isinstance(speakers, list):
+        return {}
+    diagnostics: dict[int, SpeakerClusterDiagnostic] = {}
+    for item in speakers:
+        diagnostic = _cluster_diagnostic(item)
+        if diagnostic is not None:
+            diagnostics[diagnostic.speaker_id] = diagnostic
+    return diagnostics
+
+
+def _cluster_diagnostic(item: object) -> SpeakerClusterDiagnostic | None:
+    """Convert one serialized cluster report row into a TUI diagnostic."""
+    if not isinstance(item, dict):
+        return None
+    try:
+        speaker_id = int(item["speaker_id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    samples = _cluster_sample_scores(item.get("samples"))
+    return SpeakerClusterDiagnostic(
+        speaker_id=speaker_id,
+        status=str(item.get("status") or "unknown"),
+        centroid_mean=_optional_float(item.get("centroid_mean")),
+        centroid_min=_optional_float(item.get("centroid_min")),
+        clip_count=_optional_int(item.get("clip_count")),
+        segment_count=_optional_int(item.get("segment_count")),
+        warning_clip_count=_optional_int(item.get("warning_clip_count")),
+        critical_clip_count=_optional_int(item.get("critical_clip_count")),
+        component_count=_optional_int(item.get("component_count")),
+        component_sizes=tuple(_optional_int(value) for value in _list_values(item.get("component_sizes"))),
+        warnings=tuple(str(value) for value in _list_values(item.get("warnings"))),
+        samples={sample.key: sample for sample in samples},
+    )
+
+
+def _cluster_sample_scores(value: object) -> list[SpeakerClusterSampleScore]:
+    """Convert serialized sample score rows into TUI rows."""
+    rows: list[SpeakerClusterSampleScore] = []
+    for item in _list_values(value):
+        if not isinstance(item, dict):
+            continue
+        try:
+            begin = int(item["begin_time_ms"])
+            end = int(item["end_time_ms"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        sentence_id = item.get("sentence_id")
+        rows.append(
+            SpeakerClusterSampleScore(
+                sentence_id=None if sentence_id is None else _optional_int(sentence_id),
+                begin_time_ms=begin,
+                end_time_ms=end,
+                score=_optional_float(item.get("centroid_score")),
+                status=str(item.get("status") or "unknown"),
+                text=str(item.get("text") or ""),
+            )
+        )
+    return rows
+
+
+def _list_values(value: object) -> list[object]:
+    """Return a JSON list payload as a list, or an empty list."""
+    return value if isinstance(value, list) else []
+
+
+def _optional_float(value: object) -> float | None:
+    """Convert a JSON scalar to float, preserving missing values."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: object) -> int:
+    """Convert a JSON scalar to int, defaulting to zero."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _build_review_speakers(

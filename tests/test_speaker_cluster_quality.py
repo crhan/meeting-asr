@@ -51,6 +51,9 @@ def test_project_speakers_cluster_flags_mixed_speaker(
     assert speaker_a["component_count"] == 2
     assert speaker_a["component_sizes"] == [2, 2]
     assert "multi_component" in speaker_a["warnings"]
+    assert speaker_a["samples"][0]["sentence_id"] == 1
+    assert speaker_a["samples"][0]["centroid_score"] is not None
+    assert speaker_a["samples"][0]["status"] in {"ok", "warning", "critical"}
 
 
 def test_project_speakers_cluster_can_emit_json_without_writing_report(
