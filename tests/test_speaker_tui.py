@@ -164,6 +164,62 @@ def test_speaker_review_tui_shows_cluster_scores() -> None:
     assert "身份=0.930 正常 第一句" not in sample_pane
 
 
+def test_speaker_review_tui_filters_review_candidates() -> None:
+    """The sample filter should focus review-worthy suspicious samples."""
+    app = SpeakerReviewApp(
+        replace(
+            _session(page_size=10),
+            cluster_diagnostics=_cluster_diagnostics(),
+            sample_identity_scores=_sample_identity_scores(),
+        )
+    )
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("right")
+            await pilot.press("f")
+
+            assert app.sample_filter_mode == speaker_tui.SAMPLE_FILTER_REVIEW
+            assert app._speaker().selected_sample_index == 1
+            visible = [segment.text for segment in app._visible_segments(app._speaker())[1]]
+            assert visible == ["第二句"]
+            pane = app._sample_pane()
+            assert "筛选=疑点" in pane
+            assert "total=2" in pane
+            assert "疑似错人" in pane
+            assert "第一句" not in pane
+
+    asyncio.run(scenario())
+
+
+def test_speaker_review_tui_filters_low_score_samples() -> None:
+    """The sample filter should separately show low-score weak evidence."""
+    app = SpeakerReviewApp(
+        replace(
+            _session(page_size=10),
+            cluster_diagnostics=_cluster_diagnostics(),
+            sample_identity_scores=_sample_identity_scores_with_weak(),
+        )
+    )
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("right")
+            await pilot.press("f")
+            await pilot.press("f")
+
+            assert app.sample_filter_mode == speaker_tui.SAMPLE_FILTER_LOW
+            assert app._speaker().selected_sample_index == 0
+            visible = [segment.text for segment in app._visible_segments(app._speaker())[1]]
+            assert visible == ["第一句"]
+            pane = app._sample_pane()
+            assert "筛选=低分" in pane
+            assert "弱证据" in pane
+            assert "第二句" not in pane
+
+    asyncio.run(scenario())
+
+
 def test_speaker_review_tui_uses_chinese_language() -> None:
     """Speaker review overview should localize visible workflow guidance."""
     try:
@@ -1787,6 +1843,25 @@ def _sample_identity_scores() -> dict[int, dict[tuple[int | None, int, int], Spe
             ),
         }
     }
+
+
+def _sample_identity_scores_with_weak() -> dict[int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]]:
+    """Build sample identity diagnostics with a weak first sample."""
+    scores = _sample_identity_scores()
+    scores[0][(1, 0, 1000)] = SpeakerSampleIdentityScore(
+        1,
+        0,
+        1000,
+        0.31,
+        "Speaker A",
+        0.31,
+        "Speaker B",
+        0.18,
+        0.13,
+        "identity-weak",
+        "第一句",
+    )
+    return scores
 
 
 def _correction_summary(

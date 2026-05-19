@@ -14,12 +14,12 @@ def browse_status() -> str:
         (
             "Browse: h/l or left/right choose column | j/k or up/down move | "
             "PgUp/PgDn page samples | Space play/stop | p project | / name | e edit text | "
-            "r reassign | t timeline | v capture | m rematch | b embed | ? help | s save"
+            "f filter | r reassign | t timeline | v capture | m rematch | b embed | ? help | s save"
         ),
         (
             "浏览：h/l 或 ←/→ 切列 | j/k 或 ↑/↓ 移动 | PgUp/PgDn 翻页 | "
             "Space 播放/停止 | p 切项目 | / 改人名 | e 改文字 | "
-            "r 改归属 | t 时间轴视图 | v 声纹采样 | m 重新匹配 | b 生成 embedding | ? 帮助 | s 保存"
+            "f 筛选 | r 改归属 | t 时间轴视图 | v 声纹采样 | m 重新匹配 | b 生成 embedding | ? 帮助 | s 保存"
         ),
     )
 
@@ -67,6 +67,7 @@ h/l or left/right    Switch focused column
 j/k or up/down       Move within focused column
 PageUp/PageDown      Previous/next sample page
 [ / ]                Previous/next sample page
+f                    Cycle sample filter: all, review candidates, low-score weak evidence
 
 [b]Actions[/b]
 space                Play or stop selected sample
@@ -116,6 +117,7 @@ h/l 或 ←/→           切换当前列
 j/k 或 ↑/↓           在当前列内移动
 PageUp/PageDown      上一页/下一页 sample
 [ / ]                上一页/下一页 sample
+f                    切换 sample 筛选：全部、疑点、低分弱证据
 
 [b]操作[/b]
 space                播放或停止当前 sample

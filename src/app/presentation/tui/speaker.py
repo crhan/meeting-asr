@@ -107,6 +107,10 @@ UNFOCUSED_PANE_CLASS = "unfocused-pane"
 
 VIEW_MODE_SPEAKERS = "speakers"
 VIEW_MODE_TIMELINE = "timeline"
+SAMPLE_FILTER_ALL = "all"
+SAMPLE_FILTER_REVIEW = "review"
+SAMPLE_FILTER_LOW = "low"
+SAMPLE_FILTER_MODES = (SAMPLE_FILTER_ALL, SAMPLE_FILTER_REVIEW, SAMPLE_FILTER_LOW)
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +216,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("i", "ignore_speaker", "Ignore"),
         Binding("e", "edit_sample_text", "Edit text"),
         Binding("c", "edit_sample_text", "Correct text", show=False),
+        Binding("f", "toggle_sample_filter", "Filter samples"),
         Binding("t", "toggle_view", "Toggle view"),
         Binding("r", "reassign_speaker", "Reassign sentence"),
         Binding("p", "switch_project", "Switch project"),
@@ -261,6 +266,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.correction_edits: list[SentenceCorrectionEdit] = []
         self.identity_baseline = _identity_snapshot(session.speakers)
         self.view_mode = VIEW_MODE_SPEAKERS
+        self.sample_filter_mode = SAMPLE_FILTER_ALL
         self.timeline_selected_index = 0
         self.original_speaker_by_segment: dict[tuple[int | None, int, int], int] = (
             capture_speaker_baseline(session.speakers)
@@ -413,6 +419,17 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._set_status(tr("No projects found to switch to.", "没有可切换的项目。"))
             return
         self.push_screen(ProjectPickerScreen(picker_session), self._handle_project_switch)
+
+    def action_toggle_sample_filter(self) -> None:
+        """Cycle sample filters in grouped speaker view."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            self._set_status(tr("Sample filter only applies to speaker samples view.", "筛选只作用于 speaker 分组样本视图。"))
+            return
+        self.sample_filter_mode = _next_sample_filter_mode(self.sample_filter_mode)
+        self._snap_selected_sample_to_filter(self._speaker())
+        label = _sample_filter_label(self.sample_filter_mode)
+        self._set_status(tr(f"Sample filter: {label}.", f"样本筛选：{label}。"))
+        self._refresh()
 
     def action_voiceprint_review(self) -> None:
         """Open the embedded voiceprint review screen from project review."""
@@ -699,23 +716,33 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Move the selected speaker index."""
         total = len(self.session.speakers)
         self.selected_speaker_index = (self.selected_speaker_index + delta) % total
+        self._snap_selected_sample_to_filter(self._speaker())
         self._refresh()
 
     def _move_sample(self, delta: int) -> None:
         """Move the selected sample index."""
         speaker = self._speaker()
-        target = speaker.selected_sample_index + delta
-        speaker.selected_sample_index = _clamp(target, 0, speaker.segment_count - 1)
+        indices = self._filtered_sample_indices(speaker)
+        if not indices:
+            self._set_status(tr("No samples match the current filter.", "当前筛选下没有 sample。"))
+            return
+        position = _filtered_sample_position(indices, speaker.selected_sample_index)
+        speaker.selected_sample_index = indices[_clamp(position + delta, 0, len(indices) - 1)]
         self._refresh()
 
     def _move_sample_page(self, delta: int) -> None:
         """Move the selected sample page."""
         speaker = self._speaker()
+        indices = self._filtered_sample_indices(speaker)
+        if not indices:
+            self._set_status(tr("No samples match the current filter.", "当前筛选下没有 sample。"))
+            return
         page_size = self._sample_page_size()
-        current_start = _sample_page_start(speaker.selected_sample_index, page_size)
-        last_start = _last_sample_page_start(speaker.segment_count, page_size)
+        position = _filtered_sample_position(indices, speaker.selected_sample_index)
+        current_start = _sample_page_start(position, page_size)
+        last_start = _last_sample_page_start(len(indices), page_size)
         target_start = _clamp(current_start + delta * page_size, 0, last_start)
-        speaker.selected_sample_index = target_start
+        speaker.selected_sample_index = indices[target_start]
         self._refresh()
 
     def _refresh(self) -> None:
@@ -916,9 +943,10 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             + " | "
             + _cluster_detail(self._cluster_diagnostic(speaker))
         )
-        page_start, segments = self._visible_segments(speaker)
-        for offset, segment in enumerate(segments):
-            index = page_start + offset
+        page_start, rows = self._visible_segment_rows(speaker)
+        if not rows:
+            lines.append(f"[dim]当前筛选「{escape(_sample_filter_label(self.sample_filter_mode))}」下没有 sample。按 f 切换筛选。[/]")
+        for index, segment in rows:
             prefix = ">" if index == speaker.selected_sample_index else " "
             time_range = _segment_time_range(segment)
             text = _trim_sample_text(segment.text)
@@ -1295,7 +1323,8 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _selected_sample(self) -> SentenceSegment:
         """Return the selected sample segment."""
         speaker = self._speaker()
-        return speaker.segments[speaker.selected_sample_index]
+        index = self._selected_sample_index(speaker)
+        return speaker.segments[index]
 
     def _cluster_diagnostic(self, speaker: ReviewSpeaker) -> SpeakerClusterDiagnostic | None:
         """Return optional cluster diagnostics for one speaker."""
@@ -1328,11 +1357,53 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                     segment.text = edit.corrected_text
                     return
 
+    def _selected_sample_index(self, speaker: ReviewSpeaker) -> int:
+        """Return a selected sample index that is valid under the current filter."""
+        indices = self._filtered_sample_indices(speaker)
+        if not indices:
+            raise RuntimeError("No samples match the current filter.")
+        if speaker.selected_sample_index not in indices:
+            speaker.selected_sample_index = indices[0]
+        return speaker.selected_sample_index
+
+    def _snap_selected_sample_to_filter(self, speaker: ReviewSpeaker) -> None:
+        """Move selection to the first filtered sample when the current one is hidden."""
+        indices = self._filtered_sample_indices(speaker)
+        if indices and speaker.selected_sample_index not in indices:
+            speaker.selected_sample_index = indices[0]
+
+    def _filtered_sample_indices(self, speaker: ReviewSpeaker) -> list[int]:
+        """Return sample indices matching the current filter mode."""
+        return [
+            index
+            for index, segment in enumerate(speaker.segments)
+            if self._sample_matches_filter(speaker, segment)
+        ]
+
+    def _sample_matches_filter(self, speaker: ReviewSpeaker, segment: SentenceSegment) -> bool:
+        """Return whether one sample should be visible in the current filter."""
+        return _sample_matches_filter(
+            self.sample_filter_mode,
+            self._cluster_sample_score(speaker, segment),
+            self._sample_identity_score(speaker, segment),
+        )
+
     def _visible_segments(self, speaker: ReviewSpeaker) -> tuple[int, list[SentenceSegment]]:
         """Return the current sample page start and segments."""
+        page_start, rows = self._visible_segment_rows(speaker)
+        return page_start, [segment for _index, segment in rows]
+
+    def _visible_segment_rows(self, speaker: ReviewSpeaker) -> tuple[int, list[tuple[int, SentenceSegment]]]:
+        """Return visible sample rows with their original speaker indices."""
         page_size = self._sample_page_size()
-        page_start = _sample_page_start(speaker.selected_sample_index, page_size)
-        return page_start, speaker.segments[page_start : page_start + page_size]
+        indices = self._filtered_sample_indices(speaker)
+        if not indices:
+            return 0, []
+        position = _filtered_sample_position(indices, speaker.selected_sample_index)
+        speaker.selected_sample_index = indices[position]
+        page_start = _sample_page_start(position, page_size)
+        visible_indices = indices[page_start : page_start + page_size]
+        return page_start, [(index, speaker.segments[index]) for index in visible_indices]
 
     def _sample_page_size(self) -> int:
         """Return the number of sample rows that fit in the pane."""
@@ -1347,13 +1418,19 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _sample_page_footer(self, speaker: ReviewSpeaker, page_start: int) -> str:
         """Render pagination status for the sample pane."""
         page_size = self._sample_page_size()
-        page_count = _sample_page_count(speaker.segment_count, page_size)
+        filtered_count = len(self._filtered_sample_indices(speaker))
+        page_count = _sample_page_count(filtered_count, page_size)
         page_number = page_start // page_size + 1
-        start = page_start + 1
-        end = min(page_start + page_size, speaker.segment_count)
+        if filtered_count:
+            start = page_start + 1
+            end = min(page_start + page_size, filtered_count)
+            sample_range = f"{start}-{end}/{filtered_count}"
+        else:
+            sample_range = "0/0"
+        total = "" if filtered_count == speaker.segment_count else f" total={speaker.segment_count}"
         return (
-            f"Page {page_number}/{page_count}  Samples {start}-{end}/"
-            f"{speaker.segment_count}  PageUp/PageDown or bracket keys"
+            f"Page {page_number}/{page_count}  Samples {sample_range}{total}  "
+            f"筛选={_sample_filter_label(self.sample_filter_mode)}  f 切换筛选"
         )
 
     def _pane_title(self, title: str, column: str) -> str:
@@ -1421,6 +1498,16 @@ def _last_sample_page_start(segment_count: int, page_size: int) -> int:
 def _sample_page_count(segment_count: int, page_size: int) -> int:
     """Return the number of sample pages."""
     return max(1, (segment_count + page_size - 1) // page_size)
+
+
+def _filtered_sample_position(indices: list[int], selected_index: int) -> int:
+    """Return selected index position inside filtered indices."""
+    if selected_index in indices:
+        return indices.index(selected_index)
+    for position, index in enumerate(indices):
+        if index > selected_index:
+            return position
+    return max(0, len(indices) - 1)
 
 
 def _clamp(value: int, minimum: int, maximum: int) -> int:
@@ -1518,6 +1605,44 @@ def _sample_cluster_status_label(status: str) -> str:
         "critical": "疑似错桶",
         "low-info": "过短",
     }.get(status, status)
+
+
+def _next_sample_filter_mode(mode: str) -> str:
+    """Return the next sample filter mode."""
+    try:
+        index = SAMPLE_FILTER_MODES.index(mode)
+    except ValueError:
+        return SAMPLE_FILTER_ALL
+    return SAMPLE_FILTER_MODES[(index + 1) % len(SAMPLE_FILTER_MODES)]
+
+
+def _sample_filter_label(mode: str) -> str:
+    """Return a user-facing sample filter label."""
+    return {
+        SAMPLE_FILTER_ALL: "全部",
+        SAMPLE_FILTER_REVIEW: "疑点",
+        SAMPLE_FILTER_LOW: "低分",
+    }.get(mode, mode)
+
+
+def _sample_matches_filter(
+    mode: str,
+    cluster_score: SpeakerClusterSampleScore | None,
+    identity_score: SpeakerSampleIdentityScore | None,
+) -> bool:
+    """Return whether diagnostic scores match a sample filter mode."""
+    if mode == SAMPLE_FILTER_ALL:
+        return True
+    cluster_status = None if cluster_score is None else cluster_score.status
+    identity_status = None if identity_score is None else identity_score.status
+    if mode == SAMPLE_FILTER_REVIEW:
+        return cluster_status in {"conflict", "ambiguous", "critical"} or identity_status in {
+            "identity-conflict",
+            "identity-ambiguous",
+        }
+    if mode == SAMPLE_FILTER_LOW:
+        return cluster_status in {"weak-fit", "warning"} or identity_status == "identity-weak"
+    return True
 
 
 def _cluster_status_style(status: str) -> str:
