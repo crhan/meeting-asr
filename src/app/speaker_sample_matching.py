@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 
 from app.core.progress import CliProgressReporter, emit_progress
 from app.infra.ffmpeg import extract_audio_clip
@@ -109,6 +111,7 @@ def match_project_speaker_samples(
     max_seconds: float,
     padding_seconds: float,
     write_report: bool,
+    workers: int = 1,
     progress: CliProgressReporter | None = None,
 ) -> SpeakerSampleMatchSummary:
     """
@@ -125,6 +128,7 @@ def match_project_speaker_samples(
         max_seconds: Maximum clip duration per transcript sample.
         padding_seconds: Audio context padding around each sample.
         write_report: Whether to write ``speaker_sample_matches.json``.
+        workers: Maximum parallel sample embedding workers.
         progress: Optional CLI progress reporter.
 
     Returns:
@@ -138,6 +142,7 @@ def match_project_speaker_samples(
         ambiguous_margin=ambiguous_margin,
         max_seconds=max_seconds,
         padding_seconds=padding_seconds,
+        workers=workers,
         progress=progress,
     )
     summary = SpeakerSampleMatchSummary(
@@ -303,6 +308,7 @@ def _match_sample_groups(
     ambiguous_margin: float,
     max_seconds: float,
     padding_seconds: float,
+    workers: int,
     progress: CliProgressReporter | None,
 ) -> list[SpeakerSampleMatchReport]:
     """Match all project sample groups."""
@@ -310,6 +316,21 @@ def _match_sample_groups(
     total = sum(len(segments) for _speaker_id, segments in speaker_items)
     emit_progress(progress, "Matching speaker samples", total=total, completed=0)
     cache = _read_sample_cache(context.project_root)
+    if workers > 1 and total > 1:
+        reports = _match_sample_groups_parallel(
+            context,
+            speaker_items,
+            threshold=threshold,
+            conflict_margin=conflict_margin,
+            ambiguous_margin=ambiguous_margin,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+            workers=workers,
+            cache=cache,
+            progress=progress,
+        )
+        _write_sample_cache(context.project_root, cache)
+        return reports
     reports = [
         _match_one_speaker_samples(
             context,
@@ -321,11 +342,72 @@ def _match_sample_groups(
             max_seconds=max_seconds,
             padding_seconds=padding_seconds,
             cache=cache,
+            cache_lock=Lock(),
             progress=progress,
         )
         for speaker_id, segments in speaker_items
     ]
     _write_sample_cache(context.project_root, cache)
+    return reports
+
+
+def _match_sample_groups_parallel(
+    context: _SampleMatchContext,
+    speaker_items: list[tuple[int, list[SentenceSegment]]],
+    *,
+    threshold: float,
+    conflict_margin: float,
+    ambiguous_margin: float,
+    max_seconds: float,
+    padding_seconds: float,
+    workers: int,
+    cache: dict[str, list[float]],
+    progress: CliProgressReporter | None,
+) -> list[SpeakerSampleMatchReport]:
+    """Match transcript samples concurrently while preserving speaker order."""
+    cache_lock = Lock()
+    rows_by_speaker: dict[int, list[tuple[int, SpeakerSampleMatch]]] = defaultdict(list)
+    futures = {}
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        for speaker_id, segments in speaker_items:
+            assigned_person_id = context.assigned_person_by_speaker.get(speaker_id)
+            assigned = context.known.get(assigned_person_id) if assigned_person_id is not None else None
+            for index, segment in enumerate(segments):
+                future = executor.submit(
+                    _match_one_sample,
+                    context,
+                    speaker_id,
+                    segment,
+                    assigned,
+                    threshold=threshold,
+                    conflict_margin=conflict_margin,
+                    ambiguous_margin=ambiguous_margin,
+                    max_seconds=max_seconds,
+                    padding_seconds=padding_seconds,
+                    cache=cache,
+                    cache_lock=cache_lock,
+                )
+                futures[future] = (speaker_id, index)
+        for future in as_completed(futures):
+            speaker_id, index = futures[future]
+            rows_by_speaker[speaker_id].append((index, future.result()))
+            emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)} sample", advance=1)
+    reports: list[SpeakerSampleMatchReport] = []
+    for speaker_id, segments in speaker_items:
+        assigned_person_id = context.assigned_person_by_speaker.get(speaker_id)
+        assigned = context.known.get(assigned_person_id) if assigned_person_id is not None else None
+        rows = [row for _index, row in sorted(rows_by_speaker[speaker_id], key=lambda item: item[0])]
+        reports.append(
+            SpeakerSampleMatchReport(
+                speaker_id,
+                speaker_id_to_label(speaker_id),
+                None if assigned is None else assigned.person_id,
+                None if assigned is None else assigned.name,
+                len(rows),
+                dict(Counter(row.status for row in rows)),
+                rows,
+            )
+        )
     return reports
 
 
@@ -340,6 +422,7 @@ def _match_one_speaker_samples(
     max_seconds: float,
     padding_seconds: float,
     cache: dict[str, list[float]],
+    cache_lock: Lock,
     progress: CliProgressReporter | None,
 ) -> SpeakerSampleMatchReport:
     """Match all samples for one project speaker."""
@@ -358,6 +441,7 @@ def _match_one_speaker_samples(
             max_seconds=max_seconds,
             padding_seconds=padding_seconds,
             cache=cache,
+            cache_lock=cache_lock,
         )
         rows.append(row)
         emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)} sample", advance=1)
@@ -384,13 +468,14 @@ def _match_one_sample(
     max_seconds: float,
     padding_seconds: float,
     cache: dict[str, list[float]],
+    cache_lock: Lock,
 ) -> SpeakerSampleMatch:
     """Match one transcript sample against assigned and best-known identities."""
     if _is_low_information_segment(segment):
         return _sample_row(speaker_id, segment, assigned, None, None, None, "low-info", ())
     if assigned is None:
         return _sample_row(speaker_id, segment, None, None, None, None, "no-assignment", ())
-    vector = _sample_vector(context, speaker_id, segment, max_seconds, padding_seconds, cache)
+    vector = _sample_vector(context, speaker_id, segment, max_seconds, padding_seconds, cache, cache_lock)
     candidates = tuple(_ranked_matches(vector, context.known, limit=3))
     assigned_score = _cosine(vector, assigned.vector)
     best = candidates[0] if candidates else None
@@ -414,10 +499,12 @@ def _sample_vector(
     max_seconds: float,
     padding_seconds: float,
     cache: dict[str, list[float]],
+    cache_lock: Lock,
 ) -> list[float]:
     """Return a cached embedding vector for one transcript sample."""
     key = _sample_cache_key(context, speaker_id, segment, max_seconds, padding_seconds)
-    cached = cache.get(key)
+    with cache_lock:
+        cached = cache.get(key)
     if cached is not None:
         return cached
     clip_path = _sample_clip_path(context.project_root, speaker_id, segment)
@@ -425,7 +512,8 @@ def _sample_vector(
     embedding_path = _sample_embedding_clip_path(clip_path)
     trim_embedding_audio_silence(clip_path, embedding_path)
     vector = _normalize(embed_audio_file(embedding_path, provider=context.provider))
-    cache[key] = vector
+    with cache_lock:
+        cache[key] = vector
     return vector
 
 

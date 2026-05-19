@@ -40,6 +40,7 @@ class ProjectRunSummaryView:
     lexicon_correction_summary: CorrectionEditSummary | None
     transcription: ProjectTranscribeSummary
     speaker_matches: tuple[SpeakerMatchRow, ...]
+    speaker_reassignments: int = 0
 
 
 def render_project_run_summary(view: ProjectRunSummaryView) -> None:
@@ -148,6 +149,8 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         rows.append(("Transcript polish", polish_label))
     if view.correction_summary and view.correction_summary.model_error:
         rows.append(("Polish recovery", view.correction_summary.model_error))
+    if view.speaker_reassignments:
+        rows.append(("Speaker stabilization", f"reassigned {view.speaker_reassignments} sentence(s)"))
     return rows
 
 

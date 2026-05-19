@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from app.core.progress import CliProgressReporter, emit_progress
@@ -35,6 +36,7 @@ _DEFAULT_MODELS = {
     VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN: LOCAL_SPEECHBRAIN_MODEL,
 }
 _SPEECHBRAIN_CLASSIFIER: Any | None = None
+_SPEECHBRAIN_CLASSIFIER_LOCK = Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,19 +172,22 @@ def _load_speechbrain_classifier() -> Any:
     global _SPEECHBRAIN_CLASSIFIER
     if _SPEECHBRAIN_CLASSIFIER is not None:
         return _SPEECHBRAIN_CLASSIFIER
-    with suppress_noisy_dependency_info_logs():
-        try:
-            from speechbrain.inference.speaker import EncoderClassifier
-        except ImportError:
+    with _SPEECHBRAIN_CLASSIFIER_LOCK:
+        if _SPEECHBRAIN_CLASSIFIER is not None:
+            return _SPEECHBRAIN_CLASSIFIER
+        with suppress_noisy_dependency_info_logs():
             try:
-                from speechbrain.pretrained import EncoderClassifier  # type: ignore[no-redef]
-            except ImportError as exc:
-                raise RuntimeError(_speechbrain_install_message()) from exc
-        _SPEECHBRAIN_CLASSIFIER = EncoderClassifier.from_hparams(
-            source="speechbrain/spkrec-ecapa-voxceleb",
-            savedir=str(get_cache_dir() / "models" / "speechbrain" / "spkrec-ecapa-voxceleb"),
-        )
-    return _SPEECHBRAIN_CLASSIFIER
+                from speechbrain.inference.speaker import EncoderClassifier
+            except ImportError:
+                try:
+                    from speechbrain.pretrained import EncoderClassifier  # type: ignore[no-redef]
+                except ImportError as exc:
+                    raise RuntimeError(_speechbrain_install_message()) from exc
+            _SPEECHBRAIN_CLASSIFIER = EncoderClassifier.from_hparams(
+                source="speechbrain/spkrec-ecapa-voxceleb",
+                savedir=str(get_cache_dir() / "models" / "speechbrain" / "spkrec-ecapa-voxceleb"),
+            )
+        return _SPEECHBRAIN_CLASSIFIER
 
 
 def _speechbrain_install_message() -> str:

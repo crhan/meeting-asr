@@ -70,6 +70,8 @@ def apply_project_sentence_reassignments(
     reassignments: Sequence[SentenceReassignmentSpec],
     *,
     store_dir: Path | None = None,
+    provider: str | None = None,
+    model: str | None = None,
     rematch: bool = True,
 ) -> SentenceReassignmentApplyResult:
     """Persist sentence reassignments and refresh every dependent artifact.
@@ -78,6 +80,8 @@ def apply_project_sentence_reassignments(
         project_dir: Project root.
         reassignments: Sentence reassignments to persist.
         store_dir: Voiceprint store directory; ``None`` resolves to the default.
+        provider: Optional voiceprint embedding provider for the rematch.
+        model: Optional voiceprint embedding model key for the rematch.
         rematch: Whether to rerun voiceprint matching after invalidation.
 
     Returns:
@@ -104,6 +108,8 @@ def apply_project_sentence_reassignments(
     match_summary, rematch_skipped_reason = _maybe_rematch_speakers(
         project_dir=paths.root,
         store_dir=store_dir,
+        provider=provider,
+        model=model,
         rematch=rematch,
         manifest=manifest,
     )
@@ -205,6 +211,8 @@ def _maybe_rematch_speakers(
     *,
     project_dir: Path,
     store_dir: Path | None,
+    provider: str | None,
+    model: str | None,
     rematch: bool,
     manifest: ProjectManifest,
 ) -> tuple[SpeakerMatchSummary | None, str | None]:
@@ -213,6 +221,8 @@ def _maybe_rematch_speakers(
     Args:
         project_dir: Project root.
         store_dir: Optional voiceprint store directory.
+        provider: Optional voiceprint embedding provider.
+        model: Optional voiceprint embedding model key.
         rematch: Whether the caller requested a rematch.
         manifest: Loaded project manifest (used for source-path metadata).
 
@@ -227,8 +237,8 @@ def _maybe_rematch_speakers(
         summary = match_project_speakers(
             project_dir,
             store_dir=store_dir,
-            provider=None,
-            model=None,
+            provider=provider,
+            model=model,
             threshold=DEFAULT_REMATCH_THRESHOLD,
             sample_count=DEFAULT_REMATCH_SAMPLE_COUNT,
             max_seconds=DEFAULT_REMATCH_MAX_SECONDS,

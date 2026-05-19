@@ -7,6 +7,7 @@ import shutil
 import wave
 from datetime import timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import typer
@@ -236,6 +237,88 @@ def test_project_run_applies_accepted_voiceprint_matches(
     assert f"meeting-asr project transcript show {manifest.project_id} --kind corrected" in result.output
     assert "欧丁" in transcript.read_text(encoding="utf-8")
     assert "敬悦" in transcript.read_text(encoding="utf-8")
+
+
+def test_project_run_stabilizes_sentence_speakers_after_voiceprint_matches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project run should trigger sentence-level stabilization after accepted identity matches."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    projects_dir = tmp_path / "projects"
+    calls: dict[str, object] = {}
+
+    def fake_transcribe_project(project_dir, options, progress=None, **kwargs):
+        _write_sample_sentences(project_dir / "asr" / "sentences.json")
+        return ProjectTranscribeSummary(project_dir, "task-1", "test", 2, 3)
+
+    def fake_match_project_speakers(project_dir, **kwargs):
+        return SpeakerMatchSummary(
+            project_dir / "speakers" / "speaker_matches.json",
+            "fake-provider",
+            "fake-model",
+            0.75,
+            [
+                SpeakerMatch(
+                    0,
+                    "Speaker A",
+                    "欧丁",
+                    0.91,
+                    True,
+                    2,
+                    accepted_person_id=1,
+                    accepted_person_public_id="vpp-0000000000000001",
+                ),
+                SpeakerMatch(
+                    1,
+                    "Speaker B",
+                    "敬悦",
+                    0.88,
+                    True,
+                    1,
+                    accepted_person_id=2,
+                    accepted_person_public_id="vpp-0000000000000002",
+                ),
+            ],
+        )
+
+    def fake_stabilize_project_speakers(project_dir, **kwargs):
+        calls["project_dir"] = project_dir
+        calls["kwargs"] = kwargs
+        return SimpleNamespace(reassignment_count=2, final_match_summary=None)
+
+    monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+    monkeypatch.setattr(project_commands, "stabilize_project_speakers", fake_stabilize_project_speakers)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "run",
+            str(source),
+            "--projects-dir",
+            str(projects_dir),
+            "--no-polish",
+            "--no-summarize",
+            "--no-progress",
+            "--speaker-sample-workers",
+            "7",
+        ],
+    )
+
+    project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
+    assert result.exit_code == 0
+    assert calls["project_dir"] == project_dir
+    assert calls["kwargs"] == {
+        "store_dir": None,
+        "model": None,
+        "iterations": 2,
+        "sample_workers": 7,
+        "progress": None,
+    }
+    assert "reassigned 2 sentence(s)" in result.output
 
 
 def test_project_run_agent_log_prints_project_id_before_polling(

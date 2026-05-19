@@ -118,6 +118,12 @@ from app.speaker_sample_matching import (
     match_project_speaker_samples,
     speaker_sample_match_payload,
 )
+from app.speaker_stabilization import (
+    DEFAULT_STABILIZATION_ITERATIONS,
+    DEFAULT_STABILIZATION_SAMPLE_WORKERS,
+    SpeakerStabilizationSummary,
+    stabilize_project_speakers,
+)
 from app.speaker_review import (
     build_audio_preview_command,
     build_preview_command,
@@ -205,6 +211,7 @@ class ProjectRunSummary:
     lexicon_correction_summary: CorrectionEditSummary | None
     matches: SpeakerMatchSummary
     applied_mapping: dict[int, str]
+    stabilization: SpeakerStabilizationSummary | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,6 +407,25 @@ def run(
         help="Use the legacy aggressive-rewrite polish prompt (pre-2026 behavior). "
         "Default is the strict downstream-summary-friendly polish.",
     ),
+    speaker_stabilization: bool = typer.Option(
+        True,
+        "--speaker-stabilization/--no-speaker-stabilization",
+        help="After speaker matching, run two sentence-level reassignment stabilization passes.",
+    ),
+    speaker_stabilization_iterations: int = typer.Option(
+        DEFAULT_STABILIZATION_ITERATIONS,
+        "--speaker-stabilization-iterations",
+        min=1,
+        max=5,
+        help="Number of automatic sentence speaker stabilization passes.",
+    ),
+    speaker_sample_workers: int = typer.Option(
+        DEFAULT_STABILIZATION_SAMPLE_WORKERS,
+        "--speaker-sample-workers",
+        min=1,
+        max=64,
+        help="Parallel workers for per-sentence voiceprint sample matching.",
+    ),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
     agent_log: bool = typer.Option(
         False,
@@ -440,6 +466,9 @@ def run(
             correction_model=correction_model,
             polish_concurrency=polish_concurrency,
             polish_legacy=polish_legacy,
+            speaker_stabilization=speaker_stabilization,
+            speaker_stabilization_iterations=speaker_stabilization_iterations,
+            speaker_sample_workers=speaker_sample_workers,
             progress=reporter,
         ),
         description="Running project workflow",
@@ -586,6 +615,9 @@ def _run_project_workflow(
     correction_model: str | None,
     polish_concurrency: int | None,
     polish_legacy: bool = False,
+    speaker_stabilization: bool = True,
+    speaker_stabilization_iterations: int = DEFAULT_STABILIZATION_ITERATIONS,
+    speaker_sample_workers: int = DEFAULT_STABILIZATION_SAMPLE_WORKERS,
     progress: CliProgressReporter | None = None,
 ) -> ProjectRunSummary:
     """
@@ -606,13 +638,16 @@ def _run_project_workflow(
         summary_model: Optional DashScope text model override.
         local_correction: Apply active local lexicon rules when true.
         polish_concurrency: Optional transcript polish request concurrency override.
+        speaker_stabilization: Run sentence-level speaker stabilization when true.
+        speaker_stabilization_iterations: Number of stabilization passes.
+        speaker_sample_workers: Parallel per-sentence embedding workers.
         progress: Optional progress reporter.
 
     Returns:
         Project run summary.
     """
-    step_total = 7 + int(local_correction) + int(polish) + int(summarize) + 2
-    step_descriptions = _project_run_step_descriptions(summarize, polish, local_correction)
+    step_total = 7 + int(local_correction) + int(polish) + int(summarize) + 2 + int(speaker_stabilization)
+    step_descriptions = _project_run_step_descriptions(summarize, polish, local_correction, speaker_stabilization)
     emit_progress(
         progress,
         "Creating or reusing project",
@@ -747,6 +782,35 @@ def _run_project_workflow(
             person_mapping=matches.accepted_person_mapping,
             person_public_mapping=matches.accepted_person_public_mapping,
         )
+    stabilization_summary = None
+    if speaker_stabilization and _should_stabilize_run_speakers(matches):
+        stabilization_step = apply_step + 1
+        _record_and_emit_run_stage(
+            project.project_dir,
+            input_path,
+            "speaker stabilization",
+            progress,
+            external_ids={
+                "iterations": speaker_stabilization_iterations,
+                "sample_workers": speaker_sample_workers,
+            },
+            last_success="speaker matching applied",
+            description="Stabilizing sentence speaker assignments",
+            step_index=stabilization_step,
+            step_total=step_total,
+            reset_total=True,
+        )
+        stabilization_summary = stabilize_project_speakers(
+            project.project_dir,
+            store_dir=store_dir,
+            model=voiceprint_model,
+            iterations=speaker_stabilization_iterations,
+            sample_workers=speaker_sample_workers,
+            progress=progress,
+        )
+        if stabilization_summary.final_match_summary is not None:
+            matches = stabilization_summary.final_match_summary
+            applied_mapping = matches.accepted_mapping
     record_project_stage(
         project.project_dir,
         stage="complete",
@@ -762,10 +826,16 @@ def _run_project_workflow(
         lexicon_correction_summary,
         matches,
         applied_mapping,
+        stabilization_summary,
     )
 
 
-def _project_run_step_descriptions(summarize: bool, polish: bool, local_correction: bool) -> tuple[str, ...]:
+def _project_run_step_descriptions(
+    summarize: bool,
+    polish: bool,
+    local_correction: bool,
+    speaker_stabilization: bool,
+) -> tuple[str, ...]:
     """
     Return the planned step names for ``project run``.
 
@@ -773,6 +843,7 @@ def _project_run_step_descriptions(summarize: bool, polish: bool, local_correcti
         summarize: Whether the summary step is enabled.
         polish: Whether the transcript polish step is enabled.
         local_correction: Whether local lexicon correction is enabled.
+        speaker_stabilization: Whether sentence speaker stabilization is enabled.
 
     Returns:
         Ordered step descriptions.
@@ -794,7 +865,14 @@ def _project_run_step_descriptions(summarize: bool, polish: bool, local_correcti
     if summarize:
         steps.append("Summarizing meeting")
     steps.extend(("Matching speakers with voiceprints", "Applying accepted speaker matches"))
+    if speaker_stabilization:
+        steps.append("Stabilizing sentence speaker assignments")
     return tuple(steps)
+
+
+def _should_stabilize_run_speakers(matches: SpeakerMatchSummary) -> bool:
+    """Return whether automatic sentence stabilization has enough identity anchors."""
+    return bool(matches.accepted_person_mapping or matches.accepted_person_public_mapping)
 
 
 def _record_and_emit_run_stage(
@@ -1579,6 +1657,13 @@ def speakers_sample_match(
     ambiguous_margin: float = typer.Option(DEFAULT_IDENTITY_AMBIGUOUS_MARGIN, "--ambiguous-margin", min=0.0, max=1.0),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
+    workers: int = typer.Option(
+        DEFAULT_STABILIZATION_SAMPLE_WORKERS,
+        "--workers",
+        min=1,
+        max=64,
+        help="Parallel workers for per-sentence embedding and matching.",
+    ),
     write_report: bool = typer.Option(True, "--write-report/--no-write-report"),
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
     progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
@@ -1597,6 +1682,7 @@ def speakers_sample_match(
             max_seconds=max_seconds,
             padding_seconds=padding_seconds,
             write_report=write_report,
+            workers=workers,
             progress=reporter,
         ),
         description="Matching project speaker samples",
@@ -1771,6 +1857,7 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
         correction_summary=summary.correction_summary,
         lexicon_correction_summary=summary.lexicon_correction_summary,
         transcription=summary.transcription,
+        speaker_reassignments=0 if summary.stabilization is None else summary.stabilization.reassignment_count,
         speaker_matches=speaker_match_rows(
             summary.matches.matches,
             default_threshold=summary.matches.threshold,
