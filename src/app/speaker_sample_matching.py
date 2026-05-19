@@ -14,7 +14,7 @@ from app.core.progress import CliProgressReporter, emit_progress
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
-from app.project_manager import ensure_project_dirs, load_manifest, resolve_project_source_path, save_manifest
+from app.project_manager import ensure_project_dirs, load_manifest, resolve_project_audio_path, save_manifest
 from app.speaker_labeling import load_speaker_person_mapping, load_transcript_result
 from app.speaker_matching import (
     VoiceprintCandidate,
@@ -192,7 +192,7 @@ def _sample_match_context(
     known = _known_speaker_vectors(store_dir, resolved_model)
     return _SampleMatchContext(
         paths.root,
-        resolve_project_source_path(paths.root, manifest),
+        resolve_project_audio_path(paths.root, manifest),
         _segments_by_speaker(result.sentences),
         known,
         _assigned_person_map(paths.root, known),

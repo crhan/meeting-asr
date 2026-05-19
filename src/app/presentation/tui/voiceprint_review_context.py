@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.project_manager import load_manifest, project_paths, resolve_project_source_path
+from app.project_manager import load_manifest, project_paths, resolve_project_audio_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,7 +14,7 @@ class ProjectVoiceprintContext:
     """Project metadata shown in voiceprint review.
 
     Attributes:
-        source_path: Resolved source media path.
+        source_path: Resolved ASR-aligned audio path.
         title: Human-readable project title.
         status: Current project processing status.
         source_name: Original source media file name.
@@ -39,7 +39,7 @@ def load_project_voiceprint_context(project_dir: Path) -> ProjectVoiceprintConte
     """
     paths = project_paths(project_dir)
     manifest = load_manifest(paths.root)
-    source_path = resolve_project_source_path(paths.root, manifest)
+    source_path = resolve_project_audio_path(paths.root, manifest)
     return ProjectVoiceprintContext(
         source_path=source_path,
         title=manifest.title,

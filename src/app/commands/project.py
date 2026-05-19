@@ -70,6 +70,7 @@ from app.project_manager import (
     prepare_project_audio,
     project_paths,
     record_project_stage,
+    resolve_project_audio_path,
     resolve_project_source_path,
     save_manifest,
     summarize_project,
@@ -1203,7 +1204,7 @@ def speakers_preview(
         padding_seconds,
     )
     command = build_preview_command(
-        video=resolve_project_source_path(paths.root, manifest),
+        video=_project_preview_media(paths.root, manifest),
         subtitle=_preferred_project_srt(paths),
         start_seconds=start_seconds,
     )
@@ -2202,6 +2203,14 @@ def _preferred_project_srt(paths) -> Path:
     return paths.exports_dir / "subtitle.srt"
 
 
+def _project_preview_media(project_root: Path, manifest: ProjectManifest) -> Path:
+    """Return media aligned with subtitles while preserving video preview when present."""
+    source = resolve_project_source_path(project_root, manifest)
+    if source.suffix.lower() in {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav"}:
+        return resolve_project_audio_path(project_root, manifest)
+    return source
+
+
 def _resolve_speaker_mappings(
     *,
     project_dir: Path,
@@ -2329,7 +2338,7 @@ def _speaker_apply_preview_context(project_dir: Path) -> SpeakerApplyPreviewCont
     manifest = load_manifest(paths.root)
     return SpeakerApplyPreviewContext(
         project_root=paths.root,
-        video=resolve_project_source_path(paths.root, manifest),
+        video=resolve_project_audio_path(paths.root, manifest),
     )
 
 

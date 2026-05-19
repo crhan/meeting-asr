@@ -37,6 +37,7 @@ from app.project_manager import (
     ProjectMeetingSummary,
     ProjectTranscribeSummary,
     project_paths,
+    resolve_project_audio_path,
     resolve_project_source_path,
     save_manifest,
     summarize_project,
@@ -82,6 +83,47 @@ def test_create_project_writes_manifest_and_copies_source(tmp_path: Path) -> Non
     assert loaded.source.sha256 is not None
     assert loaded.title_source == "manual"
     assert loaded.title_model is None
+
+
+def test_resolve_project_audio_path_prefers_asr_audio_timeline(tmp_path: Path) -> None:
+    """ASR-timed clip extraction should use project audio, not original media."""
+    source = tmp_path / "meeting.mp3"
+    source.write_bytes(b"source")
+    project_dir = tmp_path / "projects" / "audio-path"
+    create_project(
+        source,
+        title="Audio Path",
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    audio_path = project_dir / "audio" / "audio.flac"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_path.write_bytes(b"audio")
+    manifest = load_manifest(project_dir)
+    manifest.audio = {"path": "audio/audio.flac", "format": "flac", "duration_seconds": 10.0}
+    save_manifest(project_dir, manifest)
+
+    assert resolve_project_audio_path(project_dir, load_manifest(project_dir)) == audio_path.resolve()
+
+
+def test_resolve_project_audio_path_falls_back_to_source(tmp_path: Path) -> None:
+    """Old projects without extracted audio should still be playable."""
+    source = tmp_path / "meeting.mp3"
+    source.write_bytes(b"source")
+    project_dir = tmp_path / "projects" / "source-fallback"
+    create_project(
+        source,
+        title="Source Fallback",
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    manifest = load_manifest(project_dir)
+
+    assert resolve_project_audio_path(project_dir, manifest) == resolve_project_source_path(project_dir, manifest)
 
 
 def test_create_project_reports_copy_progress(tmp_path: Path) -> None:
@@ -2580,6 +2622,7 @@ def test_project_speakers_preview_prefers_named_subtitle(
     captured: dict[str, Path] = {}
 
     def fake_build_preview_command(*, video: Path, subtitle: Path, start_seconds: float) -> list[str]:
+        captured["video"] = video
         captured["subtitle"] = subtitle
         return ["player", str(subtitle)]
 
@@ -2588,6 +2631,7 @@ def test_project_speakers_preview_prefers_named_subtitle(
     result = runner.invoke(app, ["project", "speakers", "preview", str(project_dir), "--dry-run"])
 
     assert result.exit_code == 0
+    assert captured["video"] == project_dir.resolve() / "source" / "meeting.mp4"
     assert captured["subtitle"] == project_dir.resolve() / "exports" / "subtitle_named.srt"
     assert "subtitle_named.srt" in result.output
 
@@ -2615,6 +2659,46 @@ def test_project_speakers_preview_prefers_corrected_named_subtitle(
     assert result.exit_code == 0
     assert captured["subtitle"] == project_dir.resolve() / "exports" / "subtitle_named_corrected.srt"
     assert "subtitle_named_corrected.srt" in result.output
+
+
+def test_project_speakers_preview_uses_asr_audio_for_audio_only_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Audio-only subtitle preview should use the ASR audio timeline."""
+    source = tmp_path / "meeting.mp3"
+    source.write_bytes(b"source")
+    project_dir = tmp_path / "projects" / "audio-preview"
+    create_project(
+        source,
+        title="Audio Preview",
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    (project_dir / "exports").mkdir(exist_ok=True)
+    (project_dir / "exports" / "subtitle.srt").write_text("anonymous", encoding="utf-8")
+    audio_path = project_dir / "audio" / "audio.flac"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_path.write_bytes(b"audio")
+    manifest = load_manifest(project_dir)
+    manifest.audio = {"path": "audio/audio.flac", "format": "flac", "duration_seconds": 10.0}
+    save_manifest(project_dir, manifest)
+    captured: dict[str, Path] = {}
+
+    def fake_build_preview_command(*, video: Path, subtitle: Path, start_seconds: float) -> list[str]:
+        captured["video"] = video
+        return ["player", str(video)]
+
+    monkeypatch.setattr("app.commands.project.build_preview_command", fake_build_preview_command)
+
+    result = runner.invoke(app, ["project", "speakers", "preview", str(project_dir), "--dry-run"])
+
+    assert result.exit_code == 0
+    assert captured["video"] == audio_path.resolve()
+    assert "audio.flac" in result.output
 
 
 def test_project_git_init_writes_safe_ignore_file(tmp_path: Path) -> None:

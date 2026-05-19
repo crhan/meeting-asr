@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
-from app.project_manager import ProjectManifest, load_manifest, project_paths, resolve_project_source_path
+from app.project_manager import ProjectManifest, load_manifest, project_paths, resolve_project_audio_path
 from app.speaker_labeling import load_ignored_speakers, load_transcript_result
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
@@ -63,7 +63,7 @@ def load_speaker_review_session(
     if not segments_by_speaker:
         raise RuntimeError("No detected speakers found in the transcript.")
     manifest = load_manifest(paths.root)
-    source_media = resolve_project_source_path(paths.root, manifest)
+    source_media = resolve_project_audio_path(paths.root, manifest)
     mapping_path = paths.speakers_dir / "speaker_map.json"
     ignore_path = paths.speakers_dir / "speaker_ignore.json"
     match_path = paths.speakers_dir / "speaker_matches.json"

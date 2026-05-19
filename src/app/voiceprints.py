@@ -15,7 +15,7 @@ from app.core.progress import CliProgressReporter, emit_progress
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
-from app.project_manager import ensure_project_dirs, load_manifest, resolve_project_source_path, save_manifest
+from app.project_manager import ensure_project_dirs, load_manifest, resolve_project_audio_path, save_manifest
 from app.speaker_labeling import load_transcript_result
 from app.voiceprint_audio import trim_embedding_audio_silence
 from app.voiceprint_embedding import embed_audio_file
@@ -110,7 +110,7 @@ def capture_voiceprints(
     _validate_capture_options(sample_count, max_seconds, padding_seconds)
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(paths.root)
-    source = resolve_project_source_path(paths.root, manifest)
+    source = resolve_project_audio_path(paths.root, manifest)
     result = load_transcript_result(paths.asr_dir / "sentences.json")
     resolved_store_dir = _resolve_store_dir(store_dir)
     clip_dir = get_voiceprint_clip_dir(resolved_store_dir)
@@ -201,7 +201,7 @@ def persist_voiceprint_capture_selection(
         raise ValueError("No voiceprint clips were selected for capture.")
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(paths.root)
-    source = resolve_project_source_path(paths.root, manifest)
+    source = resolve_project_audio_path(paths.root, manifest)
     speakers = _filter_voiceprint_speakers(planned.speakers, selected_clip_rel_paths)
     if not speakers:
         raise ValueError("No selected voiceprint clips matched the capture plan.")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 from collections.abc import Callable
@@ -1876,6 +1877,7 @@ def _ensure_preview_clip(
     if _preview_clip_is_fresh(clip_path, source_media):
         return clip_path
     extract_audio_clip(source_media, clip_path, start_seconds=start_seconds, duration_seconds=duration_seconds)
+    _write_preview_clip_metadata(clip_path, source_media)
     _prune_preview_clips(clip_path.parent, keep_path=clip_path)
     return clip_path
 
@@ -1896,7 +1898,48 @@ def _preview_clip_is_fresh(clip_path: Path, source_media: Path) -> bool:
         source_stat = source_media.stat()
     except OSError:
         return False
-    return clip_stat.st_size > 44 and clip_stat.st_mtime >= source_stat.st_mtime
+    return (
+        clip_stat.st_size > 44
+        and clip_stat.st_mtime >= source_stat.st_mtime
+        and _preview_clip_metadata_matches(clip_path, source_media, source_stat.st_mtime, source_stat.st_size)
+    )
+
+
+def _write_preview_clip_metadata(clip_path: Path, source_media: Path) -> None:
+    """Persist the source identity used to build a playback clip."""
+    try:
+        source_stat = source_media.stat()
+    except OSError:
+        return
+    payload = {
+        "source": str(source_media.resolve()),
+        "source_mtime": source_stat.st_mtime,
+        "source_size": source_stat.st_size,
+    }
+    _preview_clip_metadata_path(clip_path).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _preview_clip_metadata_matches(
+    clip_path: Path,
+    source_media: Path,
+    source_mtime: float,
+    source_size: int,
+) -> bool:
+    """Return whether a cached playback clip was built from this source."""
+    try:
+        payload = json.loads(_preview_clip_metadata_path(clip_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        payload.get("source") == str(source_media.resolve())
+        and payload.get("source_mtime") == source_mtime
+        and payload.get("source_size") == source_size
+    )
+
+
+def _preview_clip_metadata_path(clip_path: Path) -> Path:
+    """Return sidecar metadata path for one cached playback clip."""
+    return clip_path.with_suffix(f"{clip_path.suffix}.json")
 
 
 def _prune_preview_clips(
@@ -1963,7 +2006,11 @@ def _unlink_preview_clip(path: Path) -> None:
     try:
         path.unlink()
     except OSError:
-        return
+        pass
+    try:
+        _preview_clip_metadata_path(path).unlink()
+    except OSError:
+        pass
 
 
 def _trim_sample_text(text: str, *, limit: int = 90) -> str:

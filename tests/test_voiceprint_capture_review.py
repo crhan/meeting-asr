@@ -18,7 +18,7 @@ from app.presentation.tui.voiceprint_capture import (
     load_voiceprint_capture_review_session,
     render_voiceprint_capture_review_summary,
 )
-from app.project_manager import create_project, load_manifest
+from app.project_manager import create_project, load_manifest, save_manifest
 from app.voiceprint_people import create_voiceprint_person
 from app.voiceprint_store import get_voiceprint_db_path, list_all_voiceprint_samples
 from app.voiceprints import (
@@ -121,6 +121,12 @@ def test_voiceprint_capture_review_tui_space_toggles_playback(monkeypatch, tmp_p
 def test_persist_voiceprint_capture_selection_writes_only_accepted_samples(monkeypatch, tmp_path: Path) -> None:
     """Selective persistence should write only human-approved WAV clips and database rows."""
     project_dir = _sample_project(tmp_path)
+    audio_path = project_dir / "audio" / "audio.flac"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_path.write_bytes(b"asr audio")
+    manifest = load_manifest(project_dir)
+    manifest.audio = {"path": "audio/audio.flac", "format": "flac", "duration_seconds": 4.0}
+    save_manifest(project_dir, manifest)
     planned = plan_voiceprint_capture(
         project_dir,
         sample_count=2,
@@ -128,8 +134,10 @@ def test_persist_voiceprint_capture_selection_writes_only_accepted_samples(monke
         padding_seconds=0.0,
         store_dir=tmp_path / "voiceprints",
     )
+    sources: list[Path] = []
 
     def fake_extract_audio_clip(source, output, start_seconds, duration_seconds) -> Path:
+        sources.append(Path(source))
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         Path(output).write_bytes(f"{start_seconds}:{duration_seconds}".encode())
         return Path(output)
@@ -148,6 +156,7 @@ def test_persist_voiceprint_capture_selection_writes_only_accepted_samples(monke
     assert len(samples) == 1
     assert samples[0].transcript_text == "第二段更长一点"
     assert samples[0].clip_path.exists()
+    assert sources == [audio_path.resolve()]
     assert manifest.status == "voiceprinted"
     assert manifest.speakers["voiceprints"]["sample_count"] == 1
 

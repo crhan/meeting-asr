@@ -14,7 +14,7 @@ from app.core.progress import CliProgressReporter, emit_progress
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
-from app.project_manager import load_manifest, project_paths, resolve_project_source_path
+from app.project_manager import load_manifest, project_paths, resolve_project_audio_path
 from app.speaker_labeling import load_transcript_result
 from app.utils import safe_write_json
 from app.voiceprint_audio import (
@@ -223,7 +223,7 @@ def _load_cluster_context(project_dir: Path, provider: str | None, model: str | 
     result = load_transcript_result(paths.asr_dir / "sentences.json")
     return _ClusterContext(
         paths.root,
-        resolve_project_source_path(paths.root, manifest),
+        resolve_project_audio_path(paths.root, manifest),
         _segments_by_speaker(result.sentences),
         resolved_provider,
         resolved_model,

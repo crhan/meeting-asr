@@ -19,7 +19,7 @@ from app.project_manager import (
     ProjectManifest,
     ensure_project_dirs,
     load_manifest,
-    resolve_project_source_path,
+    resolve_project_audio_path,
     save_manifest,
 )
 from app.speaker_match_status import voiceprint_match_status
@@ -256,7 +256,7 @@ def _match_context(
     return _MatchContext(
         paths.root,
         manifest,
-        resolve_project_source_path(paths.root, manifest),
+        resolve_project_audio_path(paths.root, manifest),
         result.sentences,
         _known_speaker_vectors(store_dir, resolved_model),
         resolved_provider,

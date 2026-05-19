@@ -1090,6 +1090,32 @@ def resolve_project_source_path(project_root: Path, manifest: ProjectManifest) -
         return source_path
     return (project_root / source_path).resolve()
 
+
+def resolve_project_audio_path(project_root: Path, manifest: ProjectManifest) -> Path:
+    """
+    Resolve the media path that matches ASR sentence timestamps.
+
+    Args:
+        project_root: Project root.
+        manifest: Loaded manifest.
+
+    Returns:
+        Project ASR audio when available, otherwise the original source path.
+    """
+    audio_path = manifest.audio.get("path")
+    if isinstance(audio_path, str) and audio_path.strip():
+        resolved = Path(audio_path)
+        if not resolved.is_absolute():
+            resolved = project_root / resolved
+        if resolved.exists():
+            return resolved.resolve()
+    for name in ("audio.flac", "audio.wav", "audio.mp3", "audio.m4a"):
+        candidate = project_root / "audio" / name
+        if candidate.exists():
+            return candidate.resolve()
+    return resolve_project_source_path(project_root, manifest)
+
+
 def parse_mapping_items(mappings: list[str], known_speakers: set[int]) -> dict[int, str]:
     """
     Parse ``speaker_id=name`` mapping CLI values.
