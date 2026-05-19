@@ -1434,23 +1434,23 @@ def _segment_time_range(segment: SentenceSegment) -> str:
 def _cluster_badge(diagnostic: SpeakerClusterDiagnostic | None) -> str:
     """Render one compact speaker cluster badge."""
     if diagnostic is None:
-        return "[dim]fit=-[/]"
+        return "[dim]分桶=-[/]"
     score = _format_optional_score(diagnostic.centroid_mean)
     style = _cluster_status_style(diagnostic.status)
-    return f"[{style}]fit={score} {escape(diagnostic.status)}[/]"
+    return f"[{style}]分桶={score} {escape(_speaker_cluster_status_label(diagnostic.status))}[/]"
 
 
 def _cluster_detail(diagnostic: SpeakerClusterDiagnostic | None) -> str:
     """Render selected speaker cluster detail."""
     if diagnostic is None:
-        return "[dim]centroid-fit report=-[/]"
+        return "[dim]分桶诊断=-[/]"
     mean = _format_optional_score(diagnostic.centroid_mean)
     minimum = _format_optional_score(diagnostic.centroid_min)
     style = _cluster_status_style(diagnostic.status)
     counts = f"{diagnostic.clip_count}/{diagnostic.segment_count}"
     components = ",".join(str(value) for value in diagnostic.component_sizes) or "-"
     return (
-        f"[{style}]centroid-fit {escape(diagnostic.status)}[/] "
+        f"[{style}]分桶诊断 {escape(_speaker_cluster_status_label(diagnostic.status))}[/] "
         f"mean={mean} min={minimum} clips={counts} "
         f"components={diagnostic.component_count} sizes={components}"
     )
@@ -1459,37 +1459,61 @@ def _cluster_detail(diagnostic: SpeakerClusterDiagnostic | None) -> str:
 def _sample_cluster_badge(score: SpeakerClusterSampleScore | None) -> str:
     """Render one sample-to-centroid score badge."""
     if score is None:
-        return "[dim]fit=-[/]"
+        return "[dim]分桶=-[/]"
     value = _format_optional_score(score.score)
     margin = _format_optional_score(score.margin_score)
     style = _sample_score_style(score.status)
     if score.nearest_speaker_id is not None and score.status in {"conflict", "ambiguous"}:
         label = speaker_id_to_label(score.nearest_speaker_id)
-        return f"[{style}]fit={value} sep={margin} vs={escape(label)} {escape(score.status)}[/]"
+        status = _sample_cluster_status_label(score.status)
+        return f"[{style}]分桶={value} 差值={margin} 更像={escape(label)} {escape(status)}[/]"
     if score.margin_score is not None and score.status == "weak-fit":
-        return f"[{style}]fit={value} sep={margin} {escape(score.status)}[/]"
-    return f"[{style}]fit={value} {escape(score.status)}[/]"
+        return f"[{style}]分桶={value} 差值={margin} 弱证据[/]"
+    return f"[{style}]分桶={value} {escape(_sample_cluster_status_label(score.status))}[/]"
 
 
 def _sample_identity_badge(score: SpeakerSampleIdentityScore | None) -> str:
     """Render one sample-to-voiceprint identity score badge."""
     if score is None:
-        return "[dim]id=-[/]"
+        return "[dim]身份=-[/]"
     assigned = _format_optional_score(score.assigned_score)
     style = _identity_score_style(score.status)
     if score.status == "identity-conflict" and score.best_name:
         best = escape(score.best_name)
         margin = _format_optional_score(score.margin_score)
-        return f"[{style}]id={assigned} sep={margin} best={best} conflict[/]"
+        return f"[{style}]身份={assigned} 差值={margin} 更像={best} 疑似错人[/]"
     if score.status == "identity-ambiguous":
         margin = _format_optional_score(score.margin_score)
-        return f"[{style}]id={assigned} sep={margin} ambiguous[/]"
+        return f"[{style}]身份={assigned} 差值={margin} 身份接近[/]"
     if score.status == "identity-weak":
-        return f"[{style}]id={assigned} weak[/]"
+        return f"[{style}]身份={assigned} 弱证据[/]"
     if score.status in {"low-info", "no-assignment"}:
-        label = "low" if score.status == "low-info" else "unassigned"
-        return f"[{style}]id={label}[/]"
-    return f"[{style}]id={assigned} ok[/]"
+        label = "过短" if score.status == "low-info" else "未绑定"
+        return f"[{style}]身份={label}[/]"
+    return f"[{style}]身份={assigned} 正常[/]"
+
+
+def _speaker_cluster_status_label(status: str) -> str:
+    """Return a user-facing speaker bucket status label."""
+    return {
+        "ok": "正常",
+        "insufficient": "样本少",
+        "warning": "分散",
+        "mixed": "混杂",
+    }.get(status, status)
+
+
+def _sample_cluster_status_label(status: str) -> str:
+    """Return a user-facing per-sample bucket status label."""
+    return {
+        "ok": "正常",
+        "ambiguous": "边界近",
+        "weak-fit": "弱证据",
+        "conflict": "疑似错桶",
+        "warning": "弱证据",
+        "critical": "疑似错桶",
+        "low-info": "过短",
+    }.get(status, status)
 
 
 def _cluster_status_style(status: str) -> str:

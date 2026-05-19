@@ -152,13 +152,13 @@ def test_speaker_review_tui_shows_cluster_scores() -> None:
     speaker_pane = app._speaker_pane()
     sample_pane = app._sample_pane()
 
-    assert "fit=0.840 ok" in speaker_pane
-    assert "centroid-fit ok" in sample_pane
+    assert "分桶=0.840 正常" in speaker_pane
+    assert "分桶诊断 正常" in sample_pane
     assert "mean=0.840" in sample_pane
-    assert "fit=0.910 ok" in sample_pane
-    assert "id=0.930 ok" in sample_pane
-    assert "fit=0.550 sep=-0.120 vs=Speaker B conflict" in sample_pane
-    assert "id=0.410 sep=-0.350 best=Speaker B conflict" in sample_pane
+    assert "分桶=0.910 正常" in sample_pane
+    assert "身份=0.930 正常" in sample_pane
+    assert "分桶=0.550 差值=-0.120 更像=Speaker B 疑似错桶" in sample_pane
+    assert "身份=0.410 差值=-0.350 更像=Speaker B 疑似错人" in sample_pane
 
 
 def test_speaker_review_tui_uses_chinese_language() -> None:
