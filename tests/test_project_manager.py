@@ -16,7 +16,7 @@ from app import project_manager
 from app.cli import app
 from app.commands import project as project_commands
 from app.asr_hotwords import AsrHotwordResolution
-from app.config import Settings
+from app.config import Settings, set_config_value
 from app.core.progress import emit_progress
 from app.core.project_refs import list_projects, resolve_project_ref
 from app.core.project_models import ProjectTranscribeOptions
@@ -49,7 +49,8 @@ runner = CliRunner()
 
 @pytest.fixture(autouse=True)
 def _isolate_default_lexicon_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Keep project-run tests away from the developer's real lexicon DB."""
+    """Keep project tests away from the developer's real XDG state."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     isolated_db = tmp_path / "lexicon" / "lexicon.sqlite"
     monkeypatch.setattr("app.transcript_corrections.default_lexicon_db_path", lambda: isolated_db)
     monkeypatch.setattr("app.lexicon_store.default_lexicon_db_path", lambda: isolated_db)
@@ -578,6 +579,121 @@ def test_project_run_generates_default_transcript_polish_proposal(
     assert "Transcript polish proposal" in result.output
     assert f"meeting-asr project correct diff {manifest.project_id}" in result.output
     assert f"meeting-asr project correct accept {manifest.project_id}" in result.output
+
+
+def test_project_run_auto_accepts_polish_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Project run should avoid review handoff when polish auto-accept is configured."""
+    set_config_value("correction.polish_auto_accept", "true")
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    projects_dir = tmp_path / "projects"
+
+    def fake_transcribe_project(project_dir, options, progress=None, **kwargs):
+        _write_sample_sentences(project_dir / "asr" / "sentences.json")
+        return ProjectTranscribeSummary(project_dir, "task-1", "test", 1, 3)
+
+    def fake_summarize_project(project_dir, model=None, update_title=True, progress=None):
+        summary_path = project_dir / "exports" / "meeting_summary.md"
+        json_path = project_dir / "exports" / "meeting_summary.json"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text("# 自动会议标题\n", encoding="utf-8")
+        json_path.write_text("{}\n", encoding="utf-8")
+        return ProjectMeetingSummary(project_dir, "自动会议标题", summary_path, json_path, "qwen-test", False)
+
+    def fake_match_project_speakers(project_dir, **kwargs):
+        return SpeakerMatchSummary(
+            project_dir / "speakers" / "speaker_matches.json",
+            "fake-provider",
+            "fake-model",
+            0.75,
+            [SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2)],
+        )
+
+    def fake_prepare_polish(project_dir, correction_model, polish_concurrency=None, polish_legacy=False, progress=None):
+        proposal_dir = project_dir / "tmp" / "corrections"
+        proposal_dir.mkdir(parents=True, exist_ok=True)
+        review_path = proposal_dir / "review_polish_test.md"
+        proposal_path = proposal_dir / "proposal_test.md"
+        diff_path = proposal_dir / "proposal_test.diff"
+        json_path = proposal_dir / "proposal_test.json"
+        for path in (review_path, proposal_path, diff_path, json_path):
+            path.write_text("proposal\n", encoding="utf-8")
+        return CorrectionEditSummary(
+            review_path=review_path,
+            proposal_path=proposal_path,
+            proposal_diff_path=diff_path,
+            proposal_json_path=json_path,
+            change_count=0,
+            sample_change_count=0,
+            proposed_change_count=2,
+            learned_count=0,
+            accepted=False,
+            model="qwen-test",
+            model_error=None,
+            understanding=[],
+            corrected_sentences_path=None,
+            corrected_transcript_path=None,
+            corrected_named_transcript_path=None,
+            corrected_srt_path=None,
+            hotwords_path=None,
+            applied_path=None,
+            lexicon_db=tmp_path / "lexicon.sqlite",
+        )
+
+    def fake_accept_polish(project_dir, summary):
+        manifest = load_manifest(project_dir)
+        corrected_path = project_dir / "exports" / "transcript_named_corrected.txt"
+        corrected_srt = project_dir / "exports" / "subtitle_named_corrected.srt"
+        corrected_path.parent.mkdir(parents=True, exist_ok=True)
+        corrected_path.write_text("欧丁: 修正后的内容。\n", encoding="utf-8")
+        corrected_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n修正后的内容。\n", encoding="utf-8")
+        manifest.status = "corrected"
+        manifest.outputs["corrected_named_transcript"] = "exports/transcript_named_corrected.txt"
+        manifest.outputs["corrected_named_subtitle"] = "exports/subtitle_named_corrected.srt"
+        save_manifest(project_dir, manifest)
+        return CorrectionEditSummary(
+            review_path=summary.review_path,
+            proposal_path=summary.proposal_path,
+            proposal_diff_path=summary.proposal_diff_path,
+            proposal_json_path=summary.proposal_json_path,
+            change_count=2,
+            sample_change_count=0,
+            proposed_change_count=2,
+            learned_count=0,
+            accepted=True,
+            model=summary.model,
+            model_error=None,
+            understanding=[],
+            corrected_sentences_path=project_dir / "asr" / "sentences_corrected.json",
+            corrected_transcript_path=project_dir / "exports" / "transcript_corrected.txt",
+            corrected_named_transcript_path=corrected_path,
+            corrected_srt_path=corrected_srt,
+            hotwords_path=project_dir / "corrections" / "asr_hotwords.json",
+            applied_path=project_dir / "corrections" / "applied.json",
+            lexicon_db=summary.lexicon_db,
+        )
+
+    monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+    monkeypatch.setattr(project_commands, "summarize_project", fake_summarize_project)
+    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+    monkeypatch.setattr(project_commands, "_prepare_run_transcript_polish", fake_prepare_polish)
+    monkeypatch.setattr(project_commands, "_accept_run_transcript_polish", fake_accept_polish)
+
+    result = runner.invoke(app, ["project", "run", str(source), "--projects-dir", str(projects_dir)])
+    project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
+    manifest = load_manifest(project_dir)
+
+    assert result.exit_code == 0, result.output
+    assert manifest.runtime["polish"]["status"] == "accepted"
+    assert manifest.runtime["polish"]["accepted_changes"] == 2
+    assert "accepted (2/2 change(s))" in result.output
+    assert "Transcript polish proposal" not in result.output
+    assert f"meeting-asr project correct diff {manifest.project_id}" not in result.output
+    assert f"meeting-asr project correct accept {manifest.project_id}" not in result.output
+    assert "exports/transcript_named_corrected.txt" in result.output
 
 
 def test_project_run_polish_failure_prints_recovery_context(
@@ -1471,9 +1587,9 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     assert "ASR polling" in result.output
     assert "dashscope_task_id=task-1" in result.output
     assert "Transcript polish" in result.output
-    assert "proposal ready (2 change(s)); review before accepting" in result.output
-    assert f"meeting-asr project correct diff {manifest.project_id}" in result.output
+    assert "proposal ready (2 change(s)); accept or inspect diff if needed" in result.output
     assert f"meeting-asr project correct accept {manifest.project_id}" in result.output
+    assert f"meeting-asr project correct diff {manifest.project_id}" in result.output
     assert "Final transcript" in result.output
     assert "Location" not in result.output
     assert "How to view" not in result.output

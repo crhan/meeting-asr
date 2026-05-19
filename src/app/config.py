@@ -15,6 +15,7 @@ DEFAULT_DASHSCOPE_SUMMARY_MODEL = "qwen-plus"
 DEFAULT_DASHSCOPE_CORRECTION_MODEL = DEFAULT_DASHSCOPE_SUMMARY_MODEL
 DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY = 24
 MAX_DASHSCOPE_CORRECTION_CONCURRENCY = 64
+DEFAULT_CORRECTION_POLISH_AUTO_ACCEPT = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +40,7 @@ class Settings:
     dashscope_model_endpoints: dict[str, str] | None = None
     dashscope_correction_concurrency: int = DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY
     dashscope_asr_vocabulary_id: str | None = None
+    correction_polish_auto_accept: bool = DEFAULT_CORRECTION_POLISH_AUTO_ACCEPT
     oss_access_key_id: str | None = None
     oss_access_key_secret: str | None = None
     oss_bucket_name: str | None = None
@@ -75,6 +77,12 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         default=str(DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY),
     ),
     ConfigKey("dashscope.asr_vocabulary_id", "dashscope_asr_vocabulary_id", "DASHSCOPE_ASR_VOCABULARY_ID"),
+    ConfigKey(
+        "correction.polish_auto_accept",
+        "correction_polish_auto_accept",
+        "MEETING_ASR_POLISH_AUTO_ACCEPT",
+        default="false",
+    ),
     ConfigKey("oss.access_key_id", "oss_access_key_id", "OSS_ACCESS_KEY_ID", secret=True),
     ConfigKey("oss.access_key_secret", "oss_access_key_secret", "OSS_ACCESS_KEY_SECRET", secret=True),
     ConfigKey("oss.bucket_name", "oss_bucket_name", "OSS_BUCKET_NAME"),
@@ -253,6 +261,7 @@ def load_settings(*, require_oss: bool = False, require_dashscope: bool = True) 
             maximum=MAX_DASHSCOPE_CORRECTION_CONCURRENCY,
         ),
         dashscope_asr_vocabulary_id=_read_value(values, "dashscope.asr_vocabulary_id", required=False),
+        correction_polish_auto_accept=_read_bool_value(values, "correction.polish_auto_accept"),
         oss_access_key_id=_read_value(values, "oss.access_key_id", required=require_oss),
         oss_access_key_secret=_read_value(values, "oss.access_key_secret", required=require_oss),
         oss_bucket_name=_read_value(values, "oss.bucket_name", required=require_oss),
@@ -353,6 +362,19 @@ def _read_int_value(config_values: dict[str, str], key: str, *, minimum: int, ma
     if parsed < minimum or parsed > maximum:
         raise ValueError(f"Config value {key} must be between {minimum} and {maximum}, got {parsed}")
     return parsed
+
+
+def _read_bool_value(config_values: dict[str, str], key: str) -> bool:
+    """Read and validate one boolean config value."""
+    value = _read_value(config_values, key, required=False)
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"Config value {key} must be a boolean, got {value!r}")
 
 
 def _read_json_mapping(config_values: dict[str, str], key: str) -> dict[str, str]:

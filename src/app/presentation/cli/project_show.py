@@ -287,7 +287,7 @@ def _polish_label(view: ProjectShowView) -> str | None:
         accepted = _safe_int(state.get("accepted_changes"))
         return f"accepted ({accepted}/{count} change(s)); corrected transcript ready"
     if status == "proposal_ready":
-        return f"proposal ready ({count} change(s)); review before accepting"
+        return f"proposal ready ({count} change(s)); accept or inspect diff if needed"
     if status == "no_changes":
         return "done; no changes proposed"
     if status == "failed":
@@ -320,8 +320,8 @@ def _polish_command_rows(view: ProjectShowView, quoted_ref: str) -> list[tuple[s
     if status == "proposal_ready":
         proposal = _proposal_option(view, state)
         return [
-            ("Review transcript polish", f"meeting-asr project correct diff {quoted_ref}{proposal}"),
             ("Accept transcript polish", f"meeting-asr project correct accept {quoted_ref}{proposal}"),
+            ("Inspect transcript polish diff", f"meeting-asr project correct diff {quoted_ref}{proposal}"),
         ]
     if status == "failed":
         model = str(state.get("model") or "").strip()

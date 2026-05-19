@@ -194,17 +194,23 @@ meeting-asr --no-color project list
 meeting-asr project run "/path/to/meeting.mp4" --no-local-correction
 ```
 
-`project run` 还会生成 polish proposal，但不会自动接受新的 LLM 润色建议。看状态：
+`project run` 还会运行 transcript polish。默认保持兼容模式：只生成 proposal，不自动接受。Agent 自动化场景建议开启配置，让 strict polish 通过内置 guard 后直接写回 corrected 产物：
+
+```bash
+meeting-asr config set correction.polish_auto_accept true
+```
+
+看状态：
 
 ```bash
 meeting-asr project show PROJECT_ID
 ```
 
-如果显示 `Transcript polish: proposal ready`：
+如果显示 `Transcript polish: accepted`，`exports/transcript_named_corrected.txt` 已经可用。如果显示 `Transcript polish: proposal ready`，可以直接接受；需要抽查质量时再看 diff：
 
 ```bash
-meeting-asr project correct diff PROJECT_ID --proposal /path/to/proposal.json
 meeting-asr project correct accept PROJECT_ID --proposal /path/to/proposal.json
+meeting-asr project correct diff PROJECT_ID --proposal /path/to/proposal.json
 ```
 
 手工教系统纠错：

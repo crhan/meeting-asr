@@ -17,7 +17,7 @@ meeting-asr project run "/path/to/meeting.mp4"
 3. 下载并标准化转写结果。
 4. 应用已入库的本地词汇订正规则，例如把 `IC` 订正为 `iSee`。
 5. 生成会议标题和回忆索引。
-6. 生成 transcript polish proposal。
+6. 运行 transcript polish；如果配置 `correction.polish_auto_accept=true`，直接接受安全建议。
 7. 用全局声纹库匹配 speaker。
 8. 自动应用 accepted speaker 匹配并写出 named transcript/SRT。
 
@@ -44,11 +44,17 @@ exports/subtitle_named.srt
 exports/meeting_summary.md
 ```
 
-如果 `project show PROJECT_ID` 显示 `Transcript polish: proposal ready`，先看 diff，再接受：
+Agent 自动化场景建议先开启 polish 自动接受：
 
 ```bash
-meeting-asr project correct diff PROJECT_ID
+meeting-asr config set correction.polish_auto_accept true
+```
+
+如果 `project show PROJECT_ID` 显示 `Transcript polish: proposal ready`，可以直接接受；需要抽查质量时再看 diff：
+
+```bash
 meeting-asr project correct accept PROJECT_ID
+meeting-asr project correct diff PROJECT_ID
 ```
 
 如果输出是 `Project automation needs review.`，进入 TUI 路径。

@@ -111,10 +111,13 @@ def _next_steps_table(view: ProjectRunSummaryView) -> Table:
 
 def _agent_prompt_panel(view: ProjectRunSummaryView) -> Panel:
     """Build an agent-friendly remediation prompt."""
+    correction_step = "handle pending transcript correction proposals"
+    if not _has_pending_polish_proposal(view):
+        correction_step = "verify the final transcript"
     prompt = (
         f"Open project review for {view.project_ref}, resolve "
         f"{view.below_threshold_matches} below-threshold and {view.no_candidate_matches} no-candidate speaker(s), "
-        "save named outputs, review transcript correction proposals, then verify the corrected transcript and subtitle preview."
+        f"save named outputs, {correction_step}, then verify the subtitle preview."
     )
     return Panel(prompt, title="[bold yellow]Agent prompt:[/]", border_style="yellow", expand=False)
 
@@ -170,7 +173,7 @@ def _output_rows(view: ProjectRunSummaryView) -> list[tuple[str, str, str]]:
     if view.meeting_summary is not None:
         rows.append(("Memory index", "ready", "exports/meeting_summary.md"))
         rows.append(("Memory index JSON", "supporting", "exports/meeting_summary.json"))
-    if view.correction_summary and view.correction_summary.proposal_diff_path:
+    if _has_pending_polish_proposal(view) and view.correction_summary and view.correction_summary.proposal_diff_path:
         rows.append((
             "Transcript polish proposal",
             "review",
@@ -214,10 +217,12 @@ def _polish_next_steps(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
     if summary is None:
         return []
     quoted_ref = shlex.quote(view.project_ref)
+    if summary.accepted:
+        return []
     if summary.model_error:
         return [
             ("Retry transcript polish", f"meeting-asr project correct polish {quoted_ref}"),
-            ("Skip polish and review", f"meeting-asr project review {quoted_ref}"),
+            ("Continue without polish", f"meeting-asr project review {quoted_ref}"),
         ]
     if summary.proposal_json_path is None or summary.proposed_change_count == 0:
         return []
@@ -260,6 +265,8 @@ def _polish_label(summary: CorrectionEditSummary | None) -> str | None:
     """Return a compact transcript polish state label."""
     if summary is None:
         return None
+    if summary.accepted:
+        return f"accepted ({summary.change_count}/{summary.proposed_change_count} change(s))"
     if summary.proposed_change_count:
         return f"proposal ready ({summary.proposed_change_count} change(s))"
     if summary.model_error:
@@ -275,6 +282,17 @@ def _local_correction_label(summary: CorrectionEditSummary | None) -> str | None
         rule_count = len(summary.understanding)
         return f"applied ({summary.change_count} sentence(s), {rule_count} rule(s))"
     return "no local lexicon changes"
+
+
+def _has_pending_polish_proposal(view: ProjectRunSummaryView) -> bool:
+    """Return whether transcript polish still requires an explicit accept/skip action."""
+    summary = view.correction_summary
+    return bool(
+        summary
+        and not summary.accepted
+        and summary.proposal_json_path is not None
+        and summary.proposed_change_count > 0
+    )
 
 
 def _preferred_output_path(view: ProjectRunSummaryView, *, keys: tuple[str, ...], fallback: str) -> str:

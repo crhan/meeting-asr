@@ -312,7 +312,7 @@ OPTION_ZH = {
     "--match-threshold": "设置声纹自动接受阈值。",
     "--summarize": "ASR 后生成会议标题和回忆索引；可用 --no-summarize 关闭。",
     "--summary-model": "指定回忆索引使用的 DashScope 模型。",
-    "--polish": "ASR 后生成转写润色建议；可用 --no-polish 关闭。",
+    "--polish": "ASR 后运行转写润色；配置 correction.polish_auto_accept=true 时自动接受安全建议，可用 --no-polish 关闭。",
     "--local-correction": "ASR 后应用已接受的本地词库订正规则；可用 --no-local-correction 关闭。",
     "--correction-model": "指定转写润色使用的 DashScope 模型。",
     "--polish-concurrency": "指定转写润色并发批次数。",

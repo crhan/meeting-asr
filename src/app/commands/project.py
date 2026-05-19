@@ -45,7 +45,7 @@ from app.completion_helpers import (
     complete_oss_upload_mode,
     complete_voiceprint_model,
 )
-from app.config import get_default_projects_dir
+from app.config import get_default_projects_dir, load_settings
 from app.asr_pricing import AsrCostEstimate, format_asr_cost
 from app.core.project_models import (
     ProjectCreateSummary,
@@ -350,7 +350,11 @@ def run(
     match_threshold: float = typer.Option(0.75, "--match-threshold", min=0.0, max=1.0),
     summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Generate title and memory index after ASR."),
     summary_model: Optional[str] = typer.Option(None, "--summary-model", help="DashScope model for meeting memory index."),
-    polish: bool = typer.Option(True, "--polish/--no-polish", help="Generate transcript polish proposal after ASR."),
+    polish: bool = typer.Option(
+        True,
+        "--polish/--no-polish",
+        help="Run transcript polish after ASR. If correction.polish_auto_accept=true, accept safe proposals automatically.",
+    ),
     local_correction: bool = typer.Option(
         True,
         "--local-correction/--no-local-correction",
@@ -647,6 +651,8 @@ def _run_project_workflow(
             polish_legacy=polish_legacy,
             progress=progress,
         )
+        if _should_auto_accept_run_polish(correction_summary):
+            correction_summary = _accept_run_transcript_polish(project.project_dir, correction_summary)
         _record_polish_runtime(project.project_dir, correction_summary)
     meeting_summary = None
     if summarize:
@@ -821,15 +827,47 @@ def _polish_runtime_payload(project_dir: Path, summary: CorrectionEditSummary) -
     status = "failed" if summary.model_error else "no_changes"
     if summary.proposed_change_count:
         status = "proposal_ready"
-    return {
+    if summary.accepted:
+        status = "accepted"
+    payload = {
         "status": status,
         "updated_at": _now_local_iso(),
         "model": summary.model,
         "error": summary.model_error,
         "proposed_changes": summary.proposed_change_count,
+        "accepted_changes": summary.change_count if summary.accepted else 0,
         "proposal_json": _relative_optional_path(project_dir, summary.proposal_json_path),
         "proposal_diff": _relative_optional_path(project_dir, summary.proposal_diff_path),
+        "corrected_transcript": _relative_optional_path(project_dir, summary.corrected_named_transcript_path),
     }
+    return payload
+
+
+def _should_auto_accept_run_polish(summary: CorrectionEditSummary) -> bool:
+    """
+    Return whether ``project run`` should accept a generated polish proposal.
+
+    Auto-accept is config-gated so existing users keep the review-before-accept
+    workflow unless they opt into the stricter agent-friendly path.
+    """
+    if summary.model_error or summary.proposal_json_path is None or summary.proposed_change_count == 0:
+        return False
+    settings = load_settings(require_dashscope=False)
+    return settings.correction_polish_auto_accept
+
+
+def _accept_run_transcript_polish(project_dir: Path, summary: CorrectionEditSummary) -> CorrectionEditSummary:
+    """Accept a project-run transcript polish proposal without prompting."""
+    paths = project_paths(project_dir)
+    manifest = load_manifest(paths.root)
+    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    return project_correct_commands.accept_correction_for_review(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        proposal_path=summary.proposal_json_path,
+        lexicon_db=summary.lexicon_db,
+    )
 
 
 def _apply_run_lexicon_corrections(

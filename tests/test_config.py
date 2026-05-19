@@ -67,6 +67,7 @@ def test_load_settings_reads_global_config(monkeypatch: pytest.MonkeyPatch, tmp_
     assert settings.dashscope_model_endpoints == {}
     assert settings.dashscope_correction_concurrency == DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY
     assert settings.dashscope_asr_vocabulary_id is None
+    assert settings.correction_polish_auto_accept is False
 
 
 def test_ui_editor_config_is_supported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -97,6 +98,21 @@ def test_model_endpoint_routes_can_be_configured(monkeypatch: pytest.MonkeyPatch
         "qwen3.6-*": "compatible",
         "qwen-plus": "generation",
     }
+
+
+def test_polish_auto_accept_can_be_configured(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Transcript polish auto-accept should be opt-in through config."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _clear_runtime_env(monkeypatch)
+    set_config_value("correction.polish_auto_accept", "true")
+
+    settings = load_settings(require_dashscope=False)
+    keys_result = runner.invoke(app, ["config", "keys"])
+    show_result = runner.invoke(app, ["config", "show"])
+
+    assert settings.correction_polish_auto_accept is True
+    assert "correction.polish_auto_accept" in keys_result.output
+    assert "correction.polish_auto_accept=true" in show_result.output
 
 
 def test_config_show_prints_masked_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
