@@ -547,9 +547,21 @@ def _sample_cache_path(project_root: Path) -> Path:
     return project_root / "tmp" / "voiceprint_sample_match" / "sample_embeddings.json"
 
 
+def _cluster_cache_path(project_root: Path) -> Path:
+    """Return the compatible cluster embedding cache path."""
+    return project_root / "tmp" / "speaker_cluster" / "clip_embeddings.json"
+
+
 def _read_sample_cache(project_root: Path) -> dict[str, list[float]]:
-    """Read valid cached sample embeddings."""
-    path = _sample_cache_path(project_root)
+    """Read valid cached sample embeddings, reusing cluster vectors when possible."""
+    cache: dict[str, list[float]] = {}
+    for path in (_cluster_cache_path(project_root), _sample_cache_path(project_root)):
+        cache.update(_read_embedding_cache_file(path))
+    return cache
+
+
+def _read_embedding_cache_file(path: Path) -> dict[str, list[float]]:
+    """Read one embedding cache file."""
     if not path.exists():
         return {}
     try:

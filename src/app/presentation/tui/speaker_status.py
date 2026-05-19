@@ -277,8 +277,8 @@ def _page_overview_line() -> str:
     return (
         "[reverse][b] PROJECT REVIEW [/b][/]  "
         + tr(
-            "p: switch project | v: capture voiceprints | m: rematch | b: embed | /: identity | e: edit text | s: save | q: quit",
-            "p: 切项目 | v: 声纹采样 | m: 重新匹配 | b: embedding | /: 身份 | e: 改文字 | s: 保存 | q: 退出",
+            "p: switch project | v: capture voiceprints | m: refresh diagnostics | b: embed | /: identity | e: edit text | s: save | q: quit",
+            "p: 切项目 | v: 声纹采样 | m: 刷新诊断 | b: embedding | /: 身份 | e: 改文字 | s: 保存 | q: 退出",
         )
     )
 

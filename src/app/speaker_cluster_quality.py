@@ -252,9 +252,13 @@ def _embed_speaker_clips(
 ) -> dict[int, tuple[list[SpeakerClusterClip], list[SpeakerClusterClip]]]:
     """Extract and embed selected clips for each project speaker."""
     speaker_items = sorted(context.segments_by_speaker.items())
-    emit_progress(progress, "Embedding speaker cluster probes", total=len(speaker_items), completed=0)
+    emit_progress(progress, "Selecting speaker cluster anchors", total=len(speaker_items), completed=0)
     clips_by_speaker: dict[int, tuple[list[SpeakerClusterClip], list[SpeakerClusterClip]]] = {}
     cache = _read_embedding_cache(context.project_root)
+    if score_all_segments:
+        score_total = sum(len(segments) for _speaker_id, segments in speaker_items)
+    else:
+        score_total = 0
     for speaker_id, segments in speaker_items:
         selected = _select_segments(segments, sample_count * 3)
         anchor_clips = _embed_selected_segments(
@@ -294,9 +298,12 @@ def _embed_speaker_clips(
         else:
             selected_segments = [_clip_segment(clip) for clip in anchor_clips]
             anchor_clips = _reindex_clips(anchor_clips)
+        emit_progress(progress, f"Selected {speaker_id_to_label(speaker_id)} cluster anchors", advance=1)
         score_segments = segments if score_all_segments else selected
         score_clips = anchor_clips
         if score_all_segments:
+            if speaker_id == speaker_items[0][0]:
+                emit_progress(progress, "Scoring speaker cluster samples", total=score_total, completed=0, reset_total=True)
             score_clips = _embed_selected_segments(
                 context,
                 speaker_id,
@@ -306,9 +313,10 @@ def _embed_speaker_clips(
                 cache=cache,
                 max_clips=None,
                 require_audio_quality=False,
+                progress=progress,
+                progress_description=f"Scoring {speaker_id_to_label(speaker_id)} cluster samples",
             )
         clips_by_speaker[speaker_id] = (anchor_clips, score_clips)
-        emit_progress(progress, f"Embedded {speaker_id_to_label(speaker_id)} cluster probes", advance=1)
     _write_embedding_cache(context.project_root, cache)
     return clips_by_speaker
 
@@ -323,6 +331,8 @@ def _embed_selected_segments(
     cache: dict[str, list[float]],
     max_clips: int | None,
     require_audio_quality: bool,
+    progress: CliProgressReporter | None = None,
+    progress_description: str | None = None,
 ) -> list[SpeakerClusterClip]:
     """Build embedded probe clips for selected segments."""
     clips: list[SpeakerClusterClip] = []
@@ -340,6 +350,7 @@ def _embed_selected_segments(
             vector = _normalize(embed_audio_file(embedding_path, provider=context.provider))
             cache[key] = vector
         clips.append(_cluster_clip(speaker_id, index, segment, vector))
+        emit_progress(progress, progress_description, advance=1)
         if max_clips is not None and len(clips) >= max_clips:
             break
     return clips

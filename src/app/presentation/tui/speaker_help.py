@@ -14,12 +14,12 @@ def browse_status() -> str:
         (
             "Browse: h/l or left/right choose column | j/k or up/down move | "
             "PgUp/PgDn page samples | Space play/stop | p project | / name | e edit text | "
-            "f filter | r reassign | t timeline | v capture | m rematch | b embed | ? help | s save"
+            "f filter | r reassign | t timeline | v capture | m refresh diagnostics | b embed | ? help | s save"
         ),
         (
             "浏览：h/l 或 ←/→ 切列 | j/k 或 ↑/↓ 移动 | PgUp/PgDn 翻页 | "
             "Space 播放/停止 | p 切项目 | / 改人名 | e 改文字 | "
-            "f 筛选 | r 改归属 | t 时间轴视图 | v 声纹采样 | m 重新匹配 | b 生成 embedding | ? 帮助 | s 保存"
+            "f 筛选 | r 改归属 | t 时间轴视图 | v 声纹采样 | m 刷新诊断 | b 生成 embedding | ? 帮助 | s 保存"
         ),
     )
 
@@ -129,7 +129,7 @@ c                    等同于 e
 t                    在「分组视图」与「时间轴视图」之间切换
 r                    把当前句子改给另一个或新的 speaker
 v                    打开声纹 Review：项目候选样本和全局声纹库
-m                    使用当前全局声纹库重新匹配 speaker
+m                    刷新声纹匹配、分桶分数和逐句身份分数
 b                    为已采集声纹样本生成 embedding
 p                    从历史项目中切换项目
 s                    保存 speaker 映射、句子归属修改；如有文字修正则继续生成全篇修正建议

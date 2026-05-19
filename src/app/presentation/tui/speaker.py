@@ -16,6 +16,7 @@ from textual.containers import Horizontal
 from textual.worker import Worker, WorkerState
 from textual.widgets import Header, Static
 
+from app.core.progress import CliProgressEvent
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
@@ -462,13 +463,22 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._set_status(tr("Save current review changes with s before rematching speakers.", "重新匹配前请先按 s 保存当前 review 修改。"))
             return
         self._stop_playback()
-        self.push_screen(SpeakerRematchProcessingScreen())
+        processing_screen = SpeakerRematchProcessingScreen()
+        self.push_screen(processing_screen)
+
+        def report_progress(event: CliProgressEvent) -> None:
+            try:
+                self.call_from_thread(processing_screen.update_progress, event)
+            except RuntimeError:
+                return
+
         self.run_worker(
             lambda: run_speaker_rematch(
                 self.session.project_dir,
                 store_dir=self.session.store_dir,
                 page_size=self.session.page_size,
                 allow_correction=self.session.allow_correction,
+                progress=report_progress,
             ),
             group="speaker-review-rematch",
             name="rematch",

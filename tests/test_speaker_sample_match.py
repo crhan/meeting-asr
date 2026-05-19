@@ -66,6 +66,32 @@ def test_project_speakers_sample_match_reuses_embedding_cache(
     assert (project_dir / "tmp" / "voiceprint_sample_match" / "sample_embeddings.json").exists()
 
 
+def test_project_speakers_sample_match_reuses_cluster_embedding_cache(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Sample matching should reuse compatible vectors produced by cluster diagnostics."""
+    project_dir = _sample_project(tmp_path)
+    calls: list[Path] = []
+    _write_sample_match_inputs(project_dir)
+    _patch_sample_matching(monkeypatch, calls=calls)
+
+    first = runner.invoke(app, ["project", "speakers", "sample-match", str(project_dir), "--no-progress"])
+    sample_cache_path = project_dir / "tmp" / "voiceprint_sample_match" / "sample_embeddings.json"
+    cluster_cache_path = project_dir / "tmp" / "speaker_cluster" / "clip_embeddings.json"
+    cluster_cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cluster_cache_path.write_text(sample_cache_path.read_text(encoding="utf-8"), encoding="utf-8")
+    sample_cache_path.unlink()
+    calls.clear()
+
+    second = runner.invoke(app, ["project", "speakers", "sample-match", str(project_dir), "--no-progress"])
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert calls == []
+    assert sample_cache_path.exists()
+
+
 def _sample_project(tmp_path: Path) -> Path:
     """Create a minimal project for sample match tests."""
     source = tmp_path / "meeting.mp4"

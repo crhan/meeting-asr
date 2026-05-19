@@ -12,6 +12,7 @@ from pathlib import Path
 from textual.widgets import Input, Static, TextArea
 
 from app import speaker_tui
+from app.presentation.tui import speaker_rematch as speaker_rematch_workflow
 from app.presentation.tui import voiceprint_review_workflow
 from app.correction_types import CorrectionEditSummary
 from app.core.project_models import ProjectListItem
@@ -971,6 +972,65 @@ def test_project_review_tui_blocks_project_switch_with_unsaved_changes() -> None
     asyncio.run(scenario())
 
 
+def test_run_speaker_rematch_refreshes_visible_diagnostics(monkeypatch, tmp_path: Path) -> None:
+    """The m action backend should rebuild all diagnostics visible in Project Review."""
+    project_dir = (tmp_path / "projects" / "p-current").resolve()
+    project_dir.mkdir(parents=True)
+    store_dir = (tmp_path / "voiceprints").resolve()
+    session = _session_for_project(project_dir, project_id="p-current", title="Current")
+    summary = SpeakerMatchSummary(
+        project_dir / "speakers" / "speaker_matches.json",
+        "local-speechbrain",
+        "test-model",
+        0.75,
+        [SpeakerMatch(0, "Speaker A", "米汤", 0.91, True, 2, best_name="米汤", best_score=0.91, accepted_name="米汤")],
+    )
+    calls: list[str] = []
+
+    def fake_match(project_dir_arg: Path, **kwargs) -> SpeakerMatchSummary:
+        calls.append("match")
+        assert project_dir_arg == project_dir
+        assert kwargs["store_dir"] == store_dir
+        assert kwargs["sample_count"] == 2
+        return summary
+
+    def fake_cluster(project_dir_arg: Path, **kwargs) -> object:
+        calls.append("cluster")
+        assert project_dir_arg == project_dir
+        assert kwargs["sample_count"] == 40
+        assert kwargs["score_all_segments"] is True
+        assert kwargs["write_report"] is True
+        return object()
+
+    def fake_sample_match(project_dir_arg: Path, **kwargs) -> object:
+        calls.append("sample-match")
+        assert project_dir_arg == project_dir
+        assert kwargs["store_dir"] == store_dir
+        assert kwargs["write_report"] is True
+        return object()
+
+    def fake_load(project_dir_arg: Path, **kwargs) -> SpeakerReviewSession:
+        calls.append("load")
+        assert project_dir_arg == project_dir
+        assert kwargs == {"page_size": 7, "store_dir": store_dir, "allow_correction": False}
+        return session
+
+    monkeypatch.setattr(speaker_rematch_workflow, "match_project_speakers", fake_match)
+    monkeypatch.setattr(speaker_rematch_workflow, "analyze_project_speaker_clusters", fake_cluster)
+    monkeypatch.setattr(speaker_rematch_workflow, "match_project_speaker_samples", fake_sample_match)
+    monkeypatch.setattr(speaker_rematch_workflow, "load_speaker_review_session", fake_load)
+
+    result = speaker_rematch_workflow.run_speaker_rematch(
+        project_dir,
+        store_dir=store_dir,
+        page_size=7,
+        allow_correction=False,
+    )
+
+    assert result == SpeakerRematchResult(summary, session)
+    assert calls == ["match", "cluster", "sample-match", "load"]
+
+
 def test_project_review_tui_rematches_speakers_and_refreshes(monkeypatch, tmp_path: Path) -> None:
     """Project Review should rerun voiceprint matching and reload visible matches."""
     current_dir = (tmp_path / "projects" / "p-current").resolve()
@@ -1004,6 +1064,7 @@ def test_project_review_tui_rematches_speakers_and_refreshes(monkeypatch, tmp_pa
     calls: list[tuple[Path, dict[str, object]]] = []
 
     def fake_rematch(project_dir: Path, **kwargs) -> SpeakerRematchResult:
+        assert callable(kwargs.pop("progress"))
         calls.append((project_dir, kwargs))
         assert unblock.wait(timeout=5)
         return SpeakerRematchResult(summary, target_session)
