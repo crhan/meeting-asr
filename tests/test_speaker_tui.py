@@ -159,6 +159,9 @@ def test_speaker_review_tui_shows_cluster_scores() -> None:
     assert "身份=0.930 正常" in sample_pane
     assert "分桶=0.550 差值=-0.120 更像=Speaker B 疑似错桶" in sample_pane
     assert "身份=0.410 差值=-0.350 更像=Speaker B 疑似错人" in sample_pane
+    assert "第一句" in sample_pane
+    assert "\n    第二句" in sample_pane
+    assert "身份=0.930 正常 第一句" not in sample_pane
 
 
 def test_speaker_review_tui_uses_chinese_language() -> None:

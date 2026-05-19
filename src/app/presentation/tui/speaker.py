@@ -96,6 +96,7 @@ from app.utils import format_ms_timestamp
 
 DEFAULT_SAMPLE_PAGE_SIZE = 6
 SAMPLE_PANE_RESERVED_ROWS = 5
+SAMPLE_LINES_PER_ROW = 2
 TIMELINE_PANE_RESERVED_ROWS = 4
 DEFAULT_TIMELINE_PAGE_SIZE = 16
 PREVIEW_CLIP_CACHE_MAX_FILES = 300
@@ -922,19 +923,21 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             time_range = _segment_time_range(segment)
             text = _trim_sample_text(segment.text)
             playing = "[bold magenta]PLAY[/]" if self._playing_segment_key() == segment_key(segment) else "[dim]    [/]"
-            sample_line = (
+            meta_line = (
                 f"{prefix} {playing} [cyan]{time_range}[/] "
                 f"{_sample_cluster_badge(self._cluster_sample_score(speaker, segment))} "
-                f"{_sample_identity_badge(self._sample_identity_score(speaker, segment))} "
-                f"{escape(text)}"
+                f"{_sample_identity_badge(self._sample_identity_score(speaker, segment))}"
             )
+            text_line = f"    {escape(text)}"
             if self._has_correction_edit(segment):
-                sample_line += " [yellow]edited[/]"
+                meta_line += " [yellow]edited[/]"
             if segment_key(segment) in self._reassigned_segment_keys():
-                sample_line += " [yellow]reassigned[/]"
+                meta_line += " [yellow]reassigned[/]"
             if index == speaker.selected_sample_index:
-                sample_line = f"[reverse]{sample_line}[/]"
-            lines.append(sample_line)
+                meta_line = f"[reverse]{meta_line}[/]"
+                text_line = f"[reverse]{text_line}[/]"
+            lines.append(meta_line)
+            lines.append(text_line)
         lines.append("")
         lines.append(self._sample_page_footer(speaker, page_start))
         return "\n".join(lines)
@@ -1337,8 +1340,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             return max(1, self.session.page_size)
         pane_height = self.query_one("#samples", Static).size.height
         if pane_height <= SAMPLE_PANE_RESERVED_ROWS:
-            return DEFAULT_SAMPLE_PAGE_SIZE
-        return max(1, pane_height - SAMPLE_PANE_RESERVED_ROWS)
+            return max(1, DEFAULT_SAMPLE_PAGE_SIZE // SAMPLE_LINES_PER_ROW)
+        available_rows = pane_height - SAMPLE_PANE_RESERVED_ROWS
+        return max(1, available_rows // SAMPLE_LINES_PER_ROW)
 
     def _sample_page_footer(self, speaker: ReviewSpeaker, page_start: int) -> str:
         """Render pagination status for the sample pane."""
