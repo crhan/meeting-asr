@@ -67,6 +67,7 @@ from app.postprocess import (
     speaker_id_to_label,
 )
 from app.speaker_labeling import (
+    load_speaker_person_mapping,
     load_transcript_result,
     render_named_speaker_text,
     render_named_srt,
@@ -903,6 +904,7 @@ def apply_project_speakers(
     person_mapping: dict[int, int] | None = None,
     person_public_mapping: dict[int, str] | None = None,
     ignored_speaker_ids: Collection[int] | None = None,
+    replace_existing: bool = False,
 ) -> tuple[Path, Path, Path]:
     """
     Apply speaker names to project outputs.
@@ -913,6 +915,7 @@ def apply_project_speakers(
         person_mapping: Optional project speaker to internal voiceprint person id mapping.
         person_public_mapping: Optional project speaker to voiceprint person public id mapping.
         ignored_speaker_ids: Optional explicit speaker ids to keep anonymous.
+        replace_existing: Replace stored speaker mappings instead of merging into them.
 
     Returns:
         Paths for map, transcript, and SRT.
@@ -920,14 +923,21 @@ def apply_project_speakers(
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
     result = load_transcript_result(paths.asr_dir / "sentences.json")
-    resolved_mapping = _merge_speaker_mapping(result, mappings)
+    existing_mapping = {} if replace_existing else _load_existing_speaker_mapping(paths.speakers_dir / "speaker_map.json")
+    explicit_mapping = _merge_speaker_mapping(result, mappings)
+    resolved_mapping = _merge_speaker_mapping(result, existing_mapping | explicit_mapping)
     mapping_path = write_speaker_mapping(paths.speakers_dir / "speaker_map.json", resolved_mapping)
     if ignored_speaker_ids is not None:
         _write_project_ignored_speakers(paths, manifest, result, ignored_speaker_ids)
-    resolved_person_mapping = _merge_speaker_person_mapping(resolved_mapping, person_mapping or {})
-    resolved_public_mapping = _merge_speaker_person_public_mapping(resolved_mapping, person_public_mapping or {})
-    stored_person_mapping = resolved_public_mapping or resolved_person_mapping
     person_map_path = paths.speakers_dir / "speaker_person_map.json"
+    existing_person_mapping = {} if replace_existing else load_speaker_person_mapping(person_map_path)
+    stored_person_mapping = _resolve_speaker_person_mapping(
+        resolved_mapping,
+        existing_mapping,
+        existing_person_mapping,
+        person_mapping or {},
+        person_public_mapping or {},
+    )
     if stored_person_mapping:
         write_speaker_person_mapping(person_map_path, stored_person_mapping)
         manifest.speakers["person_map"] = {str(key): value for key, value in sorted(stored_person_mapping.items())}
@@ -1766,28 +1776,36 @@ def _merge_speaker_mapping(result: TranscriptResult, mappings: dict[int, str]) -
     return resolved
 
 
-def _merge_speaker_person_mapping(
-    speaker_mapping: dict[int, str],
-    person_mapping: dict[int, int],
-) -> dict[int, int]:
-    """Return person mappings only for named project speakers."""
-    return {
-        speaker_id: person_id
-        for speaker_id, person_id in person_mapping.items()
-        if speaker_id in speaker_mapping and person_id > 0
-    }
+def _load_existing_speaker_mapping(path: Path) -> dict[int, str]:
+    """Load persisted speaker names from a project speaker map file."""
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return {int(key): str(value) for key, value in payload.items()}
 
 
-def _merge_speaker_person_public_mapping(
+def _resolve_speaker_person_mapping(
     speaker_mapping: dict[int, str],
-    person_mapping: dict[int, str],
-) -> dict[int, str]:
-    """Return public person mappings only for named project speakers."""
-    return {
-        speaker_id: person_id.strip()
-        for speaker_id, person_id in person_mapping.items()
-        if speaker_id in speaker_mapping and person_id.strip()
-    }
+    existing_speaker_mapping: dict[int, str],
+    existing_person_mapping: dict[int, int | str],
+    explicit_person_mapping: dict[int, int],
+    explicit_public_mapping: dict[int, str],
+) -> dict[int, int | str]:
+    """Resolve project speaker to voiceprint person refs without keeping stale names."""
+    resolved: dict[int, int | str] = {}
+    for speaker_id, speaker_name in sorted(speaker_mapping.items()):
+        public_id = explicit_public_mapping.get(speaker_id, "").strip()
+        if public_id:
+            resolved[speaker_id] = public_id
+            continue
+        person_id = explicit_person_mapping.get(speaker_id, 0)
+        if person_id > 0:
+            resolved[speaker_id] = person_id
+            continue
+        unchanged_existing_name = existing_speaker_mapping.get(speaker_id) == speaker_name
+        if unchanged_existing_name and speaker_id in existing_person_mapping:
+            resolved[speaker_id] = existing_person_mapping[speaker_id]
+    return resolved
 
 def _parse_mapping_item(item: str) -> tuple[int, str]:
     """Parse one speaker mapping value."""

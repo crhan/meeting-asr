@@ -13,6 +13,12 @@
 - Its mpv log showed only `Loading external files in .../source/` and no open of `exports/subtitle.srt`.
 - For IINA preview, stage a same-stem `.srt` next to the source video so IINA/mpv auto-loads it as a sidecar subtitle.
 
+## Speaker Apply Notes
+
+- `meeting-asr project speakers apply --map N=Name` is a patch operation by default. It must merge into saved speaker names instead of replacing `speaker_map.json`.
+- Destructive replacement requires the explicit `--replace` flag.
+- When merging, preserve `speaker_person_map.json` entries only for unchanged names. If a speaker name changes without a new person id, drop that speaker's stale voiceprint link.
+
 ## ASR Postprocess Notes
 
 - Filler-only speaker removal happens in `src/app/postprocess.py` during `parse_transcription_result()`.

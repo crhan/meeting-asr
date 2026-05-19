@@ -1218,10 +1218,15 @@ def speakers_preview(
 def speakers_apply(
     project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
     projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    mappings: list[str] = typer.Option([], "--map", help="Non-interactive speaker_id=name mapping."),
+    mappings: list[str] = typer.Option([], "--map", help="Non-interactive speaker_id=name mapping; merges with saved names by default."),
     sample_count: int = typer.Option(3, "--sample-count", min=1, max=20, help="Samples shown per speaker."),
+    replace_existing: bool = typer.Option(
+        False,
+        "--replace",
+        help="Replace saved speaker mappings instead of merging into them.",
+    ),
 ) -> None:
-    """Apply known speaker mappings non-interactively; intended for scripts or already confirmed mappings."""
+    """Apply known speaker mappings; by default, new mappings merge into saved names."""
     resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
     sentences_path = project_paths(resolved_project_dir).asr_dir / "sentences.json"
     result = run_with_cli_errors(lambda: load_transcript_result(sentences_path))
@@ -1233,7 +1238,7 @@ def speakers_apply(
         result=result,
     )
     mapping_path, transcript_path, srt_path = run_with_cli_errors(
-        lambda: apply_project_speakers(resolved_project_dir, resolved)
+        lambda: apply_project_speakers(resolved_project_dir, resolved, replace_existing=replace_existing)
     )
     typer.echo(f"Mapping written to: {mapping_path}")
     typer.echo(f"Named transcript written to: {transcript_path}")

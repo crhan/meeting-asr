@@ -2046,6 +2046,38 @@ def test_apply_project_speakers_keeps_person_map_in_sync(tmp_path: Path) -> None
     assert "person_map" not in manifest.speakers
 
 
+def test_apply_project_speakers_merges_existing_names_by_default(tmp_path: Path) -> None:
+    """Applying one confirmed name should not erase existing speaker names."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+
+    apply_project_speakers(
+        project_dir,
+        {0: "欧丁", 1: "敬悦"},
+        person_public_mapping={0: "vpp-0000000000000000", 1: "vpp-0000000000000001"},
+    )
+    apply_project_speakers(project_dir, {1: "米汤"})
+
+    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    person_mapping = json.loads((project_dir / "speakers" / "speaker_person_map.json").read_text(encoding="utf-8"))
+
+    assert mapping == {"0": "欧丁", "1": "米汤"}
+    assert person_mapping == {"0": "vpp-0000000000000000"}
+
+
+def test_apply_project_speakers_can_replace_existing_names(tmp_path: Path) -> None:
+    """Callers that need destructive replacement must opt in explicitly."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+
+    apply_project_speakers(project_dir, {0: "欧丁", 1: "敬悦"})
+    apply_project_speakers(project_dir, {1: "米汤"}, replace_existing=True)
+
+    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+
+    assert mapping == {"1": "米汤"}
+
+
 def test_apply_project_speakers_ignores_low_information_speaker(tmp_path: Path) -> None:
     """Existing normalized transcripts should still drop backchannel-only speakers."""
     project_dir = _sample_project(tmp_path)
@@ -2442,6 +2474,41 @@ def test_project_speakers_apply_map_writes_named_transcript(tmp_path: Path) -> N
     assert mapping == {"0": "欧丁", "1": "敬悦"}
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
     assert "敬悦" in transcript_path.read_text(encoding="utf-8")
+
+
+def test_project_speakers_apply_map_merges_saved_names(tmp_path: Path) -> None:
+    """Scripted speaker apply should patch names instead of clearing the project map."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    apply_project_speakers(project_dir, {0: "欧丁"})
+
+    result = runner.invoke(
+        app,
+        ["project", "speakers", "apply", str(project_dir), "--map", "1=敬悦"],
+    )
+
+    transcript_path = project_dir / "exports" / "transcript_named.txt"
+    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert mapping == {"0": "欧丁", "1": "敬悦"}
+    assert "欧丁" in transcript_path.read_text(encoding="utf-8")
+    assert "敬悦" in transcript_path.read_text(encoding="utf-8")
+
+
+def test_project_speakers_apply_map_replace_clears_saved_names(tmp_path: Path) -> None:
+    """Destructive scripted speaker apply should require the explicit replace flag."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    apply_project_speakers(project_dir, {0: "欧丁"})
+
+    result = runner.invoke(
+        app,
+        ["project", "speakers", "apply", str(project_dir), "--map", "1=敬悦", "--replace"],
+    )
+
+    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert mapping == {"1": "敬悦"}
 
 
 def test_project_speakers_apply_can_show_more_samples(
