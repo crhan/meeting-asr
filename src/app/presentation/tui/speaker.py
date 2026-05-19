@@ -16,6 +16,7 @@ from textual.containers import Horizontal
 from textual.worker import Worker, WorkerState
 from textual.widgets import Header, Static
 
+from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
 from app.speaker_match_status import best_candidate_name
@@ -96,6 +97,8 @@ DEFAULT_SAMPLE_PAGE_SIZE = 6
 SAMPLE_PANE_RESERVED_ROWS = 5
 TIMELINE_PANE_RESERVED_ROWS = 4
 DEFAULT_TIMELINE_PAGE_SIZE = 16
+PREVIEW_CLIP_CACHE_MAX_FILES = 300
+PREVIEW_CLIP_CACHE_MAX_BYTES = 64 * 1024 * 1024
 COLUMNS = ("speakers", "samples")
 FOCUSED_PANE_CLASS = "focused-pane"
 UNFOCUSED_PANE_CLASS = "unfocused-pane"
@@ -939,9 +942,16 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self._stop_playback()
         start_seconds = max(0.0, segment.begin_time_ms / 1000.0 - 0.5)
         duration_seconds = max(2.0, (segment.end_time_ms - segment.begin_time_ms) / 1000.0 + 1.0)
-        command = build_audio_preview_command(
-            media=self.session.source_media,
+        clip_path = _ensure_preview_clip(
+            self.session.project_dir,
+            self.session.source_media,
+            segment,
             start_seconds=start_seconds,
+            duration_seconds=duration_seconds,
+        )
+        command = build_audio_preview_command(
+            media=clip_path,
+            start_seconds=0.0,
             duration_seconds=duration_seconds,
         )
         self.playback_process = subprocess.Popen(
@@ -1602,6 +1612,138 @@ def _summarize_reassignment_outcome(result: object | None) -> str:
         pieces.append(tr(f", rematch skipped: {rematch_reason}", f"，重新匹配被跳过：{rematch_reason}"))
     pieces.append(".")
     return "".join(pieces)
+
+
+def _preview_clip_path(project_dir: Path, segment: SentenceSegment) -> Path:
+    """
+    Build the transient WAV path for precise Project Review playback.
+
+    Args:
+        project_dir: Project root.
+        segment: Transcript segment to preview.
+
+    Returns:
+        Path under the project temporary directory.
+    """
+    speaker = "unknown" if segment.speaker_id is None else str(segment.speaker_id)
+    sentence = "unknown" if segment.sentence_id is None else str(segment.sentence_id)
+    filename = f"speaker_{speaker}_sentence_{sentence}_{segment.begin_time_ms}_{segment.end_time_ms}.wav"
+    return project_dir / "tmp" / "project_review_playback" / filename
+
+
+def _ensure_preview_clip(
+    project_dir: Path,
+    source_media: Path,
+    segment: SentenceSegment,
+    *,
+    start_seconds: float,
+    duration_seconds: float,
+) -> Path:
+    """
+    Return a fresh cached WAV clip for precise Project Review playback.
+
+    Args:
+        project_dir: Project root.
+        source_media: Source audio or video file.
+        segment: Transcript segment to preview.
+        start_seconds: Clip start time.
+        duration_seconds: Clip duration.
+
+    Returns:
+        Cached WAV clip path.
+    """
+    clip_path = _preview_clip_path(project_dir, segment)
+    if _preview_clip_is_fresh(clip_path, source_media):
+        return clip_path
+    extract_audio_clip(source_media, clip_path, start_seconds=start_seconds, duration_seconds=duration_seconds)
+    _prune_preview_clips(clip_path.parent, keep_path=clip_path)
+    return clip_path
+
+
+def _preview_clip_is_fresh(clip_path: Path, source_media: Path) -> bool:
+    """
+    Return whether a cached preview clip can be reused.
+
+    Args:
+        clip_path: Cached WAV clip.
+        source_media: Source audio or video file.
+
+    Returns:
+        True when the clip exists, is non-empty, and is newer than the source.
+    """
+    try:
+        clip_stat = clip_path.stat()
+        source_stat = source_media.stat()
+    except OSError:
+        return False
+    return clip_stat.st_size > 44 and clip_stat.st_mtime >= source_stat.st_mtime
+
+
+def _prune_preview_clips(
+    cache_dir: Path,
+    *,
+    keep_path: Path,
+    max_files: int = PREVIEW_CLIP_CACHE_MAX_FILES,
+    max_bytes: int = PREVIEW_CLIP_CACHE_MAX_BYTES,
+) -> None:
+    """
+    Bound Project Review playback cache size.
+
+    Args:
+        cache_dir: Directory containing generated WAV previews.
+        keep_path: Clip that must survive the pruning pass.
+        max_files: Maximum number of cached clips.
+        max_bytes: Maximum total cached bytes.
+    """
+    try:
+        wav_paths = [path for path in cache_dir.glob("*.wav") if path.is_file()]
+    except OSError:
+        return
+    entries = _preview_clip_cache_entries(wav_paths, keep_path)
+    kept_files = 0
+    kept_bytes = 0
+    for path, size, _mtime in entries:
+        must_keep = path == keep_path
+        under_limits = kept_files < max_files and kept_bytes + size <= max_bytes
+        if must_keep or under_limits:
+            kept_files += 1
+            kept_bytes += size
+            continue
+        _unlink_preview_clip(path)
+
+
+def _preview_clip_cache_entries(paths: list[Path], keep_path: Path) -> list[tuple[Path, int, float]]:
+    """
+    Return cache entries sorted by keep-first and newest-first order.
+
+    Args:
+        paths: Candidate WAV clip paths.
+        keep_path: Clip that should sort before all other entries.
+
+    Returns:
+        Tuples of path, byte size, and modification time.
+    """
+    entries: list[tuple[Path, int, float]] = []
+    for path in paths:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        entries.append((path, stat.st_size, stat.st_mtime))
+    return sorted(entries, key=lambda item: (item[0] == keep_path, item[2]), reverse=True)
+
+
+def _unlink_preview_clip(path: Path) -> None:
+    """
+    Remove one stale preview clip, ignoring races with another process.
+
+    Args:
+        path: WAV clip path to remove.
+    """
+    try:
+        path.unlink()
+    except OSError:
+        return
 
 
 def _trim_sample_text(text: str, *, limit: int = 90) -> str:

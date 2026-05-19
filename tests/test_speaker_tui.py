@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -1225,6 +1226,20 @@ def test_speaker_review_tui_recomputes_page_size_after_resize() -> None:
 def test_speaker_review_tui_plays_selected_sample(monkeypatch) -> None:
     """Space should play the currently selected sample, not the whole speaker batch."""
     captured: dict[str, float] = {}
+    captured_paths: dict[str, Path] = {}
+
+    def fake_extract_audio_clip(
+        source: Path,
+        output: Path,
+        *,
+        start_seconds: float,
+        duration_seconds: float,
+    ) -> Path:
+        captured_paths["source"] = source
+        captured_paths["output"] = output
+        captured["extract_start_seconds"] = start_seconds
+        captured["extract_duration_seconds"] = duration_seconds
+        return output
 
     def fake_command(
         *,
@@ -1232,10 +1247,12 @@ def test_speaker_review_tui_plays_selected_sample(monkeypatch) -> None:
         start_seconds: float,
         duration_seconds: float | None,
     ) -> list[str]:
+        captured_paths["media"] = media
         captured["start_seconds"] = start_seconds
         captured["duration_seconds"] = duration_seconds or 0.0
         return ["fake-player"]
 
+    monkeypatch.setattr(speaker_tui, "extract_audio_clip", fake_extract_audio_clip)
     monkeypatch.setattr(speaker_tui, "build_audio_preview_command", fake_command)
     monkeypatch.setattr(
         speaker_tui.subprocess,
@@ -1251,8 +1268,70 @@ def test_speaker_review_tui_plays_selected_sample(monkeypatch) -> None:
 
     asyncio.run(scenario())
 
-    assert captured["start_seconds"] == 1.5
+    assert captured["extract_start_seconds"] == 1.5
+    assert captured["extract_duration_seconds"] == 2.0
+    assert captured["start_seconds"] == 0.0
     assert captured["duration_seconds"] == 2.0
+    assert captured_paths["source"] == Path("source.mp4")
+    assert captured_paths["media"] == Path("tmp/project_review_playback/speaker_0_sentence_2_2000_2500.wav")
+
+
+def test_speaker_review_preview_clip_reuses_fresh_cache(monkeypatch, tmp_path: Path) -> None:
+    """Repeated playback of the same sample should reuse the generated WAV."""
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    segment = SentenceSegment(begin_time_ms=2000, end_time_ms=2500, text="第二句", speaker_id=0, sentence_id=2)
+    calls: list[tuple[float, float]] = []
+
+    def fake_extract_audio_clip(
+        source_media: Path,
+        output: Path,
+        *,
+        start_seconds: float,
+        duration_seconds: float,
+    ) -> Path:
+        calls.append((start_seconds, duration_seconds))
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"RIFF" + b"0" * 128)
+        return output
+
+    monkeypatch.setattr(speaker_tui, "extract_audio_clip", fake_extract_audio_clip)
+
+    first = speaker_tui._ensure_preview_clip(
+        tmp_path,
+        source,
+        segment,
+        start_seconds=1.5,
+        duration_seconds=2.0,
+    )
+    second = speaker_tui._ensure_preview_clip(
+        tmp_path,
+        source,
+        segment,
+        start_seconds=1.5,
+        duration_seconds=2.0,
+    )
+
+    assert first == second
+    assert calls == [(1.5, 2.0)]
+
+
+def test_speaker_review_preview_clip_prunes_old_cache(tmp_path: Path) -> None:
+    """Preview cache pruning should keep the active clip and newest entries."""
+    cache_dir = tmp_path / "tmp" / "project_review_playback"
+    cache_dir.mkdir(parents=True)
+    keep = cache_dir / "keep.wav"
+    newest = cache_dir / "newest.wav"
+    oldest = cache_dir / "oldest.wav"
+    for index, path in enumerate((oldest, newest, keep)):
+        path.write_bytes(b"RIFF" + bytes([index]) * 128)
+        os.utime(path, (1000 + index, 1000 + index))
+
+    speaker_tui._prune_preview_clips(cache_dir, keep_path=keep, max_files=2, max_bytes=10_000)
+
+    assert keep.exists()
+    assert newest.exists()
+    assert not oldest.exists()
 
 
 def test_speaker_review_tui_space_stops_running_sample(monkeypatch) -> None:
@@ -1260,6 +1339,11 @@ def test_speaker_review_tui_space_stops_running_sample(monkeypatch) -> None:
     process = _RunningFakeProcess()
     starts = 0
 
+    monkeypatch.setattr(
+        speaker_tui,
+        "extract_audio_clip",
+        lambda source, output, *, start_seconds, duration_seconds: output,
+    )
     monkeypatch.setattr(
         speaker_tui,
         "build_audio_preview_command",
