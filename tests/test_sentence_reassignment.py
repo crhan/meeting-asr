@@ -23,6 +23,14 @@ from app.voiceprint_store import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_xdg_data_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep default voiceprint lookups inside the test sandbox."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+
 def test_apply_returns_empty_result_when_no_reassignments(tmp_path: Path) -> None:
     """The orchestrator must short-circuit cleanly with no work."""
     project_dir = _make_project(tmp_path)
