@@ -97,7 +97,7 @@ def test_unchanged_below_threshold_score_is_not_critical() -> None:
 
 def _project(projects_dir: Path, source: Path, title: str) -> Path:
     """Create one minimal project."""
-    source.write_bytes(b"source")
+    source.write_bytes(f"source:{title}".encode())
     project_dir = projects_dir / title.lower()
     create_project(
         source,
