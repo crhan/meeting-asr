@@ -7,6 +7,30 @@
 
 ## [未发布]
 
+## [0.6.0] - 2026-05-21
+
+### 新增
+
+- 新增 speaker 聚类质量诊断，并在 Project Review 中展示聚类状态、离群样本和混桶风险。
+- 新增全量 speaker cluster 行级评分，支持逐句定位 speaker 样本离群。
+- 新增逐句声纹身份诊断，可对每个句子判断是否更像另一个已知 speaker。
+- `project run` 默认接入两轮逐句 speaker 稳定化：刷新诊断、自动改写高置信归属冲突、重新计算声纹分数。
+- `project speakers sample-match` 支持 `--workers`，逐句 embedding 和声纹匹配可并发执行。
+- Project Review 增加样本筛选能力，便于在大量句子中聚焦异常样本。
+
+### 变更
+
+- 统一声纹 embedding 音频预处理，减少源音量和格式差异对匹配结果的影响。
+- Project Review 样本播放改为精确抽取句子片段，并调整样本双行布局与诊断命名。
+- 时间戳敏感的预览、声纹匹配、聚类诊断和采样流程优先使用项目 ASR 音频，避免原始 source 与 ASR 音频时长不一致导致字幕和播放错位。
+
+### 修复
+
+- 修复显式 `--project-dir` 可能绕过同源项目复用、创建重复项目的问题。
+- 修复 Project Review 保存后声纹诊断未刷新，导致页面继续展示过期诊断的问题。
+- 修复 Project Review 预览缓存只看 mtime/size，可能复用错误音频来源缓存的问题。
+- 修复 `project speakers apply` 可能覆盖已有说话人映射的问题。
+
 ## [0.5.0] - 2026-05-19
 
 ### 新增
@@ -93,7 +117,8 @@
 - 首个公开版本，提供基于 project 的 Meeting-ASR CLI。
 - 新增项目创建、会议转写、转写导出、speaker review、声纹匹配、词汇纠错 review，以及 GitHub Actions 发布基础能力。
 
-[未发布]: https://github.com/crhan/meeting-asr/compare/v0.5.0...HEAD
+[未发布]: https://github.com/crhan/meeting-asr/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/crhan/meeting-asr/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/crhan/meeting-asr/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/crhan/meeting-asr/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/crhan/meeting-asr/compare/v0.2.0...v0.3.0
