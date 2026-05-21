@@ -248,7 +248,7 @@ def _current_evaluation_text(summary: VoiceprintEvaluationSummary) -> str:
         lines.append(tr("No material score changes.", "没有实质分数变化。"))
         return "\n".join(lines)
     for change in visible_changes[:CURRENT_CHANGE_DISPLAY_LIMIT]:
-        lines.append("  " + _score_change_line(change))
+        lines.append("  " + _current_score_change_line(change))
     hidden_count = len(visible_changes) - CURRENT_CHANGE_DISPLAY_LIMIT
     if hidden_count > 0:
         lines.append(tr(f"  [dim]... {hidden_count} more current change(s) omitted.[/]", f"  [dim]... 省略 {hidden_count} 个当前项目变化。[/]"))
@@ -326,6 +326,23 @@ def _score_change_line(change) -> str:
     status_text = f" {escape(change.status)}" if change.is_warning or change.is_critical else ""
     threshold_text = "" if change.threshold is None else f" threshold={change.threshold:.3f}"
     line = f"{escape(change.label)}: {before} -> {after}{delta_text}{status_text}"
+    if change.is_critical:
+        return f"[red]{line}{threshold_text}[/]"
+    if change.is_warning:
+        return f"[yellow]{line}{threshold_text}[/]"
+    return line
+
+
+def _current_score_change_line(change) -> str:
+    """Render one current-project score line as an expected workflow outcome."""
+    before = _candidate_score_text(change.before_name, change.before_score)
+    after = _candidate_score_text(change.after_name, change.after_score)
+    delta_text = "" if change.delta is None else f" ({change.delta:+.3f})"
+    status_text = "" if change.status == "improved" else f" {escape(change.status)}"
+    threshold_text = "" if change.threshold is None else f" threshold={change.threshold:.3f}"
+    line = f"{escape(change.label)}: {before} -> {after}{delta_text}{status_text}"
+    if change.status in {"improved", "changed-best"}:
+        return f"[green]{line}{threshold_text}[/]"
     if change.is_critical:
         return f"[red]{line}{threshold_text}[/]"
     if change.is_warning:

@@ -32,6 +32,7 @@
 - Keep project selection/review UI modules separate, such as `src/app/project_tui.py` and `src/app/speaker_tui.py`, and leave command modules as thin Typer adapters.
 - Project Review inline text correction mutates in-memory `SentenceSegment.text` before final save. Keep a separate loaded-text baseline for correction diffs; otherwise re-editing a staged sentence compares version 2 -> version 3 instead of original -> version 3.
 - Terminal IME composition may not reach Textual text widgets even though bracketed paste works. Keep paste-friendly editing and an external-editor fallback for Chinese correction text.
+- Voiceprint Review result rendering has two different meanings: current-project score changes are the expected result of new embeddings, so `changed-best` should read as green success there; historical reverse checks are regression risk and should keep warning/critical colors.
 
 ## Project Identity Notes
 

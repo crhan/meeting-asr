@@ -140,6 +140,37 @@ def test_historical_risks_show_severity_project_id_and_review_command() -> None:
     assert "threshold=0.750" in rendered
 
 
+def test_current_project_changed_best_is_rendered_as_expected_improvement() -> None:
+    """Current project speaker changes are the intended result of accepting embeddings."""
+    evaluation = VoiceprintEvaluationSummary(
+        VoiceprintProjectEvaluation(
+            Path("project"),
+            "project-1",
+            "Project",
+            True,
+            (
+                VoiceprintScoreChange(
+                    1,
+                    "Speaker B",
+                    "华璟",
+                    0.564,
+                    "黄睿",
+                    0.843,
+                    0.279,
+                    "changed-best",
+                    0.75,
+                ),
+            ),
+        ),
+        (),
+    )
+
+    rendered = voiceprint_review_workflow._current_evaluation_text(evaluation)
+
+    assert "[green]Speaker B: 华璟 0.564 -> 黄睿 0.843 (+0.279) changed-best threshold=0.750[/]" in rendered
+    assert "[red]Speaker B" not in rendered
+
+
 def test_historical_risk_details_are_capped_to_keep_actions_visible() -> None:
     """The result modal should summarize overflowing risk details."""
     evaluation = VoiceprintEvaluationSummary(
