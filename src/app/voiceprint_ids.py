@@ -33,7 +33,9 @@ def new_speaker_public_id(connection: sqlite3.Connection) -> str:
     Returns:
         Prefixed public id.
     """
-    return _new_public_id(connection, "voiceprint_speakers", VOICEPRINT_PERSON_ID_PREFIX)
+    return _new_public_id(
+        connection, "voiceprint_speakers", VOICEPRINT_PERSON_ID_PREFIX
+    )
 
 
 def new_sample_public_id(connection: sqlite3.Connection) -> str:
@@ -64,32 +66,50 @@ def valid_person_public_id(public_id: str) -> bool:
 
 def _ensure_public_id_column(connection: sqlite3.Connection, table: str) -> None:
     """Add the public_id column and index when upgrading an old database."""
-    columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+    columns = {
+        str(row["name"])
+        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
     if "public_id" not in columns:
         connection.execute(f"ALTER TABLE {table} ADD COLUMN public_id TEXT")
-    connection.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_public_id ON {table}(public_id)")
+    connection.execute(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_public_id ON {table}(public_id)"
+    )
 
 
-def _backfill_public_ids(connection: sqlite3.Connection, table: str, prefix: str) -> None:
+def _backfill_public_ids(
+    connection: sqlite3.Connection, table: str, prefix: str
+) -> None:
     """Backfill missing public ids for older local databases."""
-    rows = connection.execute(f"SELECT id FROM {table} WHERE public_id IS NULL OR public_id = ''").fetchall()
+    rows = connection.execute(
+        f"SELECT id FROM {table} WHERE public_id IS NULL OR public_id = ''"
+    ).fetchall()
     for row in rows:
         public_id = _new_public_id(connection, table, prefix)
-        connection.execute(f"UPDATE {table} SET public_id = ? WHERE id = ?", (public_id, int(row["id"])))
+        connection.execute(
+            f"UPDATE {table} SET public_id = ? WHERE id = ?",
+            (public_id, int(row["id"])),
+        )
 
 
 def _new_public_id(connection: sqlite3.Connection, table: str, prefix: str) -> str:
     """Generate a collision-free public id for a voiceprint table."""
     return new_prefixed_id(
         prefix,
-        lambda public_id: connection.execute(f"SELECT 1 FROM {table} WHERE public_id = ?", (public_id,)).fetchone()
-        is not None,
+        lambda public_id: (
+            connection.execute(
+                f"SELECT 1 FROM {table} WHERE public_id = ?", (public_id,)
+            ).fetchone()
+            is not None
+        ),
     )
 
 
 def _valid_public_id(public_id: str, prefix: str) -> bool:
     """Return whether a string is one of our prefixed public ids."""
     suffix = public_id.removeprefix(prefix)
-    return public_id.startswith(prefix) and len(suffix) == 16 and all(
-        character in "0123456789abcdef" for character in suffix
+    return (
+        public_id.startswith(prefix)
+        and len(suffix) == 16
+        and all(character in "0123456789abcdef" for character in suffix)
     )

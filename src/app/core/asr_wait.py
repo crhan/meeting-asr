@@ -96,7 +96,6 @@ def record_dashscope_wait(
         LOGGER.debug("Unable to record ASR wait observation: %s", exc)
 
 
-
 def emit_dashscope_wait_poll(
     progress: CliProgressReporter | None,
     *,
@@ -128,7 +127,9 @@ def emit_dashscope_wait_poll(
     )
 
 
-def asr_wait_total(estimate: AsrWaitEstimate | None, elapsed_seconds: float = 0.0) -> int | None:
+def asr_wait_total(
+    estimate: AsrWaitEstimate | None, elapsed_seconds: float = 0.0
+) -> int | None:
     """
     Return progress total for an estimated ASR wait.
 
@@ -141,10 +142,14 @@ def asr_wait_total(estimate: AsrWaitEstimate | None, elapsed_seconds: float = 0.
     """
     if estimate is None:
         return None
-    return max(1, math.ceil(estimate.estimated_seconds), math.floor(elapsed_seconds) + 1)
+    return max(
+        1, math.ceil(estimate.estimated_seconds), math.floor(elapsed_seconds) + 1
+    )
 
 
-def asr_wait_description(task_id: str, estimate: AsrWaitEstimate | None, status: str | None) -> str:
+def asr_wait_description(
+    task_id: str, estimate: AsrWaitEstimate | None, status: str | None
+) -> str:
     """
     Build the DashScope wait progress description.
 

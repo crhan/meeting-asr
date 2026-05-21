@@ -39,7 +39,9 @@ def test_failed_upload_does_not_create_baseline(tmp_path: Path) -> None:
     """Failed uploads should be stored but should not affect ETA estimates."""
     db_path = tmp_path / "runtime.sqlite"
 
-    record_oss_upload_observation(_observation(size=1_000, seconds=2.0, status="failed"), db_path)
+    record_oss_upload_observation(
+        _observation(size=1_000, seconds=2.0, status="failed"), db_path
+    )
     estimate = estimate_oss_upload_seconds(
         provider=OSS_UPLOAD_PROVIDER,
         endpoint="https://oss.example.com",
@@ -98,7 +100,9 @@ def test_three_upload_samples_raise_confidence(tmp_path: Path) -> None:
     assert estimate.estimated_seconds == pytest.approx(8.0)
 
 
-def _observation(size: int, seconds: float, status: str = "succeeded") -> OssUploadObservation:
+def _observation(
+    size: int, seconds: float, status: str = "succeeded"
+) -> OssUploadObservation:
     """Build one OSS upload observation fixture."""
     return OssUploadObservation(
         provider=OSS_UPLOAD_PROVIDER,
@@ -115,4 +119,8 @@ def _observation(size: int, seconds: float, status: str = "succeeded") -> OssUpl
 def _baseline_count(db_path: Path) -> int:
     """Return baseline row count from the test database."""
     with sqlite3.connect(db_path) as connection:
-        return int(connection.execute("SELECT COUNT(*) FROM oss_upload_baselines").fetchone()[0])
+        return int(
+            connection.execute("SELECT COUNT(*) FROM oss_upload_baselines").fetchone()[
+                0
+            ]
+        )

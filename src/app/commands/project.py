@@ -26,10 +26,16 @@ from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import should_enable_verbose_logs
 from app.presentation.cli.progress import run_with_progress
-from app.presentation.cli.project_payloads import project_list_payload, project_status_payload
+from app.presentation.cli.project_payloads import (
+    project_list_payload,
+    project_status_payload,
+)
 from app.presentation.cli.project_list import render_project_list
 from app.presentation.cli.project_show import ProjectShowView, render_project_show
-from app.presentation.cli.project_run_summary import ProjectRunSummaryView, render_project_run_summary
+from app.presentation.cli.project_run_summary import (
+    ProjectRunSummaryView,
+    render_project_run_summary,
+)
 from app.presentation.cli.speaker_match_table import speaker_match_rows
 from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.core.project_workflow import (
@@ -154,7 +160,12 @@ speakers_app = MeetingAsrTyper(
     no_args_is_help=True,
     pretty_exceptions_enable=False,
 )
-app.add_typer(speakers_app, name="speakers", help="Review and name project speakers.", context_settings=HELP_CONTEXT)
+app.add_typer(
+    speakers_app,
+    name="speakers",
+    help="Review and name project speakers.",
+    context_settings=HELP_CONTEXT,
+)
 app.add_typer(
     transcript_commands.app,
     name="transcript",
@@ -226,10 +237,16 @@ class ProjectReviewCorrectionOptions:
 
 @app.command("create")
 def create(
-    input: Path = typer.Argument(..., metavar="INPUT", exists=True, file_okay=True, dir_okay=False),
+    input: Path = typer.Argument(
+        ..., metavar="INPUT", exists=True, file_okay=True, dir_okay=False
+    ),
     title: Optional[str] = typer.Option(None, "--title", "-t"),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    project_dir: Optional[Path] = typer.Option(None, "--project-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    project_dir: Optional[Path] = typer.Option(
+        None, "--project-dir", file_okay=False, dir_okay=True
+    ),
     meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
     variant: Optional[str] = typer.Option(
         None,
@@ -241,7 +258,11 @@ def create(
         "--hash-source/--no-hash-source",
         help="Deprecated compatibility flag. Source identity is always hashed.",
     ),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
 ) -> None:
     """Create a project directory with project.json metadata."""
     summary = run_with_progress(
@@ -258,21 +279,37 @@ def create(
         description="Creating project",
         enabled=progress,
     )
-    _echo_project_created(summary.project_dir, summary.manifest, created=summary.created)
+    _echo_project_created(
+        summary.project_dir, summary.manifest, created=summary.created
+    )
 
 
 @app.command("prepare")
 def prepare(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    audio_format: str = typer.Option(
+        "flac", "--audio-format", autocompletion=complete_audio_format
+    ),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
 ) -> None:
     """Extract project audio without starting cloud transcription."""
     configure_logging(verbose=should_enable_verbose_logs())
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     audio_path = run_with_progress(
-        lambda reporter: prepare_project_audio(resolved_project_dir, audio_format=audio_format, progress=reporter),
+        lambda reporter: prepare_project_audio(
+            resolved_project_dir, audio_format=audio_format, progress=reporter
+        ),
         description="Preparing project audio",
         total=1,
         enabled=progress,
@@ -282,23 +319,43 @@ def prepare(
 
 @app.command("transcribe")
 def transcribe(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     speaker_count: Optional[int] = typer.Option(None, "--speaker-count", min=1),
     language: Optional[str] = typer.Option("zh,en", "--language"),
     model: str = typer.Option("fun-asr", "--model", autocompletion=complete_model),
-    oss_upload: str = typer.Option("auto", "--oss-upload", autocompletion=complete_oss_upload_mode),
+    oss_upload: str = typer.Option(
+        "auto", "--oss-upload", autocompletion=complete_oss_upload_mode
+    ),
     file_url: Optional[str] = typer.Option(None, "--file-url"),
     generate_srt: bool = typer.Option(True, "--generate-srt/--no-generate-srt"),
-    timestamp_alignment: bool = typer.Option(True, "--timestamp-alignment/--no-timestamp-alignment"),
-    disfluency_removal: bool = typer.Option(False, "--disfluency-removal/--no-disfluency-removal"),
-    audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
-    asr_hotwords: str = typer.Option("auto", "--asr-hotwords", autocompletion=complete_asr_hotwords),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    timestamp_alignment: bool = typer.Option(
+        True, "--timestamp-alignment/--no-timestamp-alignment"
+    ),
+    disfluency_removal: bool = typer.Option(
+        False, "--disfluency-removal/--no-disfluency-removal"
+    ),
+    audio_format: str = typer.Option(
+        "flac", "--audio-format", autocompletion=complete_audio_format
+    ),
+    asr_hotwords: str = typer.Option(
+        "auto", "--asr-hotwords", autocompletion=complete_asr_hotwords
+    ),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
 ) -> None:
     """Transcribe a project and write structured artifacts."""
     configure_logging(verbose=should_enable_verbose_logs())
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     options = _project_transcribe_options(
         speaker_count=speaker_count,
         language=language,
@@ -312,7 +369,9 @@ def transcribe(
         asr_hotwords=asr_hotwords,
     )
     summary = run_with_progress(
-        lambda reporter: transcribe_project(resolved_project_dir, options, progress=reporter),
+        lambda reporter: transcribe_project(
+            resolved_project_dir, options, progress=reporter
+        ),
         description="Transcribing project",
         total=7,
         enabled=progress,
@@ -328,15 +387,27 @@ def transcribe(
 
 @app.command("summarize")
 def summarize(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    model: Optional[str] = typer.Option(None, "--model", help="DashScope text model for meeting memory index."),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", help="DashScope text model for meeting memory index."
+    ),
     update_title: bool = typer.Option(True, "--update-title/--no-update-title"),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
 ) -> None:
     """Generate a meeting title and memory index from a transcribed project."""
     configure_logging(verbose=should_enable_verbose_logs())
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     summary = run_with_progress(
         lambda reporter: summarize_project(
             resolved_project_dir,
@@ -358,10 +429,16 @@ def summarize(
 
 @app.command("run")
 def run(
-    input: Path = typer.Argument(..., metavar="INPUT", exists=True, file_okay=True, dir_okay=False),
+    input: Path = typer.Argument(
+        ..., metavar="INPUT", exists=True, file_okay=True, dir_okay=False
+    ),
     title: Optional[str] = typer.Option(None, "--title", "-t"),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    project_dir: Optional[Path] = typer.Option(None, "--project-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    project_dir: Optional[Path] = typer.Option(
+        None, "--project-dir", file_okay=False, dir_okay=True
+    ),
     meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
     variant: Optional[str] = typer.Option(
         None,
@@ -371,19 +448,33 @@ def run(
     speaker_count: Optional[int] = typer.Option(None, "--speaker-count", min=1),
     language: Optional[str] = typer.Option("zh,en", "--language"),
     model: str = typer.Option("fun-asr", "--model", autocompletion=complete_model),
-    oss_upload: str = typer.Option("auto", "--oss-upload", autocompletion=complete_oss_upload_mode),
+    oss_upload: str = typer.Option(
+        "auto", "--oss-upload", autocompletion=complete_oss_upload_mode
+    ),
     file_url: Optional[str] = typer.Option(None, "--file-url"),
-    audio_format: str = typer.Option("flac", "--audio-format", autocompletion=complete_audio_format),
-    asr_hotwords: str = typer.Option("auto", "--asr-hotwords", autocompletion=complete_asr_hotwords),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    audio_format: str = typer.Option(
+        "flac", "--audio-format", autocompletion=complete_audio_format
+    ),
+    asr_hotwords: str = typer.Option(
+        "auto", "--asr-hotwords", autocompletion=complete_asr_hotwords
+    ),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     voiceprint_model: Optional[str] = typer.Option(
         None,
         "--voiceprint-model",
         autocompletion=complete_voiceprint_model,
     ),
     match_threshold: float = typer.Option(0.75, "--match-threshold", min=0.0, max=1.0),
-    summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Generate title and memory index after ASR."),
-    summary_model: Optional[str] = typer.Option(None, "--summary-model", help="DashScope model for meeting memory index."),
+    summarize: bool = typer.Option(
+        True,
+        "--summarize/--no-summarize",
+        help="Generate title and memory index after ASR.",
+    ),
+    summary_model: Optional[str] = typer.Option(
+        None, "--summary-model", help="DashScope model for meeting memory index."
+    ),
     polish: bool = typer.Option(
         True,
         "--polish/--no-polish",
@@ -394,7 +485,9 @@ def run(
         "--local-correction/--no-local-correction",
         help="Apply accepted local lexicon corrections after ASR.",
     ),
-    correction_model: Optional[str] = typer.Option(None, "--correction-model", help="DashScope model for transcript polish."),
+    correction_model: Optional[str] = typer.Option(
+        None, "--correction-model", help="DashScope model for transcript polish."
+    ),
     polish_concurrency: Optional[int] = typer.Option(
         None,
         "--polish-concurrency",
@@ -427,7 +520,11 @@ def run(
         max=64,
         help="Parallel workers for per-sentence voiceprint sample matching.",
     ),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
     agent_log: bool = typer.Option(
         False,
         "--agent-log/--no-agent-log",
@@ -481,9 +578,13 @@ def run(
 
 @app.command("list")
 def list_command(
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
-    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
+    plain: bool = typer.Option(
+        False, "--plain", help="Print stable tab-separated output."
+    ),
 ) -> None:
     """List projects under the XDG project store."""
     result = run_with_cli_errors(lambda: list_projects(projects_dir))
@@ -495,30 +596,46 @@ def list_command(
 
 @app.command("show")
 def show(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show a human-friendly project overview and where outputs live."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
     paths = project_paths(resolved_project_dir)
     if as_json:
         emit_json(project_status_payload(paths, manifest))
         return
-    workflow = project_workflow_summary(paths.root, manifest, project_ref=manifest.project_id)
-    render_project_show(ProjectShowView(paths.root, manifest.project_id, manifest, workflow))
+    workflow = project_workflow_summary(
+        paths.root, manifest, project_ref=manifest.project_id
+    )
+    render_project_show(
+        ProjectShowView(paths.root, manifest.project_id, manifest, workflow)
+    )
 
 
 @app.command("update")
 def update(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     title: Optional[str] = typer.Option(None, "--title", "-t"),
     meeting_time: Optional[str] = typer.Option(None, "--meeting-time"),
 ) -> None:
     """Update editable project metadata."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     summary = run_with_cli_errors(
         lambda: update_project_metadata(
             resolved_project_dir,
@@ -531,25 +648,41 @@ def update(
 
 @app.command("delete")
 def delete(
-    project_dir: Path = typer.Argument(..., metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Do not prompt for confirmation."),
-    permanent: bool = typer.Option(False, "--permanent", help="Physically remove instead of moving to trash."),
+    project_dir: Path = typer.Argument(
+        ..., metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Do not prompt for confirmation."
+    ),
+    permanent: bool = typer.Option(
+        False, "--permanent", help="Physically remove instead of moving to trash."
+    ),
 ) -> None:
     """Delete a project. By default the project is moved to Meeting-ASR trash."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
-    if not yes and not _confirm_project_delete(resolved_project_dir, manifest, permanent=permanent):
+    if not yes and not _confirm_project_delete(
+        resolved_project_dir, manifest, permanent=permanent
+    ):
         typer.echo("Project delete cancelled.")
         return
-    summary = run_with_cli_errors(lambda: delete_project(resolved_project_dir, permanent=permanent))
+    summary = run_with_cli_errors(
+        lambda: delete_project(resolved_project_dir, permanent=permanent)
+    )
     _echo_project_deleted(summary)
 
 
 @app.command("review")
 def review(
     project: Optional[str] = typer.Argument(None, metavar="PROJECT"),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     page_size: Optional[int] = typer.Option(
         None,
         "--page-size",
@@ -557,16 +690,43 @@ def review(
         max=50,
         help="Override samples per page. By default the TUI uses the pane height.",
     ),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    summary: bool = typer.Option(False, "--summary", help="Print without opening a TUI."),
-    editor: Optional[str] = typer.Option(None, "--editor", help="Editor command used by transcript correction."),
-    no_ai: bool = typer.Option(False, "--no-ai", help="Disable DashScope correction proposals in TUI text correction."),
-    no_proposal_open: bool = typer.Option(False, "--no-proposal-open", help="Do not open the generated correction proposal."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Accept generated correction proposals without prompting."),
-    model: Optional[str] = typer.Option(None, "--model", help="DashScope correction model id."),
-    category: str = typer.Option("unknown", "--category", help="Category for learned correction terms."),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
-    from_original: bool = typer.Option(False, "--from-original", help="Correct from the original ASR transcript."),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    summary: bool = typer.Option(
+        False, "--summary", help="Print without opening a TUI."
+    ),
+    editor: Optional[str] = typer.Option(
+        None, "--editor", help="Editor command used by transcript correction."
+    ),
+    no_ai: bool = typer.Option(
+        False,
+        "--no-ai",
+        help="Disable DashScope correction proposals in TUI text correction.",
+    ),
+    no_proposal_open: bool = typer.Option(
+        False,
+        "--no-proposal-open",
+        help="Do not open the generated correction proposal.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Accept generated correction proposals without prompting.",
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", help="DashScope correction model id."
+    ),
+    category: str = typer.Option(
+        "unknown", "--category", help="Category for learned correction terms."
+    ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
+    from_original: bool = typer.Option(
+        False, "--from-original", help="Correct from the original ASR transcript."
+    ),
 ) -> None:
     """Open the recommended human review workflow for project outputs, including unresolved speaker names."""
     project_dir = _resolve_review_project(project, projects_dir, summary=summary)
@@ -647,8 +807,17 @@ def _run_project_workflow(
     Returns:
         Project run summary.
     """
-    step_total = 7 + int(local_correction) + int(polish) + int(summarize) + 2 + int(speaker_stabilization)
-    step_descriptions = _project_run_step_descriptions(summarize, polish, local_correction, speaker_stabilization)
+    step_total = (
+        7
+        + int(local_correction)
+        + int(polish)
+        + int(summarize)
+        + 2
+        + int(speaker_stabilization)
+    )
+    step_descriptions = _project_run_step_descriptions(
+        summarize, polish, local_correction, speaker_stabilization
+    )
     emit_progress(
         progress,
         "Creating or reusing project",
@@ -678,7 +847,13 @@ def _run_project_workflow(
         step_index=1,
         step_total=step_total,
     )
-    transcription = transcribe_project(project.project_dir, options, progress=progress, step_offset=1, step_total=step_total)
+    transcription = transcribe_project(
+        project.project_dir,
+        options,
+        progress=progress,
+        step_offset=1,
+        step_total=step_total,
+    )
     lexicon_correction_summary = None
     if local_correction:
         correction_step = 8
@@ -692,8 +867,12 @@ def _run_project_workflow(
             step_total=step_total,
             reset_total=True,
         )
-        lexicon_correction_summary = _apply_run_lexicon_corrections(project.project_dir, progress=progress)
-        _record_local_correction_runtime(project.project_dir, lexicon_correction_summary)
+        lexicon_correction_summary = _apply_run_lexicon_corrections(
+            project.project_dir, progress=progress
+        )
+        _record_local_correction_runtime(
+            project.project_dir, lexicon_correction_summary
+        )
     correction_summary = None
     if polish:
         polish_step = 8 + int(local_correction)
@@ -718,7 +897,9 @@ def _run_project_workflow(
             progress=progress,
         )
         if _should_auto_accept_run_polish(correction_summary):
-            correction_summary = _accept_run_transcript_polish(project.project_dir, correction_summary)
+            correction_summary = _accept_run_transcript_polish(
+                project.project_dir, correction_summary
+            )
         _record_polish_runtime(project.project_dir, correction_summary)
     meeting_summary = None
     if summarize:
@@ -865,7 +1046,9 @@ def _project_run_step_descriptions(
         steps.append("Generating transcript polish proposal")
     if summarize:
         steps.append("Summarizing meeting")
-    steps.extend(("Matching speakers with voiceprints", "Applying accepted speaker matches"))
+    steps.extend(
+        ("Matching speakers with voiceprints", "Applying accepted speaker matches")
+    )
     if speaker_stabilization:
         steps.append("Stabilizing sentence speaker assignments")
     return tuple(steps)
@@ -873,7 +1056,9 @@ def _project_run_step_descriptions(
 
 def _should_stabilize_run_speakers(matches: SpeakerMatchSummary) -> bool:
     """Return whether automatic sentence stabilization has enough identity anchors."""
-    return bool(matches.accepted_person_mapping or matches.accepted_person_public_mapping)
+    return bool(
+        matches.accepted_person_mapping or matches.accepted_person_public_mapping
+    )
 
 
 def _record_and_emit_run_stage(
@@ -931,7 +1116,9 @@ def _record_polish_runtime(project_dir: Path, summary: CorrectionEditSummary) ->
     save_manifest(project_dir, manifest)
 
 
-def _polish_runtime_payload(project_dir: Path, summary: CorrectionEditSummary) -> dict[str, object]:
+def _polish_runtime_payload(
+    project_dir: Path, summary: CorrectionEditSummary
+) -> dict[str, object]:
     """Build JSON-safe transcript polish state."""
     status = "failed" if summary.model_error else "no_changes"
     if summary.proposed_change_count:
@@ -945,9 +1132,15 @@ def _polish_runtime_payload(project_dir: Path, summary: CorrectionEditSummary) -
         "error": summary.model_error,
         "proposed_changes": summary.proposed_change_count,
         "accepted_changes": summary.change_count if summary.accepted else 0,
-        "proposal_json": _relative_optional_path(project_dir, summary.proposal_json_path),
-        "proposal_diff": _relative_optional_path(project_dir, summary.proposal_diff_path),
-        "corrected_transcript": _relative_optional_path(project_dir, summary.corrected_named_transcript_path),
+        "proposal_json": _relative_optional_path(
+            project_dir, summary.proposal_json_path
+        ),
+        "proposal_diff": _relative_optional_path(
+            project_dir, summary.proposal_diff_path
+        ),
+        "corrected_transcript": _relative_optional_path(
+            project_dir, summary.corrected_named_transcript_path
+        ),
     }
     return payload
 
@@ -959,17 +1152,25 @@ def _should_auto_accept_run_polish(summary: CorrectionEditSummary) -> bool:
     Auto-accept is config-gated so existing users keep the review-before-accept
     workflow unless they opt into the stricter agent-friendly path.
     """
-    if summary.model_error or summary.proposal_json_path is None or summary.proposed_change_count == 0:
+    if (
+        summary.model_error
+        or summary.proposal_json_path is None
+        or summary.proposed_change_count == 0
+    ):
         return False
     settings = load_settings(require_dashscope=False)
     return settings.correction_polish_auto_accept
 
 
-def _accept_run_transcript_polish(project_dir: Path, summary: CorrectionEditSummary) -> CorrectionEditSummary:
+def _accept_run_transcript_polish(
+    project_dir: Path, summary: CorrectionEditSummary
+) -> CorrectionEditSummary:
     """Accept a project-run transcript polish proposal without prompting."""
     paths = project_paths(project_dir)
     manifest = load_manifest(paths.root)
-    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(
+        paths.root
+    )
     return project_correct_commands.accept_correction_for_review(
         paths=paths,
         manifest=manifest,
@@ -996,7 +1197,9 @@ def _apply_run_lexicon_corrections(
     """
     paths = project_paths(project_dir)
     manifest = load_manifest(paths.root)
-    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(
+        paths.root
+    )
     summary = apply_lexicon_corrections(
         paths=paths,
         manifest=manifest,
@@ -1010,21 +1213,29 @@ def _apply_run_lexicon_corrections(
         progress=progress,
     )
     if summary.accepted and summary.change_count:
-        project_correct_commands.record_correction_outputs(paths.root, manifest, summary)
+        project_correct_commands.record_correction_outputs(
+            paths.root, manifest, summary
+        )
         save_manifest(paths.root, manifest)
     return summary
 
 
-def _record_local_correction_runtime(project_dir: Path, summary: CorrectionEditSummary) -> None:
+def _record_local_correction_runtime(
+    project_dir: Path, summary: CorrectionEditSummary
+) -> None:
     """Persist local lexicon correction state for project show."""
     manifest = load_manifest(project_dir)
     runtime = dict(manifest.runtime)
-    runtime["local_correction"] = _local_correction_runtime_payload(project_dir, summary)
+    runtime["local_correction"] = _local_correction_runtime_payload(
+        project_dir, summary
+    )
     manifest.runtime = runtime
     save_manifest(project_dir, manifest)
 
 
-def _local_correction_runtime_payload(project_dir: Path, summary: CorrectionEditSummary) -> dict[str, object]:
+def _local_correction_runtime_payload(
+    project_dir: Path, summary: CorrectionEditSummary
+) -> dict[str, object]:
     """Build JSON-safe local correction runtime state."""
     status = "applied" if summary.accepted and summary.change_count else "no_changes"
     return {
@@ -1033,7 +1244,9 @@ def _local_correction_runtime_payload(project_dir: Path, summary: CorrectionEdit
         "model": summary.model,
         "changed_sentences": summary.change_count,
         "rules_applied": len(summary.understanding),
-        "corrected_transcript": _relative_optional_path(project_dir, summary.corrected_named_transcript_path),
+        "corrected_transcript": _relative_optional_path(
+            project_dir, summary.corrected_named_transcript_path
+        ),
         "hotwords": _relative_optional_path(project_dir, summary.hotwords_path),
         "lexicon_db": str(summary.lexicon_db) if summary.lexicon_db else None,
     }
@@ -1070,7 +1283,9 @@ def _prepare_run_transcript_polish(
     """
     paths = project_paths(project_dir)
     manifest = load_manifest(paths.root)
-    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(
+        paths.root
+    )
     options = CorrectionEditOptions(
         open_editor=False,
         open_proposal=False,
@@ -1091,12 +1306,18 @@ def _prepare_run_transcript_polish(
 
 @app.command("status")
 def status(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Print a project status summary."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
     paths = project_paths(resolved_project_dir)
     if as_json:
@@ -1125,7 +1346,9 @@ def status(
     runtime = manifest.runtime
     if runtime:
         typer.echo(f"Current stage: {runtime.get('current_stage', '-')}")
-        typer.echo(f"Stage updated: {runtime.get('last_heartbeat_at') or runtime.get('stage_started_at') or '-'}")
+        typer.echo(
+            f"Stage updated: {runtime.get('last_heartbeat_at') or runtime.get('stage_started_at') or '-'}"
+        )
         if runtime.get("external_ids"):
             typer.echo(f"External IDs: {runtime.get('external_ids')}")
         if runtime.get("last_error"):
@@ -1135,11 +1358,17 @@ def status(
 
 @app.command("git-init")
 def git_init(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
 ) -> None:
     """Initialize optional Git tracking for human-edited project files."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     gitignore_path = run_with_cli_errors(lambda: init_project_git(resolved_project_dir))
     typer.echo(f"Git initialized: {resolved_project_dir}")
     typer.echo(f"Git ignore written to: {gitignore_path}")
@@ -1147,21 +1376,33 @@ def git_init(
 
 @speakers_app.command("inspect")
 def speakers_inspect(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     sample_count: int = typer.Option(5, "--sample-count", min=1, max=20),
 ) -> None:
     """Print diagnostic speaker samples; read-only, does not apply names."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     result = run_with_cli_errors(
-        lambda: load_transcript_result(project_paths(resolved_project_dir).asr_dir / "sentences.json")
+        lambda: load_transcript_result(
+            project_paths(resolved_project_dir).asr_dir / "sentences.json"
+        )
     )
     summaries = build_speaker_summaries(result, sample_count=sample_count)
     if not summaries:
         typer.echo("No detected speakers found in the transcript.")
         raise typer.Exit(code=1)
-    speaker_mapping = run_with_cli_errors(lambda: _load_existing_speaker_mapping(resolved_project_dir))
-    ignored_speakers = run_with_cli_errors(lambda: load_project_ignored_speakers(resolved_project_dir))
+    speaker_mapping = run_with_cli_errors(
+        lambda: _load_existing_speaker_mapping(resolved_project_dir)
+    )
+    ignored_speakers = run_with_cli_errors(
+        lambda: load_project_ignored_speakers(resolved_project_dir)
+    )
     speaker_matches = run_with_cli_errors(
         lambda: _load_speaker_match_summaries(
             resolved_project_dir,
@@ -1176,26 +1417,38 @@ def speakers_inspect(
         typer.echo(
             render_speaker_summary(
                 summary,
-                mapped_name=None if is_ignored else speaker_mapping.get(summary.speaker_id),
-                match_summary=None if is_ignored else speaker_matches.get(summary.speaker_id),
+                mapped_name=None
+                if is_ignored
+                else speaker_mapping.get(summary.speaker_id),
+                match_summary=None
+                if is_ignored
+                else speaker_matches.get(summary.speaker_id),
                 ignored=is_ignored,
             )
         )
-    if _project_has_unresolved_match(resolved_project_dir, ignored_speaker_ids=ignored_speakers):
+    if _project_has_unresolved_match(
+        resolved_project_dir, ignored_speaker_ids=ignored_speakers
+    ):
         manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
         _echo_unresolved_speaker_next_steps(manifest.project_id, speaker_only=True)
 
 
 @speakers_app.command("preview")
 def speakers_preview(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     speaker_id: Optional[int] = typer.Option(None, "--speaker-id"),
     padding_seconds: int = typer.Option(8, "--padding-seconds", min=0),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
     """Open the source video with the project's subtitle for speaker review."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
     paths = project_paths(resolved_project_dir)
     start_seconds = preview_start_seconds(
@@ -1216,10 +1469,20 @@ def speakers_preview(
 
 @speakers_app.command("apply")
 def speakers_apply(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    mappings: list[str] = typer.Option([], "--map", help="Apply speaker_id=name mapping non-interactively; merges with saved names by default."),
-    sample_count: int = typer.Option(3, "--sample-count", min=1, max=20, help="Samples shown per speaker."),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    mappings: list[str] = typer.Option(
+        [],
+        "--map",
+        help="Apply speaker_id=name mapping non-interactively; merges with saved names by default.",
+    ),
+    sample_count: int = typer.Option(
+        3, "--sample-count", min=1, max=20, help="Samples shown per speaker."
+    ),
     replace_existing: bool = typer.Option(
         False,
         "--replace",
@@ -1227,7 +1490,9 @@ def speakers_apply(
     ),
 ) -> None:
     """Apply already confirmed mappings non-interactively for scripts or automation."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     sentences_path = project_paths(resolved_project_dir).asr_dir / "sentences.json"
     result = run_with_cli_errors(lambda: load_transcript_result(sentences_path))
     resolved = _resolve_speaker_mappings(
@@ -1238,7 +1503,9 @@ def speakers_apply(
         result=result,
     )
     mapping_path, transcript_path, srt_path = run_with_cli_errors(
-        lambda: apply_project_speakers(resolved_project_dir, resolved, replace_existing=replace_existing)
+        lambda: apply_project_speakers(
+            resolved_project_dir, resolved, replace_existing=replace_existing
+        )
     )
     typer.echo(f"Mapping written to: {mapping_path}")
     typer.echo(f"Named transcript written to: {transcript_path}")
@@ -1259,7 +1526,9 @@ def speakers_review(
         file_okay=False,
         dir_okay=True,
     ),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     page_size: Optional[int] = typer.Option(
         None,
         "--page-size",
@@ -1267,7 +1536,9 @@ def speakers_review(
         max=50,
         help="Override samples per page. By default the TUI uses the pane height.",
     ),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     summary: bool = typer.Option(
         False,
         "--summary",
@@ -1275,7 +1546,9 @@ def speakers_review(
     ),
 ) -> None:
     """Open the recommended interactive speaker identity review."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     _run_speaker_review(
         resolved_project_dir,
         page_size=page_size,
@@ -1312,12 +1585,15 @@ def _run_speaker_review(
             "Speaker review TUI requires an interactive terminal. Use --summary to inspect."
         )
     if correction_options is not None:
+
         def save_active_project(
             active_project_dir: Path,
             decision: SpeakerReviewDecision,
         ) -> SpeakerReviewSaveOutcome:
             """Save review state for the project currently shown in the TUI."""
-            return _save_review_from_tui(active_project_dir, decision, correction_options)
+            return _save_review_from_tui(
+                active_project_dir, decision, correction_options
+            )
 
         def accept_active_project(
             active_project_dir: Path,
@@ -1339,7 +1615,9 @@ def _run_speaker_review(
         )
         return
     decision = run_speaker_review_tui(session)
-    _handle_speaker_review_decision(project_dir, decision, correction_options, store_dir=store_dir)
+    _handle_speaker_review_decision(
+        project_dir, decision, correction_options, store_dir=store_dir
+    )
 
 
 def _handle_speaker_review_decision(
@@ -1354,8 +1632,10 @@ def _handle_speaker_review_decision(
         typer.echo("Speaker review exited without saving.")
         return
     project_dir = decision.project_dir or project_dir
-    effective_store_dir = store_dir if store_dir is not None else (
-        correction_options.store_dir if correction_options else None
+    effective_store_dir = (
+        store_dir
+        if store_dir is not None
+        else (correction_options.store_dir if correction_options else None)
     )
     reassignment_result = _persist_sentence_reassignments(
         project_dir, decision, store_dir=effective_store_dir
@@ -1392,9 +1672,13 @@ def _echo_reassignment_result(result: SentenceReassignmentApplyResult | None) ->
     if result is None:
         return
     typer.echo("")
-    typer.echo(f"Sentence reassignments applied to: {', '.join(str(path) for path in result.sentence_files)}")
+    typer.echo(
+        f"Sentence reassignments applied to: {', '.join(str(path) for path in result.sentence_files)}"
+    )
     if result.anonymous_transcript_path is not None:
-        typer.echo(f"Anonymous transcript regenerated: {result.anonymous_transcript_path}")
+        typer.echo(
+            f"Anonymous transcript regenerated: {result.anonymous_transcript_path}"
+        )
     if result.deleted_samples:
         typer.echo(
             f"Voiceprint samples invalidated: {len(result.deleted_samples)} (re-capture from voiceprint review)"
@@ -1423,7 +1707,9 @@ def _save_review_from_tui(
     )
     correction_summary = None
     if decision.action == "correct-inline":
-        correction_summary = _prepare_review_correction_from_tui(project_dir, decision, correction_options)
+        correction_summary = _prepare_review_correction_from_tui(
+            project_dir, decision, correction_options
+        )
         if correction_options.yes and correction_summary.proposal_json_path is not None:
             correction_summary = _accept_review_correction_from_tui(
                 project_dir,
@@ -1450,7 +1736,9 @@ def _prepare_review_correction_from_tui(
         raise RuntimeError("No transcript correction edits were staged.")
     paths = project_paths(project_dir)
     manifest = load_manifest(paths.root)
-    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(
+        paths.root
+    )
     return project_correct_commands.prepare_inline_corrections_for_review(
         paths=paths,
         manifest=manifest,
@@ -1469,7 +1757,9 @@ def _accept_review_correction_from_tui(
     """Accept a pending correction proposal from inside the TUI."""
     paths = project_paths(project_dir)
     manifest = load_manifest(paths.root)
-    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    speaker_mapping = project_correct_commands.load_speaker_mapping_for_correction(
+        paths.root
+    )
     summary = project_correct_commands.accept_correction_for_review(
         paths=paths,
         manifest=manifest,
@@ -1547,11 +1837,15 @@ def _run_review_inline_correction(
     """Run transcript correction from TUI-edited sentences."""
     correction_edits = _decision_correction_edits(decision)
     if correction_options is None or not correction_edits:
-        typer.echo("Transcript correction is only available from meeting-asr project review.")
+        typer.echo(
+            "Transcript correction is only available from meeting-asr project review."
+        )
         return
     paths = project_paths(project_dir)
     manifest = run_with_cli_errors(lambda: load_manifest(paths.root))
-    speaker_mapping = run_with_cli_errors(lambda: project_correct_commands.load_speaker_mapping_for_correction(paths.root))
+    speaker_mapping = run_with_cli_errors(
+        lambda: project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    )
     typer.echo("")
     typer.echo("Transcript correction:")
     run_with_cli_errors(
@@ -1572,11 +1866,15 @@ def _run_review_transcript_correction(
 ) -> None:
     """Run transcript correction after project review saves speaker names."""
     if correction_options is None:
-        typer.echo("Transcript correction is only available from meeting-asr project review.")
+        typer.echo(
+            "Transcript correction is only available from meeting-asr project review."
+        )
         return
     paths = project_paths(project_dir)
     manifest = run_with_cli_errors(lambda: load_manifest(paths.root))
-    speaker_mapping = run_with_cli_errors(lambda: project_correct_commands.load_speaker_mapping_for_correction(paths.root))
+    speaker_mapping = run_with_cli_errors(
+        lambda: project_correct_commands.load_speaker_mapping_for_correction(paths.root)
+    )
     typer.echo("")
     typer.echo("Transcript correction:")
     run_with_cli_errors(
@@ -1590,7 +1888,9 @@ def _run_review_transcript_correction(
     )
 
 
-def _resolve_review_project(project: str | None, projects_dir: Path | None, *, summary: bool) -> Path | None:
+def _resolve_review_project(
+    project: str | None, projects_dir: Path | None, *, summary: bool
+) -> Path | None:
     """Resolve a project review target or run the project picker."""
     if project is not None:
         return run_with_cli_errors(lambda: resolve_project_ref(project, projects_dir))
@@ -1602,7 +1902,9 @@ def _resolve_review_project(project: str | None, projects_dir: Path | None, *, s
         typer.echo("No projects found.")
         return None
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise typer.BadParameter("Project review TUI requires an interactive terminal. Provide PROJECT or use --summary.")
+        raise typer.BadParameter(
+            "Project review TUI requires an interactive terminal. Provide PROJECT or use --summary."
+        )
     selected = run_project_picker_tui(session)
     if selected is None:
         typer.echo("Project review exited without selecting a project.")
@@ -1611,19 +1913,33 @@ def _resolve_review_project(project: str | None, projects_dir: Path | None, *, s
 
 @speakers_app.command("match")
 def speakers_match(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
     threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
     sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
     apply_matches: bool = typer.Option(False, "--apply"),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
 ) -> None:
     """Match project speakers against the cross-project voiceprint library."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     summary = run_with_progress(
         lambda reporter: match_project_speakers(
             resolved_project_dir,
@@ -1654,13 +1970,27 @@ def speakers_match(
 
 @speakers_app.command("sample-match")
 def speakers_sample_match(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
-    threshold: float = typer.Option(DEFAULT_SAMPLE_IDENTITY_THRESHOLD, "--threshold", min=0.0, max=1.0),
-    conflict_margin: float = typer.Option(DEFAULT_IDENTITY_CONFLICT_MARGIN, "--conflict-margin", min=0.0, max=1.0),
-    ambiguous_margin: float = typer.Option(DEFAULT_IDENTITY_AMBIGUOUS_MARGIN, "--ambiguous-margin", min=0.0, max=1.0),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
+    threshold: float = typer.Option(
+        DEFAULT_SAMPLE_IDENTITY_THRESHOLD, "--threshold", min=0.0, max=1.0
+    ),
+    conflict_margin: float = typer.Option(
+        DEFAULT_IDENTITY_CONFLICT_MARGIN, "--conflict-margin", min=0.0, max=1.0
+    ),
+    ambiguous_margin: float = typer.Option(
+        DEFAULT_IDENTITY_AMBIGUOUS_MARGIN, "--ambiguous-margin", min=0.0, max=1.0
+    ),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
     workers: int = typer.Option(
@@ -1671,11 +2001,19 @@ def speakers_sample_match(
         help="Parallel workers for per-sentence embedding and matching.",
     ),
     write_report: bool = typer.Option(True, "--write-report/--no-write-report"),
-    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON."
+    ),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
 ) -> None:
     """Match each transcript sample against the assigned speaker's voiceprint identity."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     summary = run_with_progress(
         lambda reporter: match_project_speaker_samples(
             resolved_project_dir,
@@ -1702,9 +2040,15 @@ def speakers_sample_match(
 
 @speakers_app.command("cluster")
 def speakers_cluster(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
     sample_count: int = typer.Option(8, "--sample-count", min=2, max=40),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
@@ -1713,16 +2057,30 @@ def speakers_cluster(
         "--all-segments",
         help="Score every transcript segment against high-information cluster anchors.",
     ),
-    same_speaker_threshold: float = typer.Option(0.60, "--same-speaker-threshold", min=0.0, max=1.0),
+    same_speaker_threshold: float = typer.Option(
+        0.60, "--same-speaker-threshold", min=0.0, max=1.0
+    ),
     merge_threshold: float = typer.Option(0.62, "--merge-threshold", min=0.0, max=1.0),
-    warning_score: float = typer.Option(DEFAULT_WARNING_SCORE, "--warning-score", min=0.0, max=1.0),
-    critical_score: float = typer.Option(DEFAULT_CRITICAL_SCORE, "--critical-score", min=0.0, max=1.0),
+    warning_score: float = typer.Option(
+        DEFAULT_WARNING_SCORE, "--warning-score", min=0.0, max=1.0
+    ),
+    critical_score: float = typer.Option(
+        DEFAULT_CRITICAL_SCORE, "--critical-score", min=0.0, max=1.0
+    ),
     write_report: bool = typer.Option(True, "--write-report/--no-write-report"),
-    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON."
+    ),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
 ) -> None:
     """Diagnose whether detected speaker groups are acoustically coherent."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     summary = run_with_progress(
         lambda reporter: analyze_project_speaker_clusters(
             resolved_project_dir,
@@ -1750,13 +2108,21 @@ def speakers_cluster(
 
 @speakers_app.command("compare-srt")
 def speakers_compare_srt(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    dingtalk_srt: Path = typer.Option(..., "--dingtalk-srt", exists=True, file_okay=True, dir_okay=False),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    dingtalk_srt: Path = typer.Option(
+        ..., "--dingtalk-srt", exists=True, file_okay=True, dir_okay=False
+    ),
     output: Optional[Path] = typer.Option(None, "--output"),
 ) -> None:
     """Compare a DingTalk SRT with the project's subtitle."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     paths = project_paths(resolved_project_dir)
     local_srt = _preferred_project_srt(paths)
     output_path = output or paths.exports_dir / "speaker_comparison.md"
@@ -1845,7 +2211,8 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
     accepted_matches = len(summary.applied_mapping)
     ignored_ids = load_project_ignored_speakers(project_dir)
     statuses = [
-        effective_match_status(match, ignored_speaker_ids=ignored_ids) for match in summary.matches.matches
+        effective_match_status(match, ignored_speaker_ids=ignored_ids)
+        for match in summary.matches.matches
     ]
     below_threshold_matches = statuses.count(MATCH_STATUS_BELOW_THRESHOLD)
     no_candidate_matches = statuses.count(MATCH_STATUS_NO_CANDIDATE)
@@ -1863,7 +2230,9 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
         correction_summary=summary.correction_summary,
         lexicon_correction_summary=summary.lexicon_correction_summary,
         transcription=summary.transcription,
-        speaker_reassignments=0 if summary.stabilization is None else summary.stabilization.reassignment_count,
+        speaker_reassignments=0
+        if summary.stabilization is None
+        else summary.stabilization.reassignment_count,
         speaker_matches=speaker_match_rows(
             summary.matches.matches,
             default_threshold=summary.matches.threshold,
@@ -1911,7 +2280,9 @@ def _echo_project_updated(summary: ProjectUpdateSummary) -> None:
     typer.echo(f"Meeting time: {summary.manifest.source.meeting_time or '-'}")
 
 
-def _confirm_project_delete(project_dir: Path, manifest: ProjectManifest, *, permanent: bool) -> bool:
+def _confirm_project_delete(
+    project_dir: Path, manifest: ProjectManifest, *, permanent: bool
+) -> bool:
     """
     Ask for destructive project delete confirmation.
 
@@ -2091,12 +2462,19 @@ def _echo_match_summary(summary: SpeakerMatchSummary) -> None:
     project_dir = summary.match_path.parent.parent
     ignored = load_project_ignored_speakers(project_dir)
     for match in summary.matches:
-        typer.echo(_voiceprint_match_cli_line(match, default_threshold=summary.threshold, ignored_speaker_ids=ignored))
+        typer.echo(
+            _voiceprint_match_cli_line(
+                match, default_threshold=summary.threshold, ignored_speaker_ids=ignored
+            )
+        )
     if any(
-        effective_match_status(match, ignored_speaker_ids=ignored) not in (MATCH_STATUS_MATCHED, MATCH_STATUS_IGNORED)
+        effective_match_status(match, ignored_speaker_ids=ignored)
+        not in (MATCH_STATUS_MATCHED, MATCH_STATUS_IGNORED)
         for match in summary.matches
     ):
-        _echo_unresolved_speaker_next_steps(_project_ref_from_match_path(summary.match_path), speaker_only=True)
+        _echo_unresolved_speaker_next_steps(
+            _project_ref_from_match_path(summary.match_path), speaker_only=True
+        )
 
 
 def _voiceprint_match_cli_line(
@@ -2148,11 +2526,13 @@ def _project_ref_from_match_path(match_path: Path) -> str:
     project_dir = match_path.parent.parent
     try:
         return load_manifest(project_dir).project_id
-    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+    except OSError, ValueError, KeyError, json.JSONDecodeError:
         return str(project_dir)
 
 
-def _echo_unresolved_speaker_next_steps(project_ref: str, *, speaker_only: bool) -> None:
+def _echo_unresolved_speaker_next_steps(
+    project_ref: str, *, speaker_only: bool
+) -> None:
     """
     Print concrete commands for unresolved speaker remediation.
 
@@ -2187,11 +2567,17 @@ def _shell_quote_path(path: Path) -> str:
     return shlex.quote(str(path.expanduser().resolve()))
 
 
-def _created_project_root(project_dir: Path | None, projects_dir: Path | None, manifest) -> Path:
+def _created_project_root(
+    project_dir: Path | None, projects_dir: Path | None, manifest
+) -> Path:
     """Resolve the root for a freshly created project."""
     if project_dir is not None:
         return project_dir.expanduser().resolve()
-    base_dir = projects_dir.expanduser().resolve() if projects_dir else get_default_projects_dir()
+    base_dir = (
+        projects_dir.expanduser().resolve()
+        if projects_dir
+        else get_default_projects_dir()
+    )
     return base_dir / manifest.project_id.replace("-", "_", 1)
 
 
@@ -2211,9 +2597,17 @@ def _preferred_project_srt(paths) -> Path:
 def _project_preview_media(project_root: Path, manifest: ProjectManifest) -> Path:
     """Return media aligned with subtitles while preserving video preview when present."""
     source = resolve_project_source_path(project_root, manifest)
-    if source.suffix.lower() in {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav"}:
-        return resolve_project_audio_path(project_root, manifest)
-    return source
+    if source.exists() and source.suffix.lower() not in {
+        ".aac",
+        ".flac",
+        ".m4a",
+        ".mp3",
+        ".ogg",
+        ".opus",
+        ".wav",
+    }:
+        return source
+    return resolve_project_audio_path(project_root, manifest)
 
 
 def _resolve_speaker_mappings(
@@ -2242,7 +2636,9 @@ def _resolve_speaker_mappings(
     return _prompt_speaker_mappings(project_dir, result, sample_count=sample_count)
 
 
-def _prompt_speaker_mappings(project_dir: Path, result: TranscriptResult, *, sample_count: int) -> dict[int, str]:
+def _prompt_speaker_mappings(
+    project_dir: Path, result: TranscriptResult, *, sample_count: int
+) -> dict[int, str]:
     """
     Prompt for speaker names with transcript samples.
 
@@ -2270,7 +2666,11 @@ def _prompt_speaker_mappings(project_dir: Path, result: TranscriptResult, *, sam
         if index:
             typer.echo("")
         typer.echo(render_speaker_summary(summary))
-        default_name = existing.get(summary.speaker_id) or matched.get(summary.speaker_id) or summary.anonymous_label
+        default_name = (
+            existing.get(summary.speaker_id)
+            or matched.get(summary.speaker_id)
+            or summary.anonymous_label
+        )
         resolved[summary.speaker_id] = _prompt_speaker_name(
             speaker_label=summary.anonymous_label,
             default_name=default_name,
@@ -2324,7 +2724,9 @@ def _prompt_speaker_name(
                 segments=preview_segments,
             )
             continue
-        offset, samples = _show_more_speaker_samples(speaker_label, segments, offset, sample_count)
+        offset, samples = _show_more_speaker_samples(
+            speaker_label, segments, offset, sample_count
+        )
         if samples:
             preview_segments = samples
 
@@ -2383,7 +2785,9 @@ def _play_speaker_apply_preview(
             segments=segments,
         )
         command = build_audio_preview_command(media=clip_path, start_seconds=0.0)
-        typer.echo(f"Starting audio preview for {speaker_label} with {len(segments)} displayed sample(s).")
+        typer.echo(
+            f"Starting audio preview for {speaker_label} with {len(segments)} displayed sample(s)."
+        )
         typer.echo("Controls: Space/P pauses, Q/Esc stops early, Ctrl-C also stops.")
         _run_speaker_apply_preview_command(command)
     except Exception as exc:  # noqa: BLE001
@@ -2422,7 +2826,9 @@ def _run_speaker_apply_preview_command(command: list[str]) -> None:
         returncode = process.wait()
     finally:
         if old_terminal_settings is not None:
-            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_terminal_settings)
+            termios.tcsetattr(
+                sys.stdin.fileno(), termios.TCSADRAIN, old_terminal_settings
+            )
     if stopped:
         typer.echo("Preview stopped.")
         return
@@ -2491,7 +2897,9 @@ def _echo_preview_segments(speaker_label: str, segments: list[SentenceSegment]) 
         segments: Currently visible speaker segments.
     """
     if len(segments) == 1:
-        typer.echo(f"Preview sample for {speaker_label}: {_render_preview_target_sample(segments[0])}")
+        typer.echo(
+            f"Preview sample for {speaker_label}: {_render_preview_target_sample(segments[0])}"
+        )
         return
     typer.echo(f"Preview samples for {speaker_label}:")
     for segment in segments:
@@ -2517,7 +2925,9 @@ def _build_speaker_apply_audio_preview_clip(
     """
     if not segments:
         raise RuntimeError("No transcript samples found for this speaker.")
-    clip_dir = _speaker_apply_preview_clip_dir(preview_context.project_root, speaker_label)
+    clip_dir = _speaker_apply_preview_clip_dir(
+        preview_context.project_root, speaker_label
+    )
     clip_dir.mkdir(parents=True, exist_ok=True)
     clip_paths = []
     for index, segment in enumerate(segments, start=1):
@@ -2546,7 +2956,10 @@ def _speaker_apply_preview_clip_dir(project_root: Path, speaker_label: str) -> P
     Returns:
         Temporary clip directory.
     """
-    safe_label = "".join(char if char.isalnum() else "_" for char in speaker_label).strip("_") or "speaker"
+    safe_label = (
+        "".join(char if char.isalnum() else "_" for char in speaker_label).strip("_")
+        or "speaker"
+    )
     return project_root / "tmp" / "speaker_apply_preview" / safe_label
 
 
@@ -2580,7 +2993,9 @@ def _concatenate_wav_clips(clip_paths: list[Path], output_path: Path) -> Path:
                     writer.setparams(params)
                     expected_format = current_format
                 elif current_format != expected_format:
-                    raise RuntimeError(f"Audio preview clip format mismatch: {clip_path}")
+                    raise RuntimeError(
+                        f"Audio preview clip format mismatch: {clip_path}"
+                    )
                 writer.writeframes(reader.readframes(reader.getnframes()))
                 if index + 1 < len(clip_paths):
                     _write_wav_silence(writer, params)
@@ -2604,7 +3019,9 @@ def _write_wav_silence(
     writer.writeframes(b"\x00" * frame_count * params.nchannels * params.sampwidth)
 
 
-def _speaker_apply_preview_target(segments: list[SentenceSegment]) -> SpeakerApplyPreviewTarget:
+def _speaker_apply_preview_target(
+    segments: list[SentenceSegment],
+) -> SpeakerApplyPreviewTarget:
     """
     Select a finite preview target for the current speaker.
 
@@ -2617,7 +3034,9 @@ def _speaker_apply_preview_target(segments: list[SentenceSegment]) -> SpeakerApp
     if not segments:
         raise RuntimeError("No transcript samples found for this speaker.")
     segment = _speaker_apply_preview_segment(segments)
-    start_seconds = max(0.0, segment.begin_time_ms / 1000.0 - SPEAKER_APPLY_PREVIEW_LEAD_SECONDS)
+    start_seconds = max(
+        0.0, segment.begin_time_ms / 1000.0 - SPEAKER_APPLY_PREVIEW_LEAD_SECONDS
+    )
     end_seconds = segment.end_time_ms / 1000.0 + SPEAKER_APPLY_PREVIEW_TAIL_SECONDS
     duration_seconds = min(
         SPEAKER_APPLY_PREVIEW_MAX_SECONDS,
@@ -2638,7 +3057,11 @@ def _speaker_apply_preview_segment(segments: list[SentenceSegment]) -> SentenceS
     """
     return max(
         segments,
-        key=lambda segment: (_segment_duration_ms(segment), len(segment.text.strip()), -segment.begin_time_ms),
+        key=lambda segment: (
+            _segment_duration_ms(segment),
+            len(segment.text.strip()),
+            -segment.begin_time_ms,
+        ),
     )
 
 
@@ -2716,11 +3139,13 @@ def _remember_prompt_history(value: str) -> None:
         if length > 0 and readline.get_history_item(length) == value:
             return
         readline.add_history(value)
-    except (AttributeError, OSError):
+    except AttributeError, OSError:
         return
 
 
-def _speaker_segments_by_id(result: TranscriptResult) -> dict[int, list[SentenceSegment]]:
+def _speaker_segments_by_id(
+    result: TranscriptResult,
+) -> dict[int, list[SentenceSegment]]:
     """
     Group non-empty transcript segments by speaker id.
 
@@ -2846,7 +3271,9 @@ def _load_speaker_match_summaries(
         speaker_id = int(item["speaker_id"])
         if speaker_id in ignored:
             continue
-        summaries[speaker_id] = _speaker_match_summary(item, mapped_name=speaker_mapping.get(speaker_id))
+        summaries[speaker_id] = _speaker_match_summary(
+            item, mapped_name=speaker_mapping.get(speaker_id)
+        )
     return summaries
 
 
@@ -2881,7 +3308,9 @@ def _project_has_unresolved_match(
     return False
 
 
-def _speaker_match_summary(item: dict[str, object], *, mapped_name: str | None = None) -> str:
+def _speaker_match_summary(
+    item: dict[str, object], *, mapped_name: str | None = None
+) -> str:
     """
     Format one voiceprint match row for humans.
 
@@ -2941,7 +3370,9 @@ def _style_speaker_match_summary(text: str, *, accepted: bool, conflict: bool) -
     return typer.style(text, fg=typer.colors.YELLOW)
 
 
-def _speaker_match_conflicts(item: dict[str, object], match_name: str | None, mapped_name: str | None) -> bool:
+def _speaker_match_conflicts(
+    item: dict[str, object], match_name: str | None, mapped_name: str | None
+) -> bool:
     """
     Return whether a voiceprint match conflicts with a confirmed mapping.
 
@@ -2974,5 +3405,5 @@ def _safe_float(value: object) -> float | None:
     """
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None

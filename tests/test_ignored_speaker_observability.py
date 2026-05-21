@@ -73,7 +73,9 @@ def _write_speaker_ignore(project_dir: Path, ignored: list[int]) -> Path:
     """Write speakers/speaker_ignore.json without going through apply."""
     path = project_dir / "speakers" / "speaker_ignore.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"ignored_speakers": ignored}, ensure_ascii=False), encoding="utf-8")
+    path.write_text(
+        json.dumps({"ignored_speakers": ignored}, ensure_ascii=False), encoding="utf-8"
+    )
     return path
 
 
@@ -266,7 +268,9 @@ def test_project_speakers_inspect_treats_ignored_as_resolved(tmp_path: Path) -> 
         json.dumps(payload, ensure_ascii=False), encoding="utf-8"
     )
 
-    result = runner.invoke(app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"])
+    result = runner.invoke(
+        app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"]
+    )
 
     assert result.exit_code == 0, result.output
     assert "Speaker C (speaker_id=2)" in result.output
@@ -277,7 +281,9 @@ def test_project_speakers_inspect_treats_ignored_as_resolved(tmp_path: Path) -> 
     assert "Recommended next step:" not in result.output
 
 
-def test_project_speakers_inspect_still_prompts_when_non_ignored_remains(tmp_path: Path) -> None:
+def test_project_speakers_inspect_still_prompts_when_non_ignored_remains(
+    tmp_path: Path,
+) -> None:
     """When a non-ignored speaker still needs review, inspect must still prompt."""
     project_dir = _sample_project(tmp_path)
     _write_three_speaker_sentences(project_dir / "asr" / "sentences.json")
@@ -285,15 +291,22 @@ def test_project_speakers_inspect_still_prompts_when_non_ignored_remains(tmp_pat
     _write_matches(project_dir)
     manifest = load_manifest(project_dir)
 
-    result = runner.invoke(app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"])
+    result = runner.invoke(
+        app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"]
+    )
 
     assert result.exit_code == 0, result.output
     assert "Status: ignored" in result.output
     assert "best=墨泪" not in result.output  # ignored speaker shouldn't expose match
-    assert f"Recommended next step: meeting-asr project speakers review {manifest.project_id}" in result.output
+    assert (
+        f"Recommended next step: meeting-asr project speakers review {manifest.project_id}"
+        in result.output
+    )
 
 
-def test_project_show_renders_ignored_status_in_voiceprint_table(tmp_path: Path) -> None:
+def test_project_show_renders_ignored_status_in_voiceprint_table(
+    tmp_path: Path,
+) -> None:
     """Project show should render ignored speakers as ``ignored`` in the match table."""
     project_dir = _sample_project(tmp_path)
     _write_three_speaker_sentences(project_dir / "asr" / "sentences.json")

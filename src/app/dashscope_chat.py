@@ -65,13 +65,17 @@ def generate_chat_text(
 
 def resolve_chat_endpoint(model: str, settings: Settings) -> DashScopeChatEndpoint:
     """Resolve the model endpoint from config overrides or built-in routes."""
-    configured_endpoint = _configured_endpoint(model, settings.dashscope_model_endpoints or {})
+    configured_endpoint = _configured_endpoint(
+        model, settings.dashscope_model_endpoints or {}
+    )
     if configured_endpoint:
         return configured_endpoint
     return "multimodal" if _looks_multimodal_chat_model(model) else "generation"
 
 
-def _configured_endpoint(model: str, routes: dict[str, str]) -> DashScopeChatEndpoint | None:
+def _configured_endpoint(
+    model: str, routes: dict[str, str]
+) -> DashScopeChatEndpoint | None:
     """Return an endpoint from exact or wildcard route config."""
     exact_endpoint = routes.get(model)
     if exact_endpoint is not None:
@@ -87,7 +91,9 @@ def _validate_endpoint(pattern: str, endpoint: str) -> DashScopeChatEndpoint:
     normalized_endpoint = endpoint.strip().lower()
     if normalized_endpoint not in VALID_DASHSCOPE_CHAT_ENDPOINTS:
         supported = ", ".join(sorted(VALID_DASHSCOPE_CHAT_ENDPOINTS))
-        raise ValueError(f"Unsupported DashScope endpoint {endpoint!r} for {pattern!r}; supported: {supported}")
+        raise ValueError(
+            f"Unsupported DashScope endpoint {endpoint!r} for {pattern!r}; supported: {supported}"
+        )
     return normalized_endpoint  # type: ignore[return-value]
 
 
@@ -127,7 +133,10 @@ def _thinking_kwargs(enable_thinking: bool | None) -> dict[str, bool]:
 
 def _multimodal_messages(messages: list[dict[str, str]]) -> list[dict[str, object]]:
     """Convert text-generation messages to DashScope multimodal message parts."""
-    return [{"role": item["role"], "content": [{"text": item["content"]}]} for item in messages]
+    return [
+        {"role": item["role"], "content": [{"text": item["content"]}]}
+        for item in messages
+    ]
 
 
 def _generate_text_compatible(
@@ -159,13 +168,19 @@ def _generate_text_compatible(
     payload = _compatible_json_payload(response)
     if response.status_code >= 400:
         error = payload.get("error") if isinstance(payload, dict) else None
-        raise RuntimeError(f"DashScope compatible generation failed: HTTP {response.status_code} {error or payload}")
+        raise RuntimeError(
+            f"DashScope compatible generation failed: HTTP {response.status_code} {error or payload}"
+        )
     choices = payload.get("choices") if isinstance(payload, dict) else None
     if not choices:
-        raise RuntimeError("DashScope compatible generation response did not contain choices.")
+        raise RuntimeError(
+            "DashScope compatible generation response did not contain choices."
+        )
     content = ((choices[0] or {}).get("message") or {}).get("content")
     if not content:
-        raise RuntimeError("DashScope compatible generation response did not contain generated text.")
+        raise RuntimeError(
+            "DashScope compatible generation response did not contain generated text."
+        )
     return str(content)
 
 
@@ -177,7 +192,7 @@ def compatible_chat_completions_url(base_url: str | None) -> str:
     if root.endswith("/compatible-mode/v1"):
         return f"{root}/chat/completions"
     if root.endswith("/api/v1"):
-        return f"{root[:-len('/api/v1')]}{DASHSCOPE_COMPATIBLE_CHAT_COMPLETIONS_PATH}"
+        return f"{root[: -len('/api/v1')]}{DASHSCOPE_COMPATIBLE_CHAT_COMPLETIONS_PATH}"
     return f"{root}{DASHSCOPE_COMPATIBLE_CHAT_COMPLETIONS_PATH}"
 
 
@@ -186,7 +201,9 @@ def _compatible_json_payload(response: requests.Response) -> dict[str, Any]:
     try:
         payload = response.json()
     except ValueError as exc:
-        raise RuntimeError(f"DashScope compatible generation returned non-JSON: {response.text[:200]}") from exc
+        raise RuntimeError(
+            f"DashScope compatible generation returned non-JSON: {response.text[:200]}"
+        ) from exc
     if not isinstance(payload, dict):
         raise RuntimeError("DashScope compatible generation returned non-object JSON.")
     return payload
@@ -196,7 +213,11 @@ def _raise_for_generation_error(response: Any) -> None:
     """Raise when DashScope returns an error response."""
     status_code = getattr(response, "status_code", None)
     if status_code and int(status_code) >= 400:
-        message = getattr(response, "message", None) or getattr(response, "code", None) or response
+        message = (
+            getattr(response, "message", None)
+            or getattr(response, "code", None)
+            or response
+        )
         raise RuntimeError(f"DashScope generation failed: HTTP {status_code} {message}")
 
 

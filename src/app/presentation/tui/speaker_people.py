@@ -29,10 +29,15 @@ def load_people(store_dir: Path | None) -> list[KnownPerson]:
         Stable person rows for the TUI.
     """
     db_path = get_voiceprint_db_path(store_dir)
-    return [KnownPerson(row.speaker_id, row.name, row.public_id) for row in list_voiceprint_speakers(db_path)]
+    return [
+        KnownPerson(row.speaker_id, row.name, row.public_id)
+        for row in list_voiceprint_speakers(db_path)
+    ]
 
 
-def load_existing_person_mapping(path: Path, people: list[KnownPerson]) -> tuple[dict[int, int], dict[int, str]]:
+def load_existing_person_mapping(
+    path: Path, people: list[KnownPerson]
+) -> tuple[dict[int, int], dict[int, str]]:
     """
     Load the current project speaker-to-person map if it exists.
 
@@ -90,7 +95,7 @@ def optional_person_id(value: object) -> int | None:
         return None
     try:
         person_id = int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return person_id if person_id > 0 else None
 
@@ -107,7 +112,9 @@ def _resolve_person(value: object, people: list[KnownPerson]) -> KnownPerson | N
     return next((person for person in people if person.person_id == person_id), None)
 
 
-def _person_by_public_id(public_id: str, people: list[KnownPerson]) -> KnownPerson | None:
+def _person_by_public_id(
+    public_id: str, people: list[KnownPerson]
+) -> KnownPerson | None:
     """Return a known person by public id."""
     stripped = public_id.strip()
     return next((person for person in people if person.public_id == stripped), None)

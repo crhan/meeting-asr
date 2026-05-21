@@ -102,7 +102,9 @@ class SpeakerRematchProcessingScreen(ModalScreen[None]):
         if event.description:
             self._description = event.description
         try:
-            self.query_one("#speaker-rematch-processing", Static).update(self._render_progress())
+            self.query_one("#speaker-rematch-processing", Static).update(
+                self._render_progress()
+            )
         except Exception:  # noqa: BLE001
             return
 
@@ -241,7 +243,9 @@ def compact_rematch_line(result: SpeakerRematchResult) -> str:
 
 def _status_count(summary: SpeakerMatchSummary, status: str) -> int:
     """Count matches with one voiceprint status."""
-    return sum(1 for match in summary.matches if voiceprint_match_status(match) == status)
+    return sum(
+        1 for match in summary.matches if voiceprint_match_status(match) == status
+    )
 
 
 def _progress_bar(completed: int, total: int | None, *, width: int = 30) -> str:

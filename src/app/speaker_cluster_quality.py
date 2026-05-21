@@ -23,7 +23,10 @@ from app.voiceprint_audio import (
     embedding_audio_stats,
     trim_embedding_audio_silence,
 )
-from app.voiceprint_embedding import embed_audio_file, resolve_voiceprint_embedding_options
+from app.voiceprint_embedding import (
+    embed_audio_file,
+    resolve_voiceprint_embedding_options,
+)
 from app.voiceprint_quality import DEFAULT_CRITICAL_SCORE, DEFAULT_WARNING_SCORE
 
 MIN_ANCHOR_DURATION_MS = 1500
@@ -199,7 +202,9 @@ def analyze_project_speaker_clusters(
     return summary
 
 
-def speaker_cluster_quality_payload(summary: SpeakerClusterQualitySummary) -> dict[str, object]:
+def speaker_cluster_quality_payload(
+    summary: SpeakerClusterQualitySummary,
+) -> dict[str, object]:
     """Return a JSON-safe cluster quality summary payload."""
     return _summary_payload(summary)
 
@@ -215,9 +220,13 @@ class _ClusterContext:
     model: str
 
 
-def _load_cluster_context(project_dir: Path, provider: str | None, model: str | None) -> _ClusterContext:
+def _load_cluster_context(
+    project_dir: Path, provider: str | None, model: str | None
+) -> _ClusterContext:
     """Resolve project data and embedding options."""
-    resolved_provider, resolved_model = resolve_voiceprint_embedding_options(provider=provider, model=model)
+    resolved_provider, resolved_model = resolve_voiceprint_embedding_options(
+        provider=provider, model=model
+    )
     paths = project_paths(project_dir)
     manifest = load_manifest(paths.root)
     result = load_transcript_result(paths.asr_dir / "sentences.json")
@@ -230,7 +239,9 @@ def _load_cluster_context(project_dir: Path, provider: str | None, model: str | 
     )
 
 
-def _segments_by_speaker(segments: list[SentenceSegment]) -> dict[int, list[SentenceSegment]]:
+def _segments_by_speaker(
+    segments: list[SentenceSegment],
+) -> dict[int, list[SentenceSegment]]:
     """Group usable transcript segments by speaker id."""
     grouped: dict[int, list[SentenceSegment]] = defaultdict(list)
     for segment in segments:
@@ -252,8 +263,15 @@ def _embed_speaker_clips(
 ) -> dict[int, tuple[list[SpeakerClusterClip], list[SpeakerClusterClip]]]:
     """Extract and embed selected clips for each project speaker."""
     speaker_items = sorted(context.segments_by_speaker.items())
-    emit_progress(progress, "Selecting speaker cluster anchors", total=len(speaker_items), completed=0)
-    clips_by_speaker: dict[int, tuple[list[SpeakerClusterClip], list[SpeakerClusterClip]]] = {}
+    emit_progress(
+        progress,
+        "Selecting speaker cluster anchors",
+        total=len(speaker_items),
+        completed=0,
+    )
+    clips_by_speaker: dict[
+        int, tuple[list[SpeakerClusterClip], list[SpeakerClusterClip]]
+    ] = {}
     cache = _read_embedding_cache(context.project_root)
     if score_all_segments:
         score_total = sum(len(segments) for _speaker_id, segments in speaker_items)
@@ -298,12 +316,22 @@ def _embed_speaker_clips(
         else:
             selected_segments = [_clip_segment(clip) for clip in anchor_clips]
             anchor_clips = _reindex_clips(anchor_clips)
-        emit_progress(progress, f"Selected {speaker_id_to_label(speaker_id)} cluster anchors", advance=1)
+        emit_progress(
+            progress,
+            f"Selected {speaker_id_to_label(speaker_id)} cluster anchors",
+            advance=1,
+        )
         score_segments = segments if score_all_segments else selected
         score_clips = anchor_clips
         if score_all_segments:
             if speaker_id == speaker_items[0][0]:
-                emit_progress(progress, "Scoring speaker cluster samples", total=score_total, completed=0, reset_total=True)
+                emit_progress(
+                    progress,
+                    "Scoring speaker cluster samples",
+                    total=score_total,
+                    completed=0,
+                    reset_total=True,
+                )
             score_clips = _embed_selected_segments(
                 context,
                 speaker_id,
@@ -337,17 +365,23 @@ def _embed_selected_segments(
     """Build embedded probe clips for selected segments."""
     clips: list[SpeakerClusterClip] = []
     for index, segment in enumerate(segments, start=1):
-        key = _clip_cache_key(context, speaker_id, segment, max_seconds, padding_seconds)
+        key = _clip_cache_key(
+            context, speaker_id, segment, max_seconds, padding_seconds
+        )
         clip_path = _clip_path(context.project_root, speaker_id, index)
         if key not in cache or require_audio_quality:
-            _write_clip(context.source, clip_path, segment, max_seconds, padding_seconds)
+            _write_clip(
+                context.source, clip_path, segment, max_seconds, padding_seconds
+            )
         if require_audio_quality and not _audio_quality_ok(clip_path):
             continue
         vector = cache.get(key)
         if vector is None:
             embedding_path = _embedding_clip_path(clip_path)
             trim_embedding_audio_silence(clip_path, embedding_path)
-            vector = _normalize(embed_audio_file(embedding_path, provider=context.provider))
+            vector = _normalize(
+                embed_audio_file(embedding_path, provider=context.provider)
+            )
             cache[key] = vector
         clips.append(_cluster_clip(speaker_id, index, segment, vector))
         emit_progress(progress, progress_description, advance=1)
@@ -358,7 +392,13 @@ def _embed_selected_segments(
 
 def _clip_segment(clip: SpeakerClusterClip) -> SentenceSegment:
     """Return a segment-shaped view of one cluster clip."""
-    return SentenceSegment(clip.begin_time_ms, clip.end_time_ms, clip.text, clip.speaker_id, clip.sentence_id)
+    return SentenceSegment(
+        clip.begin_time_ms,
+        clip.end_time_ms,
+        clip.text,
+        clip.speaker_id,
+        clip.sentence_id,
+    )
 
 
 def _reindex_clips(clips: list[SpeakerClusterClip]) -> list[SpeakerClusterClip]:
@@ -395,10 +435,14 @@ def _cluster_clip(
     )
 
 
-def _select_segments(segments: list[SentenceSegment], sample_count: int) -> list[SentenceSegment]:
+def _select_segments(
+    segments: list[SentenceSegment], sample_count: int
+) -> list[SentenceSegment]:
     """Select high-information speaker anchors and restore timeline order."""
     ranked = sorted(segments, key=_segment_selection_score, reverse=True)
-    selected = [segment for segment in ranked if not _is_low_information_segment(segment)][:sample_count]
+    selected = [
+        segment for segment in ranked if not _is_low_information_segment(segment)
+    ][:sample_count]
     if len(selected) < min(sample_count, len(segments)):
         selected_keys = {_segment_identity(segment) for segment in selected}
         for segment in ranked:
@@ -419,7 +463,12 @@ def _segment_selection_score(segment: SentenceSegment) -> tuple[float, int, int]
     duration_score = min(duration_ms / 8000, 1.0)
     diversity_score = len(set(chars)) / len(chars) if chars else 0.0
     low_info_penalty = 1.0 if _is_low_information_segment(segment) else 0.0
-    quality = length_score * 0.50 + duration_score * 0.35 + diversity_score * 0.15 - low_info_penalty
+    quality = (
+        length_score * 0.50
+        + duration_score * 0.35
+        + diversity_score * 0.15
+        - low_info_penalty
+    )
     return quality, duration_ms, len(chars)
 
 
@@ -468,13 +517,21 @@ def _clip_cache_key(
         "max_seconds": max_seconds,
         "padding_seconds": padding_seconds,
     }
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
 def _clip_path(project_root: Path, speaker_id: int, index: int) -> Path:
     """Return a deterministic cluster probe clip path."""
-    return project_root / "tmp" / "speaker_cluster" / f"speaker_{speaker_id}" / f"clip_{index:03d}.wav"
+    return (
+        project_root
+        / "tmp"
+        / "speaker_cluster"
+        / f"speaker_{speaker_id}"
+        / f"clip_{index:03d}.wav"
+    )
 
 
 def _embedding_clip_path(clip_path: Path) -> Path:
@@ -494,7 +551,12 @@ def _write_clip(
     max_ms = int(round(max_seconds * 1000))
     start_ms = max(0, segment.begin_time_ms - padding_ms)
     end_ms = min(segment.end_time_ms + padding_ms, start_ms + max_ms)
-    extract_audio_clip(source, output, start_seconds=start_ms / 1000, duration_seconds=(end_ms - start_ms) / 1000)
+    extract_audio_clip(
+        source,
+        output,
+        start_seconds=start_ms / 1000,
+        duration_seconds=(end_ms - start_ms) / 1000,
+    )
 
 
 def _audio_quality_ok(path: Path) -> bool:
@@ -521,7 +583,7 @@ def _read_embedding_cache(project_root: Path) -> dict[str, list[float]]:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return {}
     return _valid_embedding_cache(payload)
 
@@ -535,7 +597,7 @@ def _valid_embedding_cache(payload: object) -> dict[str, list[float]]:
         if isinstance(value, list):
             try:
                 valid[str(key)] = [float(item) for item in value]
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
     return valid
 
@@ -547,7 +609,9 @@ def _write_embedding_cache(project_root: Path, cache: dict[str, list[float]]) ->
 
 def _build_quality_summary(
     context: _ClusterContext,
-    clips_by_speaker: dict[int, tuple[list[SpeakerClusterClip], list[SpeakerClusterClip]]],
+    clips_by_speaker: dict[
+        int, tuple[list[SpeakerClusterClip], list[SpeakerClusterClip]]
+    ],
     *,
     score_all_segments: bool,
     same_speaker_threshold: float,
@@ -556,7 +620,9 @@ def _build_quality_summary(
     critical_score: float,
 ) -> SpeakerClusterQualitySummary:
     """Build the full cluster quality summary."""
-    anchor_clips_by_speaker = {speaker_id: clips[0] for speaker_id, clips in clips_by_speaker.items()}
+    anchor_clips_by_speaker = {
+        speaker_id: clips[0] for speaker_id, clips in clips_by_speaker.items()
+    }
     centroids = _speaker_centroids(anchor_clips_by_speaker)
     close_pairs = _close_centroid_pairs(centroids, merge_speaker_threshold)
     reports = [
@@ -588,7 +654,9 @@ def _build_quality_summary(
     )
 
 
-def _speaker_centroids(clips_by_speaker: dict[int, list[SpeakerClusterClip]]) -> dict[int, list[float]]:
+def _speaker_centroids(
+    clips_by_speaker: dict[int, list[SpeakerClusterClip]],
+) -> dict[int, list[float]]:
     """Return one normalized centroid per speaker with embedded clips."""
     return {
         speaker_id: _normalize(_mean_vector([clip.vector for clip in clips]))
@@ -611,10 +679,20 @@ def _speaker_report(
     scores = _pairwise_scores([clip.vector for clip in anchor_clips])
     components = _connected_components(anchor_clips, same_speaker_threshold)
     nearest_id, nearest_score = _nearest_other_speaker(speaker_id, centroids)
-    anchor_scores = _clip_centroid_score_rows(anchor_clips, speaker_id, centroids, warning_score, critical_score)
-    sample_scores = _clip_centroid_score_rows(score_clips, speaker_id, centroids, warning_score, critical_score)
-    centroid_scores = [score.centroid_score for score in anchor_scores if score.centroid_score is not None]
-    warning_count = sum(1 for score in anchor_scores if score.status in {"ambiguous", "weak-fit"})
+    anchor_scores = _clip_centroid_score_rows(
+        anchor_clips, speaker_id, centroids, warning_score, critical_score
+    )
+    sample_scores = _clip_centroid_score_rows(
+        score_clips, speaker_id, centroids, warning_score, critical_score
+    )
+    centroid_scores = [
+        score.centroid_score
+        for score in anchor_scores
+        if score.centroid_score is not None
+    ]
+    warning_count = sum(
+        1 for score in anchor_scores if score.status in {"ambiguous", "weak-fit"}
+    )
     critical_count = sum(1 for score in anchor_scores if score.status == "conflict")
     centroid_mean = _mean(centroid_scores) if centroid_scores else None
     centroid_min = min(centroid_scores) if centroid_scores else None
@@ -659,8 +737,12 @@ def _clip_centroid_score_rows(
     centroid = centroids.get(speaker_id)
     for clip in clips:
         score = None if centroid is None else _cosine(clip.vector, centroid)
-        nearest_id, nearest_score = _nearest_other_centroid(clip.vector, speaker_id, centroids)
-        margin_score = None if score is None or nearest_score is None else score - nearest_score
+        nearest_id, nearest_score = _nearest_other_centroid(
+            clip.vector, speaker_id, centroids
+        )
+        margin_score = (
+            None if score is None or nearest_score is None else score - nearest_score
+        )
         low_information = _is_low_information_clip(clip)
         rows.append(
             SpeakerClusterSampleScore(
@@ -688,7 +770,13 @@ def _clip_centroid_score_rows(
 
 def _is_low_information_clip(clip: SpeakerClusterClip) -> bool:
     """Return whether a scored clip is too short for strong interpretation."""
-    segment = SentenceSegment(clip.begin_time_ms, clip.end_time_ms, clip.text, clip.speaker_id, clip.sentence_id)
+    segment = SentenceSegment(
+        clip.begin_time_ms,
+        clip.end_time_ms,
+        clip.text,
+        clip.speaker_id,
+        clip.sentence_id,
+    )
     return _is_low_information_segment(segment)
 
 
@@ -706,7 +794,11 @@ def _sample_score_status(
         return "low-info"
     if score is None:
         return "unknown"
-    if nearest_score is not None and margin_score is not None and nearest_score >= critical_score:
+    if (
+        nearest_score is not None
+        and margin_score is not None
+        and nearest_score >= critical_score
+    ):
         if margin_score <= SAMPLE_CONFLICT_MARGIN:
             return "conflict"
         if margin_score < SAMPLE_AMBIGUOUS_MARGIN:
@@ -720,7 +812,11 @@ def _sample_score_status(
 
 def _pairwise_scores(vectors: list[list[float]]) -> list[float]:
     """Return all unique pairwise cosine scores."""
-    return [_cosine(left, right) for index, left in enumerate(vectors) for right in vectors[index + 1 :]]
+    return [
+        _cosine(left, right)
+        for index, left in enumerate(vectors)
+        for right in vectors[index + 1 :]
+    ]
 
 
 def _connected_components(
@@ -737,7 +833,10 @@ def _connected_components(
         while stack:
             left = stack.pop()
             for right in list(remaining):
-                if _cosine(clips[left].vector, clips[right].vector) >= same_speaker_threshold:
+                if (
+                    _cosine(clips[left].vector, clips[right].vector)
+                    >= same_speaker_threshold
+                ):
                     remaining.remove(right)
                     stack.append(right)
                     indices.append(right)
@@ -753,7 +852,11 @@ def _nearest_other_speaker(
     own = centroids.get(speaker_id)
     if own is None:
         return None, None
-    candidates = [(other_id, _cosine(own, vector)) for other_id, vector in centroids.items() if other_id != speaker_id]
+    candidates = [
+        (other_id, _cosine(own, vector))
+        for other_id, vector in centroids.items()
+        if other_id != speaker_id
+    ]
     if not candidates:
         return None, None
     return max(candidates, key=lambda item: item[1])
@@ -775,7 +878,11 @@ def _nearest_other_centroid(
     Returns:
         Nearest other speaker id and cosine score.
     """
-    candidates = [(other_id, _cosine(vector, centroid)) for other_id, centroid in centroids.items() if other_id != speaker_id]
+    candidates = [
+        (other_id, _cosine(vector, centroid))
+        for other_id, centroid in centroids.items()
+        if other_id != speaker_id
+    ]
     if not candidates:
         return None, None
     return max(candidates, key=lambda item: item[1])
@@ -828,7 +935,15 @@ def _speaker_status(warnings: list[str]) -> str:
         return "ok"
     if warnings == ["too_few_clips"]:
         return "insufficient"
-    if any(item in warnings for item in {"low_centroid_mean", "high_conflict_ratio", "multi_component", "low_internal_mean"}):
+    if any(
+        item in warnings
+        for item in {
+            "low_centroid_mean",
+            "high_conflict_ratio",
+            "multi_component",
+            "low_internal_mean",
+        }
+    ):
         return "mixed"
     return "warning"
 
@@ -857,7 +972,9 @@ def _summary_verdict(
     if mixed and close_pairs:
         return "unstable: mixed speaker clusters and close speaker centroids"
     if mixed:
-        return "possible under-split: at least one speaker has multiple internal clusters"
+        return (
+            "possible under-split: at least one speaker has multiple internal clusters"
+        )
     if close_pairs:
         return "possible over-split: some speaker centroids are very close"
     return "usable: speaker clusters look internally coherent"
@@ -877,7 +994,11 @@ def _summary_payload(summary: SpeakerClusterQualitySummary) -> dict[str, object]
         "verdict": summary.verdict,
         "speakers": [_report_payload(report) for report in summary.reports],
         "close_pairs": [
-            {"left_speaker_id": pair.left_speaker_id, "right_speaker_id": pair.right_speaker_id, "score": pair.score}
+            {
+                "left_speaker_id": pair.left_speaker_id,
+                "right_speaker_id": pair.right_speaker_id,
+                "score": pair.score,
+            }
             for pair in summary.close_pairs
         ],
     }
@@ -934,7 +1055,10 @@ def _mean_vector(vectors: list[list[float]]) -> list[float]:
     dimension = len(vectors[0])
     if any(len(vector) != dimension for vector in vectors):
         raise ValueError("Embedding vectors must have the same dimension.")
-    return [sum(vector[index] for vector in vectors) / len(vectors) for index in range(dimension)]
+    return [
+        sum(vector[index] for vector in vectors) / len(vectors)
+        for index in range(dimension)
+    ]
 
 
 def _normalize(vector: list[float]) -> list[float]:

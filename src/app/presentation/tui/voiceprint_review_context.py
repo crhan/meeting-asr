@@ -81,7 +81,9 @@ def _append_project_summary(lines: list[str], capture: Any) -> None:
         ]
     )
     for speaker in capture.speakers:
-        lines.append(f"  {speaker.name} speaker={speaker.speaker_id} samples={len(speaker.clips)}")
+        lines.append(
+            f"  {speaker.name} speaker={speaker.speaker_id} samples={len(speaker.clips)}"
+        )
 
 
 def _append_library_summary(lines: list[str], library: Any) -> None:
@@ -95,4 +97,6 @@ def _append_library_summary(lines: list[str], library: Any) -> None:
         ]
     )
     for speaker in library.speakers:
-        lines.append(f"  {speaker.name} id={speaker.public_id} samples={speaker.sample_count}")
+        lines.append(
+            f"  {speaker.name} id={speaker.public_id} samples={speaker.sample_count}"
+        )

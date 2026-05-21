@@ -39,7 +39,13 @@ class CorrectionTextArea(TextArea):
     BINDINGS = [
         Binding("enter", "submit_correction", "Apply", show=False, priority=True),
         Binding("escape", "cancel_correction", "Cancel", show=False, priority=True),
-        Binding("ctrl+o", "open_external_editor", "External editor", show=False, priority=True),
+        Binding(
+            "ctrl+o",
+            "open_external_editor",
+            "External editor",
+            show=False,
+            priority=True,
+        ),
         Binding("ctrl+f", "cursor_right", "Forward", show=False, priority=True),
         Binding("ctrl+b", "cursor_left", "Backward", show=False, priority=True),
     ]
@@ -121,8 +127,12 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
         self.speaker_label = speaker_label
         self.speaker_name = speaker_name
         self.segment = segment
-        self.original_text = (original_text if original_text is not None else segment.text).strip()
-        self.initial_text = (initial_text if initial_text is not None else segment.text).strip()
+        self.original_text = (
+            original_text if original_text is not None else segment.text
+        ).strip()
+        self.initial_text = (
+            initial_text if initial_text is not None else segment.text
+        ).strip()
 
     def compose(self) -> ComposeResult:
         """Build the correction popup."""
@@ -133,8 +143,18 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
         with Vertical(id="correction-box"):
             yield Static(title, id="correction-title")
             with ScrollableContainer(id="correction-original"):
-                yield Static(tr(f"[b]Original:[/]\n{self.original_text}", f"[b]原文：[/]\n{self.original_text}"))
-            yield CorrectionTextArea(self.initial_text, id="correction-input", soft_wrap=True, show_line_numbers=False)
+                yield Static(
+                    tr(
+                        f"[b]Original:[/]\n{self.original_text}",
+                        f"[b]原文：[/]\n{self.original_text}",
+                    )
+                )
+            yield CorrectionTextArea(
+                self.initial_text,
+                id="correction-input",
+                soft_wrap=True,
+                show_line_numbers=False,
+            )
             yield Static(
                 tr(
                     "Enter applies this edit. Esc cancels. Ctrl-O opens $EDITOR. Ctrl-F/Ctrl-B move cursor.",
@@ -154,7 +174,9 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
         corrected = value.strip()
         original = self.original_text
         if not corrected:
-            self.query_one("#correction-status", Static).update(tr("Corrected text cannot be empty.", "修正后的文本不能为空。"))
+            self.query_one("#correction-status", Static).update(
+                tr("Corrected text cannot be empty.", "修正后的文本不能为空。")
+            )
             return
         if corrected == original and self.initial_text == original:
             self.dismiss(None)
@@ -183,7 +205,10 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
         updated = edited.strip()
         if not updated:
             self.query_one("#correction-status", Static).update(
-                tr("External editor returned empty text; keeping current text.", "外部编辑器返回空文本，已保留当前文本。")
+                tr(
+                    "External editor returned empty text; keeping current text.",
+                    "外部编辑器返回空文本，已保留当前文本。",
+                )
             )
             return
         field.text = updated
@@ -193,13 +218,17 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
     def _run_external_editor(self, text: str) -> str:
         """Run ``$VISUAL`` or ``$EDITOR`` on a temporary UTF-8 text file."""
         editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt", delete=False) as handle:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".txt", delete=False
+        ) as handle:
             temp_path = Path(handle.name)
             handle.write(text)
             handle.write("\n")
         try:
             with self.app.suspend():
-                completed = subprocess.run([*shlex.split(editor), str(temp_path)], check=False)
+                completed = subprocess.run(
+                    [*shlex.split(editor), str(temp_path)], check=False
+                )
             if completed.returncode != 0:
                 raise RuntimeError(f"{editor} exited with {completed.returncode}")
             return temp_path.read_text(encoding="utf-8")
@@ -263,7 +292,9 @@ class CorrectionQueuedScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         """Build staged correction feedback."""
         with Vertical(id="queued-box"):
-            yield Static(tr("Transcript correction staged", "文字修正已暂存"), id="queued-title")
+            yield Static(
+                tr("Transcript correction staged", "文字修正已暂存"), id="queued-title"
+            )
             with ScrollableContainer(id="queued-body"):
                 yield Static(self._body(), id="queued-diff")
             yield Static(self._actions(), id="queued-actions")
@@ -271,19 +302,27 @@ class CorrectionQueuedScreen(ModalScreen[None]):
     def _body(self) -> Text:
         """Build the token-level staged correction preview."""
         body = Text(no_wrap=False)
-        body.append(tr("This edit is staged in the TUI.\n", "这条修改已暂存在 TUI 中。\n"), style="bold")
-        body.append(tr(f"Total staged edits: {self.count}\n\n", f"当前暂存修改数：{self.count}\n\n"))
-        body.append_text(styled_before_after(self.edit.original_text, self.edit.corrected_text))
+        body.append(
+            tr("This edit is staged in the TUI.\n", "这条修改已暂存在 TUI 中。\n"),
+            style="bold",
+        )
+        body.append(
+            tr(
+                f"Total staged edits: {self.count}\n\n",
+                f"当前暂存修改数：{self.count}\n\n",
+            )
+        )
+        body.append_text(
+            styled_before_after(self.edit.original_text, self.edit.corrected_text)
+        )
         return body
 
     def _actions(self) -> str:
         """Return available actions for the staged correction modal."""
-        return (
-            tr(
-                "Press [b]s[/b] to save and run correction in the TUI.\n"
-                "Press [b]Enter[/b] to keep reviewing; the sample stays marked as edited.",
-                "按 [b]s[/b] 在 TUI 内保存并运行修正流程。\n按 [b]Enter[/b] 继续 review；该 sample 会保持 edited 标记。",
-            )
+        return tr(
+            "Press [b]s[/b] to save and run correction in the TUI.\n"
+            "Press [b]Enter[/b] to keep reviewing; the sample stays marked as edited.",
+            "按 [b]s[/b] 在 TUI 内保存并运行修正流程。\n按 [b]Enter[/b] 继续 review；该 sample 会保持 edited 标记。",
         )
 
     def action_close_feedback(self) -> None:

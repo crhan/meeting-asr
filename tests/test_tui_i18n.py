@@ -5,8 +5,12 @@ from __future__ import annotations
 from app.presentation.cli.i18n import configure_cli_language
 from app.presentation.tui.speaker_help import browse_status as speaker_browse_status
 from app.presentation.tui.speaker_help import shortcut_help as speaker_shortcut_help
-from app.presentation.tui.voiceprint_review import help_text as voiceprint_review_help_text
-from app.presentation.tui.voiceprint_review import status_text as voiceprint_review_status_text
+from app.presentation.tui.voiceprint_review import (
+    help_text as voiceprint_review_help_text,
+)
+from app.presentation.tui.voiceprint_review import (
+    status_text as voiceprint_review_status_text,
+)
 
 
 def test_tui_text_follows_explicit_cli_language() -> None:

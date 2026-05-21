@@ -8,7 +8,9 @@ from app.config import Settings
 from app.uploader import build_oss_bucket, import_oss2
 
 
-def set_lifecycle_rule(settings: Settings, *, prefix: str, days: int, rule_id: str) -> None:
+def set_lifecycle_rule(
+    settings: Settings, *, prefix: str, days: int, rule_id: str
+) -> None:
     """
     Configure an OSS lifecycle rule that deletes objects after N days.
 

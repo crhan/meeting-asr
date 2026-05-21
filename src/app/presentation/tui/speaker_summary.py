@@ -56,7 +56,9 @@ def render_speaker_review_summary(session: Any, *, speaker_only: bool = False) -
                 "Voiceprint status:",
             ]
         )
-        lines.extend(_voiceprint_status_line(speaker) for speaker in unresolved_speakers)
+        lines.extend(
+            _voiceprint_status_line(speaker) for speaker in unresolved_speakers
+        )
         lines.extend(
             [
                 "",
@@ -94,7 +96,9 @@ def _voiceprint_status_line(speaker: Any) -> str:
         score_text = "" if score is None else f" score={score:.3f}"
         threshold = match_threshold(speaker.match)
         threshold_text = "" if threshold is None else f" threshold={threshold:.3f}"
-        return f"{speaker.label}: below-threshold best={name}{score_text}{threshold_text}"
+        return (
+            f"{speaker.label}: below-threshold best={name}{score_text}{threshold_text}"
+        )
     if status == MATCH_STATUS_MATCHED:
         name = accepted_match_name(speaker.match) or speaker.match.name
         return f"{speaker.label}: matched name={name}"

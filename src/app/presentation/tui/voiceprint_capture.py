@@ -301,7 +301,9 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
             return
         sample.included = not sample.included
         self._set_status(
-            tr("Sample included.", "已选中样本。") if sample.included else tr("Sample excluded.", "已排除样本。")
+            tr("Sample included.", "已选中样本。")
+            if sample.included
+            else tr("Sample excluded.", "已排除样本。")
         )
         self._refresh()
 
@@ -340,7 +342,12 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
         """Return selected clips for persistence."""
         selected = self._selected_clip_rel_paths()
         if not selected:
-            self._set_status(tr("No samples selected. Toggle at least one sample before capture.", "没有选中样本。采集前至少选中一个样本。"))
+            self._set_status(
+                tr(
+                    "No samples selected. Toggle at least one sample before capture.",
+                    "没有选中样本。采集前至少选中一个样本。",
+                )
+            )
             return
         self.exit(VoiceprintCaptureDecision(True, frozenset(selected)))
 
@@ -390,7 +397,9 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
         page_size = self._sample_page_size()
         current_start = _sample_page_start(speaker.selected_clip_index, page_size)
         last_start = _last_sample_page_start(len(speaker.clips), page_size)
-        speaker.selected_clip_index = _clamp(current_start + delta * page_size, 0, last_start)
+        speaker.selected_clip_index = _clamp(
+            current_start + delta * page_size, 0, last_start
+        )
         self._refresh()
 
     def _refresh(self) -> None:
@@ -418,9 +427,18 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
             f"{tr('[b]Project[/b]', '[b]项目[/b]')}  {escape(self.session.project_id)}",
             f"{tr('[b]Source[/b]', '[b]来源[/b]')}   {escape(str(self.session.source_path))}",
             f"{tr('[b]Store[/b]', '[b]库路径[/b]')}    {escape(str(self.session.db_path))}",
-            tr(f"[b]Selected[/b] {selected}/{total} sample(s)", f"[b]已选[/b]     {selected}/{total} 个样本"),
-            tr(f"[b]Focus[/b]    {escape(_selected_speaker_summary(speaker))}", f"[b]当前[/b]     {escape(_selected_speaker_summary(speaker))}"),
-            tr(f"[b]Sample[/b]   {escape(_selected_sample_summary(sample))}", f"[b]样本[/b]     {escape(_selected_sample_summary(sample))}"),
+            tr(
+                f"[b]Selected[/b] {selected}/{total} sample(s)",
+                f"[b]已选[/b]     {selected}/{total} 个样本",
+            ),
+            tr(
+                f"[b]Focus[/b]    {escape(_selected_speaker_summary(speaker))}",
+                f"[b]当前[/b]     {escape(_selected_speaker_summary(speaker))}",
+            ),
+            tr(
+                f"[b]Sample[/b]   {escape(_selected_sample_summary(sample))}",
+                f"[b]样本[/b]     {escape(_selected_sample_summary(sample))}",
+            ),
         ]
         return "\n".join(lines)
 
@@ -428,12 +446,21 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
         """Render speakers and selected sample counts."""
         lines = [self._pane_title(tr("Project speakers", "项目 speaker"), "speakers")]
         if not self.session.speakers:
-            lines.append(tr("[yellow]No capture candidates.[/]", "[yellow]没有可采集候选样本。[/]"))
+            lines.append(
+                tr(
+                    "[yellow]No capture candidates.[/]",
+                    "[yellow]没有可采集候选样本。[/]",
+                )
+            )
             return "\n".join(lines)
         for index, speaker in enumerate(self.session.speakers):
             marker = ">" if index == self.selected_speaker_index else " "
             selected = sum(1 for clip in speaker.clips if clip.included)
-            person = "" if speaker.person_public_id is None else f" {speaker.person_public_id}"
+            person = (
+                ""
+                if speaker.person_public_id is None
+                else f" {speaker.person_public_id}"
+            )
             label = tr(
                 f"{marker} {speaker.name}{person}  selected {selected}/{len(speaker.clips)}",
                 f"{marker} {speaker.name}{person}  已选 {selected}/{len(speaker.clips)}",
@@ -444,10 +471,16 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
     def _sample_pane(self) -> str:
         """Render samples for the selected speaker."""
         speaker = self._speaker()
-        title = tr("Samples", "样本") if speaker is None else tr(f"{speaker.name} capture samples", f"{speaker.name} 采样样本")
+        title = (
+            tr("Samples", "样本")
+            if speaker is None
+            else tr(f"{speaker.name} capture samples", f"{speaker.name} 采样样本")
+        )
         lines = [self._pane_title(title, "samples")]
         if speaker is None:
-            lines.append(tr("[yellow]No speaker selected.[/]", "[yellow]未选择 speaker。[/]"))
+            lines.append(
+                tr("[yellow]No speaker selected.[/]", "[yellow]未选择 speaker。[/]")
+            )
             return "\n".join(lines)
         page_start, samples = self._visible_samples(speaker)
         for offset, sample in enumerate(samples):
@@ -455,9 +488,16 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
             prefix = ">" if index == speaker.selected_clip_index else " "
             checked = "x" if sample.included else " "
             line = f"{prefix} [{checked}] #{index + 1} {_sample_line(sample)}"
-            lines.append(f"[reverse]{escape(line)}[/]" if prefix == ">" else escape(line))
+            lines.append(
+                f"[reverse]{escape(line)}[/]" if prefix == ">" else escape(line)
+            )
         if not samples:
-            lines.append(tr("[yellow]No samples for this speaker.[/]", "[yellow]当前 speaker 没有样本。[/]"))
+            lines.append(
+                tr(
+                    "[yellow]No samples for this speaker.[/]",
+                    "[yellow]当前 speaker 没有样本。[/]",
+                )
+            )
         lines.append("")
         lines.append(self._sample_page_footer(speaker, page_start))
         return "\n".join(lines)
@@ -476,7 +516,12 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self._set_status(tr(f"Playing sample {_sample_time_range(sample)}.", f"正在播放样本 {_sample_time_range(sample)}。"))
+        self._set_status(
+            tr(
+                f"Playing sample {_sample_time_range(sample)}.",
+                f"正在播放样本 {_sample_time_range(sample)}。",
+            )
+        )
 
     def _stop_playback(self) -> None:
         """Stop the current playback child process if it is still running."""
@@ -526,7 +571,9 @@ class VoiceprintCaptureReviewApp(App[VoiceprintCaptureDecision]):
             return DEFAULT_SAMPLE_PAGE_SIZE
         return max(1, pane_height - SAMPLE_PANE_RESERVED_ROWS)
 
-    def _sample_page_footer(self, speaker: VoiceprintCaptureSpeakerEntry, page_start: int) -> str:
+    def _sample_page_footer(
+        self, speaker: VoiceprintCaptureSpeakerEntry, page_start: int
+    ) -> str:
         """Render pagination status for the sample pane."""
         page_size = self._sample_page_size()
         page_count = _sample_page_count(len(speaker.clips), page_size)
@@ -596,13 +643,18 @@ def load_voiceprint_capture_review_session(
         store_dir=summary.store_dir,
         db_path=summary.db_path,
         speakers=[
-            _speaker_entry(speaker, _speaker_match(match_candidates, speaker.speaker_id)) for speaker in summary.speakers
+            _speaker_entry(
+                speaker, _speaker_match(match_candidates, speaker.speaker_id)
+            )
+            for speaker in summary.speakers
         ],
         page_size=page_size,
     )
 
 
-def run_voiceprint_capture_review_tui(session: VoiceprintCaptureReviewSession) -> VoiceprintCaptureDecision:
+def run_voiceprint_capture_review_tui(
+    session: VoiceprintCaptureReviewSession,
+) -> VoiceprintCaptureDecision:
     """
     Run the Textual voiceprint capture review app.
 
@@ -616,7 +668,9 @@ def run_voiceprint_capture_review_tui(session: VoiceprintCaptureReviewSession) -
     return result or VoiceprintCaptureDecision(False, frozenset())
 
 
-def render_voiceprint_capture_review_summary(session: VoiceprintCaptureReviewSession) -> str:
+def render_voiceprint_capture_review_summary(
+    session: VoiceprintCaptureReviewSession,
+) -> str:
     """
     Render a non-interactive capture review summary.
 
@@ -677,7 +731,9 @@ def _speaker_entry(speaker, match: Any | None = None) -> VoiceprintCaptureSpeake
     )
 
 
-def _speaker_match(match_candidates: Mapping[int, Any] | None, speaker_id: int) -> Any | None:
+def _speaker_match(
+    match_candidates: Mapping[int, Any] | None, speaker_id: int
+) -> Any | None:
     """Return the project match row for a speaker id."""
     if match_candidates is None:
         return None

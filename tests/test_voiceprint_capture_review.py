@@ -39,7 +39,9 @@ def test_voiceprint_capture_review_session_renders_candidates(tmp_path: Path) ->
     source_path.write_bytes(b"source")
     summary = _capture_summary(tmp_path)
 
-    session = load_voiceprint_capture_review_session(summary=summary, source_path=source_path, page_size=1)
+    session = load_voiceprint_capture_review_session(
+        summary=summary, source_path=source_path, page_size=1
+    )
     rendered = render_voiceprint_capture_review_summary(session)
 
     assert session.project_id == "project-1"
@@ -49,7 +51,9 @@ def test_voiceprint_capture_review_session_renders_candidates(tmp_path: Path) ->
     assert "Alice speaker=0 score=- samples=2" in rendered
 
 
-def test_voiceprint_capture_review_tui_toggles_selection_and_saves(tmp_path: Path) -> None:
+def test_voiceprint_capture_review_tui_toggles_selection_and_saves(
+    tmp_path: Path,
+) -> None:
     """The review TUI should return only checked sample paths."""
     source_path = tmp_path / "meeting.mp4"
     source_path.write_bytes(b"source")
@@ -78,14 +82,20 @@ def test_voiceprint_capture_review_tui_toggles_selection_and_saves(tmp_path: Pat
 
     assert app.return_value is not None
     assert app.return_value.saved is True
-    assert app.return_value.selected_clip_rel_paths == frozenset({"clips/project-1/speaker_0/clip_002.wav"})
+    assert app.return_value.selected_clip_rel_paths == frozenset(
+        {"clips/project-1/speaker_0/clip_002.wav"}
+    )
 
 
-def test_voiceprint_capture_review_tui_space_toggles_playback(monkeypatch, tmp_path: Path) -> None:
+def test_voiceprint_capture_review_tui_space_toggles_playback(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Space should play and stop the selected planned sample from source media."""
     source_path = tmp_path / "meeting.mp4"
     source_path.write_bytes(b"source")
-    session = load_voiceprint_capture_review_session(summary=_capture_summary(tmp_path), source_path=source_path)
+    session = load_voiceprint_capture_review_session(
+        summary=_capture_summary(tmp_path), source_path=source_path
+    )
     process = _RunningFakeProcess()
     starts = 0
 
@@ -118,14 +128,20 @@ def test_voiceprint_capture_review_tui_space_toggles_playback(monkeypatch, tmp_p
     asyncio.run(scenario())
 
 
-def test_persist_voiceprint_capture_selection_writes_only_accepted_samples(monkeypatch, tmp_path: Path) -> None:
+def test_persist_voiceprint_capture_selection_writes_only_accepted_samples(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Selective persistence should write only human-approved WAV clips and database rows."""
     project_dir = _sample_project(tmp_path)
     audio_path = project_dir / "audio" / "audio.flac"
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     audio_path.write_bytes(b"asr audio")
     manifest = load_manifest(project_dir)
-    manifest.audio = {"path": "audio/audio.flac", "format": "flac", "duration_seconds": 4.0}
+    manifest.audio = {
+        "path": "audio/audio.flac",
+        "format": "flac",
+        "duration_seconds": 4.0,
+    }
     save_manifest(project_dir, manifest)
     planned = plan_voiceprint_capture(
         project_dir,
@@ -136,7 +152,9 @@ def test_persist_voiceprint_capture_selection_writes_only_accepted_samples(monke
     )
     sources: list[Path] = []
 
-    def fake_extract_audio_clip(source, output, start_seconds, duration_seconds) -> Path:
+    def fake_extract_audio_clip(
+        source, output, start_seconds, duration_seconds
+    ) -> Path:
         sources.append(Path(source))
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         Path(output).write_bytes(f"{start_seconds}:{duration_seconds}".encode())
@@ -149,7 +167,9 @@ def test_persist_voiceprint_capture_selection_writes_only_accepted_samples(monke
         planned=planned,
         selected_clip_rel_paths={planned.speakers[0].clips[1].rel_path},
     )
-    samples = list_all_voiceprint_samples(get_voiceprint_db_path(tmp_path / "voiceprints"))
+    samples = list_all_voiceprint_samples(
+        get_voiceprint_db_path(tmp_path / "voiceprints")
+    )
     manifest = load_manifest(project_dir)
 
     assert summary.sample_count == 1
@@ -161,7 +181,9 @@ def test_persist_voiceprint_capture_selection_writes_only_accepted_samples(monke
     assert manifest.speakers["voiceprints"]["sample_count"] == 1
 
 
-def test_plan_voiceprint_capture_resolves_existing_person_by_name(tmp_path: Path) -> None:
+def test_plan_voiceprint_capture_resolves_existing_person_by_name(
+    tmp_path: Path,
+) -> None:
     """Capture planning should show a stable VPP id when a named person already exists."""
     project_dir = _sample_project(tmp_path)
     store_dir = tmp_path / "voiceprints"
@@ -179,7 +201,9 @@ def test_plan_voiceprint_capture_resolves_existing_person_by_name(tmp_path: Path
     assert planned.speakers[0].person_public_id == person.public_id
 
 
-def test_plan_voiceprint_capture_prefers_diverse_informative_segments(tmp_path: Path) -> None:
+def test_plan_voiceprint_capture_prefers_diverse_informative_segments(
+    tmp_path: Path,
+) -> None:
     """Capture planning should avoid filler and near-duplicate neighboring samples."""
     project_dir = _sample_project_with_sentences(
         tmp_path,
@@ -200,16 +224,29 @@ def test_plan_voiceprint_capture_prefers_diverse_informative_segments(tmp_path: 
     )
 
     texts = [clip.text for clip in planned.speakers[0].clips]
-    assert texts == ["这是第一段适合做声纹的完整表达。", "这是第二段相隔较远的有效声纹样本。"]
+    assert texts == [
+        "这是第一段适合做声纹的完整表达。",
+        "这是第二段相隔较远的有效声纹样本。",
+    ]
     assert all(clip.selection_score > 0 for clip in planned.speakers[0].clips)
     assert "boundary=" in planned.speakers[0].clips[0].selection_reason
 
 
-def test_plan_voiceprint_capture_exposes_candidate_pool_with_recommendations(tmp_path: Path) -> None:
+def test_plan_voiceprint_capture_exposes_candidate_pool_with_recommendations(
+    tmp_path: Path,
+) -> None:
     """Planning should expose more candidates while marking only balanced defaults."""
     project_dir = _sample_project_with_sentences(
         tmp_path,
-        [_sentence(index, f"这是第 {index} 段适合做声纹的完整表达。", index * 20_000, index * 20_000 + 8_000) for index in range(1, 16)],
+        [
+            _sentence(
+                index,
+                f"这是第 {index} 段适合做声纹的完整表达。",
+                index * 20_000,
+                index * 20_000 + 8_000,
+            )
+            for index in range(1, 16)
+        ],
     )
 
     planned = plan_voiceprint_capture(
@@ -219,16 +256,23 @@ def test_plan_voiceprint_capture_exposes_candidate_pool_with_recommendations(tmp
         padding_seconds=0.0,
         store_dir=tmp_path / "voiceprints",
     )
-    session = load_voiceprint_capture_review_session(summary=planned, source_path=project_dir / "source" / "meeting.mp4")
+    session = load_voiceprint_capture_review_session(
+        summary=planned, source_path=project_dir / "source" / "meeting.mp4"
+    )
 
     assert len(planned.speakers[0].clips) == 12
     assert sum(1 for clip in planned.speakers[0].clips if clip.recommended) == 3
     assert sum(1 for clip in session.speakers[0].clips if clip.included) == 3
     recommended = [clip for clip in planned.speakers[0].clips if clip.recommended]
-    assert recommended[-1].source_begin_time_ms - recommended[0].source_begin_time_ms >= 100_000
+    assert (
+        recommended[-1].source_begin_time_ms - recommended[0].source_begin_time_ms
+        >= 100_000
+    )
 
 
-def test_capture_voiceprints_skips_definitely_bad_audio(monkeypatch, tmp_path: Path) -> None:
+def test_capture_voiceprints_skips_definitely_bad_audio(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Captured WAVs with clearly unusable audio should not enter the store."""
     project_dir = _sample_project_with_sentences(
         tmp_path,
@@ -238,7 +282,9 @@ def test_capture_voiceprints_skips_definitely_bad_audio(monkeypatch, tmp_path: P
         ],
     )
 
-    def fake_extract_audio_clip(source, output, start_seconds, duration_seconds) -> Path:
+    def fake_extract_audio_clip(
+        source, output, start_seconds, duration_seconds
+    ) -> Path:
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         amplitude = 0 if "clip_001" in str(output) else 1200
         _write_wav(Path(output), amplitude)
@@ -261,14 +307,26 @@ def test_capture_voiceprints_skips_definitely_bad_audio(monkeypatch, tmp_path: P
     assert summary.speakers[0].clips[0].audio_reason == "audio=ok"
 
 
-def test_capture_voiceprints_prefers_embedding_central_candidates(monkeypatch, tmp_path: Path) -> None:
+def test_capture_voiceprints_prefers_embedding_central_candidates(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Final persistence should prefer candidates near the embedding centroid."""
     project_dir = _sample_project_with_sentences(
         tmp_path,
-        [_sentence(index, f"这是第 {index} 段适合做声纹的完整表达。", index * 20_000, index * 20_000 + 8_000) for index in range(1, 5)],
+        [
+            _sentence(
+                index,
+                f"这是第 {index} 段适合做声纹的完整表达。",
+                index * 20_000,
+                index * 20_000 + 8_000,
+            )
+            for index in range(1, 5)
+        ],
     )
 
-    def fake_extract_audio_clip(source, output, start_seconds, duration_seconds) -> Path:
+    def fake_extract_audio_clip(
+        source, output, start_seconds, duration_seconds
+    ) -> Path:
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         _write_wav(Path(output), 1200)
         return Path(output)
@@ -293,7 +351,9 @@ def test_capture_voiceprints_prefers_embedding_central_candidates(monkeypatch, t
     assert "这是第 4 段适合做声纹的完整表达。" not in texts
 
 
-def test_voiceprint_capture_command_accepts_project_id_for_dry_run(tmp_path: Path) -> None:
+def test_voiceprint_capture_command_accepts_project_id_for_dry_run(
+    tmp_path: Path,
+) -> None:
     """Capture should accept the same project id references shown in next-step guidance."""
     project_dir = _sample_project(tmp_path)
     manifest = load_manifest(project_dir)
@@ -318,7 +378,9 @@ def test_voiceprint_capture_command_accepts_project_id_for_dry_run(tmp_path: Pat
     assert "Alice (speaker 0): 2 sample(s)" in result.output
 
 
-def test_voiceprint_review_command_summarizes_project_and_library(tmp_path: Path) -> None:
+def test_voiceprint_review_command_summarizes_project_and_library(
+    tmp_path: Path,
+) -> None:
     """Unified review should accept project ids and show both review scopes."""
     project_dir = _sample_project(tmp_path)
     manifest = load_manifest(project_dir)
@@ -426,8 +488,12 @@ def _sample_project(tmp_path: Path) -> Path:
             _sentence(2, "第二段更长一点", 2000, 4000),
         ],
     }
-    (project_dir / "asr" / "sentences.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    (project_dir / "speakers" / "speaker_map.json").write_text('{"0": "Alice"}\n', encoding="utf-8")
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+    (project_dir / "speakers" / "speaker_map.json").write_text(
+        '{"0": "Alice"}\n', encoding="utf-8"
+    )
     return project_dir
 
 
@@ -439,7 +505,9 @@ def _sample_project_with_sentences(tmp_path: Path, sentences: list[dict]) -> Pat
         "detected_speakers": [0],
         "sentences": sentences,
     }
-    (project_dir / "asr" / "sentences.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
     return project_dir
 
 

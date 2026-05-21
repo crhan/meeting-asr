@@ -11,7 +11,12 @@ import dashscope
 from dashscope.audio.asr import VocabularyService
 
 from app.config import Settings
-from app.correction_hotwords import AsrHotword, dashscope_vocabulary, hotword_hash, write_hotword_artifact
+from app.correction_hotwords import (
+    AsrHotword,
+    dashscope_vocabulary,
+    hotword_hash,
+    write_hotword_artifact,
+)
 from app.lexicon_store import (
     AsrVocabularyState,
     default_lexicon_db_path,
@@ -27,13 +32,17 @@ PREFIX_RE = re.compile(r"^[a-z0-9]{1,9}$")
 class VocabularyClient(Protocol):
     """Protocol for DashScope vocabulary clients."""
 
-    def create_vocabulary(self, target_model: str, prefix: str, vocabulary: list[dict]) -> str:
+    def create_vocabulary(
+        self, target_model: str, prefix: str, vocabulary: list[dict]
+    ) -> str:
         """Create a vocabulary and return its id."""
 
     def update_vocabulary(self, vocabulary_id: str, vocabulary: list[dict]) -> None:
         """Update an existing vocabulary."""
 
-    def list_vocabularies(self, prefix=None, page_index: int = 0, page_size: int = 10) -> list[dict]:
+    def list_vocabularies(
+        self, prefix=None, page_index: int = 0, page_size: int = 10
+    ) -> list[dict]:
         """List remote vocabularies."""
 
     def query_vocabulary(self, vocabulary_id: str):
@@ -105,7 +114,9 @@ def resolve_asr_hotwords(
     if value.lower() in {"off", "false", "none", "0"}:
         return AsrHotwordResolution(None, "off")
     if value.lower() == "auto":
-        return _auto_hotword_resolution(settings=settings, target_model=target_model, db_path=db_path)
+        return _auto_hotword_resolution(
+            settings=settings, target_model=target_model, db_path=db_path
+        )
     return AsrHotwordResolution(value, "explicit")
 
 
@@ -132,9 +143,21 @@ def get_asr_hotword_status(
     hotwords = list_asr_hotwords(db_path=database_path, limit=limit)
     table_hash = hotword_hash(hotwords) if hotwords else None
     endpoint = settings.dashscope_base_url
-    state = get_asr_vocabulary_state(target_model=target_model, endpoint=endpoint, db_path=database_path)
-    cache_status = _cache_status(hotword_count=len(hotwords), table_hash=table_hash, state=state)
-    return AsrHotwordStatus(database_path, target_model, endpoint, len(hotwords), table_hash, cache_status, state)
+    state = get_asr_vocabulary_state(
+        target_model=target_model, endpoint=endpoint, db_path=database_path
+    )
+    cache_status = _cache_status(
+        hotword_count=len(hotwords), table_hash=table_hash, state=state
+    )
+    return AsrHotwordStatus(
+        database_path,
+        target_model,
+        endpoint,
+        len(hotwords),
+        table_hash,
+        cache_status,
+        state,
+    )
 
 
 def sync_asr_hotwords(
@@ -171,16 +194,32 @@ def sync_asr_hotwords(
     hotwords = list_asr_hotwords(db_path=database_path, limit=limit)
     artifact_path = _write_optional_artifact(output, hotwords)
     if not hotwords:
-        return _empty_summary(database_path, settings, target_model, dry_run, artifact_path)
+        return _empty_summary(
+            database_path, settings, target_model, dry_run, artifact_path
+        )
     table_hash = hotword_hash(hotwords)
     endpoint = settings.dashscope_base_url
-    state = get_asr_vocabulary_state(target_model=target_model, endpoint=endpoint, db_path=database_path)
+    state = get_asr_vocabulary_state(
+        target_model=target_model, endpoint=endpoint, db_path=database_path
+    )
     if state and state.vocabulary_hash == table_hash and not force:
         return _unchanged_summary(database_path, state, dry_run, artifact_path)
     if dry_run:
-        return _dry_run_summary(database_path, settings, target_model, table_hash, hotwords, state, artifact_path)
-    vocabulary_id = _sync_remote_vocabulary(settings, target_model, prefix, hotwords, state, client)
-    new_state = AsrVocabularyState(target_model, endpoint, table_hash, vocabulary_id, len(hotwords))
+        return _dry_run_summary(
+            database_path,
+            settings,
+            target_model,
+            table_hash,
+            hotwords,
+            state,
+            artifact_path,
+        )
+    vocabulary_id = _sync_remote_vocabulary(
+        settings, target_model, prefix, hotwords, state, client
+    )
+    new_state = AsrVocabularyState(
+        target_model, endpoint, table_hash, vocabulary_id, len(hotwords)
+    )
     save_asr_vocabulary_state(new_state, db_path=database_path)
     return _changed_summary(database_path, new_state, artifact_path)
 
@@ -208,7 +247,9 @@ def list_remote_asr_vocabularies(
     """
     _configure_dashscope(settings)
     service = client or VocabularyService()
-    rows = service.list_vocabularies(prefix=prefix, page_index=page_index, page_size=page_size)
+    rows = service.list_vocabularies(
+        prefix=prefix, page_index=page_index, page_size=page_size
+    )
     if not isinstance(rows, list):
         raise RuntimeError("DashScope list_vocabularies did not return a list.")
     return [_plain_payload(row) for row in rows]
@@ -272,10 +313,14 @@ def _auto_hotword_resolution(
     if settings.dashscope_asr_vocabulary_id:
         return AsrHotwordResolution(settings.dashscope_asr_vocabulary_id, "config")
     try:
-        summary = sync_asr_hotwords(settings=settings, target_model=target_model, db_path=db_path)
+        summary = sync_asr_hotwords(
+            settings=settings, target_model=target_model, db_path=db_path
+        )
     except Exception as exc:
         return AsrHotwordResolution(None, "auto-error", error=str(exc))
-    return AsrHotwordResolution(summary.vocabulary_id, "auto", summary.hotword_count, summary.vocabulary_hash)
+    return AsrHotwordResolution(
+        summary.vocabulary_id, "auto", summary.hotword_count, summary.vocabulary_hash
+    )
 
 
 def _sync_remote_vocabulary(
@@ -296,7 +341,9 @@ def _sync_remote_vocabulary(
             return state.vocabulary_id
         except Exception:
             pass
-    return service.create_vocabulary(target_model=target_model, prefix=prefix, vocabulary=vocabulary)
+    return service.create_vocabulary(
+        target_model=target_model, prefix=prefix, vocabulary=vocabulary
+    )
 
 
 def _cache_status(
@@ -316,7 +363,9 @@ def _cache_status(
 def _validate_prefix(prefix: str) -> None:
     """Validate DashScope hotword vocabulary prefix."""
     if not PREFIX_RE.fullmatch(prefix):
-        raise ValueError("DashScope hotword prefix must be 1-9 lowercase letters or digits.")
+        raise ValueError(
+            "DashScope hotword prefix must be 1-9 lowercase letters or digits."
+        )
 
 
 def _configure_dashscope(settings: Settings) -> None:
@@ -347,7 +396,9 @@ def _plain_payload(value):
     return str(value)
 
 
-def _write_optional_artifact(output: Path | None, hotwords: list[AsrHotword]) -> Path | None:
+def _write_optional_artifact(
+    output: Path | None, hotwords: list[AsrHotword]
+) -> Path | None:
     """Write a local hotword artifact when requested."""
     if output is None:
         return None
@@ -362,7 +413,17 @@ def _empty_summary(
     artifact_path: Path | None,
 ) -> AsrHotwordSyncSummary:
     """Build a summary when no hotwords exist."""
-    return AsrHotwordSyncSummary(db_path, target_model, settings.dashscope_base_url, None, 0, None, False, dry_run, artifact_path)
+    return AsrHotwordSyncSummary(
+        db_path,
+        target_model,
+        settings.dashscope_base_url,
+        None,
+        0,
+        None,
+        False,
+        dry_run,
+        artifact_path,
+    )
 
 
 def _unchanged_summary(
@@ -373,8 +434,15 @@ def _unchanged_summary(
 ) -> AsrHotwordSyncSummary:
     """Build a summary for an unchanged remote vocabulary."""
     return AsrHotwordSyncSummary(
-        db_path, state.target_model, state.endpoint, state.vocabulary_id, state.hotword_count, state.vocabulary_hash,
-        False, dry_run, artifact_path
+        db_path,
+        state.target_model,
+        state.endpoint,
+        state.vocabulary_id,
+        state.hotword_count,
+        state.vocabulary_hash,
+        False,
+        dry_run,
+        artifact_path,
     )
 
 
@@ -390,8 +458,15 @@ def _dry_run_summary(
     """Build a dry-run summary without remote changes."""
     vocabulary_id = state.vocabulary_id if state else None
     return AsrHotwordSyncSummary(
-        db_path, target_model, settings.dashscope_base_url, vocabulary_id, len(hotwords), table_hash, False, True,
-        artifact_path
+        db_path,
+        target_model,
+        settings.dashscope_base_url,
+        vocabulary_id,
+        len(hotwords),
+        table_hash,
+        False,
+        True,
+        artifact_path,
     )
 
 
@@ -402,6 +477,13 @@ def _changed_summary(
 ) -> AsrHotwordSyncSummary:
     """Build a summary for a changed remote vocabulary."""
     return AsrHotwordSyncSummary(
-        db_path, state.target_model, state.endpoint, state.vocabulary_id, state.hotword_count, state.vocabulary_hash,
-        True, False, artifact_path
+        db_path,
+        state.target_model,
+        state.endpoint,
+        state.vocabulary_id,
+        state.hotword_count,
+        state.vocabulary_hash,
+        True,
+        False,
+        artifact_path,
     )

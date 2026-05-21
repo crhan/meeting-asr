@@ -8,7 +8,10 @@ from pathlib import Path
 from textual.widgets import Static
 
 from app.presentation.tui import voiceprint_quality as quality_tui
-from app.presentation.tui.voiceprint_quality import VoiceprintQualityApp, VoiceprintQualityHelpScreen
+from app.presentation.tui.voiceprint_quality import (
+    VoiceprintQualityApp,
+    VoiceprintQualityHelpScreen,
+)
 from app.voiceprint_quality import analyze_voiceprint_quality
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 from app.voiceprint_store import (
@@ -23,7 +26,9 @@ from app.voiceprint_store import (
 
 def test_voiceprint_quality_tui_stages_quarantine_and_saves(tmp_path: Path) -> None:
     """The quality TUI should let users quarantine a suspicious sample after review."""
-    report = analyze_voiceprint_quality(store_dir=_quality_store(tmp_path), speaker="Alice")
+    report = analyze_voiceprint_quality(
+        store_dir=_quality_store(tmp_path), speaker="Alice"
+    )
 
     async def scenario() -> None:
         async with VoiceprintQualityApp(report).run_test(size=(120, 24)) as pilot:
@@ -50,7 +55,9 @@ def test_voiceprint_quality_tui_save_refreshes_scores_in_place(tmp_path: Path) -
     report = analyze_voiceprint_quality(store_dir=store_dir, speaker="Alice")
 
     async def scenario() -> None:
-        async with VoiceprintQualityApp(report, store_dir=store_dir, speaker="Alice").run_test(size=(120, 24)) as pilot:
+        async with VoiceprintQualityApp(
+            report, store_dir=store_dir, speaker="Alice"
+        ).run_test(size=(120, 24)) as pilot:
             app = pilot.app
 
             assert app.report.suspicious_count == 1
@@ -61,9 +68,9 @@ def test_voiceprint_quality_tui_save_refreshes_scores_in_place(tmp_path: Path) -
             await pilot.pause()
 
             assert app.report.suspicious_count == 0
-            assert "已保存 1 个变更" in str(app.query_one("#status", Static).render()) or "Saved 1 change" in str(
+            assert "已保存 1 个变更" in str(
                 app.query_one("#status", Static).render()
-            )
+            ) or "Saved 1 change" in str(app.query_one("#status", Static).render())
 
             await pilot.press("q")
 
@@ -76,7 +83,9 @@ def test_voiceprint_quality_tui_marks_verified_active(tmp_path: Path) -> None:
     report = analyze_voiceprint_quality(store_dir=store_dir, speaker="Alice")
 
     async def scenario() -> None:
-        async with VoiceprintQualityApp(report, store_dir=store_dir, speaker="Alice").run_test(size=(120, 24)) as pilot:
+        async with VoiceprintQualityApp(
+            report, store_dir=store_dir, speaker="Alice"
+        ).run_test(size=(120, 24)) as pilot:
             app = pilot.app
 
             assert app.report.suspicious_count == 1
@@ -87,19 +96,32 @@ def test_voiceprint_quality_tui_marks_verified_active(tmp_path: Path) -> None:
             await pilot.pause()
 
             assert app.report.suspicious_count == 0
-            assert len(list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, get_voiceprint_db_path(store_dir))) == 4
+            assert (
+                len(
+                    list_voiceprint_embeddings(
+                        LOCAL_SPEECHBRAIN_MODEL, get_voiceprint_db_path(store_dir)
+                    )
+                )
+                == 4
+            )
 
     asyncio.run(scenario())
 
 
-def test_voiceprint_quality_tui_space_toggles_playback(monkeypatch, tmp_path: Path) -> None:
+def test_voiceprint_quality_tui_space_toggles_playback(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Space should play and stop the selected suspicious WAV sample."""
     store_dir = _quality_store(tmp_path)
     report = analyze_voiceprint_quality(store_dir=store_dir, speaker="Alice")
     process = _RunningFakeProcess()
     starts = 0
 
-    monkeypatch.setattr(quality_tui, "build_voiceprint_play_command", lambda path: ["fake-player", str(path)])
+    monkeypatch.setattr(
+        quality_tui,
+        "build_voiceprint_play_command",
+        lambda path: ["fake-player", str(path)],
+    )
 
     def fake_popen(*args, **kwargs) -> _RunningFakeProcess:
         nonlocal starts
@@ -109,7 +131,9 @@ def test_voiceprint_quality_tui_space_toggles_playback(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(quality_tui.subprocess, "Popen", fake_popen)
 
     async def scenario() -> None:
-        async with VoiceprintQualityApp(report, store_dir=store_dir).run_test() as pilot:
+        async with VoiceprintQualityApp(
+            report, store_dir=store_dir
+        ).run_test() as pilot:
             await pilot.press("space")
 
             assert starts == 1
@@ -126,7 +150,9 @@ def test_voiceprint_quality_tui_space_toggles_playback(monkeypatch, tmp_path: Pa
 
 def test_voiceprint_quality_tui_question_mark_shows_help(tmp_path: Path) -> None:
     """The ? key should open and close shortcut help."""
-    report = analyze_voiceprint_quality(store_dir=_quality_store(tmp_path), speaker="Alice")
+    report = analyze_voiceprint_quality(
+        store_dir=_quality_store(tmp_path), speaker="Alice"
+    )
 
     async def scenario() -> None:
         async with VoiceprintQualityApp(report).run_test() as pilot:
@@ -185,7 +211,9 @@ def _quality_store(tmp_path: Path) -> Path:
     rows = list_voiceprint_samples_for_project("project-quality", db_path)
     vectors = ([1.0, 0.0], [0.98, 0.02], [0.99, 0.01], [0.0, 1.0])
     for row, vector in zip(rows, vectors, strict=True):
-        upsert_voiceprint_embedding(row.sample_id, LOCAL_SPEECHBRAIN_MODEL, vector, db_path)
+        upsert_voiceprint_embedding(
+            row.sample_id, LOCAL_SPEECHBRAIN_MODEL, vector, db_path
+        )
     return store_dir
 
 
@@ -197,7 +225,9 @@ def _stored_sample(
     index: int,
 ) -> StoredVoiceprintSample:
     """Build one stored sample fixture."""
-    clip_path = store_dir / "clips" / "project-quality" / "speaker_0" / f"clip_{index:03d}.wav"
+    clip_path = (
+        store_dir / "clips" / "project-quality" / "speaker_0" / f"clip_{index:03d}.wav"
+    )
     clip_path.parent.mkdir(parents=True, exist_ok=True)
     clip_path.write_bytes(f"{speaker_name}-{index}".encode())
     return StoredVoiceprintSample(

@@ -62,7 +62,13 @@ def test_project_speakers_cluster_flags_mixed_speaker(
     assert speaker_a["samples"][0]["sentence_id"] == 1
     assert speaker_a["samples"][0]["centroid_score"] is not None
     assert speaker_a["samples"][0]["margin_score"] is not None
-    assert speaker_a["samples"][0]["status"] in {"ok", "ambiguous", "conflict", "weak-fit", "low-info"}
+    assert speaker_a["samples"][0]["status"] in {
+        "ok",
+        "ambiguous",
+        "conflict",
+        "weak-fit",
+        "low-info",
+    }
 
 
 def test_project_speakers_cluster_can_score_all_segments(
@@ -88,7 +94,11 @@ def test_project_speakers_cluster_can_score_all_segments(
         ],
     )
 
-    payload = json.loads((project_dir / "speakers" / "speaker_cluster_quality.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (project_dir / "speakers" / "speaker_cluster_quality.json").read_text(
+            encoding="utf-8"
+        )
+    )
     speaker_a = payload["speakers"][0]
     assert result.exit_code == 0
     assert payload["scoring_mode"] == "all-segments"
@@ -119,7 +129,9 @@ def test_cluster_audio_quality_rejects_silent_anchor(tmp_path: Path) -> None:
     assert _audio_quality_ok(silent) is False
 
 
-def test_cluster_audio_quality_uses_voiced_duration_not_silence_ratio(tmp_path: Path) -> None:
+def test_cluster_audio_quality_uses_voiced_duration_not_silence_ratio(
+    tmp_path: Path,
+) -> None:
     """Long boundary silence should not reject an otherwise usable utterance."""
     padded = tmp_path / "padded.wav"
     _write_wav(padded, [0] * 80_000 + [1800] * 16_000 + [0] * 80_000)
@@ -228,21 +240,63 @@ def _write_cluster_inputs(project_dir: Path) -> None:
         "full_text": "alpha beta gamma delta other other",
         "detected_speakers": [0, 1],
         "sentences": [
-            {"begin_time_ms": 0, "end_time_ms": 3000, "text": "alpha", "speaker_id": 0, "sentence_id": 1},
-            {"begin_time_ms": 4000, "end_time_ms": 7000, "text": "beta", "speaker_id": 0, "sentence_id": 2},
-            {"begin_time_ms": 8000, "end_time_ms": 11000, "text": "gamma", "speaker_id": 0, "sentence_id": 3},
-            {"begin_time_ms": 12000, "end_time_ms": 15000, "text": "delta", "speaker_id": 0, "sentence_id": 4},
-            {"begin_time_ms": 16000, "end_time_ms": 19000, "text": "other", "speaker_id": 1, "sentence_id": 5},
-            {"begin_time_ms": 20000, "end_time_ms": 23000, "text": "other", "speaker_id": 1, "sentence_id": 6},
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 3000,
+                "text": "alpha",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 4000,
+                "end_time_ms": 7000,
+                "text": "beta",
+                "speaker_id": 0,
+                "sentence_id": 2,
+            },
+            {
+                "begin_time_ms": 8000,
+                "end_time_ms": 11000,
+                "text": "gamma",
+                "speaker_id": 0,
+                "sentence_id": 3,
+            },
+            {
+                "begin_time_ms": 12000,
+                "end_time_ms": 15000,
+                "text": "delta",
+                "speaker_id": 0,
+                "sentence_id": 4,
+            },
+            {
+                "begin_time_ms": 16000,
+                "end_time_ms": 19000,
+                "text": "other",
+                "speaker_id": 1,
+                "sentence_id": 5,
+            },
+            {
+                "begin_time_ms": 20000,
+                "end_time_ms": 23000,
+                "text": "other",
+                "speaker_id": 1,
+                "sentence_id": 6,
+            },
         ],
     }
-    (project_dir / "asr" / "sentences.json").write_text(json.dumps(sentences, ensure_ascii=False), encoding="utf-8")
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(sentences, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 def _patch_cluster_embedding(monkeypatch) -> None:
     """Patch audio extraction and cluster embedding with deterministic fakes."""
-    monkeypatch.setattr("app.speaker_cluster_quality.extract_audio_clip", _fake_extract_audio_clip)
-    monkeypatch.setattr("app.speaker_cluster_quality.embed_audio_file", _fake_embed_audio_file)
+    monkeypatch.setattr(
+        "app.speaker_cluster_quality.extract_audio_clip", _fake_extract_audio_clip
+    )
+    monkeypatch.setattr(
+        "app.speaker_cluster_quality.embed_audio_file", _fake_embed_audio_file
+    )
 
 
 def _fake_extract_audio_clip(
@@ -269,7 +323,9 @@ def _write_wav(path: Path, samples: list[int]) -> None:
         writer.setnchannels(1)
         writer.setsampwidth(2)
         writer.setframerate(16000)
-        writer.writeframes(b"".join(sample.to_bytes(2, "little", signed=True) for sample in samples))
+        writer.writeframes(
+            b"".join(sample.to_bytes(2, "little", signed=True) for sample in samples)
+        )
 
 
 def _fake_embed_audio_file(path: Path, *, provider: str | None) -> list[float]:

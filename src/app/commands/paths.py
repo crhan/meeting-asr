@@ -7,7 +7,12 @@ from pathlib import Path
 
 import typer
 
-from app.config import get_cache_dir, get_config_path, get_data_dir, get_default_projects_dir
+from app.config import (
+    get_cache_dir,
+    get_config_path,
+    get_data_dir,
+    get_default_projects_dir,
+)
 from app.lexicon_store import default_lexicon_db_path
 from app.presentation.cli.json_output import emit_json
 from app.project_trash import get_project_trash_dir
@@ -42,9 +47,15 @@ def _path_rows() -> list[PathRow]:
         PathRow("cache", get_cache_dir(), "Global cache directory"),
         PathRow("projects", get_default_projects_dir(), "Project store"),
         PathRow("project_trash", get_project_trash_dir(), "Deleted project trash"),
-        PathRow("voiceprint_db", get_voiceprint_db_path(), "Voiceprint SQLite database"),
+        PathRow(
+            "voiceprint_db", get_voiceprint_db_path(), "Voiceprint SQLite database"
+        ),
         PathRow("voiceprint_clips", get_voiceprint_clip_dir(), "Voiceprint WAV clips"),
-        PathRow("lexicon_db", default_lexicon_db_path(), "Correction lexicon SQLite database"),
+        PathRow(
+            "lexicon_db",
+            default_lexicon_db_path(),
+            "Correction lexicon SQLite database",
+        ),
     ]
 
 

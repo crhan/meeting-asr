@@ -97,7 +97,10 @@ def _is_noisy_logger_name(logger_name: str) -> bool:
     Returns:
         True when the logger should be treated as noisy.
     """
-    return any(logger_name == noisy or logger_name.startswith(f"{noisy}.") for noisy in NOISY_LOGGERS)
+    return any(
+        logger_name == noisy or logger_name.startswith(f"{noisy}.")
+        for noisy in NOISY_LOGGERS
+    )
 
 
 def ensure_directory(path: Path) -> Path:
@@ -143,7 +146,9 @@ def safe_write_json(path: Path, payload: object) -> Path:
     Returns:
         Written path.
     """
-    return safe_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    return safe_write_text(
+        path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    )
 
 
 def retry(
@@ -179,7 +184,9 @@ def retry(
             if index + 1 == attempts:
                 break
             time.sleep(delay_seconds * (index + 1))
-    raise RuntimeError(f"Operation failed after {attempts} retryable attempts: {last_error}") from last_error
+    raise RuntimeError(
+        f"Operation failed after {attempts} retryable attempts: {last_error}"
+    ) from last_error
 
 
 def is_retryable_exception(exc: Exception) -> bool:
@@ -192,12 +199,16 @@ def is_retryable_exception(exc: Exception) -> bool:
     Returns:
         True for transient network/service failures.
     """
-    if isinstance(exc, (requests.Timeout, requests.ConnectionError, TimeoutError, ConnectionError)):
+    if isinstance(
+        exc, (requests.Timeout, requests.ConnectionError, TimeoutError, ConnectionError)
+    ):
         return True
     if isinstance(exc, requests.HTTPError):
         return _status_code_is_retryable(_response_status(exc.response))
     if isinstance(exc, requests.RequestException):
-        return _status_code_is_retryable(_response_status(getattr(exc, "response", None)))
+        return _status_code_is_retryable(
+            _response_status(getattr(exc, "response", None))
+        )
     status = getattr(exc, "status", None) or getattr(exc, "status_code", None)
     if _status_code_is_retryable(_coerce_int(status)):
         return True
@@ -231,7 +242,7 @@ def _coerce_int(value: object | None) -> int | None:
     """
     try:
         return int(value) if value is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 

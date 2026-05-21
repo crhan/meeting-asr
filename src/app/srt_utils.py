@@ -23,7 +23,9 @@ def ms_to_srt_timestamp(ms: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
 
 
-def build_srt(sentences: list[SentenceSegment], include_speaker_label: bool = True) -> str:
+def build_srt(
+    sentences: list[SentenceSegment], include_speaker_label: bool = True
+) -> str:
     """
     Build legal SRT content.
 
@@ -40,7 +42,11 @@ def build_srt(sentences: list[SentenceSegment], include_speaker_label: bool = Tr
         text = sentence.text.strip()
         if not text:
             continue
-        prefix = f"{speaker_id_to_label(sentence.speaker_id)}: " if include_speaker_label else ""
+        prefix = (
+            f"{speaker_id_to_label(sentence.speaker_id)}: "
+            if include_speaker_label
+            else ""
+        )
         blocks.append(
             "\n".join(
                 [

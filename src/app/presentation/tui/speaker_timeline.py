@@ -140,9 +140,7 @@ def _render_timeline_line(
     if edited:
         badges.append("[yellow]edited[/]")
     badge = (" " + " ".join(badges)) if badges else ""
-    line = (
-        f"{marker} [cyan]{time_range}[/] [magenta]{speaker_tag}[/]: {escape(text)}{badge}"
-    )
+    line = f"{marker} [cyan]{time_range}[/] [magenta]{speaker_tag}[/]: {escape(text)}{badge}"
     if selected:
         return f"[reverse]{line}[/]"
     return line
@@ -309,7 +307,9 @@ class SpeakerPickScreen(ModalScreen[int | None]):
     def _list_text(self) -> str:
         """Render the candidate speaker list."""
         if not self.options:
-            return tr("[dim]No other speakers available.[/]", "[dim]没有可选的 speaker。[/]")
+            return tr(
+                "[dim]No other speakers available.[/]", "[dim]没有可选的 speaker。[/]"
+            )
         lines: list[str] = []
         for index, option in enumerate(self.options):
             marker = ">" if index == self.selected_index else " "
@@ -320,7 +320,9 @@ class SpeakerPickScreen(ModalScreen[int | None]):
                 note.append(tr("ignored", "已忽略"))
             suffix = (" [dim](" + ", ".join(note) + ")[/]") if note else ""
             display = f"{marker} {option.label}  {escape(option.name)}{suffix}"
-            lines.append(f"[reverse]{display}[/]" if index == self.selected_index else display)
+            lines.append(
+                f"[reverse]{display}[/]" if index == self.selected_index else display
+            )
         return "\n".join(lines)
 
 
@@ -349,7 +351,9 @@ def capture_speaker_baseline(
     baseline: dict[tuple[int | None, int, int], int] = {}
     for speaker in speakers:
         for seg in speaker.segments:
-            speaker_id = seg.speaker_id if seg.speaker_id is not None else speaker.speaker_id
+            speaker_id = (
+                seg.speaker_id if seg.speaker_id is not None else speaker.speaker_id
+            )
             baseline[_segment_key(seg)] = speaker_id
     return baseline
 

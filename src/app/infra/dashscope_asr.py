@@ -70,6 +70,7 @@ def submit_transcription(
         kwargs["speaker_count"] = speaker_count
     if vocabulary_id:
         kwargs["vocabulary_id"] = vocabulary_id
+
     def _submit() -> Any:
         response = Transcription.async_call(**kwargs)
         _raise_for_task_error(response, stage="submit")
@@ -126,6 +127,7 @@ def _fetch_transcription_status(task: Any) -> Any:
     Returns:
         DashScope status response.
     """
+
     def _fetch() -> Any:
         response = Transcription.fetch(task=task)
         _raise_for_task_error(response, stage="wait")
@@ -170,7 +172,11 @@ def _raise_for_task_error(response: Any, *, stage: str) -> None:
     """Raise when DashScope reports a failed request."""
     status_code = getattr(response, "status_code", None)
     if status_code and int(status_code) >= 400:
-        message = getattr(response, "message", None) or getattr(response, "code", None) or response
+        message = (
+            getattr(response, "message", None)
+            or getattr(response, "code", None)
+            or response
+        )
         raise RuntimeError(f"DashScope {stage} failed: HTTP {status_code} {message}")
 
 
@@ -180,7 +186,9 @@ def _check_subtasks(response: Any) -> None:
     if isinstance(output, dict):
         subtasks = output.get("results") or output.get("subtasks") or []
     else:
-        subtasks = getattr(output, "results", None) or getattr(output, "subtasks", None) or []
+        subtasks = (
+            getattr(output, "results", None) or getattr(output, "subtasks", None) or []
+        )
     for index, subtask in enumerate(subtasks):
         status = _get_field(subtask, "subtask_status") or _get_field(subtask, "status")
         if status and str(status).upper() not in {"SUCCEEDED", "SUCCESS", "COMPLETED"}:
@@ -197,7 +205,9 @@ def _extract_task_status(response: Any) -> str | None:
 def _raise_for_failed_status(status: str | None, response: Any) -> None:
     """Raise when the fetched task status is terminal failure."""
     if status in FAILED_STATUSES:
-        raise RuntimeError(f"DashScope transcription task failed with status {status}: {response}")
+        raise RuntimeError(
+            f"DashScope transcription task failed with status {status}: {response}"
+        )
 
 
 def _is_success_status(status: str | None) -> bool:

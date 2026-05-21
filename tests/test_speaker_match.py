@@ -27,16 +27,35 @@ def test_project_speakers_match_writes_suggestions(
     _patch_audio_embedding(monkeypatch)
     runner.invoke(
         app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
     runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
 
     result = runner.invoke(
         app,
-        ["project", "speakers", "match", str(project_dir), "--store-dir", str(store_dir), "--threshold", "0.7"],
+        [
+            "project",
+            "speakers",
+            "match",
+            str(project_dir),
+            "--store-dir",
+            str(store_dir),
+            "--threshold",
+            "0.7",
+        ],
     )
 
-    payload = json.loads((project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8")
+    )
     assert result.exit_code == 0
     assert "Provider: local-speechbrain" in result.output
     assert f"Model: {LOCAL_SPEECHBRAIN_MODEL}" in result.output
@@ -47,8 +66,14 @@ def test_project_speakers_match_writes_suggestions(
     assert payload["matches"][0]["accepted_name"] == "欧丁"
     assert payload["matches"][0]["best_name"] == "欧丁"
     assert isinstance(payload["matches"][0]["accepted_person_id"], int)
-    assert payload["matches"][0]["accepted_person_id"] == payload["matches"][0]["best_person_id"]
-    assert payload["matches"][0]["accepted_person_public_id"] == payload["matches"][0]["best_person_public_id"]
+    assert (
+        payload["matches"][0]["accepted_person_id"]
+        == payload["matches"][0]["best_person_id"]
+    )
+    assert (
+        payload["matches"][0]["accepted_person_public_id"]
+        == payload["matches"][0]["best_person_public_id"]
+    )
     assert payload["matches"][0]["candidates"][0]["person_public_id"].startswith("vpp-")
     assert payload["matches"][0]["best_score"] == payload["matches"][0]["score"]
     assert payload["matches"][0]["threshold"] == 0.7
@@ -70,18 +95,34 @@ def test_project_speakers_match_keeps_below_threshold_best_candidate(
     _patch_audio_embedding(monkeypatch)
     monkeypatch.setattr(
         "app.speaker_matching._known_speaker_vectors",
-        lambda store_dir, model: {7: _KnownSpeakerVector(7, "墨泪", [0.8, 0.6], "vpp-0000000000000007")},
+        lambda store_dir, model: {
+            7: _KnownSpeakerVector(7, "墨泪", [0.8, 0.6], "vpp-0000000000000007")
+        },
     )
 
     result = runner.invoke(
         app,
-        ["project", "speakers", "match", str(project_dir), "--store-dir", str(store_dir), "--threshold", "0.9"],
+        [
+            "project",
+            "speakers",
+            "match",
+            str(project_dir),
+            "--store-dir",
+            str(store_dir),
+            "--threshold",
+            "0.9",
+        ],
     )
 
-    payload = json.loads((project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8")
+    )
     first = payload["matches"][0]
     assert result.exit_code == 0
-    assert "Speaker A status=below-threshold best=墨泪 score=0.800 threshold=0.900" in result.output
+    assert (
+        "Speaker A status=below-threshold best=墨泪 score=0.800 threshold=0.900"
+        in result.output
+    )
     assert "Speaker A -> unknown" not in result.output
     assert "Recommended next step:" in result.output
     assert "meeting-asr project speakers review" in result.output
@@ -120,17 +161,39 @@ def test_project_speakers_match_can_apply_matches(
     _patch_audio_embedding(monkeypatch)
     runner.invoke(
         app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
     runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
 
     result = runner.invoke(
         app,
-        ["project", "speakers", "match", str(project_dir), "--store-dir", str(store_dir), "--apply"],
+        [
+            "project",
+            "speakers",
+            "match",
+            str(project_dir),
+            "--store-dir",
+            str(store_dir),
+            "--apply",
+        ],
     )
 
-    transcript = (project_dir / "exports" / "transcript_named.txt").read_text(encoding="utf-8")
-    person_map = json.loads((project_dir / "speakers" / "speaker_person_map.json").read_text(encoding="utf-8"))
+    transcript = (project_dir / "exports" / "transcript_named.txt").read_text(
+        encoding="utf-8"
+    )
+    person_map = json.loads(
+        (project_dir / "speakers" / "speaker_person_map.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert result.exit_code == 0
     assert "Applied accepted speaker matches." in result.output
     assert "欧丁" in transcript
@@ -151,13 +214,41 @@ def test_project_speakers_match_reuses_project_probe_embedding_cache(
     _patch_audio_embedding(monkeypatch, calls=calls)
     runner.invoke(
         app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
     runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
 
-    first = runner.invoke(app, ["project", "speakers", "match", str(project_dir), "--store-dir", str(store_dir)])
+    first = runner.invoke(
+        app,
+        [
+            "project",
+            "speakers",
+            "match",
+            str(project_dir),
+            "--store-dir",
+            str(store_dir),
+        ],
+    )
     after_first = len(calls)
-    second = runner.invoke(app, ["project", "speakers", "match", str(project_dir), "--store-dir", str(store_dir)])
+    second = runner.invoke(
+        app,
+        [
+            "project",
+            "speakers",
+            "match",
+            str(project_dir),
+            "--store-dir",
+            str(store_dir),
+        ],
+    )
 
     assert first.exit_code == 0
     assert second.exit_code == 0
@@ -174,14 +265,25 @@ def test_project_speakers_match_allows_empty_voiceprint_library(
     project_dir = _sample_project(tmp_path)
     store_dir = tmp_path / "empty-voiceprints"
     _write_named_speaker_inputs(project_dir)
-    monkeypatch.setattr("app.speaker_matching.embed_audio_file", _raise_unexpected_embedding)
+    monkeypatch.setattr(
+        "app.speaker_matching.embed_audio_file", _raise_unexpected_embedding
+    )
 
     result = runner.invoke(
         app,
-        ["project", "speakers", "match", str(project_dir), "--store-dir", str(store_dir)],
+        [
+            "project",
+            "speakers",
+            "match",
+            str(project_dir),
+            "--store-dir",
+            str(store_dir),
+        ],
     )
 
-    payload = json.loads((project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8")
+    )
     assert result.exit_code == 0
     assert "Speaker A status=no-candidate threshold=0.750" in result.output
     assert "Speaker B status=no-candidate threshold=0.750" in result.output
@@ -219,11 +321,25 @@ def _write_named_speaker_inputs(project_dir: Path) -> None:
         "full_text": "大家好。收到。",
         "detected_speakers": [0, 1],
         "sentences": [
-            {"begin_time_ms": 0, "end_time_ms": 3000, "text": "我是欧丁。", "speaker_id": 0, "sentence_id": 1},
-            {"begin_time_ms": 4000, "end_time_ms": 7000, "text": "我是敬悦。", "speaker_id": 1, "sentence_id": 2},
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 3000,
+                "text": "我是欧丁。",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 4000,
+                "end_time_ms": 7000,
+                "text": "我是敬悦。",
+                "speaker_id": 1,
+                "sentence_id": 2,
+            },
         ],
     }
-    (project_dir / "asr" / "sentences.json").write_text(json.dumps(sentences, ensure_ascii=False), encoding="utf-8")
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(sentences, ensure_ascii=False), encoding="utf-8"
+    )
     (project_dir / "speakers" / "speaker_map.json").write_text(
         json.dumps({"0": "欧丁", "1": "敬悦"}, ensure_ascii=False),
         encoding="utf-8",
@@ -233,13 +349,24 @@ def _write_named_speaker_inputs(project_dir: Path) -> None:
 def _patch_audio_embedding(monkeypatch, *, calls: list[Path] | None = None) -> None:
     """Patch audio extraction and embedding with deterministic test doubles."""
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
-    monkeypatch.setattr("app.speaker_matching.extract_audio_clip", _fake_extract_audio_clip)
+    monkeypatch.setattr(
+        "app.speaker_matching.extract_audio_clip", _fake_extract_audio_clip
+    )
     if calls is None:
-        monkeypatch.setattr("app.voiceprint_embedding.embed_audio_file", _fake_embed_audio_file)
-        monkeypatch.setattr("app.speaker_matching.embed_audio_file", _fake_embed_audio_file)
+        monkeypatch.setattr(
+            "app.voiceprint_embedding.embed_audio_file", _fake_embed_audio_file
+        )
+        monkeypatch.setattr(
+            "app.speaker_matching.embed_audio_file", _fake_embed_audio_file
+        )
         return
-    monkeypatch.setattr("app.voiceprint_embedding.embed_audio_file", _tracking_fake_embed_audio_file(calls))
-    monkeypatch.setattr("app.speaker_matching.embed_audio_file", _tracking_fake_embed_audio_file(calls))
+    monkeypatch.setattr(
+        "app.voiceprint_embedding.embed_audio_file",
+        _tracking_fake_embed_audio_file(calls),
+    )
+    monkeypatch.setattr(
+        "app.speaker_matching.embed_audio_file", _tracking_fake_embed_audio_file(calls)
+    )
 
 
 def _fake_extract_audio_clip(

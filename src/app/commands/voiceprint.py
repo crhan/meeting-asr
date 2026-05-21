@@ -27,7 +27,10 @@ from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.completion_helpers import complete_voiceprint_model
 from app.core.project_refs import resolve_project_ref
 from app.utils import format_ms_timestamp
-from app.voiceprint_audio import VOICEPRINT_AUDIO_PREPROCESS_VERSION, normalize_voiceprint_samples
+from app.voiceprint_audio import (
+    VOICEPRINT_AUDIO_PREPROCESS_VERSION,
+    normalize_voiceprint_samples,
+)
 from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_people import (
     create_voiceprint_person,
@@ -53,7 +56,9 @@ from app.presentation.tui.voiceprint_review import (
     load_voiceprint_review_session,
     run_voiceprint_review_tui,
 )
-from app.presentation.tui.voiceprint_review_context import render_voiceprint_review_summary
+from app.presentation.tui.voiceprint_review_context import (
+    render_voiceprint_review_summary,
+)
 from app.presentation.tui.voiceprint_quality import (
     persist_quality_decision,
     run_voiceprint_quality_review_tui,
@@ -86,12 +91,18 @@ app.add_typer(people_app, name="people", help="Manage stable voiceprint people."
 
 @app.command("review")
 def review_command(
-    project_dir: Optional[Path] = typer.Argument(None, metavar="[PROJECT]", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Optional[Path] = typer.Argument(
+        None, metavar="[PROJECT]", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     sample_count: int = typer.Option(3, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     page_size: Optional[int] = typer.Option(
         None,
         "--page-size",
@@ -99,13 +110,23 @@ def review_command(
         max=50,
         help="Override samples per page. By default the TUI uses the pane height.",
     ),
-    summary: bool = typer.Option(False, "--summary", help="Print project candidates and library without opening TUI."),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    summary: bool = typer.Option(
+        False,
+        "--summary",
+        help="Print project candidates and library without opening TUI.",
+    ),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
 ) -> None:
     """Open the unified voiceprint TUI for project candidates and the global library."""
     resolved_project_dir = None
     if project_dir is not None:
-        resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+        resolved_project_dir = run_with_cli_errors(
+            lambda: resolve_project_ref(project_dir, projects_dir)
+        )
     session, planned = run_with_cli_errors(
         lambda: load_voiceprint_review_session(
             project_dir=resolved_project_dir,
@@ -125,7 +146,9 @@ def review_command(
         return
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         typer.echo(render_voiceprint_review_summary(session))
-        raise typer.BadParameter("Voiceprint review TUI requires an interactive terminal. Use --summary to inspect.")
+        raise typer.BadParameter(
+            "Voiceprint review TUI requires an interactive terminal. Use --summary to inspect."
+        )
     decision = run_voiceprint_review_tui(session)
     if not decision.saved:
         typer.echo("Voiceprint review closed; no samples were written.")
@@ -144,13 +167,23 @@ def review_command(
 
 @app.command("capture")
 def capture_command(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     sample_count: int = typer.Option(3, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    review: bool = typer.Option(False, "--review", help="Compatibility shortcut; prefer `voiceprint review PROJECT`."),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    review: bool = typer.Option(
+        False,
+        "--review",
+        help="Compatibility shortcut; prefer `voiceprint review PROJECT`.",
+    ),
     page_size: Optional[int] = typer.Option(
         None,
         "--page-size",
@@ -159,10 +192,16 @@ def capture_command(
         help="Override samples per page when --review is used.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run"),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
 ) -> None:
     """Capture this project's named speakers into the global voiceprint store."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     if dry_run:
         summary = run_with_progress(
             lambda reporter: capture_voiceprints(
@@ -332,9 +371,13 @@ def _persist_review_decision(
 
 @app.command("list")
 def list_command(
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
-    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
+    plain: bool = typer.Option(
+        False, "--plain", help="Print stable tab-separated output."
+    ),
 ) -> None:
     """List speakers recorded in the global voiceprint registry."""
     db_path = get_voiceprint_db_path(store_dir)
@@ -354,7 +397,9 @@ def list_command(
 
 @app.command("browse", hidden=True)
 def browse_command(
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     page_size: Optional[int] = typer.Option(
         None,
         "--page-size",
@@ -362,11 +407,15 @@ def browse_command(
         max=50,
         help="Override samples per page. By default the TUI uses the pane height.",
     ),
-    summary: bool = typer.Option(False, "--summary", help="Print the library without opening the TUI."),
+    summary: bool = typer.Option(
+        False, "--summary", help="Print the library without opening the TUI."
+    ),
 ) -> None:
     """Open the legacy global-library TUI; prefer `voiceprint review`."""
     session = run_with_cli_errors(
-        lambda: load_voiceprint_library_session(store_dir=store_dir, page_size=page_size)
+        lambda: load_voiceprint_library_session(
+            store_dir=store_dir, page_size=page_size
+        )
     )
     if summary:
         typer.echo(render_voiceprint_library_summary(session))
@@ -383,9 +432,13 @@ def browse_command(
 
 @people_app.command("list")
 def people_list_command(
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
-    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
+    plain: bool = typer.Option(
+        False, "--plain", help="Print stable tab-separated output."
+    ),
 ) -> None:
     """List stable voiceprint people and their sample coverage."""
     db_path = get_voiceprint_db_path(store_dir)
@@ -407,7 +460,9 @@ def people_list_command(
 @people_app.command("add")
 def people_add_command(
     name: str = typer.Argument(..., metavar="NAME"),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Create one stable voiceprint person; names cannot be silently reused."""
@@ -425,12 +480,16 @@ def people_add_command(
 def people_rename_command(
     person_id: str = typer.Argument(..., metavar="PERSON_ID"),
     name: str = typer.Argument(..., metavar="NAME"),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Rename one stable voiceprint person by ID."""
     db_path = get_voiceprint_db_path(store_dir)
-    row = run_with_cli_errors(lambda: rename_voiceprint_person(person_id, name, db_path))
+    row = run_with_cli_errors(
+        lambda: rename_voiceprint_person(person_id, name, db_path)
+    )
     if as_json:
         emit_json(_voiceprint_speaker_payload(row))
         return
@@ -440,7 +499,9 @@ def people_rename_command(
 @people_app.command("show")
 def people_show_command(
     person_id: str = typer.Argument(..., metavar="PERSON_ID"),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show one stable voiceprint person by ID."""
@@ -460,10 +521,18 @@ def people_show_command(
 
 @app.command("embed")
 def embed_command(
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
     rebuild: bool = typer.Option(False, "--rebuild"),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
 ) -> None:
     """Normalize audio and generate embeddings for stored voiceprint samples."""
     summary = run_with_progress(
@@ -487,11 +556,15 @@ def embed_command(
 
 @app.command("normalize")
 def normalize_command(
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     rebuild: bool = typer.Option(False, "--rebuild"),
 ) -> None:
     """Normalize stored voiceprint sample audio without modifying original clips."""
-    summary = run_with_cli_errors(lambda: normalize_voiceprint_samples(store_dir=store_dir, rebuild=rebuild))
+    summary = run_with_cli_errors(
+        lambda: normalize_voiceprint_samples(store_dir=store_dir, rebuild=rebuild)
+    )
     typer.echo(f"Store: {summary.store_dir}")
     typer.echo(f"Normalized: {summary.normalized_dir}")
     typer.echo(f"Processed: {summary.processed_count}")
@@ -501,14 +574,22 @@ def normalize_command(
 @app.command("quality")
 def quality_command(
     speaker: Optional[str] = typer.Argument(None, metavar="[SPEAKER]"),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
-    model: Optional[str] = typer.Option(None, "--model", autocompletion=complete_voiceprint_model),
-    review: bool = typer.Option(False, "--review", help="Open an interactive review TUI for suspicious samples."),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
+    review: bool = typer.Option(
+        False, "--review", help="Open an interactive review TUI for suspicious samples."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Find and review voiceprint sample outliers without deleting user data."""
     report = run_with_cli_errors(
-        lambda: analyze_voiceprint_quality(store_dir=store_dir, speaker=speaker, model=model)
+        lambda: analyze_voiceprint_quality(
+            store_dir=store_dir, speaker=speaker, model=model
+        )
     )
     if as_json:
         emit_json(voiceprint_quality_payload(report))
@@ -516,9 +597,15 @@ def quality_command(
     if review:
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             _echo_voiceprint_quality_report(report)
-            raise typer.BadParameter("Voiceprint quality TUI requires an interactive terminal.")
-        decision = run_voiceprint_quality_review_tui(report, store_dir=store_dir, speaker=speaker, model=model)
-        changes = run_with_cli_errors(lambda: persist_quality_decision(decision, store_dir=store_dir))
+            raise typer.BadParameter(
+                "Voiceprint quality TUI requires an interactive terminal."
+            )
+        decision = run_voiceprint_quality_review_tui(
+            report, store_dir=store_dir, speaker=speaker, model=model
+        )
+        changes = run_with_cli_errors(
+            lambda: persist_quality_decision(decision, store_dir=store_dir)
+        )
         if not decision.saved:
             typer.echo("Voiceprint quality review closed; no changes were written.")
             return
@@ -532,7 +619,9 @@ def quality_command(
 @app.command("show")
 def show_command(
     speaker: str = typer.Argument(..., metavar="SPEAKER"),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show voiceprint samples for one speaker name or id."""
@@ -548,7 +637,9 @@ def show_command(
     for index, row in enumerate(rows, start=1):
         start = format_ms_timestamp(row.source_begin_time_ms)
         end = format_ms_timestamp(row.source_end_time_ms)
-        typer.echo(f"[{index}] {row.speaker_name} | {row.project_id} | speaker {row.project_speaker_id}")
+        typer.echo(
+            f"[{index}] {row.speaker_name} | {row.project_id} | speaker {row.project_speaker_id}"
+        )
         typer.echo(f"  person_id: {row.speaker_public_id}")
         typer.echo(f"  sample_id: {row.public_id}")
         typer.echo(f"  clip: {row.clip_path}")
@@ -562,7 +653,9 @@ def show_command(
 def play_command(
     speaker: str = typer.Argument(..., metavar="SPEAKER"),
     sample: int = typer.Option(1, "--sample", "-s", min=1),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
     """Play one numbered voiceprint sample."""
@@ -579,13 +672,17 @@ def play_command(
 def delete_sample_command(
     speaker: str = typer.Argument(..., metavar="SPEAKER"),
     sample: int = typer.Option(..., "--sample", "-s", min=1),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     keep_clip: bool = typer.Option(False, "--keep-clip"),
 ) -> None:
     """Delete one numbered voiceprint sample and its WAV file."""
     db_path = get_voiceprint_db_path(store_dir)
     deleted = run_with_cli_errors(
-        lambda: delete_voiceprint_sample(speaker, sample, db_path=db_path, delete_clip=not keep_clip)
+        lambda: delete_voiceprint_sample(
+            speaker, sample, db_path=db_path, delete_clip=not keep_clip
+        )
     )
     _echo_deleted_sample(deleted.clip_path, deleted.clip_deleted, kept=keep_clip)
 
@@ -593,25 +690,35 @@ def delete_sample_command(
 @app.command("delete-speaker")
 def delete_speaker_command(
     speaker: str = typer.Argument(..., metavar="SPEAKER"),
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
     keep_clips: bool = typer.Option(False, "--keep-clips"),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
     """Delete one speaker and all of their voiceprint samples."""
     db_path = get_voiceprint_db_path(store_dir)
-    if not yes and not typer.confirm(f"Delete all voiceprint samples for {_speaker_label(speaker, db_path)}?"):
+    if not yes and not typer.confirm(
+        f"Delete all voiceprint samples for {_speaker_label(speaker, db_path)}?"
+    ):
         raise typer.Exit(code=1)
     deleted = run_with_cli_errors(
-        lambda: delete_voiceprint_speaker(speaker, db_path=db_path, delete_clips=not keep_clips)
+        lambda: delete_voiceprint_speaker(
+            speaker, db_path=db_path, delete_clips=not keep_clips
+        )
     )
-    typer.echo(f"Deleted speaker: {deleted[0].speaker_name} (id {deleted[0].speaker_public_id})")
+    typer.echo(
+        f"Deleted speaker: {deleted[0].speaker_name} (id {deleted[0].speaker_public_id})"
+    )
     for item in deleted:
         _echo_deleted_sample(item.clip_path, item.clip_deleted, kept=keep_clips)
 
 
 @app.command("path")
 def path_command(
-    store_dir: Optional[Path] = typer.Option(None, "--store-dir", file_okay=False, dir_okay=True),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
 ) -> None:
     """Print the global voiceprint store paths."""
     db_path = get_voiceprint_db_path(store_dir)
@@ -620,7 +727,9 @@ def path_command(
     typer.echo(f"Clips: {get_voiceprint_clip_dir(store_dir)}")
 
 
-def _echo_voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow], *, title: str = "Speakers") -> None:
+def _echo_voiceprint_speaker_table(
+    rows: list[VoiceprintSpeakerRow], *, title: str = "Speakers"
+) -> None:
     """
     Print voiceprint speakers as a compact summary table.
 
@@ -630,7 +739,9 @@ def _echo_voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow], *, title: s
     """
     sample_total = sum(row.sample_count for row in rows)
     embedded_total = sum(row.embedded_sample_count for row in rows)
-    typer.echo(f"{title}: {len(rows)} | Samples: {sample_total} | Embedded samples: {embedded_total}/{sample_total}")
+    typer.echo(
+        f"{title}: {len(rows)} | Samples: {sample_total} | Embedded samples: {embedded_total}/{sample_total}"
+    )
     _voiceprint_table_console().print(_voiceprint_speaker_table(rows))
 
 
@@ -654,7 +765,19 @@ def _echo_voiceprint_speaker_table_plain(rows: list[VoiceprintSpeakerRow]) -> No
         )
         for row in rows
     ]
-    echo_plain_table(("id", "internal_id", "speaker", "samples", "projects", "embedded", "models", "updated"), plain_rows)
+    echo_plain_table(
+        (
+            "id",
+            "internal_id",
+            "speaker",
+            "samples",
+            "projects",
+            "embedded",
+            "models",
+            "updated",
+        ),
+        plain_rows,
+    )
 
 
 def _voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> Table:
@@ -688,7 +811,9 @@ def _voiceprint_speaker_table(rows: list[VoiceprintSpeakerRow]) -> Table:
     return table
 
 
-def _voiceprint_speakers_payload(db_path: Path, rows: list[VoiceprintSpeakerRow]) -> dict[str, object]:
+def _voiceprint_speakers_payload(
+    db_path: Path, rows: list[VoiceprintSpeakerRow]
+) -> dict[str, object]:
     """
     Build a machine-readable voiceprint speaker list payload.
 
@@ -752,11 +877,16 @@ def _voiceprint_samples_payload(
         "database": db_path,
         "speaker": speaker,
         "count": len(rows),
-        "samples": [_voiceprint_sample_payload(index, row) for index, row in enumerate(rows, start=1)],
+        "samples": [
+            _voiceprint_sample_payload(index, row)
+            for index, row in enumerate(rows, start=1)
+        ],
     }
 
 
-def _voiceprint_sample_payload(index: int, row: VoiceprintSampleRow) -> dict[str, object]:
+def _voiceprint_sample_payload(
+    index: int, row: VoiceprintSampleRow
+) -> dict[str, object]:
     """
     Build one voiceprint sample JSON row.
 
@@ -803,7 +933,9 @@ def _echo_voiceprint_quality_report(report: VoiceprintQualityReport) -> None:
         typer.echo("")
         typer.echo("Review suspicious samples:")
         typer.echo("  meeting-asr voiceprint quality --review")
-        typer.echo("Quarantined samples are kept in the library but excluded from future matching.")
+        typer.echo(
+            "Quarantined samples are kept in the library but excluded from future matching."
+        )
 
 
 def _embedded_count_text(row: VoiceprintSpeakerRow) -> str:
@@ -867,8 +999,14 @@ def _echo_capture_summary(summary: VoiceprintCaptureSummary) -> None:
     typer.echo(f"Database: {summary.db_path}")
     typer.echo(f"Clips: {summary.clip_dir}")
     for speaker in summary.speakers:
-        person = "" if speaker.person_public_id is None else f", person {speaker.person_public_id}"
-        typer.echo(f"{speaker.name} (speaker {speaker.speaker_id}{person}): {len(speaker.clips)} sample(s)")
+        person = (
+            ""
+            if speaker.person_public_id is None
+            else f", person {speaker.person_public_id}"
+        )
+        typer.echo(
+            f"{speaker.name} (speaker {speaker.speaker_id}{person}): {len(speaker.clips)} sample(s)"
+        )
         for clip in speaker.clips:
             tag = "recommended" if clip.recommended else "candidate"
             typer.echo(
@@ -913,7 +1051,9 @@ def _select_sample(speaker: str, sample: int, db_path: Path) -> VoiceprintSample
     """
     rows = list_voiceprint_samples(speaker, db_path)
     if sample < 1 or sample > len(rows):
-        raise IndexError(f"Sample {sample} is out of range for {speaker}. Available: {len(rows)}.")
+        raise IndexError(
+            f"Sample {sample} is out of range for {speaker}. Available: {len(rows)}."
+        )
     return rows[sample - 1]
 
 

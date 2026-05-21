@@ -50,12 +50,18 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def _isolate_default_lexicon_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _isolate_default_lexicon_db(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Keep project tests away from the developer's real XDG state."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     isolated_db = tmp_path / "lexicon" / "lexicon.sqlite"
-    monkeypatch.setattr("app.transcript_corrections.default_lexicon_db_path", lambda: isolated_db)
-    monkeypatch.setattr("app.lexicon_store.default_lexicon_db_path", lambda: isolated_db)
+    monkeypatch.setattr(
+        "app.transcript_corrections.default_lexicon_db_path", lambda: isolated_db
+    )
+    monkeypatch.setattr(
+        "app.lexicon_store.default_lexicon_db_path", lambda: isolated_db
+    )
 
 
 def test_create_project_writes_manifest_and_copies_source(tmp_path: Path) -> None:
@@ -102,10 +108,17 @@ def test_resolve_project_audio_path_prefers_asr_audio_timeline(tmp_path: Path) -
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     audio_path.write_bytes(b"audio")
     manifest = load_manifest(project_dir)
-    manifest.audio = {"path": "audio/audio.flac", "format": "flac", "duration_seconds": 10.0}
+    manifest.audio = {
+        "path": "audio/audio.flac",
+        "format": "flac",
+        "duration_seconds": 10.0,
+    }
     save_manifest(project_dir, manifest)
 
-    assert resolve_project_audio_path(project_dir, load_manifest(project_dir)) == audio_path.resolve()
+    assert (
+        resolve_project_audio_path(project_dir, load_manifest(project_dir))
+        == audio_path.resolve()
+    )
 
 
 def test_resolve_project_audio_path_falls_back_to_source(tmp_path: Path) -> None:
@@ -123,7 +136,152 @@ def test_resolve_project_audio_path_falls_back_to_source(tmp_path: Path) -> None
     )
     manifest = load_manifest(project_dir)
 
-    assert resolve_project_audio_path(project_dir, manifest) == resolve_project_source_path(project_dir, manifest)
+    assert resolve_project_audio_path(
+        project_dir, manifest
+    ) == resolve_project_source_path(project_dir, manifest)
+
+
+def test_prepare_project_audio_removes_staged_video_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Audio preparation should prune the project video copy without touching user input."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "projects" / "pruned-video"
+    create_project(
+        source,
+        title="Pruned Video",
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    copied_source = project_dir / "source" / "meeting.mp4"
+
+    def fake_extract_audio_for_asr(
+        input_path: Path, output_path: Path, *, audio_format: str
+    ) -> Path:
+        """
+        Write a fake extracted audio file.
+
+        Args:
+            input_path: Source media path.
+            output_path: Destination audio path.
+            audio_format: Requested audio format.
+
+        Returns:
+            Destination path.
+        """
+        assert Path(input_path) == copied_source.resolve()
+        assert audio_format == "flac"
+        Path(output_path).write_bytes(b"audio")
+        return Path(output_path)
+
+    monkeypatch.setattr(
+        project_manager, "extract_audio_for_asr", fake_extract_audio_for_asr
+    )
+
+    audio_path = project_manager.prepare_project_audio(project_dir, audio_format="flac")
+    manifest = load_manifest(project_dir)
+
+    assert audio_path == project_dir / "audio" / "audio.flac"
+    assert audio_path.exists()
+    assert source.exists()
+    assert not copied_source.exists()
+    assert (
+        manifest.runtime["source_cleanup"]["removed_project_source"]
+        == "source/meeting.mp4"
+    )
+    assert manifest.runtime["source_cleanup"]["kept_audio"] == "audio/audio.flac"
+
+
+def test_prepare_project_audio_keeps_staged_audio_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Audio preparation should not delete an already-audio project source."""
+    source = tmp_path / "meeting.wav"
+    source.write_bytes(b"fake wav")
+    project_dir = tmp_path / "projects" / "kept-audio"
+    create_project(
+        source,
+        title="Kept Audio",
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    copied_source = project_dir / "source" / "meeting.wav"
+
+    def fake_extract_audio_for_asr(
+        input_path: Path, output_path: Path, *, audio_format: str
+    ) -> Path:
+        """
+        Write a fake normalized audio file.
+
+        Args:
+            input_path: Source media path.
+            output_path: Destination audio path.
+            audio_format: Requested audio format.
+
+        Returns:
+            Destination path.
+        """
+        assert Path(input_path) == copied_source.resolve()
+        Path(output_path).write_bytes(b"audio")
+        return Path(output_path)
+
+    monkeypatch.setattr(
+        project_manager, "extract_audio_for_asr", fake_extract_audio_for_asr
+    )
+
+    project_manager.prepare_project_audio(project_dir, audio_format="flac")
+    manifest = load_manifest(project_dir)
+
+    assert copied_source.exists()
+    assert source.exists()
+    assert "source_cleanup" not in manifest.runtime
+
+
+def test_ensure_project_audio_reuses_audio_when_source_was_pruned(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Reruns should use existing project audio even when the staged video is gone."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "projects" / "audio-rerun"
+    create_project(
+        source,
+        title="Audio Rerun",
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    audio_path = project_dir / "audio" / "audio.flac"
+    audio_path.write_bytes(b"audio")
+    (project_dir / "source" / "meeting.mp4").unlink()
+    manifest = load_manifest(project_dir)
+    events = []
+
+    def fail_extract_audio_for_asr(*args, **kwargs) -> Path:
+        raise AssertionError("existing project audio should be reused")
+
+    monkeypatch.setattr(
+        project_manager, "extract_audio_for_asr", fail_extract_audio_for_asr
+    )
+
+    resolved = project_manager._ensure_project_audio(
+        project_paths(project_dir), manifest, "wav", events.append
+    )
+
+    saved = load_manifest(project_dir)
+    assert resolved == audio_path.resolve()
+    assert saved.audio["path"] == "audio/audio.flac"
+    assert saved.audio["format"] == "flac"
+    assert events[-1].description == "Using existing project audio"
 
 
 def test_create_project_reports_copy_progress(tmp_path: Path) -> None:
@@ -195,7 +353,11 @@ def test_project_create_command_defaults_to_xdg_data_home(
 
     result = runner.invoke(app, ["project", "create", str(source), "--title", "Demo"])
 
-    project_dirs = [path for path in (data_home / "meeting-asr" / "projects").iterdir() if path.is_dir()]
+    project_dirs = [
+        path
+        for path in (data_home / "meeting-asr" / "projects").iterdir()
+        if path.is_dir()
+    ]
     assert result.exit_code == 0
     assert len(project_dirs) == 1
     assert "Project created." in result.output
@@ -213,7 +375,9 @@ def test_project_create_output_uses_copyable_next_steps(tmp_path: Path) -> None:
     source.write_bytes(b"fake video")
     project_dir = tmp_path / "project with space"
 
-    result = runner.invoke(app, ["project", "create", str(source), "--project-dir", str(project_dir)])
+    result = runner.invoke(
+        app, ["project", "create", str(source), "--project-dir", str(project_dir)]
+    )
 
     assert result.exit_code == 0
     assert "cd " not in result.output
@@ -246,7 +410,9 @@ def test_project_run_applies_accepted_voiceprint_matches(
             ],
         )
 
-    def fake_summarize_project(project_dir, model=None, update_title=True, progress=None):
+    def fake_summarize_project(
+        project_dir, model=None, update_title=True, progress=None
+    ):
         manifest = load_manifest(project_dir)
         manifest.title = "自动会议标题"
         save_manifest(project_dir, manifest)
@@ -255,13 +421,19 @@ def test_project_run_applies_accepted_voiceprint_matches(
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text("# 自动会议标题\n", encoding="utf-8")
         json_path.write_text("{}\n", encoding="utf-8")
-        return ProjectMeetingSummary(project_dir, "自动会议标题", summary_path, json_path, "qwen-test", True)
+        return ProjectMeetingSummary(
+            project_dir, "自动会议标题", summary_path, json_path, "qwen-test", True
+        )
 
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
     monkeypatch.setattr(project_commands, "summarize_project", fake_summarize_project)
-    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+    monkeypatch.setattr(
+        project_commands, "match_project_speakers", fake_match_project_speakers
+    )
 
-    result = runner.invoke(app, ["project", "run", str(source), "--projects-dir", str(projects_dir)])
+    result = runner.invoke(
+        app, ["project", "run", str(source), "--projects-dir", str(projects_dir)]
+    )
 
     project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
     manifest = load_manifest(project_dir)
@@ -271,12 +443,17 @@ def test_project_run_applies_accepted_voiceprint_matches(
     assert "Title" in result.output
     assert "自动会议标题" in result.output
     assert "exports/meeting_summary.md" in result.output
-    assert str((project_dir / "exports" / "meeting_summary.md").resolve()) in result.output
+    assert (
+        str((project_dir / "exports" / "meeting_summary.md").resolve()) in result.output
+    )
     assert "Voiceprint matches" in result.output
     assert "2/2 matched | below-threshold 0 | no-candidate 0" in result.output
     assert f"meeting-asr voiceprint review {manifest.project_id}" in result.output
     assert f"meeting-asr project correct edit {manifest.project_id}" in result.output
-    assert f"meeting-asr project transcript show {manifest.project_id} --kind corrected" in result.output
+    assert (
+        f"meeting-asr project transcript show {manifest.project_id} --kind corrected"
+        in result.output
+    )
     assert "欧丁" in transcript.read_text(encoding="utf-8")
     assert "敬悦" in transcript.read_text(encoding="utf-8")
 
@@ -331,8 +508,12 @@ def test_project_run_stabilizes_sentence_speakers_after_voiceprint_matches(
         return SimpleNamespace(reassignment_count=2, final_match_summary=None)
 
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
-    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
-    monkeypatch.setattr(project_commands, "stabilize_project_speakers", fake_stabilize_project_speakers)
+    monkeypatch.setattr(
+        project_commands, "match_project_speakers", fake_match_project_speakers
+    )
+    monkeypatch.setattr(
+        project_commands, "stabilize_project_speakers", fake_stabilize_project_speakers
+    )
 
     result = runner.invoke(
         app,
@@ -397,7 +578,9 @@ def test_project_run_agent_log_prints_project_id_before_polling(
         )
 
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
-    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+    monkeypatch.setattr(
+        project_commands, "match_project_speakers", fake_match_project_speakers
+    )
 
     result = runner.invoke(
         app,
@@ -457,11 +640,21 @@ def test_project_run_human_output_suppresses_structured_agent_logs(
         )
 
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
-    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+    monkeypatch.setattr(
+        project_commands, "match_project_speakers", fake_match_project_speakers
+    )
 
     result = runner.invoke(
         app,
-        ["project", "run", str(source), "--projects-dir", str(projects_dir), "--no-polish", "--no-summarize"],
+        [
+            "project",
+            "run",
+            str(source),
+            "--projects-dir",
+            str(projects_dir),
+            "--no-polish",
+            "--no-summarize",
+        ],
     )
 
     assert result.exit_code == 0
@@ -496,14 +689,28 @@ def test_project_run_applies_local_lexicon_corrections(
         ],
         db_path=lexicon_db,
     )
-    monkeypatch.setattr("app.transcript_corrections.default_lexicon_db_path", lambda: lexicon_db)
+    monkeypatch.setattr(
+        "app.transcript_corrections.default_lexicon_db_path", lambda: lexicon_db
+    )
 
     def fake_transcribe_project(project_dir, options, progress=None, **kwargs):
         _write_sentences(
             project_dir / "asr" / "sentences.json",
             [
-                {"begin_time_ms": 0, "end_time_ms": 1000, "text": "今天聊IC产品。", "speaker_id": 0, "sentence_id": 1},
-                {"begin_time_ms": 1100, "end_time_ms": 2000, "text": "PIC保持不变。", "speaker_id": 0, "sentence_id": 2},
+                {
+                    "begin_time_ms": 0,
+                    "end_time_ms": 1000,
+                    "text": "今天聊IC产品。",
+                    "speaker_id": 0,
+                    "sentence_id": 1,
+                },
+                {
+                    "begin_time_ms": 1100,
+                    "end_time_ms": 2000,
+                    "text": "PIC保持不变。",
+                    "speaker_id": 0,
+                    "sentence_id": 2,
+                },
             ],
         )
         return ProjectTranscribeSummary(project_dir, "task-1", "test", 1, 2)
@@ -518,23 +725,48 @@ def test_project_run_applies_local_lexicon_corrections(
         )
 
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
-    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+    monkeypatch.setattr(
+        project_commands, "match_project_speakers", fake_match_project_speakers
+    )
 
     result = runner.invoke(
         app,
-        ["project", "run", str(source), "--projects-dir", str(projects_dir), "--no-polish", "--no-summarize"],
+        [
+            "project",
+            "run",
+            str(source),
+            "--projects-dir",
+            str(projects_dir),
+            "--no-polish",
+            "--no-summarize",
+        ],
     )
 
     project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
     manifest = load_manifest(project_dir)
-    corrected = json.loads((project_dir / "asr" / "sentences_corrected.json").read_text(encoding="utf-8"))
-    auto_show = runner.invoke(app, ["project", "transcript", "show", manifest.project_id, "--projects-dir", str(projects_dir)])
+    corrected = json.loads(
+        (project_dir / "asr" / "sentences_corrected.json").read_text(encoding="utf-8")
+    )
+    auto_show = runner.invoke(
+        app,
+        [
+            "project",
+            "transcript",
+            "show",
+            manifest.project_id,
+            "--projects-dir",
+            str(projects_dir),
+        ],
+    )
 
     assert result.exit_code == 0
     assert "Local correction" in result.output
     assert "applied (1 sentence(s), 1 rule(s))" in result.output
     assert manifest.runtime["local_correction"]["status"] == "applied"
-    assert manifest.outputs["corrected_named_transcript"] == "exports/transcript_named_corrected.txt"
+    assert (
+        manifest.outputs["corrected_named_transcript"]
+        == "exports/transcript_named_corrected.txt"
+    )
     assert corrected["sentences"][0]["text"] == "今天聊iSee产品。"
     assert corrected["sentences"][1]["text"] == "PIC保持不变。"
     assert auto_show.exit_code == 0
@@ -552,7 +784,11 @@ def test_asr_polling_heartbeat_redacts_signed_url_query_token(
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     audio_path.write_bytes(b"audio")
     manifest = load_manifest(project_dir)
-    manifest.audio = {"path": "audio/audio.wav", "format": "wav", "duration_seconds": 10}
+    manifest.audio = {
+        "path": "audio/audio.wav",
+        "format": "wav",
+        "duration_seconds": 10,
+    }
     save_manifest(project_dir, manifest)
     events = []
 
@@ -563,19 +799,27 @@ def test_asr_polling_heartbeat_redacts_signed_url_query_token(
 
     def fake_wait_transcription(*, settings, task, poll_callback=None):
         if poll_callback is not None:
-            poll_callback(TranscriptionPollEvent(status="RUNNING", elapsed_seconds=31.0, wait_seconds=5.0))
+            poll_callback(
+                TranscriptionPollEvent(
+                    status="RUNNING", elapsed_seconds=31.0, wait_seconds=5.0
+                )
+            )
         return object()
 
     monkeypatch.setattr(project_manager, "load_settings", lambda **_: _settings())
     monkeypatch.setattr(
         project_manager,
         "upload_file_to_oss",
-        lambda *_, **__: "https://oss.example.com/audio.wav?Signature=secret-token&Expires=1",
+        lambda *_, **__: (
+            "https://oss.example.com/audio.wav?Signature=secret-token&Expires=1"
+        ),
     )
     monkeypatch.setattr(project_manager, "record_oss_upload", lambda *_, **__: None)
     monkeypatch.setattr(project_manager, "submit_transcription", lambda **_: FakeTask())
     monkeypatch.setattr(project_manager, "wait_transcription", fake_wait_transcription)
-    monkeypatch.setattr(project_manager, "download_transcription_json", lambda _: {"raw": True})
+    monkeypatch.setattr(
+        project_manager, "download_transcription_json", lambda _: {"raw": True}
+    )
     monkeypatch.setattr(
         project_manager,
         "parse_transcription_result",
@@ -592,9 +836,15 @@ def test_asr_polling_heartbeat_redacts_signed_url_query_token(
     )
     monkeypatch.setattr(project_manager, "record_dashscope_wait", lambda **_: None)
 
-    project_manager.transcribe_project(project_dir, _transcribe_options(), progress=events.append)
+    project_manager.transcribe_project(
+        project_dir, _transcribe_options(), progress=events.append
+    )
 
-    heartbeat_events = [event for event in events if event.log_kind == "heartbeat" and event.stage == "ASR polling"]
+    heartbeat_events = [
+        event
+        for event in events
+        if event.log_kind == "heartbeat" and event.stage == "ASR polling"
+    ]
     assert heartbeat_events
     rendered = "\n".join(
         " ".join(f"{key}={value}" for key, value in event.log_fields)
@@ -620,13 +870,17 @@ def test_project_run_generates_default_transcript_polish_proposal(
         _write_sample_sentences(project_dir / "asr" / "sentences.json")
         return ProjectTranscribeSummary(project_dir, "task-1", "test", 1, 3)
 
-    def fake_summarize_project(project_dir, model=None, update_title=True, progress=None):
+    def fake_summarize_project(
+        project_dir, model=None, update_title=True, progress=None
+    ):
         summary_path = project_dir / "exports" / "meeting_summary.md"
         json_path = project_dir / "exports" / "meeting_summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text("# 自动会议标题\n", encoding="utf-8")
         json_path.write_text("{}\n", encoding="utf-8")
-        return ProjectMeetingSummary(project_dir, "自动会议标题", summary_path, json_path, "qwen-test", False)
+        return ProjectMeetingSummary(
+            project_dir, "自动会议标题", summary_path, json_path, "qwen-test", False
+        )
 
     def fake_match_project_speakers(project_dir, **kwargs):
         return SpeakerMatchSummary(
@@ -637,7 +891,13 @@ def test_project_run_generates_default_transcript_polish_proposal(
             [SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2)],
         )
 
-    def fake_prepare_polish(project_dir, correction_model, polish_concurrency=None, polish_legacy=False, progress=None):
+    def fake_prepare_polish(
+        project_dir,
+        correction_model,
+        polish_concurrency=None,
+        polish_legacy=False,
+        progress=None,
+    ):
         calls["model"] = correction_model
         calls["polish_concurrency"] = polish_concurrency
         calls["polish_legacy"] = polish_legacy
@@ -673,8 +933,12 @@ def test_project_run_generates_default_transcript_polish_proposal(
 
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
     monkeypatch.setattr(project_commands, "summarize_project", fake_summarize_project)
-    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
-    monkeypatch.setattr(project_commands, "_prepare_run_transcript_polish", fake_prepare_polish)
+    monkeypatch.setattr(
+        project_commands, "match_project_speakers", fake_match_project_speakers
+    )
+    monkeypatch.setattr(
+        project_commands, "_prepare_run_transcript_polish", fake_prepare_polish
+    )
 
     result = runner.invoke(
         app,
@@ -698,7 +962,10 @@ def test_project_run_generates_default_transcript_polish_proposal(
     assert calls["polish_concurrency"] == 3
     assert manifest.runtime["polish"]["status"] == "proposal_ready"
     assert manifest.runtime["polish"]["proposed_changes"] == 1
-    assert manifest.runtime["polish"]["proposal_diff"] == "tmp/corrections/proposal_test.diff"
+    assert (
+        manifest.runtime["polish"]["proposal_diff"]
+        == "tmp/corrections/proposal_test.diff"
+    )
     assert "Transcript polish" in result.output
     assert "proposal ready (1 change(s))" in result.output
     assert "Transcript polish proposal" in result.output
@@ -720,13 +987,17 @@ def test_project_run_auto_accepts_polish_when_configured(
         _write_sample_sentences(project_dir / "asr" / "sentences.json")
         return ProjectTranscribeSummary(project_dir, "task-1", "test", 1, 3)
 
-    def fake_summarize_project(project_dir, model=None, update_title=True, progress=None):
+    def fake_summarize_project(
+        project_dir, model=None, update_title=True, progress=None
+    ):
         summary_path = project_dir / "exports" / "meeting_summary.md"
         json_path = project_dir / "exports" / "meeting_summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text("# 自动会议标题\n", encoding="utf-8")
         json_path.write_text("{}\n", encoding="utf-8")
-        return ProjectMeetingSummary(project_dir, "自动会议标题", summary_path, json_path, "qwen-test", False)
+        return ProjectMeetingSummary(
+            project_dir, "自动会议标题", summary_path, json_path, "qwen-test", False
+        )
 
     def fake_match_project_speakers(project_dir, **kwargs):
         return SpeakerMatchSummary(
@@ -737,7 +1008,13 @@ def test_project_run_auto_accepts_polish_when_configured(
             [SpeakerMatch(0, "Speaker A", "欧丁", 0.91, True, 2)],
         )
 
-    def fake_prepare_polish(project_dir, correction_model, polish_concurrency=None, polish_legacy=False, progress=None):
+    def fake_prepare_polish(
+        project_dir,
+        correction_model,
+        polish_concurrency=None,
+        polish_legacy=False,
+        progress=None,
+    ):
         proposal_dir = project_dir / "tmp" / "corrections"
         proposal_dir.mkdir(parents=True, exist_ok=True)
         review_path = proposal_dir / "review_polish_test.md"
@@ -774,10 +1051,16 @@ def test_project_run_auto_accepts_polish_when_configured(
         corrected_srt = project_dir / "exports" / "subtitle_named_corrected.srt"
         corrected_path.parent.mkdir(parents=True, exist_ok=True)
         corrected_path.write_text("欧丁: 修正后的内容。\n", encoding="utf-8")
-        corrected_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n修正后的内容。\n", encoding="utf-8")
+        corrected_srt.write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n修正后的内容。\n", encoding="utf-8"
+        )
         manifest.status = "corrected"
-        manifest.outputs["corrected_named_transcript"] = "exports/transcript_named_corrected.txt"
-        manifest.outputs["corrected_named_subtitle"] = "exports/subtitle_named_corrected.srt"
+        manifest.outputs["corrected_named_transcript"] = (
+            "exports/transcript_named_corrected.txt"
+        )
+        manifest.outputs["corrected_named_subtitle"] = (
+            "exports/subtitle_named_corrected.srt"
+        )
         save_manifest(project_dir, manifest)
         return CorrectionEditSummary(
             review_path=summary.review_path,
@@ -793,7 +1076,9 @@ def test_project_run_auto_accepts_polish_when_configured(
             model_error=None,
             understanding=[],
             corrected_sentences_path=project_dir / "asr" / "sentences_corrected.json",
-            corrected_transcript_path=project_dir / "exports" / "transcript_corrected.txt",
+            corrected_transcript_path=project_dir
+            / "exports"
+            / "transcript_corrected.txt",
             corrected_named_transcript_path=corrected_path,
             corrected_srt_path=corrected_srt,
             hotwords_path=project_dir / "corrections" / "asr_hotwords.json",
@@ -803,11 +1088,19 @@ def test_project_run_auto_accepts_polish_when_configured(
 
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
     monkeypatch.setattr(project_commands, "summarize_project", fake_summarize_project)
-    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
-    monkeypatch.setattr(project_commands, "_prepare_run_transcript_polish", fake_prepare_polish)
-    monkeypatch.setattr(project_commands, "_accept_run_transcript_polish", fake_accept_polish)
+    monkeypatch.setattr(
+        project_commands, "match_project_speakers", fake_match_project_speakers
+    )
+    monkeypatch.setattr(
+        project_commands, "_prepare_run_transcript_polish", fake_prepare_polish
+    )
+    monkeypatch.setattr(
+        project_commands, "_accept_run_transcript_polish", fake_accept_polish
+    )
 
-    result = runner.invoke(app, ["project", "run", str(source), "--projects-dir", str(projects_dir)])
+    result = runner.invoke(
+        app, ["project", "run", str(source), "--projects-dir", str(projects_dir)]
+    )
     project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
     manifest = load_manifest(project_dir)
 
@@ -816,8 +1109,12 @@ def test_project_run_auto_accepts_polish_when_configured(
     assert manifest.runtime["polish"]["accepted_changes"] == 2
     assert "accepted (2/2 change(s))" in result.output
     assert "Transcript polish proposal" not in result.output
-    assert f"meeting-asr project correct diff {manifest.project_id}" not in result.output
-    assert f"meeting-asr project correct accept {manifest.project_id}" not in result.output
+    assert (
+        f"meeting-asr project correct diff {manifest.project_id}" not in result.output
+    )
+    assert (
+        f"meeting-asr project correct accept {manifest.project_id}" not in result.output
+    )
     assert "exports/transcript_named_corrected.txt" in result.output
 
 
@@ -844,10 +1141,16 @@ def test_project_run_polish_failure_prints_recovery_context(
         )
 
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
-    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+    monkeypatch.setattr(
+        project_commands, "match_project_speakers", fake_match_project_speakers
+    )
     monkeypatch.setattr(
         "app.transcript_corrections.load_settings",
-        lambda **_: Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_correction_model="qwen-test"),
+        lambda **_: Settings(
+            dashscope_api_key="key",
+            dashscope_base_url=None,
+            dashscope_correction_model="qwen-test",
+        ),
     )
     monkeypatch.setattr(
         "app.transcript_corrections.propose_transcript_polish",
@@ -919,19 +1222,27 @@ def test_project_run_reports_review_when_matches_are_incomplete(
             ],
         )
 
-    def fake_summarize_project(project_dir, model=None, update_title=True, progress=None):
+    def fake_summarize_project(
+        project_dir, model=None, update_title=True, progress=None
+    ):
         summary_path = project_dir / "exports" / "meeting_summary.md"
         json_path = project_dir / "exports" / "meeting_summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text("# 自动会议标题\n", encoding="utf-8")
         json_path.write_text("{}\n", encoding="utf-8")
-        return ProjectMeetingSummary(project_dir, "自动会议标题", summary_path, json_path, "qwen-test", False)
+        return ProjectMeetingSummary(
+            project_dir, "自动会议标题", summary_path, json_path, "qwen-test", False
+        )
 
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
     monkeypatch.setattr(project_commands, "summarize_project", fake_summarize_project)
-    monkeypatch.setattr(project_commands, "match_project_speakers", fake_match_project_speakers)
+    monkeypatch.setattr(
+        project_commands, "match_project_speakers", fake_match_project_speakers
+    )
 
-    result = runner.invoke(app, ["project", "run", str(source), "--projects-dir", str(projects_dir)])
+    result = runner.invoke(
+        app, ["project", "run", str(source), "--projects-dir", str(projects_dir)]
+    )
     project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
     manifest = load_manifest(project_dir)
 
@@ -948,15 +1259,27 @@ def test_project_run_reports_review_when_matches_are_incomplete(
     assert "0.120" in result.output
     assert "partial" in result.output
     assert f"meeting-asr project review {manifest.project_id}" in result.output
-    assert "This opens the human review workflow for unresolved speakers." in result.output
-    assert f"meeting-asr project speakers inspect {manifest.project_id} --sample-count 5" in result.output
-    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name" in result.output
-    assert result.output.index(f"meeting-asr project review {manifest.project_id}") < result.output.index(
+    assert (
+        "This opens the human review workflow for unresolved speakers." in result.output
+    )
+    assert (
+        f"meeting-asr project speakers inspect {manifest.project_id} --sample-count 5"
+        in result.output
+    )
+    assert (
+        f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name"
+        in result.output
+    )
+    assert result.output.index(
+        f"meeting-asr project review {manifest.project_id}"
+    ) < result.output.index(
         f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name"
     )
     assert f"meeting-asr voiceprint review {manifest.project_id}" in result.output
     assert "meeting-asr voiceprint embed" in result.output
-    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    mapping = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
     assert mapping == {"0": "欧丁"}
     assert f"meeting-asr project correct edit {manifest.project_id}" in result.output
     assert "Agent prompt:" in result.output
@@ -1034,7 +1357,9 @@ def test_summarize_project_prefixes_auto_title_with_meeting_time(
             "qwen-test",
         ),
     )
-    monkeypatch.setattr("app.project_manager.load_settings", lambda require_oss=False: object())
+    monkeypatch.setattr(
+        "app.project_manager.load_settings", lambda require_oss=False: object()
+    )
 
     summarize_project(project_dir, model=None, update_title=True)
     manifest = load_manifest(project_dir)
@@ -1067,9 +1392,13 @@ def test_summarize_project_replaces_existing_llm_title(
     save_manifest(project_dir, manifest)
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary("新自动标题", "回忆提示。", ["关键词1", "关键词2"], "qwen-test"),
+        lambda result, settings, model: MeetingSummary(
+            "新自动标题", "回忆提示。", ["关键词1", "关键词2"], "qwen-test"
+        ),
     )
-    monkeypatch.setattr("app.project_manager.load_settings", lambda require_oss=False: object())
+    monkeypatch.setattr(
+        "app.project_manager.load_settings", lambda require_oss=False: object()
+    )
 
     summary = summarize_project(project_dir, model=None, update_title=True)
     manifest = load_manifest(project_dir)
@@ -1099,7 +1428,9 @@ def test_summarize_project_preserves_manual_title(
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], "qwen-test"),
+        lambda result, settings, model: MeetingSummary(
+            "自动标题", "摘要", [], "qwen-test"
+        ),
     )
     monkeypatch.setattr(
         "app.project_manager.load_settings",
@@ -1139,9 +1470,13 @@ def test_summarize_project_marks_legacy_custom_unknown_title_as_manual(
     save_manifest(project_dir, manifest)
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary("自动标题", "摘要", [], "qwen-test"),
+        lambda result, settings, model: MeetingSummary(
+            "自动标题", "摘要", [], "qwen-test"
+        ),
     )
-    monkeypatch.setattr("app.project_manager.load_settings", lambda require_oss=False: object())
+    monkeypatch.setattr(
+        "app.project_manager.load_settings", lambda require_oss=False: object()
+    )
 
     summary = summarize_project(project_dir, model=None, update_title=True)
 
@@ -1170,25 +1505,42 @@ def test_project_summarize_command_prints_absolute_memory_index_paths(
         hash_source=False,
     )
 
-    def fake_summarize_project(project_dir, model=None, update_title=True, progress=None):
+    def fake_summarize_project(
+        project_dir, model=None, update_title=True, progress=None
+    ):
         summary_path = project_dir / "exports" / "meeting_summary.md"
         json_path = project_dir / "exports" / "meeting_summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text("# Demo\n", encoding="utf-8")
         json_path.write_text('{"model":"qwen-test"}\n', encoding="utf-8")
-        return ProjectMeetingSummary(project_dir, "Demo", summary_path, json_path, "qwen-test", False)
+        return ProjectMeetingSummary(
+            project_dir, "Demo", summary_path, json_path, "qwen-test", False
+        )
 
     monkeypatch.setattr(project_commands, "summarize_project", fake_summarize_project)
     manifest = load_manifest(project_dir)
 
     result = runner.invoke(
         app,
-        ["project", "summarize", manifest.project_id, "--projects-dir", str(projects_dir), "--no-progress"],
+        [
+            "project",
+            "summarize",
+            manifest.project_id,
+            "--projects-dir",
+            str(projects_dir),
+            "--no-progress",
+        ],
     )
 
     assert result.exit_code == 0
-    assert f"Memory index: {(project_dir / 'exports' / 'meeting_summary.md').resolve()}" in result.output
-    assert f"Memory index JSON: {(project_dir / 'exports' / 'meeting_summary.json').resolve()}" in result.output
+    assert (
+        f"Memory index: {(project_dir / 'exports' / 'meeting_summary.md').resolve()}"
+        in result.output
+    )
+    assert (
+        f"Memory index JSON: {(project_dir / 'exports' / 'meeting_summary.json').resolve()}"
+        in result.output
+    )
 
 
 def test_retranscribe_invalidates_downstream_artifacts(tmp_path: Path) -> None:
@@ -1253,15 +1605,23 @@ def test_retranscribe_invalidates_downstream_artifacts(tmp_path: Path) -> None:
     }
 
 
-def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(tmp_path: Path) -> None:
+def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(
+    tmp_path: Path,
+) -> None:
     """Project references should use stable ids, paths, titles, or unique title fragments."""
     projects_dir = tmp_path / "projects"
-    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Project Ref Demo")
+    project_dir = _sample_project(
+        tmp_path, projects_dir=projects_dir, title="Project Ref Demo"
+    )
     manifest = load_manifest(project_dir)
 
     assert resolve_project_ref(project_dir, projects_dir) == project_dir.resolve()
-    assert resolve_project_ref(manifest.project_id, projects_dir) == project_dir.resolve()
-    assert resolve_project_ref("Project Ref Demo", projects_dir) == project_dir.resolve()
+    assert (
+        resolve_project_ref(manifest.project_id, projects_dir) == project_dir.resolve()
+    )
+    assert (
+        resolve_project_ref("Project Ref Demo", projects_dir) == project_dir.resolve()
+    )
     assert resolve_project_ref("Ref Demo", projects_dir) == project_dir.resolve()
 
 
@@ -1371,7 +1731,9 @@ def test_project_list_command_keeps_time_in_title_only(tmp_path: Path) -> None:
         hash_source=False,
     )
 
-    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
+    result = runner.invoke(
+        app, ["project", "list", "--projects-dir", str(projects_dir)]
+    )
 
     assert result.exit_code == 0
     assert "Meeting (Local)" not in result.output
@@ -1394,7 +1756,9 @@ def test_project_list_command_prints_json(tmp_path: Path) -> None:
         hash_source=False,
     )
 
-    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir), "--json"])
+    result = runner.invoke(
+        app, ["project", "list", "--projects-dir", str(projects_dir), "--json"]
+    )
     payload = json.loads(result.output)
 
     assert result.exit_code == 0
@@ -1432,11 +1796,17 @@ def test_project_list_json_includes_meeting_keywords(tmp_path: Path) -> None:
     manifest.meeting_keywords = ["飞轮POC本地跑通", "诊断准确率30%", "A3A6A8"]
     save_manifest(project_dir, manifest)
 
-    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir), "--json"])
+    result = runner.invoke(
+        app, ["project", "list", "--projects-dir", str(projects_dir), "--json"]
+    )
     payload = json.loads(result.output)
 
     assert result.exit_code == 0
-    assert payload["projects"][0]["meeting_keywords"] == ["飞轮POC本地跑通", "诊断准确率30%", "A3A6A8"]
+    assert payload["projects"][0]["meeting_keywords"] == [
+        "飞轮POC本地跑通",
+        "诊断准确率30%",
+        "A3A6A8",
+    ]
 
 
 def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:
@@ -1456,7 +1826,9 @@ def test_project_list_command_accepts_projects_dir(tmp_path: Path) -> None:
         hash_source=False,
     )
 
-    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
+    result = runner.invoke(
+        app, ["project", "list", "--projects-dir", str(projects_dir)]
+    )
 
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
@@ -1470,7 +1842,9 @@ def test_project_list_command_handles_empty_projects_dir(tmp_path: Path) -> None
     """Project list should treat a missing projects parent as empty."""
     projects_dir = tmp_path / "missing"
 
-    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
+    result = runner.invoke(
+        app, ["project", "list", "--projects-dir", str(projects_dir)]
+    )
 
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
@@ -1480,7 +1854,9 @@ def test_project_list_command_handles_empty_projects_dir(tmp_path: Path) -> None
 def test_project_update_command_changes_title_and_meeting_time(tmp_path: Path) -> None:
     """Project update should change editable manifest metadata."""
     projects_dir = tmp_path / "projects"
-    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Old Title")
+    project_dir = _sample_project(
+        tmp_path, projects_dir=projects_dir, title="Old Title"
+    )
     manifest = load_manifest(project_dir)
 
     result = runner.invoke(
@@ -1544,7 +1920,10 @@ def test_project_update_requires_a_field(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Demo")
     manifest = load_manifest(project_dir)
 
-    result = runner.invoke(app, ["project", "update", manifest.project_id, "--projects-dir", str(projects_dir)])
+    result = runner.invoke(
+        app,
+        ["project", "update", manifest.project_id, "--projects-dir", str(projects_dir)],
+    )
 
     assert result.exit_code == 1
     assert "Nothing to update" in result.output
@@ -1557,11 +1936,25 @@ def test_project_delete_moves_project_to_trash(
     """Project delete should move the project to Meeting-ASR trash by default."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     projects_dir = tmp_path / "projects"
-    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Delete Me")
+    project_dir = _sample_project(
+        tmp_path, projects_dir=projects_dir, title="Delete Me"
+    )
     manifest = load_manifest(project_dir)
 
-    result = runner.invoke(app, ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--yes"])
-    list_result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "delete",
+            manifest.project_id,
+            "--projects-dir",
+            str(projects_dir),
+            "--yes",
+        ],
+    )
+    list_result = runner.invoke(
+        app, ["project", "list", "--projects-dir", str(projects_dir)]
+    )
     trash_root = tmp_path / "data" / "meeting-asr" / "trash" / "projects"
     trashed = [path for path in trash_root.iterdir() if path.is_dir()]
 
@@ -1576,12 +1969,22 @@ def test_project_delete_moves_project_to_trash(
 def test_project_delete_permanent_removes_project(tmp_path: Path) -> None:
     """Permanent delete should physically remove the project only when requested."""
     projects_dir = tmp_path / "projects"
-    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Delete Me")
+    project_dir = _sample_project(
+        tmp_path, projects_dir=projects_dir, title="Delete Me"
+    )
     manifest = load_manifest(project_dir)
 
     result = runner.invoke(
         app,
-        ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--permanent", "--yes"],
+        [
+            "project",
+            "delete",
+            manifest.project_id,
+            "--projects-dir",
+            str(projects_dir),
+            "--permanent",
+            "--yes",
+        ],
     )
 
     assert result.exit_code == 0
@@ -1609,7 +2012,10 @@ def test_project_create_command_reuses_existing_source(
     assert len(project_dirs) == 1
     assert "Project created." in first.output
     assert "Project already exists; reusing it." in second.output
-    assert f"meeting-asr project review {load_manifest(project_dirs[0]).project_id}" in second.output
+    assert (
+        f"meeting-asr project review {load_manifest(project_dirs[0]).project_id}"
+        in second.output
+    )
 
 
 def test_project_create_explicit_dir_does_not_duplicate_existing_source(
@@ -1627,7 +2033,15 @@ def test_project_create_explicit_dir_does_not_duplicate_existing_source(
     first = runner.invoke(app, ["project", "create", str(source), "--title", "Demo"])
     second = runner.invoke(
         app,
-        ["project", "create", str(source), "--project-dir", str(duplicate_dir), "--title", "Duplicate"],
+        [
+            "project",
+            "create",
+            str(source),
+            "--project-dir",
+            str(duplicate_dir),
+            "--title",
+            "Duplicate",
+        ],
     )
 
     project_dirs = [path for path in projects_dir.iterdir() if path.is_dir()]
@@ -1651,7 +2065,9 @@ def test_project_create_variant_gets_distinct_project_id(
     source.write_bytes(b"same video")
 
     base = runner.invoke(app, ["project", "create", str(source), "--title", "Base"])
-    variant = runner.invoke(app, ["project", "create", str(source), "--variant", "spk5", "--title", "SPK5"])
+    variant = runner.invoke(
+        app, ["project", "create", str(source), "--variant", "spk5", "--title", "SPK5"]
+    )
 
     projects = list_projects(data_home / "meeting-asr" / "projects").projects
     manifests = [load_manifest(project.project_dir) for project in projects]
@@ -1676,7 +2092,9 @@ def test_project_create_reuse_applies_explicit_manual_title(
     source.write_bytes(b"same video")
 
     first = runner.invoke(app, ["project", "create", str(source)])
-    second = runner.invoke(app, ["project", "create", str(source), "--title", "手工复命名"])
+    second = runner.invoke(
+        app, ["project", "create", str(source), "--title", "手工复命名"]
+    )
 
     projects_dir = data_home / "meeting-asr" / "projects"
     project_dir = next(path for path in projects_dir.iterdir() if path.is_dir())
@@ -1776,7 +2194,10 @@ def test_project_status_accepts_project_id(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path, projects_dir=projects_dir)
     manifest = load_manifest(project_dir)
 
-    result = runner.invoke(app, ["project", "status", manifest.project_id, "--projects-dir", str(projects_dir)])
+    result = runner.invoke(
+        app,
+        ["project", "status", manifest.project_id, "--projects-dir", str(projects_dir)],
+    )
 
     assert result.exit_code == 0
     assert f"Project: {project_dir.resolve()}" in result.output
@@ -1789,9 +2210,15 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     manifest = load_manifest(project_dir)
     exports_dir = project_dir / "exports"
     exports_dir.mkdir(parents=True, exist_ok=True)
-    (exports_dir / "transcript_named.txt").write_text("欧丁: 大家好\n", encoding="utf-8")
-    (exports_dir / "subtitle_named.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\n欧丁: 大家好\n", encoding="utf-8")
-    (exports_dir / "meeting_summary.md").write_text("# Demo\n\n## 摘要\n关键结论。\n", encoding="utf-8")
+    (exports_dir / "transcript_named.txt").write_text(
+        "欧丁: 大家好\n", encoding="utf-8"
+    )
+    (exports_dir / "subtitle_named.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n欧丁: 大家好\n", encoding="utf-8"
+    )
+    (exports_dir / "meeting_summary.md").write_text(
+        "# Demo\n\n## 摘要\n关键结论。\n", encoding="utf-8"
+    )
     manifest.status = "named"
     manifest.outputs.update(
         {
@@ -1800,7 +2227,9 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
             "named_subtitle": "exports/subtitle_named.srt",
         }
     )
-    manifest.asr.update({"provider": "dashscope", "model": "fun-asr", "task_id": "task-1"})
+    manifest.asr.update(
+        {"provider": "dashscope", "model": "fun-asr", "task_id": "task-1"}
+    )
     manifest.audio["duration_seconds"] = 125
     manifest.speakers.update({"detected_ids": [0], "mapped": {"0": "欧丁"}})
     manifest.runtime = {
@@ -1833,14 +2262,23 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
     assert "ASR polling" in result.output
     assert "dashscope_task_id=task-1" in result.output
     assert "Transcript polish" in result.output
-    assert "proposal ready (2 change(s)); accept or inspect diff if needed" in result.output
+    assert (
+        "proposal ready (2 change(s)); accept or inspect diff if needed"
+        in result.output
+    )
     assert f"meeting-asr project correct accept {manifest.project_id}" in result.output
     assert f"meeting-asr project correct diff {manifest.project_id}" in result.output
     assert "Final transcript" in result.output
     assert "Location" not in result.output
     assert "How to view" not in result.output
-    assert f"meeting-asr project transcript show {manifest.project_id} --kind auto" in result.output
-    assert f"meeting-asr project transcript show {manifest.project_id} --kind srt" in result.output
+    assert (
+        f"meeting-asr project transcript show {manifest.project_id} --kind auto"
+        in result.output
+    )
+    assert (
+        f"meeting-asr project transcript show {manifest.project_id} --kind srt"
+        in result.output
+    )
     assert f"meeting-asr project transcript show {manifest.project_id}" in result.output
     assert f"meeting-asr project transcript list {manifest.project_id}" in result.output
 
@@ -1848,13 +2286,19 @@ def test_project_show_command_summarizes_outputs(tmp_path: Path) -> None:
 def test_project_list_plain_prints_stable_rows(tmp_path: Path) -> None:
     """Project list should offer stable plain output for scripts."""
     projects_dir = tmp_path / "projects"
-    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Plain Demo")
+    project_dir = _sample_project(
+        tmp_path, projects_dir=projects_dir, title="Plain Demo"
+    )
     manifest = load_manifest(project_dir)
 
-    result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir), "--plain"])
+    result = runner.invoke(
+        app, ["project", "list", "--projects-dir", str(projects_dir), "--plain"]
+    )
 
     assert result.exit_code == 0
-    assert result.output.splitlines()[0] == "project_id\tstate\tupdated\ttitle\tkeywords"
+    assert (
+        result.output.splitlines()[0] == "project_id\tstate\tupdated\ttitle\tkeywords"
+    )
     assert f"{manifest.project_id}\tCreated\t" in result.output
     assert "Plain Demo" in result.output
     assert "╭" not in result.output
@@ -1864,7 +2308,9 @@ def test_project_list_timestamp_uses_local_timezone() -> None:
     """Project list timestamps should convert aware manifest times to local display time."""
     china_timezone = timezone(timedelta(hours=8))
 
-    rendered = _project_list_timestamp("2026-05-03T00:51:31+00:00", timezone=china_timezone)
+    rendered = _project_list_timestamp(
+        "2026-05-03T00:51:31+00:00", timezone=china_timezone
+    )
 
     assert rendered == "2026-05-03 08:51"
 
@@ -1875,7 +2321,10 @@ def test_project_show_accepts_project_id(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path, projects_dir=projects_dir)
     manifest = load_manifest(project_dir)
 
-    result = runner.invoke(app, ["project", "show", manifest.project_id, "--projects-dir", str(projects_dir)])
+    result = runner.invoke(
+        app,
+        ["project", "show", manifest.project_id, "--projects-dir", str(projects_dir)],
+    )
 
     assert result.exit_code == 0
     assert "Demo" in result.output
@@ -1887,7 +2336,9 @@ def test_project_show_explains_voiceprint_candidates(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path)
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
     manifest = load_manifest(project_dir)
-    manifest.speakers.update({"detected_ids": [0, 1], "mapped": {"0": "欧丁", "1": "Speaker B"}})
+    manifest.speakers.update(
+        {"detected_ids": [0, 1], "mapped": {"0": "欧丁", "1": "Speaker B"}}
+    )
     save_manifest(project_dir, manifest)
     (project_dir / "speakers" / "speaker_matches.json").write_text(
         json.dumps(
@@ -1962,7 +2413,10 @@ def test_legacy_absolute_source_path_still_resolves(tmp_path: Path) -> None:
     payload["source"].pop("original_path", None)
     manifest_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    assert resolve_project_source_path(project_dir, load_manifest(project_dir)) == source.resolve()
+    assert (
+        resolve_project_source_path(project_dir, load_manifest(project_dir))
+        == source.resolve()
+    )
 
 
 def test_top_level_transcribe_command_is_not_registered() -> None:
@@ -1984,7 +2438,9 @@ def test_apply_project_speakers_writes_project_outputs(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path)
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
 
-    mapping_path, transcript_path, srt_path = apply_project_speakers(project_dir, {0: "欧丁"})
+    mapping_path, transcript_path, srt_path = apply_project_speakers(
+        project_dir, {0: "欧丁"}
+    )
 
     assert mapping_path == project_dir / "speakers" / "speaker_map.json"
     assert transcript_path == project_dir / "exports" / "transcript_named.txt"
@@ -1992,7 +2448,9 @@ def test_apply_project_speakers_writes_project_outputs(tmp_path: Path) -> None:
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
 
 
-def test_apply_project_speakers_refreshes_corrected_named_outputs(tmp_path: Path) -> None:
+def test_apply_project_speakers_refreshes_corrected_named_outputs(
+    tmp_path: Path,
+) -> None:
     """Speaker naming should keep corrected transcript outputs aligned with new names."""
     project_dir = _sample_project(tmp_path)
     sentences_path = project_dir / "asr" / "sentences.json"
@@ -2015,8 +2473,14 @@ def test_apply_project_speakers_refreshes_corrected_named_outputs(tmp_path: Path
     corrected_srt = project_dir / "exports" / "subtitle_named_corrected.srt"
 
     assert reloaded.status == "corrected"
-    assert reloaded.outputs["corrected_named_transcript"] == "exports/transcript_named_corrected.txt"
-    assert reloaded.outputs["corrected_named_subtitle"] == "exports/subtitle_named_corrected.srt"
+    assert (
+        reloaded.outputs["corrected_named_transcript"]
+        == "exports/transcript_named_corrected.txt"
+    )
+    assert (
+        reloaded.outputs["corrected_named_subtitle"]
+        == "exports/subtitle_named_corrected.srt"
+    )
     assert "修正后的大家好" in corrected_named.read_text(encoding="utf-8")
     assert "欧丁" in corrected_srt.read_text(encoding="utf-8")
 
@@ -2027,7 +2491,11 @@ def test_apply_project_speakers_keeps_person_map_in_sync(tmp_path: Path) -> None
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
 
     apply_project_speakers(project_dir, {0: "欧丁"}, person_mapping={0: 7})
-    assert json.loads((project_dir / "speakers" / "speaker_person_map.json").read_text(encoding="utf-8")) == {"0": 7}
+    assert json.loads(
+        (project_dir / "speakers" / "speaker_person_map.json").read_text(
+            encoding="utf-8"
+        )
+    ) == {"0": 7}
 
     apply_project_speakers(
         project_dir,
@@ -2035,9 +2503,11 @@ def test_apply_project_speakers_keeps_person_map_in_sync(tmp_path: Path) -> None
         person_mapping={0: 7},
         person_public_mapping={0: "vpp-0000000000000007"},
     )
-    assert json.loads((project_dir / "speakers" / "speaker_person_map.json").read_text(encoding="utf-8")) == {
-        "0": "vpp-0000000000000007"
-    }
+    assert json.loads(
+        (project_dir / "speakers" / "speaker_person_map.json").read_text(
+            encoding="utf-8"
+        )
+    ) == {"0": "vpp-0000000000000007"}
 
     apply_project_speakers(project_dir, {0: "新名字"})
     manifest = load_manifest(project_dir)
@@ -2046,7 +2516,9 @@ def test_apply_project_speakers_keeps_person_map_in_sync(tmp_path: Path) -> None
     assert "person_map" not in manifest.speakers
 
 
-def test_apply_project_speakers_merges_existing_names_by_default(tmp_path: Path) -> None:
+def test_apply_project_speakers_merges_existing_names_by_default(
+    tmp_path: Path,
+) -> None:
     """Applying one confirmed name should not erase existing speaker names."""
     project_dir = _sample_project(tmp_path)
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
@@ -2058,8 +2530,14 @@ def test_apply_project_speakers_merges_existing_names_by_default(tmp_path: Path)
     )
     apply_project_speakers(project_dir, {1: "米汤"})
 
-    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
-    person_mapping = json.loads((project_dir / "speakers" / "speaker_person_map.json").read_text(encoding="utf-8"))
+    mapping = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
+    person_mapping = json.loads(
+        (project_dir / "speakers" / "speaker_person_map.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
     assert mapping == {"0": "欧丁", "1": "米汤"}
     assert person_mapping == {"0": "vpp-0000000000000000"}
@@ -2073,7 +2551,9 @@ def test_apply_project_speakers_can_replace_existing_names(tmp_path: Path) -> No
     apply_project_speakers(project_dir, {0: "欧丁", 1: "敬悦"})
     apply_project_speakers(project_dir, {1: "米汤"}, replace_existing=True)
 
-    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    mapping = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
 
     assert mapping == {"1": "米汤"}
 
@@ -2085,19 +2565,51 @@ def test_apply_project_speakers_ignores_low_information_speaker(tmp_path: Path) 
         "full_text": "大家看供应商闭环。嗯对啊。",
         "detected_speakers": [0, 2],
         "sentences": [
-            {"begin_time_ms": 0, "end_time_ms": 1000, "text": "大家看供应商闭环。", "speaker_id": 0},
-            {"begin_time_ms": 1100, "end_time_ms": 1200, "text": "嗯。", "speaker_id": 2},
-            {"begin_time_ms": 1300, "end_time_ms": 1400, "text": "对。", "speaker_id": 2},
-            {"begin_time_ms": 1500, "end_time_ms": 1600, "text": "啊。", "speaker_id": 2},
-            {"begin_time_ms": 1700, "end_time_ms": 1800, "text": "这样吧。", "speaker_id": 2},
-            {"begin_time_ms": 1900, "end_time_ms": 2000, "text": "就是听听听听他。", "speaker_id": 2},
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 1000,
+                "text": "大家看供应商闭环。",
+                "speaker_id": 0,
+            },
+            {
+                "begin_time_ms": 1100,
+                "end_time_ms": 1200,
+                "text": "嗯。",
+                "speaker_id": 2,
+            },
+            {
+                "begin_time_ms": 1300,
+                "end_time_ms": 1400,
+                "text": "对。",
+                "speaker_id": 2,
+            },
+            {
+                "begin_time_ms": 1500,
+                "end_time_ms": 1600,
+                "text": "啊。",
+                "speaker_id": 2,
+            },
+            {
+                "begin_time_ms": 1700,
+                "end_time_ms": 1800,
+                "text": "这样吧。",
+                "speaker_id": 2,
+            },
+            {
+                "begin_time_ms": 1900,
+                "end_time_ms": 2000,
+                "text": "就是听听听听他。",
+                "speaker_id": 2,
+            },
         ],
     }
     sentences_path = project_dir / "asr" / "sentences.json"
     sentences_path.parent.mkdir(parents=True, exist_ok=True)
     sentences_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-    _, transcript_path, _ = apply_project_speakers(project_dir, {0: "欧丁", 2: "Speaker C"})
+    _, transcript_path, _ = apply_project_speakers(
+        project_dir, {0: "欧丁", 2: "Speaker C"}
+    )
     manifest = load_manifest(project_dir)
     transcript = transcript_path.read_text(encoding="utf-8")
 
@@ -2107,16 +2619,24 @@ def test_apply_project_speakers_ignores_low_information_speaker(tmp_path: Path) 
     assert "大家看供应商闭环" in transcript
 
 
-def test_apply_project_speakers_persists_explicit_ignored_speakers(tmp_path: Path) -> None:
+def test_apply_project_speakers_persists_explicit_ignored_speakers(
+    tmp_path: Path,
+) -> None:
     """Explicit ignore state should not be encoded as a fake speaker name."""
     project_dir = _sample_project(tmp_path)
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
 
-    apply_project_speakers(project_dir, {0: "欧丁", 1: "Speaker B"}, ignored_speaker_ids=(1,))
+    apply_project_speakers(
+        project_dir, {0: "欧丁", 1: "Speaker B"}, ignored_speaker_ids=(1,)
+    )
 
     manifest = load_manifest(project_dir)
-    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
-    ignored = json.loads((project_dir / "speakers" / "speaker_ignore.json").read_text(encoding="utf-8"))
+    mapping = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
+    ignored = json.loads(
+        (project_dir / "speakers" / "speaker_ignore.json").read_text(encoding="utf-8")
+    )
 
     assert mapping == {"0": "欧丁"}
     assert ignored == {"ignored_speakers": [1]}
@@ -2130,7 +2650,9 @@ def test_project_speakers_inspect_shows_mapped_names(tmp_path: Path) -> None:
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
     apply_project_speakers(project_dir, {0: "欧丁", 1: "敬悦"})
 
-    result = runner.invoke(app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"])
+    result = runner.invoke(
+        app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"]
+    )
 
     assert result.exit_code == 0
     assert "Speaker A (speaker_id=0)" in result.output
@@ -2165,14 +2687,21 @@ def test_project_speakers_inspect_shows_voiceprint_matches(tmp_path: Path) -> No
         encoding="utf-8",
     )
 
-    result = runner.invoke(app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"])
+    result = runner.invoke(
+        app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"]
+    )
 
     assert result.exit_code == 0
     assert "Speaker B (speaker_id=1)" in result.output
-    assert "Voiceprint match: name=敬悦 score=0.775 threshold=0.750 status=matched" in result.output
+    assert (
+        "Voiceprint match: name=敬悦 score=0.775 threshold=0.750 status=matched"
+        in result.output
+    )
 
 
-def test_project_speakers_inspect_shows_below_threshold_candidates(tmp_path: Path) -> None:
+def test_project_speakers_inspect_shows_below_threshold_candidates(
+    tmp_path: Path,
+) -> None:
     """Speaker inspect should explain low-score voiceprint candidates."""
     project_dir = _sample_project(tmp_path)
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
@@ -2204,14 +2733,28 @@ def test_project_speakers_inspect_shows_below_threshold_candidates(tmp_path: Pat
         encoding="utf-8",
     )
 
-    result = runner.invoke(app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"])
+    result = runner.invoke(
+        app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"]
+    )
 
     assert result.exit_code == 0
-    assert "Voiceprint match: best=墨泪 score=0.670 threshold=0.750 status=below-threshold" in result.output
+    assert (
+        "Voiceprint match: best=墨泪 score=0.670 threshold=0.750 status=below-threshold"
+        in result.output
+    )
     assert "unknown" not in result.output
-    assert f"Recommended next step: meeting-asr project speakers review {manifest.project_id}" in result.output
-    assert f"meeting-asr project speakers inspect {manifest.project_id} --sample-count 5" in result.output
-    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name" in result.output
+    assert (
+        f"Recommended next step: meeting-asr project speakers review {manifest.project_id}"
+        in result.output
+    )
+    assert (
+        f"meeting-asr project speakers inspect {manifest.project_id} --sample-count 5"
+        in result.output
+    )
+    assert (
+        f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name"
+        in result.output
+    )
     assert f"meeting-asr voiceprint review {manifest.project_id}" in result.output
 
 
@@ -2242,16 +2785,23 @@ def test_project_speakers_inspect_marks_voiceprint_conflicts(tmp_path: Path) -> 
         encoding="utf-8",
     )
 
-    result = runner.invoke(app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"])
+    result = runner.invoke(
+        app, ["project", "speakers", "inspect", str(project_dir), "--sample-count", "1"]
+    )
 
     assert result.exit_code == 0
     assert "Name: 敬悦" in result.output
-    assert "Voiceprint match: name=墨泪 score=0.801 threshold=0.750 status=matched CONFLICT" in result.output
+    assert (
+        "Voiceprint match: name=墨泪 score=0.801 threshold=0.750 status=matched CONFLICT"
+        in result.output
+    )
 
 
 def test_speaker_match_summary_colors_review_states() -> None:
     """Voiceprint match summaries should use color to separate review states."""
-    accepted = project_commands._speaker_match_summary({"name": "敬悦", "score": 0.775052, "accepted": True})
+    accepted = project_commands._speaker_match_summary(
+        {"name": "敬悦", "score": 0.775052, "accepted": True}
+    )
     review = project_commands._speaker_match_summary(
         {
             "name": None,
@@ -2312,10 +2862,15 @@ def test_project_speakers_review_summary_shows_tui_queue(tmp_path: Path) -> None
     assert result.exit_code == 0
     assert "Speaker review queue:" in result.output
     assert "Known people: 0" in result.output
-    assert "Speaker B speaker_id=1 status=conflict name=敬悦 match=matched:墨泪" in result.output
+    assert (
+        "Speaker B speaker_id=1 status=conflict name=敬悦 match=matched:墨泪"
+        in result.output
+    )
 
 
-def test_project_review_summary_shows_below_threshold_best_candidate(tmp_path: Path) -> None:
+def test_project_review_summary_shows_below_threshold_best_candidate(
+    tmp_path: Path,
+) -> None:
     """Project review summary should not collapse low-score candidates to unknown."""
     project_dir = _sample_project(tmp_path)
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
@@ -2361,15 +2916,28 @@ def test_project_review_summary_shows_below_threshold_best_candidate(tmp_path: P
     )
 
     assert result.exit_code == 0
-    assert f"Recommended next step: meeting-asr project review {manifest.project_id}" in result.output
-    assert "This opens the human review workflow for unresolved speakers." in result.output
-    assert "Speaker A: below-threshold best=墨泪 score=0.670 threshold=0.750" in result.output
+    assert (
+        f"Recommended next step: meeting-asr project review {manifest.project_id}"
+        in result.output
+    )
+    assert (
+        "This opens the human review workflow for unresolved speakers." in result.output
+    )
+    assert (
+        "Speaker A: below-threshold best=墨泪 score=0.670 threshold=0.750"
+        in result.output
+    )
     assert "Speaker A speaker_id=0 status=review name=Speaker A" in result.output
     assert "match=below-threshold:墨泪 score=0.670 threshold=0.750" in result.output
     assert "status=ignored" not in result.output
     assert "unknown" not in result.output
-    assert f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name" in result.output
-    assert result.output.index(f"meeting-asr project review {manifest.project_id}") < result.output.index(
+    assert (
+        f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name"
+        in result.output
+    )
+    assert result.output.index(
+        f"meeting-asr project review {manifest.project_id}"
+    ) < result.output.index(
         f"meeting-asr project speakers apply {manifest.project_id} --map 0=Name"
     )
     assert f"meeting-asr voiceprint review {manifest.project_id}" in result.output
@@ -2407,7 +2975,9 @@ def test_project_review_summary_without_project_lists_history(tmp_path: Path) ->
     project_dir = _sample_project(tmp_path, projects_dir=projects_dir)
     manifest = load_manifest(project_dir)
 
-    result = runner.invoke(app, ["project", "review", "--summary", "--projects-dir", str(projects_dir)])
+    result = runner.invoke(
+        app, ["project", "review", "--summary", "--projects-dir", str(projects_dir)]
+    )
 
     assert result.exit_code == 0
     assert f"Projects: {projects_dir.resolve()}" in result.output
@@ -2417,9 +2987,15 @@ def test_project_review_summary_without_project_lists_history(tmp_path: Path) ->
 def test_speaker_review_help_separates_human_and_scripted_paths() -> None:
     """Speaker command help should point humans to review and scripts to apply --map."""
     project_review = runner.invoke(app, ["--lang", "en", "project", "review", "--help"])
-    speaker_review = runner.invoke(app, ["--lang", "en", "project", "speakers", "review", "--help"])
-    apply_help = runner.invoke(app, ["--lang", "en", "project", "speakers", "apply", "--help"])
-    inspect_help = runner.invoke(app, ["--lang", "en", "project", "speakers", "inspect", "--help"])
+    speaker_review = runner.invoke(
+        app, ["--lang", "en", "project", "speakers", "review", "--help"]
+    )
+    apply_help = runner.invoke(
+        app, ["--lang", "en", "project", "speakers", "apply", "--help"]
+    )
+    inspect_help = runner.invoke(
+        app, ["--lang", "en", "project", "speakers", "inspect", "--help"]
+    )
 
     assert project_review.exit_code == 0
     assert "recommended human review workflow" in project_review.output
@@ -2447,7 +3023,9 @@ def test_project_speakers_apply_prompts_for_names(tmp_path: Path) -> None:
     )
 
     transcript_path = project_dir / "exports" / "transcript_named.txt"
-    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    mapping = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
     assert result.exit_code == 0
     assert "Name for Speaker A" in result.output
     assert "Name for Speaker B" in result.output
@@ -2465,11 +3043,22 @@ def test_project_speakers_apply_map_writes_named_transcript(tmp_path: Path) -> N
 
     result = runner.invoke(
         app,
-        ["project", "speakers", "apply", str(project_dir), "--map", "0=欧丁", "--map", "1=敬悦"],
+        [
+            "project",
+            "speakers",
+            "apply",
+            str(project_dir),
+            "--map",
+            "0=欧丁",
+            "--map",
+            "1=敬悦",
+        ],
     )
 
     transcript_path = project_dir / "exports" / "transcript_named.txt"
-    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    mapping = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
     assert result.exit_code == 0
     assert mapping == {"0": "欧丁", "1": "敬悦"}
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
@@ -2488,7 +3077,9 @@ def test_project_speakers_apply_map_merges_saved_names(tmp_path: Path) -> None:
     )
 
     transcript_path = project_dir / "exports" / "transcript_named.txt"
-    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    mapping = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
     assert result.exit_code == 0
     assert mapping == {"0": "欧丁", "1": "敬悦"}
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
@@ -2503,10 +3094,20 @@ def test_project_speakers_apply_map_replace_clears_saved_names(tmp_path: Path) -
 
     result = runner.invoke(
         app,
-        ["project", "speakers", "apply", str(project_dir), "--map", "1=敬悦", "--replace"],
+        [
+            "project",
+            "speakers",
+            "apply",
+            str(project_dir),
+            "--map",
+            "1=敬悦",
+            "--replace",
+        ],
     )
 
-    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    mapping = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
     assert result.exit_code == 0
     assert mapping == {"1": "敬悦"}
 
@@ -2519,7 +3120,9 @@ def test_project_speakers_apply_can_show_more_samples(
     project_dir = _sample_project(tmp_path)
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
     remembered: list[str] = []
-    monkeypatch.setattr("app.commands.project._remember_prompt_history", remembered.append)
+    monkeypatch.setattr(
+        "app.commands.project._remember_prompt_history", remembered.append
+    )
 
     result = runner.invoke(
         app,
@@ -2527,7 +3130,9 @@ def test_project_speakers_apply_can_show_more_samples(
         input="/more\n欧丁\n敬悦\n",
     )
 
-    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    mapping = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
     assert result.exit_code == 0
     assert "More samples for Speaker A" in result.output
     assert "再补一句。" in result.output
@@ -2558,7 +3163,9 @@ def test_project_speakers_apply_can_preview_audio(
     remembered: list[str] = []
     captured: dict[str, Path | float] = {}
     audio_segments: list[str] = []
-    audio_clip = project_dir / "tmp" / "speaker_apply_preview" / "Speaker_A" / "preview.wav"
+    audio_clip = (
+        project_dir / "tmp" / "speaker_apply_preview" / "Speaker_A" / "preview.wav"
+    )
 
     def fake_build_audio_preview_command(
         *,
@@ -2585,10 +3192,21 @@ def test_project_speakers_apply_can_preview_audio(
     def fake_run_preview_command(command: list[str]) -> None:
         played.append(command)
 
-    monkeypatch.setattr("app.commands.project.build_audio_preview_command", fake_build_audio_preview_command)
-    monkeypatch.setattr("app.commands.project._build_speaker_apply_audio_preview_clip", fake_build_audio_preview_clip)
-    monkeypatch.setattr("app.commands.project._run_speaker_apply_preview_command", fake_run_preview_command)
-    monkeypatch.setattr("app.commands.project._remember_prompt_history", remembered.append)
+    monkeypatch.setattr(
+        "app.commands.project.build_audio_preview_command",
+        fake_build_audio_preview_command,
+    )
+    monkeypatch.setattr(
+        "app.commands.project._build_speaker_apply_audio_preview_clip",
+        fake_build_audio_preview_clip,
+    )
+    monkeypatch.setattr(
+        "app.commands.project._run_speaker_apply_preview_command",
+        fake_run_preview_command,
+    )
+    monkeypatch.setattr(
+        "app.commands.project._remember_prompt_history", remembered.append
+    )
 
     result = runner.invoke(
         app,
@@ -2596,7 +3214,9 @@ def test_project_speakers_apply_can_preview_audio(
         input="/more\n/audio\n欧丁\n敬悦\n",
     )
 
-    mapping = json.loads((project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8"))
+    mapping = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
     assert result.exit_code == 0
     assert played == [["audio-player"]]
     assert remembered == ["/more", "/audio"]
@@ -2604,9 +3224,18 @@ def test_project_speakers_apply_can_preview_audio(
     assert captured["audio_start"] == 0.0
     assert captured["audio_duration"] == 0.0
     assert audio_segments == ["再补一句。"]
-    assert "Preview sample for Speaker A: [00:00:01.900 - 00:00:02.500] 再补一句。" in result.output
-    assert "Starting audio preview for Speaker A with 1 displayed sample(s)." in result.output
-    assert "Controls: Space/P pauses, Q/Esc stops early, Ctrl-C also stops." in result.output
+    assert (
+        "Preview sample for Speaker A: [00:00:01.900 - 00:00:02.500] 再补一句。"
+        in result.output
+    )
+    assert (
+        "Starting audio preview for Speaker A with 1 displayed sample(s)."
+        in result.output
+    )
+    assert (
+        "Controls: Space/P pauses, Q/Esc stops early, Ctrl-C also stops."
+        in result.output
+    )
     assert "/video" not in result.output
     assert mapping == {"0": "欧丁", "1": "敬悦"}
 
@@ -2648,8 +3277,14 @@ def test_speaker_apply_audio_preview_clip_uses_visible_segments(
         segments=segments,
     )
 
-    assert output == tmp_path / "tmp" / "speaker_apply_preview" / "Speaker_A" / "preview.wav"
-    assert [(start, duration) for _, start, duration in calls] == [(0.0, 4.0), (4.0, 6.0)]
+    assert (
+        output
+        == tmp_path / "tmp" / "speaker_apply_preview" / "Speaker_A" / "preview.wav"
+    )
+    assert [(start, duration) for _, start, duration in calls] == [
+        (0.0, 4.0),
+        (4.0, 6.0),
+    ]
     assert [path.name for path, _, _ in calls] == ["clip_001.wav", "clip_002.wav"]
     with wave.open(str(output), "rb") as reader:
         assert reader.getnframes() > 2 * 160
@@ -2664,11 +3299,19 @@ def test_speaker_apply_preview_runner_stops_on_q(
     stdin = _FakePreviewStdin("q")
 
     monkeypatch.setattr(project_commands.sys, "stdin", stdin)
-    monkeypatch.setattr(project_commands.subprocess, "Popen", lambda command, stdin=None: process)
+    monkeypatch.setattr(
+        project_commands.subprocess, "Popen", lambda command, stdin=None: process
+    )
     monkeypatch.setattr(project_commands.termios, "tcgetattr", lambda fd: ["old"])
-    monkeypatch.setattr(project_commands.termios, "tcsetattr", lambda fd, when, settings: None)
+    monkeypatch.setattr(
+        project_commands.termios, "tcsetattr", lambda fd, when, settings: None
+    )
     monkeypatch.setattr(project_commands.tty, "setcbreak", lambda fd: None)
-    monkeypatch.setattr(project_commands.select, "select", lambda read, write, error, timeout: (read, [], []))
+    monkeypatch.setattr(
+        project_commands.select,
+        "select",
+        lambda read, write, error, timeout: (read, [], []),
+    )
 
     project_commands._run_speaker_apply_preview_command(["player"])
 
@@ -2685,21 +3328,31 @@ def test_project_speakers_preview_prefers_named_subtitle(
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
     (project_dir / "exports").mkdir(exist_ok=True)
     (project_dir / "exports" / "subtitle.srt").write_text("anonymous", encoding="utf-8")
-    (project_dir / "exports" / "subtitle_named.srt").write_text("named", encoding="utf-8")
+    (project_dir / "exports" / "subtitle_named.srt").write_text(
+        "named", encoding="utf-8"
+    )
     captured: dict[str, Path] = {}
 
-    def fake_build_preview_command(*, video: Path, subtitle: Path, start_seconds: float) -> list[str]:
+    def fake_build_preview_command(
+        *, video: Path, subtitle: Path, start_seconds: float
+    ) -> list[str]:
         captured["video"] = video
         captured["subtitle"] = subtitle
         return ["player", str(subtitle)]
 
-    monkeypatch.setattr("app.commands.project.build_preview_command", fake_build_preview_command)
+    monkeypatch.setattr(
+        "app.commands.project.build_preview_command", fake_build_preview_command
+    )
 
-    result = runner.invoke(app, ["project", "speakers", "preview", str(project_dir), "--dry-run"])
+    result = runner.invoke(
+        app, ["project", "speakers", "preview", str(project_dir), "--dry-run"]
+    )
 
     assert result.exit_code == 0
     assert captured["video"] == project_dir.resolve() / "source" / "meeting.mp4"
-    assert captured["subtitle"] == project_dir.resolve() / "exports" / "subtitle_named.srt"
+    assert (
+        captured["subtitle"] == project_dir.resolve() / "exports" / "subtitle_named.srt"
+    )
     assert "subtitle_named.srt" in result.output
 
 
@@ -2711,20 +3364,33 @@ def test_project_speakers_preview_prefers_corrected_named_subtitle(
     project_dir = _sample_project(tmp_path)
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
     (project_dir / "exports").mkdir(exist_ok=True)
-    (project_dir / "exports" / "subtitle_named.srt").write_text("named", encoding="utf-8")
-    (project_dir / "exports" / "subtitle_named_corrected.srt").write_text("corrected", encoding="utf-8")
+    (project_dir / "exports" / "subtitle_named.srt").write_text(
+        "named", encoding="utf-8"
+    )
+    (project_dir / "exports" / "subtitle_named_corrected.srt").write_text(
+        "corrected", encoding="utf-8"
+    )
     captured: dict[str, Path] = {}
 
-    def fake_build_preview_command(*, video: Path, subtitle: Path, start_seconds: float) -> list[str]:
+    def fake_build_preview_command(
+        *, video: Path, subtitle: Path, start_seconds: float
+    ) -> list[str]:
         captured["subtitle"] = subtitle
         return ["player", str(subtitle)]
 
-    monkeypatch.setattr("app.commands.project.build_preview_command", fake_build_preview_command)
+    monkeypatch.setattr(
+        "app.commands.project.build_preview_command", fake_build_preview_command
+    )
 
-    result = runner.invoke(app, ["project", "speakers", "preview", str(project_dir), "--dry-run"])
+    result = runner.invoke(
+        app, ["project", "speakers", "preview", str(project_dir), "--dry-run"]
+    )
 
     assert result.exit_code == 0
-    assert captured["subtitle"] == project_dir.resolve() / "exports" / "subtitle_named_corrected.srt"
+    assert (
+        captured["subtitle"]
+        == project_dir.resolve() / "exports" / "subtitle_named_corrected.srt"
+    )
     assert "subtitle_named_corrected.srt" in result.output
 
 
@@ -2751,17 +3417,27 @@ def test_project_speakers_preview_uses_asr_audio_for_audio_only_source(
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     audio_path.write_bytes(b"audio")
     manifest = load_manifest(project_dir)
-    manifest.audio = {"path": "audio/audio.flac", "format": "flac", "duration_seconds": 10.0}
+    manifest.audio = {
+        "path": "audio/audio.flac",
+        "format": "flac",
+        "duration_seconds": 10.0,
+    }
     save_manifest(project_dir, manifest)
     captured: dict[str, Path] = {}
 
-    def fake_build_preview_command(*, video: Path, subtitle: Path, start_seconds: float) -> list[str]:
+    def fake_build_preview_command(
+        *, video: Path, subtitle: Path, start_seconds: float
+    ) -> list[str]:
         captured["video"] = video
         return ["player", str(video)]
 
-    monkeypatch.setattr("app.commands.project.build_preview_command", fake_build_preview_command)
+    monkeypatch.setattr(
+        "app.commands.project.build_preview_command", fake_build_preview_command
+    )
 
-    result = runner.invoke(app, ["project", "speakers", "preview", str(project_dir), "--dry-run"])
+    result = runner.invoke(
+        app, ["project", "speakers", "preview", str(project_dir), "--dry-run"]
+    )
 
     assert result.exit_code == 0
     assert captured["video"] == audio_path.resolve()
@@ -2808,9 +3484,27 @@ def _write_sample_sentences(path: Path) -> None:
     _write_sentences(
         path,
         [
-            {"begin_time_ms": 0, "end_time_ms": 1000, "text": "大家好。", "speaker_id": 0, "sentence_id": 1},
-            {"begin_time_ms": 1200, "end_time_ms": 1800, "text": "收到。", "speaker_id": 1, "sentence_id": 2},
-            {"begin_time_ms": 1900, "end_time_ms": 2500, "text": "再补一句。", "speaker_id": 0, "sentence_id": 3},
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 1000,
+                "text": "大家好。",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 1200,
+                "end_time_ms": 1800,
+                "text": "收到。",
+                "speaker_id": 1,
+                "sentence_id": 2,
+            },
+            {
+                "begin_time_ms": 1900,
+                "end_time_ms": 2500,
+                "text": "再补一句。",
+                "speaker_id": 0,
+                "sentence_id": 3,
+            },
         ],
     )
 

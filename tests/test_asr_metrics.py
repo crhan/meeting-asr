@@ -41,7 +41,9 @@ def test_failed_observation_does_not_create_baseline(tmp_path: Path) -> None:
     """Failed waits are stored but should not influence ETA baselines."""
     db_path = tmp_path / "runtime.sqlite"
 
-    record_asr_wait_observation(_observation(audio=60.0, wait=30.0, status="failed"), db_path)
+    record_asr_wait_observation(
+        _observation(audio=60.0, wait=30.0, status="failed"), db_path
+    )
     estimate = estimate_asr_wait_seconds(
         provider="dashscope",
         service=ASR_SERVICE,
@@ -111,11 +113,19 @@ def test_recent_samples_dominate_old_outliers(tmp_path: Path) -> None:
 
     for index, wait in enumerate((180.0, 220.0, 260.0, 300.0), start=1):
         project_id = f"p-old-{index}"
-        record_asr_wait_observation(_observation(audio=300.0, wait=wait, project_id=project_id), db_path)
+        record_asr_wait_observation(
+            _observation(audio=300.0, wait=wait, project_id=project_id), db_path
+        )
         _set_observation_created_at(db_path, project_id, old_time)
-    record_asr_wait_observation(_observation(audio=4148.0, wait=53.0, project_id="p-recent-1"), db_path)
-    record_asr_wait_observation(_observation(audio=4148.0, wait=54.0, project_id="p-recent-2"), db_path)
-    record_asr_wait_observation(_observation(audio=1555.0, wait=27.0, project_id="p-recent-3"), db_path)
+    record_asr_wait_observation(
+        _observation(audio=4148.0, wait=53.0, project_id="p-recent-1"), db_path
+    )
+    record_asr_wait_observation(
+        _observation(audio=4148.0, wait=54.0, project_id="p-recent-2"), db_path
+    )
+    record_asr_wait_observation(
+        _observation(audio=1555.0, wait=27.0, project_id="p-recent-3"), db_path
+    )
 
     estimate = estimate_asr_wait_seconds(
         provider="dashscope",
@@ -135,8 +145,12 @@ def test_recent_samples_dominate_old_outliers(tmp_path: Path) -> None:
 def test_estimate_refreshes_stale_precomputed_baseline(tmp_path: Path) -> None:
     """Estimating should not keep using a stale baseline from an older algorithm."""
     db_path = tmp_path / "runtime.sqlite"
-    record_asr_wait_observation(_observation(audio=4148.0, wait=53.0, project_id="p-recent-1"), db_path)
-    record_asr_wait_observation(_observation(audio=4148.0, wait=54.0, project_id="p-recent-2"), db_path)
+    record_asr_wait_observation(
+        _observation(audio=4148.0, wait=53.0, project_id="p-recent-1"), db_path
+    )
+    record_asr_wait_observation(
+        _observation(audio=4148.0, wait=54.0, project_id="p-recent-2"), db_path
+    )
     _overwrite_baseline_slope(db_path, slope=0.5)
 
     estimate = estimate_asr_wait_seconds(
@@ -176,10 +190,14 @@ def _observation(
 def _baseline_count(db_path: Path) -> int:
     """Return baseline row count from the test database."""
     with sqlite3.connect(db_path) as connection:
-        return int(connection.execute("SELECT COUNT(*) FROM asr_wait_baselines").fetchone()[0])
+        return int(
+            connection.execute("SELECT COUNT(*) FROM asr_wait_baselines").fetchone()[0]
+        )
 
 
-def _set_observation_created_at(db_path: Path, project_id: str, created_at: datetime) -> None:
+def _set_observation_created_at(
+    db_path: Path, project_id: str, created_at: datetime
+) -> None:
     """Set fixture creation time for a recorded observation."""
     with sqlite3.connect(db_path) as connection:
         connection.execute(
@@ -206,4 +224,8 @@ def _overwrite_baseline_slope(db_path: Path, slope: float) -> None:
 def _baseline_slope(db_path: Path) -> float:
     """Return the current stored baseline slope."""
     with sqlite3.connect(db_path) as connection:
-        return float(connection.execute("SELECT slope_seconds_per_audio_second FROM asr_wait_baselines").fetchone()[0])
+        return float(
+            connection.execute(
+                "SELECT slope_seconds_per_audio_second FROM asr_wait_baselines"
+            ).fetchone()[0]
+        )

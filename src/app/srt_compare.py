@@ -36,7 +36,9 @@ def parse_srt(path: Path, *, source: str) -> list[SrtEntry]:
         lines = [line.strip() for line in block.splitlines() if line.strip()]
         if len(lines) < 3 or "-->" not in lines[1]:
             continue
-        start, end = [_parse_srt_time(item.strip()) for item in lines[1].split("-->", 1)]
+        start, end = [
+            _parse_srt_time(item.strip()) for item in lines[1].split("-->", 1)
+        ]
         speaker, text = _split_speaker(" ".join(lines[2:]))
         entries.append(SrtEntry(start, end, speaker, text, source))
     return entries
@@ -61,7 +63,9 @@ def build_report(*, dingtalk: list[SrtEntry], ours: list[SrtEntry]) -> str:
         if labels:
             pairs[(ding.speaker, labels.most_common(1)[0][0])] += 1
         if len(labels) > 1:
-            mixed.append(f"- `{ding.speaker}` {ding.start_ms}-{ding.end_ms} overlaps {dict(labels)}")
+            mixed.append(
+                f"- `{ding.speaker}` {ding.start_ms}-{ding.end_ms} overlaps {dict(labels)}"
+            )
     lines = ["# Speaker Comparison", "", "## Dominant Label Pairs"]
     for (ding_label, our_label), count in pairs.most_common():
         lines.append(f"- `{ding_label}` -> `{our_label}`: {count}")

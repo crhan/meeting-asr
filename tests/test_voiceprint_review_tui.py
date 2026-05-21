@@ -11,7 +11,9 @@ import app.presentation.tui.voiceprint_review as voiceprint_review
 from app.presentation.cli.i18n import configure_cli_language
 from app.presentation.tui.voiceprint_review_text import quality_reason_text
 from app.presentation.tui.voiceprint import load_voiceprint_library_session
-from app.presentation.tui.voiceprint_capture import load_voiceprint_capture_review_session
+from app.presentation.tui.voiceprint_capture import (
+    load_voiceprint_capture_review_session,
+)
 from app.presentation.tui.voiceprint_review import (
     VoiceprintReviewApp,
     VoiceprintReviewHelpScreen,
@@ -30,7 +32,9 @@ from app.voiceprint_store import (
 from app.voiceprints import VoiceprintCaptureSummary, VoiceprintClip, VoiceprintSpeaker
 
 
-def test_voiceprint_review_tui_switches_project_and_library_views(tmp_path: Path) -> None:
+def test_voiceprint_review_tui_switches_project_and_library_views(
+    tmp_path: Path,
+) -> None:
     """Unified review should switch between project candidates and global library."""
     session = _review_session(tmp_path)
     app = VoiceprintReviewApp(session)
@@ -87,7 +91,9 @@ def test_voiceprint_review_tui_uses_chinese_language(tmp_path: Path) -> None:
         configure_cli_language("en")
 
 
-def test_voiceprint_review_tui_saves_only_selected_project_samples(tmp_path: Path) -> None:
+def test_voiceprint_review_tui_saves_only_selected_project_samples(
+    tmp_path: Path,
+) -> None:
     """Saving from the unified TUI should return checked project clip paths only."""
     app = VoiceprintReviewApp(_review_session(tmp_path))
 
@@ -107,7 +113,9 @@ def test_voiceprint_review_tui_saves_only_selected_project_samples(tmp_path: Pat
 
     assert app.return_value is not None
     assert app.return_value.saved is True
-    assert app.return_value.selected_clip_rel_paths == frozenset({"clips/project-1/speaker_0/clip_002.wav"})
+    assert app.return_value.selected_clip_rel_paths == frozenset(
+        {"clips/project-1/speaker_0/clip_002.wav"}
+    )
 
 
 def test_voiceprint_review_tui_excludes_current_speaker_samples(tmp_path: Path) -> None:
@@ -127,7 +135,9 @@ def test_voiceprint_review_tui_excludes_current_speaker_samples(tmp_path: Path) 
     asyncio.run(scenario())
 
 
-def test_voiceprint_review_defaults_high_score_matches_unchecked_and_shows_score(tmp_path: Path) -> None:
+def test_voiceprint_review_defaults_high_score_matches_unchecked_and_shows_score(
+    tmp_path: Path,
+) -> None:
     """High-score project matches should not be captured again by default."""
     app = VoiceprintReviewApp(
         _review_session(
@@ -165,10 +175,14 @@ def test_voiceprint_review_tui_uses_colored_rows_and_checkmarks(tmp_path: Path) 
     assert "[green]x[/]" in sample_pane
 
 
-def test_voiceprint_review_project_playback_shows_progress(monkeypatch, tmp_path: Path) -> None:
+def test_voiceprint_review_project_playback_shows_progress(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Playing a project sample should show a visible state and progress."""
     fake_process = _FakePlaybackProcess()
-    monkeypatch.setattr(voiceprint_review, "_start_player", lambda command: fake_process)
+    monkeypatch.setattr(
+        voiceprint_review, "_start_player", lambda command: fake_process
+    )
     app = VoiceprintReviewApp(_review_session(tmp_path))
 
     async def scenario() -> None:
@@ -186,7 +200,9 @@ def test_voiceprint_review_project_playback_shows_progress(monkeypatch, tmp_path
             await pilot.pause()
 
             assert fake_process.terminated is True
-            assert "Stopped sample playback" in str(app.query_one("#status", Static).render())
+            assert "Stopped sample playback" in str(
+                app.query_one("#status", Static).render()
+            )
 
     asyncio.run(scenario())
 
@@ -204,7 +220,9 @@ def test_voiceprint_review_refuses_save_from_global_library(tmp_path: Path) -> N
 
             assert app.return_value is None
             assert app.mode == "library"
-            assert "Switch to Project candidates" in str(app.query_one("#status", Static).render())
+            assert "Switch to Project candidates" in str(
+                app.query_one("#status", Static).render()
+            )
 
     asyncio.run(scenario())
 
@@ -233,7 +251,9 @@ def test_voiceprint_review_quality_mode_saves_and_refreshes(tmp_path: Path) -> N
 
             assert app.return_value is None
             assert app.session.quality.suspicious_count == 0
-            assert "Saved 1 quality change" in str(app.query_one("#status", Static).render())
+            assert "Saved 1 quality change" in str(
+                app.query_one("#status", Static).render()
+            )
 
     asyncio.run(scenario())
 
@@ -261,7 +281,9 @@ def test_voiceprint_review_quality_mode_marks_verified_active(tmp_path: Path) ->
             await pilot.pause()
 
             assert app.session.quality.suspicious_count == 0
-            assert len(list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)) == 4
+            assert (
+                len(list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)) == 4
+            )
 
     asyncio.run(scenario())
 
@@ -294,15 +316,26 @@ def test_voiceprint_quality_reason_is_localized() -> None:
     """Quality reason text should be human-facing in Chinese."""
     try:
         configure_cli_language("zh")
-        assert quality_reason_text("statistical outlier") == "统计离群：这段样本和此人的其他声纹样本差异明显"
-        assert quality_reason_text("cluster-consistent") == "声纹一致：这段样本和此人的声纹簇匹配"
+        assert (
+            quality_reason_text("statistical outlier")
+            == "统计离群：这段样本和此人的其他声纹样本差异明显"
+        )
+        assert (
+            quality_reason_text("cluster-consistent")
+            == "声纹一致：这段样本和此人的声纹簇匹配"
+        )
         assert quality_reason_text("score<0.60") == "分数低于阈值（0.60）"
-        assert quality_reason_text("human verified active") == "人工确认：这段样本保留参与匹配，不再作为质量风险"
+        assert (
+            quality_reason_text("human verified active")
+            == "人工确认：这段样本保留参与匹配，不再作为质量风险"
+        )
     finally:
         configure_cli_language("en")
 
 
-def test_voiceprint_review_without_project_starts_in_library_mode(tmp_path: Path) -> None:
+def test_voiceprint_review_without_project_starts_in_library_mode(
+    tmp_path: Path,
+) -> None:
     """Without a project, review should behave as the global library browser."""
     store_dir = _store(tmp_path)
     session = VoiceprintReviewSession(
@@ -395,7 +428,9 @@ def _review_session(
     store_dir = _store(tmp_path)
     library = load_voiceprint_library_session(store_dir=store_dir, page_size=1)
     quality = analyze_voiceprint_quality(store_dir=store_dir)
-    return VoiceprintReviewSession(capture=capture, library=library, quality=quality, store_dir=store_dir)
+    return VoiceprintReviewSession(
+        capture=capture, library=library, quality=quality, store_dir=store_dir
+    )
 
 
 def _capture_summary(tmp_path: Path) -> VoiceprintCaptureSummary:
@@ -438,8 +473,22 @@ def _store(tmp_path: Path) -> Path:
     source_path.write_bytes(b"source")
     store_voiceprint_samples(
         [
-            _sample(store_dir, source_path, "Alice", speaker_id=0, index=1, text="library sample one"),
-            _sample(store_dir, source_path, "Alice", speaker_id=0, index=2, text="library sample two"),
+            _sample(
+                store_dir,
+                source_path,
+                "Alice",
+                speaker_id=0,
+                index=1,
+                text="library sample one",
+            ),
+            _sample(
+                store_dir,
+                source_path,
+                "Alice",
+                speaker_id=0,
+                index=2,
+                text="library sample two",
+            ),
         ],
         get_voiceprint_db_path(store_dir),
     )
@@ -451,12 +500,24 @@ def _quality_store(tmp_path: Path) -> Path:
     store_dir = tmp_path / "quality-voiceprints"
     source_path = tmp_path / "quality-meeting.mp4"
     source_path.write_bytes(b"source")
-    samples = [_sample(store_dir, source_path, "Alice", speaker_id=0, index=index, text=f"sample {index}") for index in range(1, 5)]
+    samples = [
+        _sample(
+            store_dir,
+            source_path,
+            "Alice",
+            speaker_id=0,
+            index=index,
+            text=f"sample {index}",
+        )
+        for index in range(1, 5)
+    ]
     db_path = store_voiceprint_samples(samples, get_voiceprint_db_path(store_dir))
     rows = list_voiceprint_samples_for_project("project-1", db_path)
     vectors = ([1.0, 0.0], [0.98, 0.02], [0.99, 0.01], [0.0, 1.0])
     for row, vector in zip(rows, vectors, strict=True):
-        upsert_voiceprint_embedding(row.sample_id, LOCAL_SPEECHBRAIN_MODEL, vector, db_path)
+        upsert_voiceprint_embedding(
+            row.sample_id, LOCAL_SPEECHBRAIN_MODEL, vector, db_path
+        )
     return store_dir
 
 
@@ -495,7 +556,13 @@ def _sample(
     text: str,
 ) -> StoredVoiceprintSample:
     """Build one stored voiceprint sample fixture."""
-    clip_path = store_dir / "clips" / "project-1" / f"speaker_{speaker_id}" / f"clip_{index:03d}.wav"
+    clip_path = (
+        store_dir
+        / "clips"
+        / "project-1"
+        / f"speaker_{speaker_id}"
+        / f"clip_{index:03d}.wav"
+    )
     clip_path.parent.mkdir(parents=True, exist_ok=True)
     clip_path.write_bytes(f"{speaker_name}-{index}".encode())
     return StoredVoiceprintSample(

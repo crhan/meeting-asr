@@ -12,7 +12,11 @@ from rich.panel import Panel
 from rich.table import Table
 
 from app.asr_pricing import format_asr_cost
-from app.core.project_models import ProjectManifest, ProjectMeetingSummary, ProjectTranscribeSummary
+from app.core.project_models import (
+    ProjectManifest,
+    ProjectMeetingSummary,
+    ProjectTranscribeSummary,
+)
 from app.correction_types import CorrectionEditSummary
 from app.presentation.cli.output import cli_console
 from app.presentation.cli.speaker_match_table import (
@@ -68,14 +72,24 @@ def render_project_run_summary(view: ProjectRunSummaryView) -> None:
 def _status_panel(view: ProjectRunSummaryView) -> Panel:
     """Build the high-level project run status panel."""
     completed = view.unresolved_matches == 0
-    status = "Project automation completed." if completed else "Project automation needs review."
+    status = (
+        "Project automation completed."
+        if completed
+        else "Project automation needs review."
+    )
     style = "green" if completed else "yellow"
     grid = Table.grid(expand=True)
     grid.add_column(ratio=3)
     grid.add_column(justify="right", no_wrap=True)
-    grid.add_row(f"[bold]{view.manifest.title}[/]", f"[bold cyan]Project {view.project_ref}[/]")
-    grid.add_row(f"[dim]{view.manifest.project_id}[/]", f"[{style}]{_voiceprint_label(view)}[/]")
-    return Panel(grid, title=f"[bold {style}]{status}[/]", border_style=style, expand=False)
+    grid.add_row(
+        f"[bold]{view.manifest.title}[/]", f"[bold cyan]Project {view.project_ref}[/]"
+    )
+    grid.add_row(
+        f"[dim]{view.manifest.project_id}[/]", f"[{style}]{_voiceprint_label(view)}[/]"
+    )
+    return Panel(
+        grid, title=f"[bold {style}]{status}[/]", border_style=style, expand=False
+    )
 
 
 def _metrics_table(view: ProjectRunSummaryView) -> Table:
@@ -90,7 +104,9 @@ def _metrics_table(view: ProjectRunSummaryView) -> Table:
 
 def _outputs_table(view: ProjectRunSummaryView) -> Table:
     """Build project output artifact table."""
-    table = Table(title="Outputs", box=box.SIMPLE_HEAVY, show_edge=False, pad_edge=False)
+    table = Table(
+        title="Outputs", box=box.SIMPLE_HEAVY, show_edge=False, pad_edge=False
+    )
     table.add_column("Artifact", style="bold", no_wrap=True)
     table.add_column("Status", no_wrap=True)
     table.add_column("Path")
@@ -120,7 +136,12 @@ def _agent_prompt_panel(view: ProjectRunSummaryView) -> Panel:
         f"{view.below_threshold_matches} below-threshold and {view.no_candidate_matches} no-candidate speaker(s), "
         f"save named outputs, {correction_step}, then verify the subtitle preview."
     )
-    return Panel(prompt, title="[bold yellow]Agent prompt:[/]", border_style="yellow", expand=False)
+    return Panel(
+        prompt,
+        title="[bold yellow]Agent prompt:[/]",
+        border_style="yellow",
+        expand=False,
+    )
 
 
 def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
@@ -138,7 +159,14 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         ("ASR task", view.transcription.task_id),
     ]
     if view.meeting_summary is not None:
-        rows.append(("Memory index", _relative_project_output(view.project_dir, view.meeting_summary.summary_path)))
+        rows.append(
+            (
+                "Memory index",
+                _relative_project_output(
+                    view.project_dir, view.meeting_summary.summary_path
+                ),
+            )
+        )
         if view.meeting_summary.title_updated:
             rows.append(("Auto title", view.meeting_summary.title))
     local_correction_label = _local_correction_label(view.lexicon_correction_summary)
@@ -150,7 +178,12 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
     if view.correction_summary and view.correction_summary.model_error:
         rows.append(("Polish recovery", view.correction_summary.model_error))
     if view.speaker_reassignments:
-        rows.append(("Speaker stabilization", f"reassigned {view.speaker_reassignments} sentence(s)"))
+        rows.append(
+            (
+                "Speaker stabilization",
+                f"reassigned {view.speaker_reassignments} sentence(s)",
+            )
+        )
     return rows
 
 
@@ -176,12 +209,20 @@ def _output_rows(view: ProjectRunSummaryView) -> list[tuple[str, str, str]]:
     if view.meeting_summary is not None:
         rows.append(("Memory index", "ready", "exports/meeting_summary.md"))
         rows.append(("Memory index JSON", "supporting", "exports/meeting_summary.json"))
-    if _has_pending_polish_proposal(view) and view.correction_summary and view.correction_summary.proposal_diff_path:
-        rows.append((
-            "Transcript polish proposal",
-            "review",
-            _relative_project_output(view.project_dir, view.correction_summary.proposal_diff_path),
-        ))
+    if (
+        _has_pending_polish_proposal(view)
+        and view.correction_summary
+        and view.correction_summary.proposal_diff_path
+    ):
+        rows.append(
+            (
+                "Transcript polish proposal",
+                "review",
+                _relative_project_output(
+                    view.project_dir, view.correction_summary.proposal_diff_path
+                ),
+            )
+        )
     return rows
 
 
@@ -191,24 +232,47 @@ def _next_step_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
     polish_steps = _polish_next_steps(view)
     if view.unresolved_matches == 0:
         return polish_steps + [
-            ("Review/capture voiceprints", f"meeting-asr voiceprint review {quoted_ref}"),
-            ("Correct vocabulary samples", f"meeting-asr project correct edit {quoted_ref}"),
-            ("View corrected transcript", f"meeting-asr project transcript show {quoted_ref} --kind corrected"),
+            (
+                "Review/capture voiceprints",
+                f"meeting-asr voiceprint review {quoted_ref}",
+            ),
+            (
+                "Correct vocabulary samples",
+                f"meeting-asr project correct edit {quoted_ref}",
+            ),
+            (
+                "View corrected transcript",
+                f"meeting-asr project transcript show {quoted_ref} --kind corrected",
+            ),
             ("Preview subtitles", f"meeting-asr project speakers preview {quoted_ref}"),
         ]
     rows = [
         ("Recommended", f"meeting-asr project review {quoted_ref}"),
         ("Why", "This opens the human review workflow for unresolved speakers."),
-        ("Diagnostic/read-only", f"meeting-asr project speakers inspect {quoted_ref} --sample-count 5"),
+        (
+            "Diagnostic/read-only",
+            f"meeting-asr project speakers inspect {quoted_ref} --sample-count 5",
+        ),
     ]
     if view.below_threshold_matches:
-        rows.append(("Advanced/scripted", f"meeting-asr project speakers apply {quoted_ref} --map 0=Name"))
+        rows.append(
+            (
+                "Advanced/scripted",
+                f"meeting-asr project speakers apply {quoted_ref} --map 0=Name",
+            )
+        )
     rows.extend(
         [
-            ("Review/capture voiceprints", f"meeting-asr voiceprint review {quoted_ref}"),
+            (
+                "Review/capture voiceprints",
+                f"meeting-asr voiceprint review {quoted_ref}",
+            ),
             ("Embed voiceprints", "meeting-asr voiceprint embed"),
             *polish_steps,
-            ("Then correct vocabulary samples", f"meeting-asr project correct edit {quoted_ref}"),
+            (
+                "Then correct vocabulary samples",
+                f"meeting-asr project correct edit {quoted_ref}",
+            ),
         ]
     )
     return rows
@@ -224,14 +288,23 @@ def _polish_next_steps(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
         return []
     if summary.model_error:
         return [
-            ("Retry transcript polish", f"meeting-asr project correct polish {quoted_ref}"),
+            (
+                "Retry transcript polish",
+                f"meeting-asr project correct polish {quoted_ref}",
+            ),
             ("Continue without polish", f"meeting-asr project review {quoted_ref}"),
         ]
     if summary.proposal_json_path is None or summary.proposed_change_count == 0:
         return []
     return [
-        ("Review transcript polish diff", f"meeting-asr project correct diff {quoted_ref}"),
-        ("Accept transcript polish", f"meeting-asr project correct accept {quoted_ref}"),
+        (
+            "Review transcript polish diff",
+            f"meeting-asr project correct diff {quoted_ref}",
+        ),
+        (
+            "Accept transcript polish",
+            f"meeting-asr project correct accept {quoted_ref}",
+        ),
     ]
 
 
@@ -298,7 +371,9 @@ def _has_pending_polish_proposal(view: ProjectRunSummaryView) -> bool:
     )
 
 
-def _preferred_output_path(view: ProjectRunSummaryView, *, keys: tuple[str, ...], fallback: str) -> str:
+def _preferred_output_path(
+    view: ProjectRunSummaryView, *, keys: tuple[str, ...], fallback: str
+) -> str:
     """Return the best manifest output path for one human-facing artifact."""
     for key in keys:
         value = view.manifest.outputs.get(key)

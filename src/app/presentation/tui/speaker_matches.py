@@ -114,19 +114,29 @@ def accepted_review_person_public_id(match: SpeakerMatchCandidate | None) -> str
 def _match_candidate(item: dict[str, object]) -> SpeakerMatchCandidate:
     """Convert one raw match row into a TUI candidate."""
     status = voiceprint_match_status(item)
-    name = accepted_match_name(item) if status == MATCH_STATUS_MATCHED else best_candidate_name(item)
+    name = (
+        accepted_match_name(item)
+        if status == MATCH_STATUS_MATCHED
+        else best_candidate_name(item)
+    )
     score = best_candidate_score(item)
     return SpeakerMatchCandidate(
         name=name or "unknown",
         score=score,
         accepted=bool(item.get("accepted")),
-        person_id=optional_person_id(item.get("accepted_person_id") or item.get("person_id")),
+        person_id=optional_person_id(
+            item.get("accepted_person_id") or item.get("person_id")
+        ),
         best_name=best_candidate_name(item),
         best_score=best_candidate_score(item),
         best_person_id=optional_person_id(item.get("best_person_id")),
-        best_person_public_id=_optional_person_public_id(item.get("best_person_public_id")),
+        best_person_public_id=_optional_person_public_id(
+            item.get("best_person_public_id")
+        ),
         accepted_person_id=optional_person_id(item.get("accepted_person_id")),
-        accepted_person_public_id=_optional_person_public_id(item.get("accepted_person_public_id")),
+        accepted_person_public_id=_optional_person_public_id(
+            item.get("accepted_person_public_id")
+        ),
         threshold=match_threshold(item),
         status=status,
         candidates=_person_candidates(item),
@@ -150,19 +160,29 @@ def _person_candidates(item: dict[str, object]) -> tuple[SpeakerMatchPerson, ...
                 )
     best_name = best_candidate_name(item)
     best_person_id = optional_person_id(item.get("best_person_id"))
-    best_person_public_id = _optional_person_public_id(item.get("best_person_public_id"))
+    best_person_public_id = _optional_person_public_id(
+        item.get("best_person_public_id")
+    )
     best_score = best_candidate_score(item)
     if best_name and not _has_candidate(rows, best_person_id, best_name):
-        rows.append(SpeakerMatchPerson(best_person_id, best_name, best_score, best_person_public_id))
+        rows.append(
+            SpeakerMatchPerson(
+                best_person_id, best_name, best_score, best_person_public_id
+            )
+        )
     return tuple(sorted(rows, key=_candidate_sort_key))
 
 
-def _has_candidate(rows: list[SpeakerMatchPerson], person_id: int | None, name: str) -> bool:
+def _has_candidate(
+    rows: list[SpeakerMatchPerson], person_id: int | None, name: str
+) -> bool:
     """Return whether rows already contain the best candidate."""
     if person_id is not None:
         return any(row.person_id == person_id for row in rows)
     normalized = " ".join(name.strip().split()).casefold()
-    return any(" ".join(row.name.strip().split()).casefold() == normalized for row in rows)
+    return any(
+        " ".join(row.name.strip().split()).casefold() == normalized for row in rows
+    )
 
 
 def _candidate_sort_key(candidate: SpeakerMatchPerson) -> tuple[int, float]:
@@ -178,7 +198,7 @@ def _optional_score(value: object) -> float | None:
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 

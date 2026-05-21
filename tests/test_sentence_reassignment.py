@@ -64,7 +64,9 @@ def test_apply_writes_anonymous_transcript_with_new_speakers(tmp_path: Path) -> 
     # Sentence 2 should now appear under Speaker A (id 0), not Speaker B.
     assert "Speaker A:" in text
     assert "Speaker B:" not in text  # nothing left on speaker 1 in this fixture
-    raw = json.loads((project_dir / "asr" / "sentences.json").read_text(encoding="utf-8"))
+    raw = json.loads(
+        (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8")
+    )
     assert raw["sentences"][1]["speaker_id"] == 0
 
 
@@ -128,12 +130,16 @@ def test_apply_invalidates_only_overlapping_voiceprint_samples(tmp_path: Path) -
     deleted_clip_names = {Path(item.clip_path).name for item in result.deleted_samples}
     assert deleted_clip_names == {"clip_overlap.wav"}
     # Untouched samples should still exist.
-    remaining = list_voiceprint_samples_for_project(project_id, get_voiceprint_db_path(store_dir))
+    remaining = list_voiceprint_samples_for_project(
+        project_id, get_voiceprint_db_path(store_dir)
+    )
     remaining_clips = {row.clip_path.name for row in remaining}
     assert remaining_clips == {"clip_other.wav", "clip_other_time.wav"}
 
 
-def test_apply_runs_rematch_when_requested(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_runs_rematch_when_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``rematch=True`` should invoke ``match_project_speakers`` once."""
     project_dir = _make_project(tmp_path)
     _write_sentences(project_dir, _sentences_payload())
@@ -199,7 +205,9 @@ def test_apply_rematch_failure_is_reported_not_raised(
     assert result.rematch_skipped_reason == "voiceprint store unavailable"
 
 
-def test_delete_voiceprint_samples_by_ids_removes_rows_and_clips(tmp_path: Path) -> None:
+def test_delete_voiceprint_samples_by_ids_removes_rows_and_clips(
+    tmp_path: Path,
+) -> None:
     """The bulk delete helper must remove SQLite rows and the underlying clip files."""
     store_dir = tmp_path / "voiceprints"
     project_dir = tmp_path / "project"
@@ -226,7 +234,9 @@ def test_delete_voiceprint_samples_by_ids_removes_rows_and_clips(tmp_path: Path)
         source_end_time_ms=3000,
         clip_filename="two.wav",
     )
-    db_path = store_voiceprint_samples([sample_one, sample_two], get_voiceprint_db_path(store_dir))
+    db_path = store_voiceprint_samples(
+        [sample_one, sample_two], get_voiceprint_db_path(store_dir)
+    )
     rows = list_voiceprint_samples_for_project("proj-1", db_path)
     assert len(rows) == 2
     target_id = next(row.sample_id for row in rows if row.clip_path.name == "one.wav")
@@ -305,7 +315,13 @@ def _stored_sample(
     source_end_time_ms: int,
     clip_filename: str,
 ) -> StoredVoiceprintSample:
-    clip_path = store_dir / "clips" / project_id / f"speaker_{project_speaker_id}" / clip_filename
+    clip_path = (
+        store_dir
+        / "clips"
+        / project_id
+        / f"speaker_{project_speaker_id}"
+        / clip_filename
+    )
     clip_path.parent.mkdir(parents=True, exist_ok=True)
     clip_path.write_bytes(f"wav-{clip_filename}-{source_begin_time_ms}".encode())
     return StoredVoiceprintSample(

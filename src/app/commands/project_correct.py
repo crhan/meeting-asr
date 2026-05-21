@@ -46,18 +46,47 @@ app = MeetingAsrTyper(
 
 @app.command("edit")
 def edit_command(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    editor: Optional[str] = typer.Option(None, "--editor", help="Editor command. Use {file} as optional placeholder."),
-    review_file: Optional[Path] = typer.Option(None, "--review-file", exists=True, dir_okay=False, file_okay=True),
-    no_open: bool = typer.Option(False, "--no-open", help="Only write the review file; do not launch an editor."),
-    no_ai: bool = typer.Option(False, "--no-ai", help="Disable DashScope proposal generation and use local rules."),
-    no_proposal_open: bool = typer.Option(False, "--no-proposal-open", help="Do not open the generated proposal file."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Accept the generated full-document proposal without prompting."),
-    model: Optional[str] = typer.Option(None, "--model", help="DashScope correction model id."),
-    category: str = typer.Option("unknown", "--category", help="Category for learned terms."),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
-    from_original: bool = typer.Option(False, "--from-original", help="Ignore an existing corrected transcript."),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    editor: Optional[str] = typer.Option(
+        None, "--editor", help="Editor command. Use {file} as optional placeholder."
+    ),
+    review_file: Optional[Path] = typer.Option(
+        None, "--review-file", exists=True, dir_okay=False, file_okay=True
+    ),
+    no_open: bool = typer.Option(
+        False, "--no-open", help="Only write the review file; do not launch an editor."
+    ),
+    no_ai: bool = typer.Option(
+        False,
+        "--no-ai",
+        help="Disable DashScope proposal generation and use local rules.",
+    ),
+    no_proposal_open: bool = typer.Option(
+        False, "--no-proposal-open", help="Do not open the generated proposal file."
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Accept the generated full-document proposal without prompting.",
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", help="DashScope correction model id."
+    ),
+    category: str = typer.Option(
+        "unknown", "--category", help="Category for learned terms."
+    ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
+    from_original: bool = typer.Option(
+        False, "--from-original", help="Ignore an existing corrected transcript."
+    ),
 ) -> None:
     """Open an editable transcript, generate a full-document proposal, and accept it on confirmation."""
     paths, manifest, speaker_mapping = _load_command_context(project_dir, projects_dir)
@@ -73,17 +102,41 @@ def edit_command(
         model=model,
     )
     summary = run_with_cli_errors(
-        lambda: prepare_editor_correction(paths=paths, manifest=manifest, speaker_mapping=speaker_mapping, options=options)
+        lambda: prepare_editor_correction(
+            paths=paths,
+            manifest=manifest,
+            speaker_mapping=speaker_mapping,
+            options=options,
+        )
     )
-    _finish_correction_edit(paths, manifest, speaker_mapping, summary, lexicon_db, yes, auto_accept=not no_open)
+    _finish_correction_edit(
+        paths,
+        manifest,
+        speaker_mapping,
+        summary,
+        lexicon_db,
+        yes,
+        auto_accept=not no_open,
+    )
 
 
 @app.command("polish")
 def polish_command(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Accept the generated polish proposal without prompting."),
-    model: Optional[str] = typer.Option(None, "--model", help="DashScope correction model id."),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Accept the generated polish proposal without prompting.",
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", help="DashScope correction model id."
+    ),
     concurrency: Optional[int] = typer.Option(
         None,
         "--concurrency",
@@ -91,15 +144,23 @@ def polish_command(
         max=64,
         help="Parallel DashScope batch requests for transcript polish.",
     ),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
-    from_original: bool = typer.Option(False, "--from-original", help="Polish from the original ASR transcript."),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
+    from_original: bool = typer.Option(
+        False, "--from-original", help="Polish from the original ASR transcript."
+    ),
     legacy: bool = typer.Option(
         False,
         "--legacy-polish",
         help="Use the legacy aggressive-rewrite polish prompt (pre-2026 behavior). "
         "Default is the strict downstream-summary-friendly polish.",
     ),
-    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show interactive progress on a terminal."),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
     agent_log: bool = typer.Option(
         False,
         "--agent-log",
@@ -138,7 +199,9 @@ def polish_command(
         enabled=progress,
         structured_log=agent_log,
     )
-    _finish_correction_edit(paths, manifest, speaker_mapping, summary, lexicon_db, yes, auto_accept=True)
+    _finish_correction_edit(
+        paths, manifest, speaker_mapping, summary, lexicon_db, yes, auto_accept=True
+    )
 
 
 def finish_editor_correction(
@@ -162,7 +225,9 @@ def finish_editor_correction(
     Returns:
         Final correction summary.
     """
-    summary = prepare_editor_correction(paths=paths, manifest=manifest, speaker_mapping=speaker_mapping, options=options)
+    summary = prepare_editor_correction(
+        paths=paths, manifest=manifest, speaker_mapping=speaker_mapping, options=options
+    )
     return _finish_correction_edit(
         paths,
         manifest,
@@ -330,7 +395,9 @@ def eval_polish_command(
         "--model",
         help="Run a live DashScope strict-polish model against change/no-change cases.",
     ),
-    show_passed: bool = typer.Option(False, "--show-passed", help="Print passing cases as well as failures."),
+    show_passed: bool = typer.Option(
+        False, "--show-passed", help="Print passing cases as well as failures."
+    ),
 ) -> None:
     """Evaluate transcript polish behavior against checked-in cases.
 
@@ -342,7 +409,9 @@ def eval_polish_command(
     loaded_cases = run_with_cli_errors(lambda: load_polish_eval_cases(case_path))
     proposed_items = None
     if model:
-        proposed_items = run_with_cli_errors(lambda: _run_live_polish_eval(loaded_cases, model))
+        proposed_items = run_with_cli_errors(
+            lambda: _run_live_polish_eval(loaded_cases, model)
+        )
     summary = evaluate_polish_cases(loaded_cases, proposed_items)
     typer.echo(f"Polish eval: {summary.passed}/{summary.total} passed ({case_path})")
     for result in summary.results:
@@ -409,10 +478,18 @@ def accept_correction_for_review(
 
 @app.command("accept")
 def accept_command(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    proposal: Optional[Path] = typer.Option(None, "--proposal", exists=True, dir_okay=False, file_okay=True),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    proposal: Optional[Path] = typer.Option(
+        None, "--proposal", exists=True, dir_okay=False, file_okay=True
+    ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
     select: Optional[str] = typer.Option(
         None,
         "--select",
@@ -434,9 +511,13 @@ def accept_command(
     while declining filler/restart cleanups, etc.
     """
     paths, manifest, speaker_mapping = _load_command_context(project_dir, projects_dir)
-    correction_proposal = run_with_cli_errors(lambda: load_correction_proposal(paths, proposal))
+    correction_proposal = run_with_cli_errors(
+        lambda: load_correction_proposal(paths, proposal)
+    )
     selected_indices = run_with_cli_errors(
-        lambda: _resolve_selected_indices(correction_proposal.proposed_changes, select, types)
+        lambda: _resolve_selected_indices(
+            correction_proposal.proposed_changes, select, types
+        )
     )
     summary = run_with_cli_errors(
         lambda: accept_correction_proposal(
@@ -455,17 +536,34 @@ def accept_command(
 
 @app.command("diff")
 def diff_command(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    proposal: Optional[Path] = typer.Option(None, "--proposal", exists=True, dir_okay=False, file_okay=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    proposal: Optional[Path] = typer.Option(
+        None, "--proposal", exists=True, dir_okay=False, file_okay=True
+    ),
 ) -> None:
     """Print the latest or specified correction proposal diff for human review."""
     paths, _, _ = _load_command_context(project_dir, projects_dir)
-    correction_proposal = run_with_cli_errors(lambda: load_correction_proposal(paths, proposal))
+    correction_proposal = run_with_cli_errors(
+        lambda: load_correction_proposal(paths, proposal)
+    )
     typer.echo(correction_proposal.diff_path.read_text(encoding="utf-8"), nl=False)
 
 
-_POLISH_PRIMARY_TYPES = {"typo", "term", "case", "punct", "dup", "filler", "restart", "emphasis"}
+_POLISH_PRIMARY_TYPES = {
+    "typo",
+    "term",
+    "case",
+    "punct",
+    "dup",
+    "filler",
+    "restart",
+    "emphasis",
+}
 
 
 def _resolve_selected_indices(
@@ -510,7 +608,9 @@ def _parse_select_spec(spec: str, total: int) -> set[int]:
             out.add(int(token))
     invalid = [i for i in out if i < 0 or i >= total]
     if invalid:
-        raise ValueError(f"--select contains out-of-range indices for proposal of size {total}: {sorted(invalid)}")
+        raise ValueError(
+            f"--select contains out-of-range indices for proposal of size {total}: {sorted(invalid)}"
+        )
     return out
 
 
@@ -519,7 +619,9 @@ def _parse_types_spec(spec: str) -> set[str]:
     wanted = {token.strip().lower() for token in spec.split(",") if token.strip()}
     invalid = wanted - _POLISH_PRIMARY_TYPES
     if invalid:
-        raise ValueError(f"--types contains unknown tags {sorted(invalid)}; allowed: {sorted(_POLISH_PRIMARY_TYPES)}")
+        raise ValueError(
+            f"--types contains unknown tags {sorted(invalid)}; allowed: {sorted(_POLISH_PRIMARY_TYPES)}"
+        )
     return wanted
 
 
@@ -548,7 +650,9 @@ def _load_command_context(
     Returns:
         Tuple of project paths, manifest, and speaker mapping.
     """
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     paths = project_paths(resolved_project_dir)
     manifest = run_with_cli_errors(lambda: load_manifest(paths.root))
     speaker_mapping = run_with_cli_errors(lambda: _load_speaker_mapping(paths.root))
@@ -597,7 +701,9 @@ def _finish_correction_edit(
     _echo_correction_summary(summary)
     if summary.proposal_json_path is None or not auto_accept:
         return summary
-    return _accept_or_leave_pending(paths, manifest, speaker_mapping, summary, lexicon_db, yes)
+    return _accept_or_leave_pending(
+        paths, manifest, speaker_mapping, summary, lexicon_db, yes
+    )
 
 
 def _accept_summary(
@@ -628,7 +734,9 @@ def _echo_pending_accept_command(project_dir: Path, proposal_path: Path | None) 
     typer.echo("Correction proposal left pending.")
     project_arg = shlex.quote(str(project_dir))
     proposal_arg = shlex.quote(str(proposal_path))
-    typer.echo(f"Accept later: meeting-asr project correct accept {project_arg} --proposal {proposal_arg}")
+    typer.echo(
+        f"Accept later: meeting-asr project correct accept {project_arg} --proposal {proposal_arg}"
+    )
 
 
 def _load_speaker_mapping(project_dir: Path) -> dict[int, str]:
@@ -759,7 +867,9 @@ def _echo_understanding(summary: CorrectionEditSummary) -> None:
     typer.echo("")
     typer.echo("Understanding:")
     for item in summary.understanding:
-        typer.echo(f"  - {item.wrong_text} -> {item.corrected_text} ({item.proposed_count} proposed)")
+        typer.echo(
+            f"  - {item.wrong_text} -> {item.corrected_text} ({item.proposed_count} proposed)"
+        )
 
 
 def _echo_output_paths(summary: CorrectionEditSummary) -> None:
@@ -832,8 +942,12 @@ def _record_accepted_polish_runtime(
         "error": summary.model_error,
         "proposed_changes": summary.proposed_change_count,
         "accepted_changes": summary.change_count,
-        "proposal_json": _relative_optional_path(project_dir, summary.proposal_json_path),
-        "proposal_diff": _relative_optional_path(project_dir, summary.proposal_diff_path),
+        "proposal_json": _relative_optional_path(
+            project_dir, summary.proposal_json_path
+        ),
+        "proposal_diff": _relative_optional_path(
+            project_dir, summary.proposal_diff_path
+        ),
     }
     manifest.runtime = runtime
 

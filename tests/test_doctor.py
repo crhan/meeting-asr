@@ -80,17 +80,23 @@ def test_doctor_full_runs_all_strict_checks(
     monkeypatch.setattr(
         doctor,
         "_check_python_packages",
-        lambda *, require_oss: doctor.CheckResult("python-packages", "ok", f"require_oss={require_oss}"),
+        lambda *, require_oss: doctor.CheckResult(
+            "python-packages", "ok", f"require_oss={require_oss}"
+        ),
     )
     monkeypatch.setattr(
         doctor,
         "_check_voiceprint_embedding_settings",
-        lambda *, required: doctor.CheckResult("voiceprint-embedding", "ok", f"required={required}"),
+        lambda *, required: doctor.CheckResult(
+            "voiceprint-embedding", "ok", f"required={required}"
+        ),
     )
     monkeypatch.setattr(
         doctor,
         "_check_oss_access",
-        lambda *, upload_probe: doctor.CheckResult("oss-upload-probe", "ok", f"upload_probe={upload_probe}"),
+        lambda *, upload_probe: doctor.CheckResult(
+            "oss-upload-probe", "ok", f"upload_probe={upload_probe}"
+        ),
     )
 
     result = runner.invoke(app, ["doctor", "--full", "--json"])
@@ -123,12 +129,16 @@ def test_doctor_full_human_output_hides_full_hint(
     monkeypatch.setattr(
         doctor,
         "_check_voiceprint_embedding_settings",
-        lambda *, required: doctor.CheckResult("voiceprint-embedding", "ok", f"required={required}"),
+        lambda *, required: doctor.CheckResult(
+            "voiceprint-embedding", "ok", f"required={required}"
+        ),
     )
     monkeypatch.setattr(
         doctor,
         "_check_oss_access",
-        lambda *, upload_probe: doctor.CheckResult("oss-upload-probe", "ok", f"upload_probe={upload_probe}"),
+        lambda *, upload_probe: doctor.CheckResult(
+            "oss-upload-probe", "ok", f"upload_probe={upload_probe}"
+        ),
     )
 
     result = runner.invoke(app, ["doctor", "--full"])
@@ -165,7 +175,9 @@ def test_doctor_can_require_local_voiceprint_dependencies(
 ) -> None:
     """Strict voiceprint doctor mode should fail when local dependencies are missing."""
     _prepare_doctor(monkeypatch, tmp_path)
-    monkeypatch.setattr(doctor, "_missing_modules", lambda modules: ["speechbrain", "torch"])
+    monkeypatch.setattr(
+        doctor, "_missing_modules", lambda modules: ["speechbrain", "torch"]
+    )
     save_config_values({"dashscope.api_key": "secret"})
 
     result = runner.invoke(app, ["doctor", "--require-voiceprint-embedding"])
@@ -216,15 +228,27 @@ def _prepare_doctor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     for name in _CONFIG_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(doctor, "_check_python", lambda: doctor.CheckResult("python", "ok", "test"))
+    monkeypatch.setattr(
+        doctor, "_check_python", lambda: doctor.CheckResult("python", "ok", "test")
+    )
     monkeypatch.setattr(
         doctor,
         "_check_python_packages",
-        lambda *, require_oss: doctor.CheckResult("python-packages", "ok", f"require_oss={require_oss}"),
+        lambda *, require_oss: doctor.CheckResult(
+            "python-packages", "ok", f"require_oss={require_oss}"
+        ),
     )
-    monkeypatch.setattr(doctor, "_check_ffmpeg", lambda: doctor.CheckResult("ffmpeg", "ok", "test"))
-    monkeypatch.setattr(doctor, "_check_preview_player", lambda: doctor.CheckResult("preview-player", "ok", "test"))
-    monkeypatch.setattr(doctor, "_check_editor", lambda: doctor.CheckResult("editor", "ok", "test"))
+    monkeypatch.setattr(
+        doctor, "_check_ffmpeg", lambda: doctor.CheckResult("ffmpeg", "ok", "test")
+    )
+    monkeypatch.setattr(
+        doctor,
+        "_check_preview_player",
+        lambda: doctor.CheckResult("preview-player", "ok", "test"),
+    )
+    monkeypatch.setattr(
+        doctor, "_check_editor", lambda: doctor.CheckResult("editor", "ok", "test")
+    )
 
 
 _CONFIG_ENV_NAMES = (

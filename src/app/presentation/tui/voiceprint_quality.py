@@ -162,7 +162,9 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         self.speaker = speaker
         self.model = model
         self.selected_person_index = 0
-        self.selected_sample_indices = {person.speaker_public_id: 0 for person in report.people}
+        self.selected_sample_indices = {
+            person.speaker_public_id: 0 for person in report.people
+        }
         self.focused_column = "people"
         self.statuses = _initial_statuses(report)
         self.playback_process: subprocess.Popen | None = None
@@ -218,7 +220,9 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         if sample is None:
             return
         self._stop_playback()
-        clip_path = voiceprint_playback_clip_path(sample.clip_path, store_dir=self.store_dir)
+        clip_path = voiceprint_playback_clip_path(
+            sample.clip_path, store_dir=self.store_dir
+        )
         command = build_voiceprint_play_command(clip_path)
         self.playback_process = subprocess.Popen(
             command,
@@ -226,7 +230,12 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self._set_status(tr(f"Playing {sample.sample_public_id}.", f"正在播放 {sample.sample_public_id}。"))
+        self._set_status(
+            tr(
+                f"Playing {sample.sample_public_id}.",
+                f"正在播放 {sample.sample_public_id}。",
+            )
+        )
 
     def action_toggle_quarantine(self) -> None:
         """Toggle the selected sample between active and quarantined."""
@@ -240,7 +249,12 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
             else VOICEPRINT_SAMPLE_STATUS_QUARANTINED
         )
         self.statuses[sample.sample_public_id] = target
-        self._set_status(tr(f"Set {sample.sample_public_id} to {target}.", f"已把 {sample.sample_public_id} 标记为 {target}。"))
+        self._set_status(
+            tr(
+                f"Set {sample.sample_public_id} to {target}.",
+                f"已把 {sample.sample_public_id} 标记为 {target}。",
+            )
+        )
         self._refresh()
 
     def action_mark_active(self) -> None:
@@ -262,16 +276,30 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
             self.exit(VoiceprintQualityDecision(True, changes))
             return
         if not changes:
-            self._set_status(tr("No staged quality changes to save.", "没有待保存的声纹质量变更。"))
+            self._set_status(
+                tr("No staged quality changes to save.", "没有待保存的声纹质量变更。")
+            )
             return
         for sample_id, status in changes.items():
-            update_voiceprint_sample_status(sample_id, status, get_voiceprint_db_path(self.store_dir))
-        self._reload_report(status=tr(f"Saved {len(changes)} change(s) and refreshed quality scores.", f"已保存 {len(changes)} 个变更，并刷新质量评分。"))
+            update_voiceprint_sample_status(
+                sample_id, status, get_voiceprint_db_path(self.store_dir)
+            )
+        self._reload_report(
+            status=tr(
+                f"Saved {len(changes)} change(s) and refreshed quality scores.",
+                f"已保存 {len(changes)} 个变更，并刷新质量评分。",
+            )
+        )
 
     def action_refresh_quality(self) -> None:
         """Reload quality scores from SQLite."""
         if _changed_statuses(self.report, self.statuses):
-            self._set_status(tr("Save staged changes before refreshing quality scores.", "刷新质量评分前请先保存暂存变更。"))
+            self._set_status(
+                tr(
+                    "Save staged changes before refreshing quality scores.",
+                    "刷新质量评分前请先保存暂存变更。",
+                )
+            )
             return
         self._reload_report(status=tr("Quality scores refreshed.", "质量评分已刷新。"))
 
@@ -289,14 +317,21 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         if sample is None:
             return
         self.statuses[sample.sample_public_id] = status
-        self._set_status(tr(f"Set {sample.sample_public_id} to {status}.", f"已把 {sample.sample_public_id} 标记为 {status}。"))
+        self._set_status(
+            tr(
+                f"Set {sample.sample_public_id} to {status}.",
+                f"已把 {sample.sample_public_id} 标记为 {status}。",
+            )
+        )
         self._refresh()
 
     def _move_person(self, delta: int) -> None:
         """Move selected person."""
         if not self.report.people:
             return
-        self.selected_person_index = (self.selected_person_index + delta) % len(self.report.people)
+        self.selected_person_index = (self.selected_person_index + delta) % len(
+            self.report.people
+        )
         self._refresh()
 
     def _move_sample(self, delta: int) -> None:
@@ -305,7 +340,9 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         if person is None or not person.samples:
             return
         current = self.selected_sample_indices[person.speaker_public_id]
-        self.selected_sample_indices[person.speaker_public_id] = max(0, min(len(person.samples) - 1, current + delta))
+        self.selected_sample_indices[person.speaker_public_id] = max(
+            0, min(len(person.samples) - 1, current + delta)
+        )
         self._refresh()
 
     def _refresh(self) -> None:
@@ -317,9 +354,15 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
 
     def _reload_report(self, *, status: str) -> None:
         """Reload quality report while preserving the selected person when possible."""
-        previous_person_id = self._person().speaker_public_id if self._person() is not None else None
-        self.report = analyze_voiceprint_quality(store_dir=self.store_dir, speaker=self.speaker, model=self.model)
-        self.selected_sample_indices = {person.speaker_public_id: 0 for person in self.report.people}
+        previous_person_id = (
+            self._person().speaker_public_id if self._person() is not None else None
+        )
+        self.report = analyze_voiceprint_quality(
+            store_dir=self.store_dir, speaker=self.speaker, model=self.model
+        )
+        self.selected_sample_indices = {
+            person.speaker_public_id: 0 for person in self.report.people
+        }
         self.statuses = _initial_statuses(self.report)
         self.selected_person_index = _person_index(self.report, previous_person_id)
         self._refresh()
@@ -347,8 +390,14 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
                     f"Total   people {len(self.report.people)} | samples {self.report.sample_count} | suspicious {self.report.suspicious_count} | critical {self.report.critical_count}",
                     f"总览    人员 {len(self.report.people)} | 样本 {self.report.sample_count} | 可疑 {self.report.suspicious_count} | 严重 {self.report.critical_count}",
                 ),
-                tr(f"Focus   {_person_summary(person)}", f"当前    {_person_summary(person)}"),
-                tr(f"Sample  {_sample_summary(sample, self.statuses)}", f"样本    {_sample_summary(sample, self.statuses)}"),
+                tr(
+                    f"Focus   {_person_summary(person)}",
+                    f"当前    {_person_summary(person)}",
+                ),
+                tr(
+                    f"Sample  {_sample_summary(sample, self.statuses)}",
+                    f"样本    {_sample_summary(sample, self.statuses)}",
+                ),
                 tr(f"Changes {changed} staged", f"变更    已暂存 {changed} 个"),
             ]
         )
@@ -357,7 +406,12 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         """Render people list."""
         lines = [tr("[b]People[/b]", "[b]人员[/b]")]
         if not self.report.people:
-            lines.append(tr("[yellow]No embedded voiceprint samples.[/]", "[yellow]没有已 embedding 的声纹样本。[/]"))
+            lines.append(
+                tr(
+                    "[yellow]No embedded voiceprint samples.[/]",
+                    "[yellow]没有已 embedding 的声纹样本。[/]",
+                )
+            )
             return "\n".join(lines)
         for index, person in enumerate(self.report.people):
             marker = ">" if index == self.selected_person_index else " "
@@ -371,8 +425,16 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         """Render samples for selected person."""
         person = self._person()
         if person is None:
-            return tr("[b]Samples[/b]\n[yellow]No person selected.[/]", "[b]样本[/b]\n[yellow]未选择人员。[/]")
-        lines = [tr(f"[b]{person.speaker_name} samples[/b]", f"[b]{person.speaker_name} 样本[/b]")]
+            return tr(
+                "[b]Samples[/b]\n[yellow]No person selected.[/]",
+                "[b]样本[/b]\n[yellow]未选择人员。[/]",
+            )
+        lines = [
+            tr(
+                f"[b]{person.speaker_name} samples[/b]",
+                f"[b]{person.speaker_name} 样本[/b]",
+            )
+        ]
         selected_index = self.selected_sample_indices[person.speaker_public_id]
         for index, sample in enumerate(person.samples):
             marker = ">" if index == selected_index else " "
@@ -382,8 +444,18 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
             line = f"{marker} {sample.sample_public_id} score={score} {sample.label} -> {status} | {_clip_time(sample)}"
             lines.append(f"[{style}]{escape(line)}[/]" if style else escape(line))
             if index == selected_index:
-                lines.append(tr(f"  [yellow]diagnosis[/]: {escape(quality_reason_text(sample.reason))}", f"  [yellow]诊断[/]：{escape(quality_reason_text(sample.reason))}"))
-                lines.append(tr(f"  [bright_black]text[/]: {escape(trim_text(sample.transcript_text, 120))}", f"  [bright_black]文本[/]：{escape(trim_text(sample.transcript_text, 120))}"))
+                lines.append(
+                    tr(
+                        f"  [yellow]diagnosis[/]: {escape(quality_reason_text(sample.reason))}",
+                        f"  [yellow]诊断[/]：{escape(quality_reason_text(sample.reason))}",
+                    )
+                )
+                lines.append(
+                    tr(
+                        f"  [bright_black]text[/]: {escape(trim_text(sample.transcript_text, 120))}",
+                        f"  [bright_black]文本[/]：{escape(trim_text(sample.transcript_text, 120))}",
+                    )
+                )
                 lines.append(f"  [dim]{escape(str(sample.clip_path))}[/]")
         return "\n".join(lines)
 
@@ -422,7 +494,9 @@ class VoiceprintQualityApp(App[VoiceprintQualityDecision]):
         return process is not None and process.poll() is None
 
 
-def run_voiceprint_quality_tui(report: VoiceprintQualityReport) -> VoiceprintQualityDecision:
+def run_voiceprint_quality_tui(
+    report: VoiceprintQualityReport,
+) -> VoiceprintQualityDecision:
     """
     Run the voiceprint quality TUI.
 
@@ -454,10 +528,14 @@ def run_voiceprint_quality_review_tui(
     Returns:
         User decision when the app exits.
     """
-    return VoiceprintQualityApp(report, store_dir=store_dir, speaker=speaker, model=model).run()
+    return VoiceprintQualityApp(
+        report, store_dir=store_dir, speaker=speaker, model=model
+    ).run()
 
 
-def persist_quality_decision(decision: VoiceprintQualityDecision, *, store_dir: Path | None) -> dict[str, str]:
+def persist_quality_decision(
+    decision: VoiceprintQualityDecision, *, store_dir: Path | None
+) -> dict[str, str]:
     """
     Persist sample status changes from quality review.
 
@@ -478,10 +556,16 @@ def persist_quality_decision(decision: VoiceprintQualityDecision, *, store_dir: 
 
 def _initial_statuses(report: VoiceprintQualityReport) -> dict[str, str]:
     """Return sample id to current status."""
-    return {sample.sample_public_id: sample.status for person in report.people for sample in person.samples}
+    return {
+        sample.sample_public_id: sample.status
+        for person in report.people
+        for sample in person.samples
+    }
 
 
-def _changed_statuses(report: VoiceprintQualityReport, statuses: dict[str, str]) -> dict[str, str]:
+def _changed_statuses(
+    report: VoiceprintQualityReport, statuses: dict[str, str]
+) -> dict[str, str]:
     """Return staged status changes only."""
     changes = {}
     for person in report.people:
@@ -556,7 +640,9 @@ def _person_summary(person: VoiceprintQualityPerson | None) -> str:
     return f"{person.speaker_name} {person.speaker_public_id} mean={mean} suspicious={person.suspicious_count}"
 
 
-def _sample_summary(sample: VoiceprintQualitySample | None, statuses: dict[str, str]) -> str:
+def _sample_summary(
+    sample: VoiceprintQualitySample | None, statuses: dict[str, str]
+) -> str:
     """Return compact sample summary."""
     if sample is None:
         return "-"

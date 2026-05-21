@@ -50,8 +50,12 @@ def command(
         "--full",
         help="Run all doctor checks: OSS upload probe and strict voiceprint embedding.",
     ),
-    require_oss: bool = typer.Option(False, "--require-oss", help="Require OSS config."),
-    check_oss_access: bool = typer.Option(False, "--check-oss-access", help="Check OSS bucket metadata access."),
+    require_oss: bool = typer.Option(
+        False, "--require-oss", help="Require OSS config."
+    ),
+    check_oss_access: bool = typer.Option(
+        False, "--check-oss-access", help="Check OSS bucket metadata access."
+    ),
     oss_upload_probe: bool = typer.Option(
         False,
         "--oss-upload-probe",
@@ -76,7 +80,9 @@ def command(
         _check_preview_player(),
         _check_editor(),
         _check_settings(require_oss=effective_require_oss),
-        _check_voiceprint_embedding_settings(required=effective_require_voiceprint_embedding),
+        _check_voiceprint_embedding_settings(
+            required=effective_require_voiceprint_embedding
+        ),
     ]
     if effective_check_oss_access:
         checks.append(_check_oss_access(upload_probe=effective_oss_upload_probe))
@@ -101,7 +107,9 @@ def _check_python() -> CheckResult:
         "Use Python 3.14 or newer, then recreate the virtualenv and rerun `uv sync --all-groups`.",
         "meeting-asr doctor",
     )
-    return CheckResult("python", "ok" if sys.version_info >= (3, 14) else "fail", detail, prompt)
+    return CheckResult(
+        "python", "ok" if sys.version_info >= (3, 14) else "fail", detail, prompt
+    )
 
 
 def _check_python_packages(*, require_oss: bool) -> CheckResult:
@@ -109,7 +117,9 @@ def _check_python_packages(*, require_oss: bool) -> CheckResult:
     packages = ["dashscope", "requests", "typer", "dotenv"]
     if require_oss:
         packages.append("oss2")
-    missing = [package for package in packages if importlib.util.find_spec(package) is None]
+    missing = [
+        package for package in packages if importlib.util.find_spec(package) is None
+    ]
     if not missing:
         return CheckResult("python-packages", "ok", f"installed: {', '.join(packages)}")
     detail = f"missing: {', '.join(missing)}; run `uv sync`"
@@ -198,7 +208,7 @@ def _editor_fix_prompt(detail: str) -> str:
         "editor",
         detail,
         'Set a blocking editor command, for example `meeting-asr config set ui.editor "code --wait"` or '
-        '`meeting-asr config set ui.editor vim`. Then rerun `meeting-asr doctor`.',
+        "`meeting-asr config set ui.editor vim`. Then rerun `meeting-asr doctor`.",
         "meeting-asr doctor",
     )
 
@@ -356,7 +366,9 @@ def _check_oss_access(*, upload_probe: bool) -> CheckResult:
             "meeting-asr doctor --oss-upload-probe",
         )
         return CheckResult("oss-access", "fail", detail, prompt)
-    return CheckResult("oss-access", "ok", "bucket metadata request succeeded; no object uploaded")
+    return CheckResult(
+        "oss-access", "ok", "bucket metadata request succeeded; no object uploaded"
+    )
 
 
 def _check_oss_upload_probe(bucket: Any) -> CheckResult:
@@ -367,12 +379,16 @@ def _check_oss_upload_probe(bucket: Any) -> CheckResult:
     payload = b"meeting-asr doctor oss probe\n"
     try:
         bucket.put_object(object_name, payload)
-        response = requests.get(bucket.sign_url("GET", object_name, 300, slash_safe=True), timeout=10)
+        response = requests.get(
+            bucket.sign_url("GET", object_name, 300, slash_safe=True), timeout=10
+        )
         response.raise_for_status()
         ok = response.content == payload
     finally:
         _delete_probe_object(bucket, object_name)
-    return CheckResult("oss-upload-probe", "ok" if ok else "fail", "put_object + signed GET succeeded")
+    return CheckResult(
+        "oss-upload-probe", "ok" if ok else "fail", "put_object + signed GET succeeded"
+    )
 
 
 def _delete_probe_object(bucket: Any, object_name: str) -> None:

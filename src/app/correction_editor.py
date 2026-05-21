@@ -26,7 +26,9 @@ def open_editor(path: Path, editor: str | None) -> None:
     try:
         subprocess.run(command, check=True)
     except FileNotFoundError as exc:
-        raise RuntimeError(_editor_failure_message(command, "command not found")) from exc
+        raise RuntimeError(
+            _editor_failure_message(command, "command not found")
+        ) from exc
     except subprocess.CalledProcessError as exc:
         detail = f"exited with status {exc.returncode}"
         raise RuntimeError(_editor_failure_message(command, detail)) from exc
@@ -60,7 +62,9 @@ def default_editor() -> str:
     Returns:
         Editor command text.
     """
-    configured = get_configured_editor() or os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    configured = (
+        get_configured_editor() or os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    )
     if configured:
         return configured
     if shutil.which("code"):

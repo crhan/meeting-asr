@@ -19,7 +19,12 @@ T = TypeVar("T")
 AdviceRule = tuple[Callable[[str], bool], str, str, str]
 
 ERROR_LABELS = {
-    "en": {"title": "Error", "usage": "Usage", "problem": "Problem", "next": "Next step"},
+    "en": {
+        "title": "Error",
+        "usage": "Usage",
+        "problem": "Problem",
+        "next": "Next step",
+    },
     "zh": {"title": "错误", "usage": "用法", "problem": "问题", "next": "下一步"},
 }
 
@@ -48,7 +53,7 @@ def run_with_cli_errors(operation: Callable[[], T]) -> T:
     """
     try:
         return operation()
-    except (click.ClickException, typer.Exit):
+    except click.ClickException, typer.Exit:
         raise
     except Exception as exc:  # noqa: BLE001
         _echo_cli_error(exc)
@@ -77,7 +82,9 @@ def show_click_usage_error(exc: click.ClickException) -> None:
     console.print(_usage_error_panel(exc, ctx, lang))
 
 
-def _usage_error_panel(exc: click.ClickException, ctx: click.Context | None, lang: str) -> Panel:
+def _usage_error_panel(
+    exc: click.ClickException, ctx: click.Context | None, lang: str
+) -> Panel:
     """
     Build the localized usage error panel.
 
@@ -126,7 +133,9 @@ def _localized_next_step(ctx: click.Context | None, lang: str) -> str:
     Returns:
         Actionable next-step text.
     """
-    command = f"{_context_command_path(ctx)} -h" if ctx is not None else "meeting-asr -h"
+    command = (
+        f"{_context_command_path(ctx)} -h" if ctx is not None else "meeting-asr -h"
+    )
     if lang == "zh":
         return f"运行 `{command}` 查看可用参数和命令。"
     return f"Run `{command}` to see available options and commands."
@@ -353,7 +362,10 @@ def _echo_cli_error(exc: Exception) -> None:
     if advice is None:
         return
     if advice.retry_exhausted:
-        typer.echo("Retry: this looked transient and was already retried before failing.", err=True)
+        typer.echo(
+            "Retry: this looked transient and was already retried before failing.",
+            err=True,
+        )
     typer.echo(f"Problem: {advice.problem}", err=True)
     typer.echo(f"Diagnosis: {advice.detail}", err=True)
     typer.echo(f"Next step: run `{advice.doctor_command}`.", err=True)
@@ -425,9 +437,7 @@ def _looks_like_voiceprint_config(lowered_message: str) -> bool:
     Returns:
         True for unsupported local voiceprint configuration failures.
     """
-    markers = (
-        "unsupported voiceprint embedding provider",
-    )
+    markers = ("unsupported voiceprint embedding provider",)
     return any(marker in lowered_message for marker in markers)
 
 
@@ -472,7 +482,13 @@ def _looks_like_dashscope_config_or_access(lowered_message: str) -> bool:
         return True
     if "dashscope" not in lowered_message:
         return False
-    auth_markers = ("http 401", "http 403", "unauthorized", "forbidden", "invalid api key")
+    auth_markers = (
+        "http 401",
+        "http 403",
+        "unauthorized",
+        "forbidden",
+        "invalid api key",
+    )
     return any(marker in lowered_message for marker in auth_markers)
 
 

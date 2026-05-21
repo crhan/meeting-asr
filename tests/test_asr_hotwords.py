@@ -18,7 +18,9 @@ class FakeVocabularyClient:
         self.created = []
         self.updated = []
 
-    def create_vocabulary(self, target_model: str, prefix: str, vocabulary: list[dict]) -> str:
+    def create_vocabulary(
+        self, target_model: str, prefix: str, vocabulary: list[dict]
+    ) -> str:
         """Capture vocabulary creation."""
         self.created.append((target_model, prefix, vocabulary))
         return "vocab-demo"
@@ -34,8 +36,12 @@ def test_sync_asr_hotwords_creates_and_caches_vocabulary(tmp_path: Path) -> None
     record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
     client = FakeVocabularyClient()
 
-    first = sync_asr_hotwords(settings=_settings(), target_model="fun-asr", db_path=db_path, client=client)
-    second = sync_asr_hotwords(settings=_settings(), target_model="fun-asr", db_path=db_path, client=client)
+    first = sync_asr_hotwords(
+        settings=_settings(), target_model="fun-asr", db_path=db_path, client=client
+    )
+    second = sync_asr_hotwords(
+        settings=_settings(), target_model="fun-asr", db_path=db_path, client=client
+    )
 
     assert first.changed is True
     assert first.vocabulary_id == "vocab-demo"
@@ -74,7 +80,9 @@ def test_resolve_asr_hotwords_prefers_configured_vocabulary_id() -> None:
         dashscope_asr_vocabulary_id="vocab-config",
     )
 
-    result = resolve_asr_hotwords(mode="auto", settings=settings, target_model="fun-asr")
+    result = resolve_asr_hotwords(
+        mode="auto", settings=settings, target_model="fun-asr"
+    )
 
     assert result.vocabulary_id == "vocab-config"
     assert result.source == "config"
@@ -82,6 +90,7 @@ def test_resolve_asr_hotwords_prefers_configured_vocabulary_id() -> None:
 
 def test_resolve_asr_hotwords_auto_degrades_on_sync_error(monkeypatch) -> None:
     """Auto mode must not break transcription when optional hotword sync fails."""
+
     def fail_sync(**kwargs):
         raise RuntimeError("remote hotword unavailable")
 
@@ -116,4 +125,6 @@ def _context(wrong: str, corrected: str) -> LexiconContext:
 
 def _settings() -> Settings:
     """Build minimal settings for hotword sync tests."""
-    return Settings(dashscope_api_key="key", dashscope_base_url="https://dashscope.example.com")
+    return Settings(
+        dashscope_api_key="key", dashscope_base_url="https://dashscope.example.com"
+    )

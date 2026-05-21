@@ -40,7 +40,9 @@ class _ArtifactFlags:
     corrected_subtitle: bool
 
 
-def load_project_workflow_summary(project_dir: Path, project_ref: str | None = None) -> ProjectWorkflowSummary:
+def load_project_workflow_summary(
+    project_dir: Path, project_ref: str | None = None
+) -> ProjectWorkflowSummary:
     """
     Load a project manifest and infer the user-facing workflow state.
 
@@ -137,22 +139,35 @@ def _artifact_flags(root: Path, manifest: ProjectManifest) -> _ArtifactFlags:
     return _ArtifactFlags(
         audio=_audio_exists(root, manifest),
         sentences=_artifact_exists(root, manifest, (), ("asr/sentences.json",)),
-        plain_transcript=_artifact_exists(root, manifest, ("plain_transcript",), ("exports/transcript.txt",)),
+        plain_transcript=_artifact_exists(
+            root, manifest, ("plain_transcript",), ("exports/transcript.txt",)
+        ),
         speaker_transcript=_artifact_exists(
             root,
             manifest,
             ("anonymous_transcript",),
             ("exports/transcript_speakers.txt",),
         ),
-        subtitle=_artifact_exists(root, manifest, ("subtitle",), ("exports/subtitle.srt",)),
-        summary=_artifact_exists(root, manifest, ("meeting_summary",), ("exports/meeting_summary.md",)),
-        named_transcript=_artifact_exists(root, manifest, ("named_transcript",), ("exports/transcript_named.txt",)),
-        named_subtitle=_artifact_exists(root, manifest, ("named_subtitle",), ("exports/subtitle_named.srt",)),
+        subtitle=_artifact_exists(
+            root, manifest, ("subtitle",), ("exports/subtitle.srt",)
+        ),
+        summary=_artifact_exists(
+            root, manifest, ("meeting_summary",), ("exports/meeting_summary.md",)
+        ),
+        named_transcript=_artifact_exists(
+            root, manifest, ("named_transcript",), ("exports/transcript_named.txt",)
+        ),
+        named_subtitle=_artifact_exists(
+            root, manifest, ("named_subtitle",), ("exports/subtitle_named.srt",)
+        ),
         corrected_transcript=_artifact_exists(
             root,
             manifest,
             ("corrected_named_transcript", "corrected_transcript"),
-            ("exports/transcript_named_corrected.txt", "exports/transcript_corrected.txt"),
+            (
+                "exports/transcript_named_corrected.txt",
+                "exports/transcript_corrected.txt",
+            ),
         ),
         corrected_subtitle=_artifact_exists(
             root,
@@ -202,7 +217,11 @@ def _workflow_summary(
         "created": ("Created", "Transcribe", ("transcribe", project_ref)),
         "prepared": ("Prepared", "Transcribe", ("transcribe", project_ref)),
         "transcribed": ("Transcribed", "Resolve speakers", ("review", project_ref)),
-        "completed": ("Completed", "Correct vocabulary", ("correct", "edit", project_ref)),
+        "completed": (
+            "Completed",
+            "Correct vocabulary",
+            ("correct", "edit", project_ref),
+        ),
         "corrected": (
             "Corrected",
             "View corrected transcript",
@@ -242,7 +261,10 @@ def _audio_exists(root: Path, manifest: ProjectManifest) -> bool:
     audio_path = manifest.audio.get("path")
     if isinstance(audio_path, str) and _stored_path(root, audio_path).is_file():
         return True
-    return any((root / "audio" / f"audio.{suffix}").is_file() for suffix in ("flac", "wav", "mp3", "m4a"))
+    return any(
+        (root / "audio" / f"audio.{suffix}").is_file()
+        for suffix in ("flac", "wav", "mp3", "m4a")
+    )
 
 
 def _missing_declared_paths(root: Path, manifest: ProjectManifest) -> tuple[str, ...]:

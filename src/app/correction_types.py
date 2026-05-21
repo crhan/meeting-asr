@@ -56,7 +56,9 @@ class CorrectionChange:
     original_text: str
     corrected_text: str
     replacements: list[CorrectionReplacement]
-    change_type: str = ""  # multi-tag tokens like "dup|filler"; empty for non-polish changes
+    change_type: str = (
+        ""  # multi-tag tokens like "dup|filler"; empty for non-polish changes
+    )
     reason: str = ""
 
 

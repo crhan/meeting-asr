@@ -54,7 +54,9 @@ def test_cli_output_honors_no_color_option(monkeypatch: pytest.MonkeyPatch) -> N
     assert cli_console().no_color is True
 
 
-def test_cli_output_honors_no_color_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_output_honors_no_color_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """NO_COLOR should disable styled output even without a CLI flag."""
     monkeypatch.setenv("NO_COLOR", "")
     monkeypatch.setenv("TERM", "xterm-256color")
@@ -62,7 +64,9 @@ def test_cli_output_honors_no_color_environment(monkeypatch: pytest.MonkeyPatch)
     assert should_disable_color() is True
 
 
-def test_cli_output_disables_color_for_dumb_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_output_disables_color_for_dumb_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Dumb terminals should get plain Rich output."""
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setenv("TERM", "dumb")
@@ -70,7 +74,9 @@ def test_cli_output_disables_color_for_dumb_terminal(monkeypatch: pytest.MonkeyP
     assert should_disable_color() is True
 
 
-def test_root_no_color_option_is_accepted(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_root_no_color_option_is_accepted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     """The root command should accept --no-color before subcommands."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
@@ -82,7 +88,9 @@ def test_root_no_color_option_is_accepted(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert should_disable_color() is True
 
 
-def test_root_verbose_option_enables_debug_logging(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_root_verbose_option_enables_debug_logging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     """The root --verbose option should enable process-wide diagnostic logging."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))

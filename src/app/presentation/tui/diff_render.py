@@ -8,7 +8,9 @@ from collections.abc import Callable
 
 from rich.text import Text
 
-DIFF_TOKEN_RE = re.compile(r"[A-Za-z0-9_+.#-]+|[\u4e00-\u9fff]+|\s+|[^\w\s]", re.UNICODE)
+DIFF_TOKEN_RE = re.compile(
+    r"[A-Za-z0-9_+.#-]+|[\u4e00-\u9fff]+|\s+|[^\w\s]", re.UNICODE
+)
 
 
 def styled_unified_diff(diff_text: str) -> Text:
@@ -37,14 +39,18 @@ def styled_unified_diff(diff_text: str) -> Text:
 
 def styled_before_after(original_text: str, corrected_text: str) -> Text:
     """Return a token-styled before/after correction preview."""
-    original_segments, corrected_segments = word_diff_segments(original_text, corrected_text)
+    original_segments, corrected_segments = word_diff_segments(
+        original_text, corrected_text
+    )
     rendered = Text(no_wrap=False)
     append_segmented_line(rendered, "Before: ", original_segments, removed=True)
     append_segmented_line(rendered, "After:  ", corrected_segments, removed=False)
     return rendered
 
 
-def append_changed_line_block(rendered: Text, removed: list[str], added: list[str]) -> None:
+def append_changed_line_block(
+    rendered: Text, removed: list[str], added: list[str]
+) -> None:
     """Append one removed/added line block with token-level highlights."""
     count = max(len(removed), len(added))
     for index in range(count):
@@ -77,7 +83,9 @@ def append_segmented_line(
     rendered.append("\n")
 
 
-def word_diff_segments(old_text: str, new_text: str) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+def word_diff_segments(
+    old_text: str, new_text: str
+) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
     """Return old/new token segments marked as changed or unchanged."""
     old_tokens = _diff_tokens(old_text)
     new_tokens = _diff_tokens(new_text)
@@ -91,7 +99,9 @@ def word_diff_segments(old_text: str, new_text: str) -> tuple[list[tuple[str, bo
     return old_segments, new_segments
 
 
-def _collect_diff_lines(lines: list[str], start: int, predicate: Callable[[str], bool]) -> tuple[list[str], int]:
+def _collect_diff_lines(
+    lines: list[str], start: int, predicate: Callable[[str], bool]
+) -> tuple[list[str], int]:
     """Collect a contiguous diff line run."""
     collected: list[str] = []
     index = start

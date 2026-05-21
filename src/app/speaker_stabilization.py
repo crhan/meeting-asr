@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.progress import CliProgressReporter, emit_progress
-from app.sentence_reassignment import SentenceReassignmentApplyResult, apply_project_sentence_reassignments
+from app.sentence_reassignment import (
+    SentenceReassignmentApplyResult,
+    apply_project_sentence_reassignments,
+)
 from app.speaker_cluster_quality import (
     SpeakerClusterQualitySummary,
     SpeakerClusterSampleScore,
@@ -106,7 +109,10 @@ def stabilize_project_speakers(
         reassignments = tuple(_sentence_reassignments(sample_summary, cluster_summary))
         apply_result = None
         if reassignments:
-            emit_progress(progress, f"Applying {len(reassignments)} sentence speaker reassignment(s)")
+            emit_progress(
+                progress,
+                f"Applying {len(reassignments)} sentence speaker reassignment(s)",
+            )
             apply_result = apply_project_sentence_reassignments(
                 project_dir,
                 reassignments,
@@ -132,7 +138,12 @@ def stabilize_project_speakers(
                 sample_summary,
             )
         )
-        emit_progress(progress, f"Speaker stabilization pass {index}/{total} complete", completed=index, total=total)
+        emit_progress(
+            progress,
+            f"Speaker stabilization pass {index}/{total} complete",
+            completed=index,
+            total=total,
+        )
     return SpeakerStabilizationSummary(tuple(results))
 
 
@@ -188,7 +199,10 @@ def _sentence_reassignments(
     reassignments: list[SentenceReassignmentSpec] = []
     for report in sample_summary.reports:
         for sample in report.samples:
-            if sample.status != "identity-conflict" or sample.best_other_person_id is None:
+            if (
+                sample.status != "identity-conflict"
+                or sample.best_other_person_id is None
+            ):
                 continue
             target_speaker_id = target_by_person.get(sample.best_other_person_id)
             if target_speaker_id is None or target_speaker_id == sample.speaker_id:
@@ -197,7 +211,9 @@ def _sentence_reassignments(
             if identity in seen:
                 continue
             cluster_sample = cluster_samples.get((sample.speaker_id, *identity))
-            if cluster_sample is not None and not _cluster_allows_target(cluster_sample, target_speaker_id):
+            if cluster_sample is not None and not _cluster_allows_target(
+                cluster_sample, target_speaker_id
+            ):
                 continue
             seen.add(identity)
             reassignments.append(
@@ -228,18 +244,29 @@ def _cluster_sample_index(
     indexed: dict[tuple[int, int | None, int, int], SpeakerClusterSampleScore] = {}
     for report in summary.reports:
         for sample in report.samples:
-            indexed[(report.speaker_id, sample.sentence_id, sample.begin_time_ms, sample.end_time_ms)] = sample
+            indexed[
+                (
+                    report.speaker_id,
+                    sample.sentence_id,
+                    sample.begin_time_ms,
+                    sample.end_time_ms,
+                )
+            ] = sample
     return indexed
 
 
-def _cluster_allows_target(sample: SpeakerClusterSampleScore, target_speaker_id: int) -> bool:
+def _cluster_allows_target(
+    sample: SpeakerClusterSampleScore, target_speaker_id: int
+) -> bool:
     """Return whether cluster diagnostics do not contradict the identity target."""
     if sample.nearest_speaker_id == target_speaker_id:
         return True
     return sample.status not in {"conflict", "ambiguous"}
 
 
-def _apply_latest_match_names(project_dir: Path, summary: SpeakerMatchSummary | None) -> None:
+def _apply_latest_match_names(
+    project_dir: Path, summary: SpeakerMatchSummary | None
+) -> None:
     """Refresh named transcript outputs from the latest accepted aggregate matches."""
     if summary is None or not summary.accepted_mapping:
         return

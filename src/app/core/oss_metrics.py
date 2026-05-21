@@ -92,7 +92,9 @@ def get_oss_metrics_db_path() -> Path:
     return get_data_dir() / METRICS_DIR / METRICS_DB_FILENAME
 
 
-def record_oss_upload_observation(observation: OssUploadObservation, db_path: Path | None = None) -> Path:
+def record_oss_upload_observation(
+    observation: OssUploadObservation, db_path: Path | None = None
+) -> Path:
     """
     Store one OSS upload observation and refresh the backend baseline.
 
@@ -167,14 +169,18 @@ def estimate_oss_upload_seconds(
     if baseline is None:
         return None
     return OssUploadEstimate(
-        estimated_seconds=max(MIN_UPLOAD_SECONDS, size_bytes / baseline.bytes_per_second),
+        estimated_seconds=max(
+            MIN_UPLOAD_SECONDS, size_bytes / baseline.bytes_per_second
+        ),
         sample_count=baseline.sample_count,
         confidence=baseline.confidence,
         bytes_per_second=baseline.bytes_per_second,
     )
 
 
-def _refresh_baseline(connection: sqlite3.Connection, provider: str, endpoint: str, bucket_name: str) -> None:
+def _refresh_baseline(
+    connection: sqlite3.Connection, provider: str, endpoint: str, bucket_name: str
+) -> None:
     """Refresh one OSS upload throughput baseline."""
     rows = _load_success_rows(connection, provider, endpoint, bucket_name)
     now = datetime.now(UTC)
@@ -182,7 +188,9 @@ def _refresh_baseline(connection: sqlite3.Connection, provider: str, endpoint: s
     weight_sum = 0.0
     for size_bytes, upload_seconds, created_at in rows:
         weight = _row_weight(created_at, now)
-        weighted_speed_sum += weight * size_bytes / max(MIN_UPLOAD_SECONDS, upload_seconds)
+        weighted_speed_sum += (
+            weight * size_bytes / max(MIN_UPLOAD_SECONDS, upload_seconds)
+        )
         weight_sum += weight
     bytes_per_second = max(1.0, weighted_speed_sum / weight_sum)
     sample_count = len(rows)
@@ -197,7 +205,15 @@ def _refresh_baseline(connection: sqlite3.Connection, provider: str, endpoint: s
           bytes_per_second = excluded.bytes_per_second,
           updated_at = excluded.updated_at
         """,
-        (provider, endpoint, bucket_name, sample_count, _confidence(sample_count), bytes_per_second, _now_iso()),
+        (
+            provider,
+            endpoint,
+            bucket_name,
+            sample_count,
+            _confidence(sample_count),
+            bytes_per_second,
+            _now_iso(),
+        ),
     )
 
 
@@ -220,11 +236,17 @@ def _load_baseline(
             FROM oss_upload_baselines
             WHERE provider = ? AND endpoint = ? AND bucket_name = ?
             """,
-            (_normalize_dimension(provider), _normalize_dimension(endpoint), _normalize_dimension(bucket_name)),
+            (
+                _normalize_dimension(provider),
+                _normalize_dimension(endpoint),
+                _normalize_dimension(bucket_name),
+            ),
         ).fetchone()
     if row is None:
         return None
-    return OssUploadBaseline(sample_count=int(row[0]), confidence=str(row[1]), bytes_per_second=float(row[2]))
+    return OssUploadBaseline(
+        sample_count=int(row[0]), confidence=str(row[1]), bytes_per_second=float(row[2])
+    )
 
 
 def _load_success_rows(

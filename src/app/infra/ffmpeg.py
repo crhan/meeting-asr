@@ -8,7 +8,9 @@ from pathlib import Path
 SUPPORTED_AUDIO_FORMATS = {"wav", "flac"}
 
 
-def extract_audio_for_asr(input_path: str | Path, output_path: str | Path, *, audio_format: str = "flac") -> Path:
+def extract_audio_for_asr(
+    input_path: str | Path, output_path: str | Path, *, audio_format: str = "flac"
+) -> Path:
     """
     Extract mono 16kHz s16 audio from a local media file.
 
@@ -27,7 +29,9 @@ def extract_audio_for_asr(input_path: str | Path, output_path: str | Path, *, au
     normalized_format = audio_format.strip().lower()
     if normalized_format not in SUPPORTED_AUDIO_FORMATS:
         supported = ", ".join(sorted(SUPPORTED_AUDIO_FORMATS))
-        raise ValueError(f"Unsupported audio format: {audio_format}. Supported formats: {supported}.")
+        raise ValueError(
+            f"Unsupported audio format: {audio_format}. Supported formats: {supported}."
+        )
     output.parent.mkdir(parents=True, exist_ok=True)
     command = [
         "ffmpeg",
@@ -116,15 +120,21 @@ def probe_media_duration_seconds(path: str | Path) -> float:
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
     except FileNotFoundError as exc:
-        raise RuntimeError("ffprobe was not found in PATH. Install ffmpeg first.") from exc
+        raise RuntimeError(
+            "ffprobe was not found in PATH. Install ffmpeg first."
+        ) from exc
     if completed.returncode != 0:
         stderr = completed.stderr.strip()
-        raise RuntimeError(f"ffprobe failed with exit code {completed.returncode}: {stderr}")
+        raise RuntimeError(
+            f"ffprobe failed with exit code {completed.returncode}: {stderr}"
+        )
     duration_text = completed.stdout.strip()
     try:
         duration = float(duration_text)
     except ValueError as exc:
-        raise RuntimeError(f"ffprobe returned an invalid duration: {duration_text}") from exc
+        raise RuntimeError(
+            f"ffprobe returned an invalid duration: {duration_text}"
+        ) from exc
     if duration <= 0:
         raise RuntimeError(f"ffprobe returned a non-positive duration: {duration}")
     return duration
@@ -144,7 +154,9 @@ def _validate_audio_clip_times(start_seconds: float, duration_seconds: float) ->
         raise ValueError("duration_seconds must be > 0.")
 
 
-def _audio_clip_command(source: Path, output: Path, start_seconds: float, duration_seconds: float) -> list[str]:
+def _audio_clip_command(
+    source: Path, output: Path, start_seconds: float, duration_seconds: float
+) -> list[str]:
     """
     Build an ffmpeg command for one reference clip.
 
@@ -185,7 +197,11 @@ def _run_ffmpeg(command: list[str]) -> None:
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
     except FileNotFoundError as exc:
-        raise RuntimeError("ffmpeg was not found in PATH. Install ffmpeg first.") from exc
+        raise RuntimeError(
+            "ffmpeg was not found in PATH. Install ffmpeg first."
+        ) from exc
     if completed.returncode != 0:
         stderr = completed.stderr.strip()
-        raise RuntimeError(f"ffmpeg failed with exit code {completed.returncode}: {stderr}")
+        raise RuntimeError(
+            f"ffmpeg failed with exit code {completed.returncode}: {stderr}"
+        )

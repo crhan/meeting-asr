@@ -7,9 +7,17 @@ from pathlib import Path
 from typing import Any
 
 from app.core.project_models import ProjectListItem, ProjectManifest, ProjectPaths
-from app.core.project_workflow import load_project_workflow_summary, project_workflow_summary, workflow_payload
+from app.core.project_workflow import (
+    load_project_workflow_summary,
+    project_workflow_summary,
+    workflow_payload,
+)
 from app.postprocess import speaker_id_to_label
-from app.speaker_labeling import build_speaker_summaries, load_project_ignored_speakers, load_transcript_result
+from app.speaker_labeling import (
+    build_speaker_summaries,
+    load_project_ignored_speakers,
+    load_transcript_result,
+)
 from app.speaker_match_status import (
     MATCH_STATUS_IGNORED,
     MATCH_STATUS_MATCHED,
@@ -22,7 +30,9 @@ from app.speaker_match_status import (
 )
 
 
-def project_list_payload(projects_dir: Path, projects: list[ProjectListItem]) -> dict[str, Any]:
+def project_list_payload(
+    projects_dir: Path, projects: list[ProjectListItem]
+) -> dict[str, Any]:
     """
     Build the JSON payload for ``meeting-asr project list``.
 
@@ -40,7 +50,9 @@ def project_list_payload(projects_dir: Path, projects: list[ProjectListItem]) ->
     }
 
 
-def project_status_payload(paths: ProjectPaths, manifest: ProjectManifest) -> dict[str, Any]:
+def project_status_payload(
+    paths: ProjectPaths, manifest: ProjectManifest
+) -> dict[str, Any]:
     """
     Build the JSON payload for ``meeting-asr project status``.
 
@@ -92,14 +104,18 @@ def _speakers_payload(
         One row per detected speaker, ordered by speaker id.
     """
     ignored_set = set(ignored_speakers)
-    matches_by_id, default_threshold = _load_match_rows_by_id(paths.speakers_dir / "speaker_matches.json")
+    matches_by_id, default_threshold = _load_match_rows_by_id(
+        paths.speakers_dir / "speaker_matches.json"
+    )
     mapped = _mapped_names(manifest.speakers.get("mapped"))
     sentences_path = paths.asr_dir / "sentences.json"
     summaries: list[Any] = []
     if sentences_path.exists():
         try:
-            summaries = build_speaker_summaries(load_transcript_result(sentences_path), sample_count=1)
-        except (OSError, ValueError, TypeError, KeyError):
+            summaries = build_speaker_summaries(
+                load_transcript_result(sentences_path), sample_count=1
+            )
+        except OSError, ValueError, TypeError, KeyError:
             summaries = []
     rows: list[dict[str, Any]] = []
     seen_ids: set[int] = set()
@@ -121,7 +137,7 @@ def _speakers_payload(
     for raw_id in detected_ids:
         try:
             speaker_id = int(raw_id)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         if speaker_id in seen_ids:
             continue
@@ -195,13 +211,15 @@ def _speaker_status(
     return "unnamed"
 
 
-def _load_match_rows_by_id(match_path: Path) -> tuple[dict[int, dict[str, Any]], float | None]:
+def _load_match_rows_by_id(
+    match_path: Path,
+) -> tuple[dict[int, dict[str, Any]], float | None]:
     """Return speaker_matches.json rows keyed by speaker_id."""
     if not match_path.exists():
         return {}, None
     try:
         payload = json.loads(match_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return {}, None
     if not isinstance(payload, dict):
         return {}, None
@@ -227,7 +245,7 @@ def _mapped_names(value: object) -> dict[int, str]:
     for key, raw_name in value.items():
         try:
             speaker_id = int(key)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         name = str(raw_name).strip()
         if name:
@@ -239,13 +257,15 @@ def _safe_float(value: object) -> float | None:
     """Return a float value when possible."""
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
 def _project_item_payload(project: ProjectListItem) -> dict[str, Any]:
     """Return a JSON-ready payload for one project list item."""
-    workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
+    workflow = load_project_workflow_summary(
+        project.project_dir, project_ref=project.project_id
+    )
     return {
         "project_id": project.project_id,
         "title": project.title,

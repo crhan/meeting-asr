@@ -17,7 +17,9 @@ from app.core.progress import CliProgressReporter, emit_progress
 LOGGER = logging.getLogger(__name__)
 
 
-def estimate_oss_upload(settings: Settings, *, size_bytes: int) -> OssUploadEstimate | None:
+def estimate_oss_upload(
+    settings: Settings, *, size_bytes: int
+) -> OssUploadEstimate | None:
     """
     Estimate OSS upload duration from the persisted throughput baseline.
 
@@ -97,7 +99,9 @@ def emit_oss_upload_start(
     Returns:
         None.
     """
-    emit_progress(progress, oss_upload_description(estimate), total=size_bytes, completed=0)
+    emit_progress(
+        progress, oss_upload_description(estimate), total=size_bytes, completed=0
+    )
 
 
 def emit_oss_upload_progress(

@@ -10,7 +10,13 @@ from pathlib import Path
 import pytest
 import requests
 
-from app.utils import configure_logging, is_retryable_exception, retry, safe_write_text, suppress_noisy_dependency_info_logs
+from app.utils import (
+    configure_logging,
+    is_retryable_exception,
+    retry,
+    safe_write_text,
+    suppress_noisy_dependency_info_logs,
+)
 
 
 def test_retry_retries_timeout_then_returns_value() -> None:
@@ -81,10 +87,14 @@ def test_is_retryable_exception_rejects_bad_request() -> None:
     response = requests.Response()
     response.status_code = 400
 
-    assert not is_retryable_exception(requests.HTTPError("Bad request", response=response))
+    assert not is_retryable_exception(
+        requests.HTTPError("Bad request", response=response)
+    )
 
 
-def test_safe_write_text_replaces_instead_of_overwriting_hardlink(tmp_path: Path) -> None:
+def test_safe_write_text_replaces_instead_of_overwriting_hardlink(
+    tmp_path: Path,
+) -> None:
     """Safe writes should not mutate another path that shares the old inode."""
     original = tmp_path / "original.txt"
     linked = tmp_path / "linked.txt"
@@ -102,11 +112,16 @@ def test_configure_logging_suppresses_noisy_dependency_info() -> None:
     """Default logging should not let dependency INFO messages break progress UI."""
     configure_logging()
 
-    assert logging.getLogger("speechbrain.utils.fetching").getEffectiveLevel() == logging.WARNING
+    assert (
+        logging.getLogger("speechbrain.utils.fetching").getEffectiveLevel()
+        == logging.WARNING
+    )
     assert logging.getLogger("huggingface_hub").getEffectiveLevel() == logging.WARNING
 
 
-def test_suppress_noisy_dependency_info_logs_blocks_logger_resets(capsys: pytest.CaptureFixture[str]) -> None:
+def test_suppress_noisy_dependency_info_logs_blocks_logger_resets(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """Dependency INFO should stay hidden even when the library resets its logger."""
     logger = logging.getLogger("speechbrain.utils.fetching")
     child_logger = logging.getLogger("speechbrain.core")

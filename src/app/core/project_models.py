@@ -59,13 +59,17 @@ class ProjectManifest:
         """Build a manifest from JSON data."""
         source = ProjectSource(**payload["source"])
         keywords_raw = payload.get("meeting_keywords") or []
-        keywords = [str(item) for item in keywords_raw if isinstance(item, str) and item.strip()]
+        keywords = [
+            str(item) for item in keywords_raw if isinstance(item, str) and item.strip()
+        ]
         return cls(
             schema_version=int(payload.get("schema_version", SCHEMA_VERSION)),
             project_id=str(payload["project_id"]),
             title=str(payload["title"]),
             title_source=str(payload.get("title_source") or TITLE_SOURCE_UNKNOWN),
-            title_model=str(payload["title_model"]) if payload.get("title_model") else None,
+            title_model=str(payload["title_model"])
+            if payload.get("title_model")
+            else None,
             created_at=str(payload["created_at"]),
             updated_at=str(payload["updated_at"]),
             status=str(payload["status"]),

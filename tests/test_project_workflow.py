@@ -6,7 +6,12 @@ import json
 from pathlib import Path
 
 from app.core.project_workflow import project_workflow_summary
-from app.project_manager import apply_project_speakers, create_project, load_manifest, save_manifest
+from app.project_manager import (
+    apply_project_speakers,
+    create_project,
+    load_manifest,
+    save_manifest,
+)
 
 
 def test_created_project_points_to_transcription(tmp_path: Path) -> None:
@@ -14,7 +19,9 @@ def test_created_project_points_to_transcription(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path)
     manifest = load_manifest(project_dir)
 
-    summary = project_workflow_summary(project_dir, manifest, project_ref=manifest.project_id)
+    summary = project_workflow_summary(
+        project_dir, manifest, project_ref=manifest.project_id
+    )
 
     assert summary.state == "Created"
     assert summary.next_command_short == f"transcribe {manifest.project_id}"
@@ -124,9 +131,15 @@ def _write_transcribed_outputs(project_dir: Path) -> None:
             }
         ],
     }
-    (project_dir / "asr" / "sentences.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    (project_dir / "exports" / "transcript.txt").write_text("大家好。\n", encoding="utf-8")
-    (project_dir / "exports" / "transcript_speakers.txt").write_text("Speaker A: 大家好。\n", encoding="utf-8")
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+    (project_dir / "exports" / "transcript.txt").write_text(
+        "大家好。\n", encoding="utf-8"
+    )
+    (project_dir / "exports" / "transcript_speakers.txt").write_text(
+        "Speaker A: 大家好。\n", encoding="utf-8"
+    )
     (project_dir / "exports" / "subtitle.srt").write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n大家好。\n",
         encoding="utf-8",
@@ -149,9 +162,15 @@ def _write_corrected_outputs(project_dir: Path) -> None:
     transcript = project_dir / "exports" / "transcript_named_corrected.txt"
     subtitle = project_dir / "exports" / "subtitle_named_corrected.srt"
     transcript.write_text("敬悦: 大家好。\n", encoding="utf-8")
-    subtitle.write_text("1\n00:00:00,000 --> 00:00:01,000\n敬悦: 大家好。\n", encoding="utf-8")
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n敬悦: 大家好。\n", encoding="utf-8"
+    )
     manifest = load_manifest(project_dir)
     manifest.status = "corrected"
-    manifest.outputs["corrected_named_transcript"] = "exports/transcript_named_corrected.txt"
-    manifest.outputs["corrected_named_subtitle"] = "exports/subtitle_named_corrected.srt"
+    manifest.outputs["corrected_named_transcript"] = (
+        "exports/transcript_named_corrected.txt"
+    )
+    manifest.outputs["corrected_named_subtitle"] = (
+        "exports/subtitle_named_corrected.srt"
+    )
     save_manifest(project_dir, manifest)

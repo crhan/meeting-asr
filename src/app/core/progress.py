@@ -103,6 +103,8 @@ def emit_progress(
             elapsed_seconds=elapsed_seconds,
             last_success=last_success,
             next_action=next_action,
-            log_fields=tuple((str(key), str(value)) for key, value in (log_fields or ())),
+            log_fields=tuple(
+                (str(key), str(value)) for key, value in (log_fields or ())
+            ),
         )
     )

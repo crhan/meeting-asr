@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from app.presentation.tui.i18n import tr
 from app.presentation.tui.voiceprint import VoiceprintSpeakerEntry
-from app.presentation.tui.voiceprint_capture import VoiceprintCaptureClipEntry, VoiceprintCaptureSpeakerEntry
+from app.presentation.tui.voiceprint_capture import (
+    VoiceprintCaptureClipEntry,
+    VoiceprintCaptureSpeakerEntry,
+)
 from app.utils import format_ms_timestamp
 from app.voiceprint_store import VoiceprintSampleRow
 
@@ -38,7 +41,11 @@ def project_speaker_summary(speaker: VoiceprintCaptureSpeakerEntry | None) -> st
     if speaker is None:
         return "-"
     selected = sum(1 for clip in speaker.clips if clip.included)
-    person = "" if speaker.person_public_id is None else f" | person {speaker.person_public_id}"
+    person = (
+        ""
+        if speaker.person_public_id is None
+        else f" | person {speaker.person_public_id}"
+    )
     score = project_match_score_text(speaker.match_score)
     return tr(
         f"{speaker.name} speaker {speaker.speaker_id}{person} | score {score} | selected {selected}/{len(speaker.clips)}",
@@ -70,7 +77,10 @@ def library_sample_summary(sample: VoiceprintSampleRow | None) -> str:
     """Render selected library sample summary."""
     if sample is None:
         return "-"
-    return tr(f"sample_id {sample.public_id} | clip {sample.clip_path}", f"样本ID {sample.public_id} | 文件 {sample.clip_path}")
+    return tr(
+        f"sample_id {sample.public_id} | clip {sample.clip_path}",
+        f"样本ID {sample.public_id} | 文件 {sample.clip_path}",
+    )
 
 
 def project_sample_line(sample: VoiceprintCaptureClipEntry) -> str:

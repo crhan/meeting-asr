@@ -99,7 +99,9 @@ def apply_project_sentence_reassignments(
     paths = project_paths(project_dir)
     sentence_files = apply_sentence_reassignments(paths.asr_dir, reassignments)
     manifest = load_manifest(paths.root)
-    transcript_path = _refresh_anonymous_speaker_outputs(paths.asr_dir, paths.exports_dir)
+    transcript_path = _refresh_anonymous_speaker_outputs(
+        paths.asr_dir, paths.exports_dir
+    )
     deleted_samples = _invalidate_overlapping_voiceprint_samples(
         manifest=manifest,
         reassignments=reassignments,
@@ -138,7 +140,9 @@ def _refresh_anonymous_speaker_outputs(asr_dir: Path, exports_dir: Path) -> Path
         merge_adjacent_sentences(result.sentences),
         result.detected_speakers,
     )
-    return safe_write_text(exports_dir / "transcript_speakers.txt", render_speaker_text(merged))
+    return safe_write_text(
+        exports_dir / "transcript_speakers.txt", render_speaker_text(merged)
+    )
 
 
 def _invalidate_overlapping_voiceprint_samples(
@@ -169,7 +173,9 @@ def _invalidate_overlapping_voiceprint_samples(
     stale_ids = _stale_sample_ids(samples, reassignments)
     if not stale_ids:
         return []
-    return delete_voiceprint_samples_by_ids(stale_ids, db_path=db_path, delete_clips=True)
+    return delete_voiceprint_samples_by_ids(
+        stale_ids, db_path=db_path, delete_clips=True
+    )
 
 
 def _stale_sample_ids(
@@ -197,12 +203,19 @@ def _stale_sample_ids(
         ranges = by_speaker.get(int(sample.project_speaker_id))
         if not ranges:
             continue
-        if any(_ranges_overlap(sample.source_begin_time_ms, sample.source_end_time_ms, begin, end) for begin, end in ranges):
+        if any(
+            _ranges_overlap(
+                sample.source_begin_time_ms, sample.source_end_time_ms, begin, end
+            )
+            for begin, end in ranges
+        ):
             stale.append(int(sample.sample_id))
     return stale
 
 
-def _ranges_overlap(left_begin: int, left_end: int, right_begin: int, right_end: int) -> bool:
+def _ranges_overlap(
+    left_begin: int, left_end: int, right_begin: int, right_end: int
+) -> bool:
     """Return whether two half-open time ranges overlap."""
     return left_begin < right_end and right_begin < left_end
 

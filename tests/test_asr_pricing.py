@@ -19,7 +19,10 @@ def test_estimate_fun_asr_mainland_cost_rounds_to_billable_seconds() -> None:
     assert estimate.currency == "CNY"
     assert estimate.unit_price_per_second == 0.00022
     assert estimate.estimated_cost == 1.00188
-    assert format_asr_cost(estimate) == "¥1.001880 estimated (4554s x ¥0.000220/s, Chinese Mainland)"
+    assert (
+        format_asr_cost(estimate)
+        == "¥1.001880 estimated (4554s x ¥0.000220/s, Chinese Mainland)"
+    )
 
 
 def test_estimate_returns_none_for_unknown_model() -> None:
@@ -49,4 +52,7 @@ def test_legacy_mainland_cost_metadata_is_repriced_as_cny() -> None:
     )
 
     assert estimate.currency == "CNY"
-    assert format_asr_cost(estimate) == "¥1.001880 estimated (4554s x ¥0.000220/s, Chinese Mainland)"
+    assert (
+        format_asr_cost(estimate)
+        == "¥1.001880 estimated (4554s x ¥0.000220/s, Chinese Mainland)"
+    )

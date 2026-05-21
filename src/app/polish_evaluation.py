@@ -91,7 +91,9 @@ def load_polish_eval_cases(path: Path) -> list[PolishEvalCase]:
         Parsed evaluation cases.
     """
     cases: list[PolishEvalCase] = []
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -115,10 +117,14 @@ def evaluate_polish_cases(
     """
     results = tuple(_evaluate_case(case, proposed_items or {}) for case in cases)
     passed = sum(1 for result in results if result.passed)
-    return PolishEvalSummary(total=len(results), passed=passed, failed=len(results) - passed, results=results)
+    return PolishEvalSummary(
+        total=len(results), passed=passed, failed=len(results) - passed, results=results
+    )
 
 
-def cases_to_llm_candidates(cases: list[PolishEvalCase]) -> list[LlmCorrectionCandidate]:
+def cases_to_llm_candidates(
+    cases: list[PolishEvalCase],
+) -> list[LlmCorrectionCandidate]:
     """Convert change/no-change cases into LLM candidates for live model eval."""
     return [
         LlmCorrectionCandidate(
@@ -132,7 +138,9 @@ def cases_to_llm_candidates(cases: list[PolishEvalCase]) -> list[LlmCorrectionCa
     ]
 
 
-def _case_from_payload(payload: dict, *, line_number: int, path: Path) -> PolishEvalCase:
+def _case_from_payload(
+    payload: dict, *, line_number: int, path: Path
+) -> PolishEvalCase:
     """Build one case from a decoded JSON object."""
     required = ("id", "original_text", "expected_decision")
     for key in required:
@@ -140,7 +148,9 @@ def _case_from_payload(payload: dict, *, line_number: int, path: Path) -> Polish
             raise ValueError(f"{path}:{line_number}: missing required field {key!r}")
     expected_decision = payload["expected_decision"]
     if expected_decision not in {"change", "no_change", "reject"}:
-        raise ValueError(f"{path}:{line_number}: invalid expected_decision {expected_decision!r}")
+        raise ValueError(
+            f"{path}:{line_number}: invalid expected_decision {expected_decision!r}"
+        )
     must_keep = payload.get("must_keep") or []
     if isinstance(must_keep, str):
         must_keep = [must_keep]
@@ -168,7 +178,9 @@ def _optional_text(value: object) -> str | None:
     return text if text else None
 
 
-def _evaluate_case(case: PolishEvalCase, proposed_items: dict[str, LlmPolishItem]) -> PolishEvalCaseResult:
+def _evaluate_case(
+    case: PolishEvalCase, proposed_items: dict[str, LlmPolishItem]
+) -> PolishEvalCaseResult:
     """Evaluate one case."""
     item = proposed_items.get(case.case_id)
     proposed_text = item.corrected_text if item is not None else case.proposed_text
@@ -183,17 +195,23 @@ def _evaluate_case(case: PolishEvalCase, proposed_items: dict[str, LlmPolishItem
 def _evaluate_absent_proposal(case: PolishEvalCase) -> PolishEvalCaseResult:
     """Evaluate a case where the model produced no proposal."""
     if case.expected_decision == "no_change":
-        return _result(case, True, "no_change", case.original_text, "no proposal expected")
+        return _result(
+            case, True, "no_change", case.original_text, "no proposal expected"
+        )
     return _result(case, False, "no_change", case.original_text, "expected a proposal")
 
 
-def _proposal_decision(case: PolishEvalCase, proposed_text: str, change_type: str) -> str:
+def _proposal_decision(
+    case: PolishEvalCase, proposed_text: str, change_type: str
+) -> str:
     """Return kept/reject/no_change for one proposed edit."""
     if proposed_text == case.original_text:
         return "no_change"
     if not _is_change_type_allowed(change_type):
         return f"reject_unknown_type:{change_type}"
-    verdict = _polish_guard(1, _sentences_for_case(case), case.original_text, proposed_text)
+    verdict = _polish_guard(
+        1, _sentences_for_case(case), case.original_text, proposed_text
+    )
     if verdict is not None:
         return f"reject:{verdict}"
     return "kept"
@@ -208,11 +226,15 @@ def _sentences_for_case(case: PolishEvalCase) -> list[SentenceSegment]:
     ]
 
 
-def _judge_case(case: PolishEvalCase, actual_decision: str, actual_text: str) -> PolishEvalCaseResult:
+def _judge_case(
+    case: PolishEvalCase, actual_decision: str, actual_text: str
+) -> PolishEvalCaseResult:
     """Judge the final behavior against expected behavior."""
     if case.expected_decision == "reject":
         passed = actual_decision.startswith("reject")
-        reason = "rejected unsafe proposal" if passed else "unsafe proposal was not rejected"
+        reason = (
+            "rejected unsafe proposal" if passed else "unsafe proposal was not rejected"
+        )
         return _result(case, passed, actual_decision, actual_text, reason)
     if case.expected_decision == "no_change":
         passed = actual_text == case.original_text and actual_decision != "kept"
@@ -220,12 +242,20 @@ def _judge_case(case: PolishEvalCase, actual_decision: str, actual_text: str) ->
         return _result(case, passed, actual_decision, actual_text, reason)
     expected_text = case.expected_text or ""
     keeps_required = all(term in actual_text for term in case.must_keep)
-    passed = actual_decision == "kept" and actual_text == expected_text and keeps_required
-    reason = "accepted expected correction" if passed else _change_failure_reason(case, actual_decision, actual_text)
+    passed = (
+        actual_decision == "kept" and actual_text == expected_text and keeps_required
+    )
+    reason = (
+        "accepted expected correction"
+        if passed
+        else _change_failure_reason(case, actual_decision, actual_text)
+    )
     return _result(case, passed, actual_decision, actual_text, reason)
 
 
-def _change_failure_reason(case: PolishEvalCase, actual_decision: str, actual_text: str) -> str:
+def _change_failure_reason(
+    case: PolishEvalCase, actual_decision: str, actual_text: str
+) -> str:
     """Return a compact failure reason for expected-change cases."""
     if actual_decision != "kept":
         return f"expected kept change, got {actual_decision}"

@@ -336,7 +336,9 @@ def _configure_presentation_from_context(ctx: click.Context) -> None:
         configure_cli_language(params.get("lang"))
     except ValueError:
         configure_cli_language(None)
-    configure_cli_output(no_color=bool(params.get("no_color")), verbose=bool(params.get("verbose")))
+    configure_cli_output(
+        no_color=bool(params.get("no_color")), verbose=bool(params.get("verbose"))
+    )
 
 
 def _configure_presentation_from_error(exc: click.ClickException) -> None:

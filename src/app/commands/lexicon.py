@@ -68,21 +68,37 @@ app.add_typer(
 
 @app.command("list")
 def terms_list_command(
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
     status: str = typer.Option("active", "--status", help="active, inactive, or all."),
-    category: Optional[str] = typer.Option(None, "--category", help="Filter by lexicon category."),
-    query: Optional[str] = typer.Option(None, "--query", "-q", help="Search canonical terms and aliases."),
+    category: Optional[str] = typer.Option(
+        None, "--category", help="Filter by lexicon category."
+    ),
+    query: Optional[str] = typer.Option(
+        None, "--query", "-q", help="Search canonical terms and aliases."
+    ),
     limit: int = typer.Option(100, "--limit", min=1, help="Maximum terms to list."),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
-    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
+    plain: bool = typer.Option(
+        False, "--plain", help="Print stable tab-separated output."
+    ),
 ) -> None:
     """List local vocabulary terms."""
     db_path = lexicon_db or default_lexicon_db_path()
     terms = run_with_cli_errors(
-        lambda: list_lexicon_terms(db_path=db_path, status=status, category=category, query=query, limit=limit)
+        lambda: list_lexicon_terms(
+            db_path=db_path, status=status, category=category, query=query, limit=limit
+        )
     )
     if as_json:
-        emit_json({"lexicon_db": db_path, "count": len(terms), "terms": [_term_payload(term) for term in terms]})
+        emit_json(
+            {
+                "lexicon_db": db_path,
+                "count": len(terms),
+                "terms": [_term_payload(term) for term in terms],
+            }
+        )
         return
     if plain:
         _echo_terms_plain(terms)
@@ -97,13 +113,19 @@ def terms_list_command(
 @app.command("show")
 def term_show_command(
     term: str = typer.Argument(..., help="Term id, canonical term, or alias."),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
-    context_limit: int = typer.Option(20, "--context-limit", min=0, help="Maximum contexts to display."),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
+    context_limit: int = typer.Option(
+        20, "--context-limit", min=0, help="Maximum contexts to display."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show one local vocabulary term."""
     db_path = lexicon_db or default_lexicon_db_path()
-    detail = run_with_cli_errors(lambda: get_lexicon_term(term, db_path=db_path, context_limit=context_limit))
+    detail = run_with_cli_errors(
+        lambda: get_lexicon_term(term, db_path=db_path, context_limit=context_limit)
+    )
     if as_json:
         emit_json({"lexicon_db": db_path, **_detail_payload(detail)})
         return
@@ -114,10 +136,16 @@ def term_show_command(
 def term_add_command(
     term: str = typer.Argument(..., help="Canonical vocabulary term."),
     category: str = typer.Option("unknown", "--category", "-c", help="Term category."),
-    description: str = typer.Option("", "--description", "-d", help="Human note for this term."),
-    alias: Optional[list[str]] = typer.Option(None, "--alias", "-a", help="Alias or common ASR mistake."),
+    description: str = typer.Option(
+        "", "--description", "-d", help="Human note for this term."
+    ),
+    alias: Optional[list[str]] = typer.Option(
+        None, "--alias", "-a", help="Alias or common ASR mistake."
+    ),
     status: str = typer.Option("active", "--status", help="active or inactive."),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Add or update one local vocabulary term."""
@@ -143,20 +171,34 @@ def term_add_command(
 @app.command("delete")
 def term_delete_command(
     term: str = typer.Argument(..., help="Term id, canonical term, or alias."),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
-    permanent: bool = typer.Option(False, "--permanent", help="Physically delete the term and its contexts."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm deletion without prompting."),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
+    permanent: bool = typer.Option(
+        False, "--permanent", help="Physically delete the term and its contexts."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Confirm deletion without prompting."
+    ),
 ) -> None:
     """Deactivate or permanently delete one local vocabulary term."""
     db_path = lexicon_db or default_lexicon_db_path()
-    detail = run_with_cli_errors(lambda: get_lexicon_term(term, db_path=db_path, context_limit=3))
+    detail = run_with_cli_errors(
+        lambda: get_lexicon_term(term, db_path=db_path, context_limit=3)
+    )
     if not yes:
         _echo_delete_preview(db_path, detail, permanent=permanent)
         confirmed = typer.confirm(_delete_confirmation_text(permanent))
         if not confirmed:
             raise typer.Exit(code=1)
-    detail = run_with_cli_errors(lambda: delete_lexicon_term(term, db_path=db_path, permanent=permanent))
-    header = "Lexicon term deleted permanently." if permanent else "Lexicon term deactivated."
+    detail = run_with_cli_errors(
+        lambda: delete_lexicon_term(term, db_path=db_path, permanent=permanent)
+    )
+    header = (
+        "Lexicon term deleted permanently."
+        if permanent
+        else "Lexicon term deactivated."
+    )
     typer.echo(header)
     typer.echo(f"ID: {detail.term.public_id}")
     typer.echo(f"Term: {detail.term.canonical}")
@@ -165,7 +207,9 @@ def term_delete_command(
 
 @app.command("stats")
 def stats_command(
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show local vocabulary store statistics."""
@@ -180,13 +224,21 @@ def stats_command(
 
 @app.command("export")
 def lexicon_export_command(
-    output: Path = typer.Option(..., "--output", "-o", file_okay=True, dir_okay=False, help="Output JSON path."),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
-    active_only: bool = typer.Option(False, "--active-only", help="Skip inactive terms."),
+    output: Path = typer.Option(
+        ..., "--output", "-o", file_okay=True, dir_okay=False, help="Output JSON path."
+    ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
+    active_only: bool = typer.Option(
+        False, "--active-only", help="Skip inactive terms."
+    ),
 ) -> None:
     """Export the local vocabulary knowledge base as JSON."""
     payload = run_with_cli_errors(
-        lambda: export_lexicon_payload(db_path=lexicon_db, include_inactive=not active_only)
+        lambda: export_lexicon_payload(
+            db_path=lexicon_db, include_inactive=not active_only
+        )
     )
     written = run_with_cli_errors(lambda: _write_json(output, payload))
     typer.echo("Lexicon exported.")
@@ -196,12 +248,20 @@ def lexicon_export_command(
 
 @app.command("import")
 def lexicon_import_command(
-    input_path: Path = typer.Argument(..., exists=True, file_okay=True, dir_okay=False, help="Input JSON path."),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    input_path: Path = typer.Argument(
+        ..., exists=True, file_okay=True, dir_okay=False, help="Input JSON path."
+    ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
 ) -> None:
     """Import a previously exported local vocabulary JSON file."""
-    payload = run_with_cli_errors(lambda: json.loads(input_path.read_text(encoding="utf-8")))
-    imported = run_with_cli_errors(lambda: import_lexicon_payload(payload, db_path=lexicon_db))
+    payload = run_with_cli_errors(
+        lambda: json.loads(input_path.read_text(encoding="utf-8"))
+    )
+    imported = run_with_cli_errors(
+        lambda: import_lexicon_payload(payload, db_path=lexicon_db)
+    )
     typer.echo("Lexicon imported.")
     typer.echo(f"Terms: {imported}")
     typer.echo(f"Lexicon DB: {lexicon_db or default_lexicon_db_path()}")
@@ -209,15 +269,25 @@ def lexicon_import_command(
 
 @hotwords_app.command("list")
 def list_command(
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
     limit: int = typer.Option(500, "--limit", min=1),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """List local ASR hotwords derived from accepted corrections."""
     db_path = lexicon_db or default_lexicon_db_path()
-    hotwords = run_with_cli_errors(lambda: list_asr_hotwords(db_path=db_path, limit=limit))
+    hotwords = run_with_cli_errors(
+        lambda: list_asr_hotwords(db_path=db_path, limit=limit)
+    )
     if as_json:
-        emit_json({"lexicon_db": db_path, "count": len(hotwords), "hotwords": [asdict(item) for item in hotwords]})
+        emit_json(
+            {
+                "lexicon_db": db_path,
+                "count": len(hotwords),
+                "hotwords": [asdict(item) for item in hotwords],
+            }
+        )
         return
     typer.echo(f"Lexicon DB: {db_path}")
     typer.echo(f"Hotwords: {len(hotwords)}")
@@ -225,18 +295,26 @@ def list_command(
         typer.echo("No ASR hotwords.")
         return
     for index, hotword in enumerate(hotwords, start=1):
-        typer.echo(f"{index}. {hotword.text} weight={hotword.weight} category={hotword.category}")
+        typer.echo(
+            f"{index}. {hotword.text} weight={hotword.weight} category={hotword.category}"
+        )
 
 
 @hotwords_app.command("export")
 def export_command(
-    output: Optional[Path] = typer.Option(None, "--output", file_okay=True, dir_okay=False),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    output: Optional[Path] = typer.Option(
+        None, "--output", file_okay=True, dir_okay=False
+    ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
     limit: int = typer.Option(500, "--limit", min=1),
 ) -> None:
     """Export accepted correction knowledge as a DashScope ASR hotword table."""
     db_path = lexicon_db or default_lexicon_db_path()
-    hotwords = run_with_cli_errors(lambda: list_asr_hotwords(db_path=db_path, limit=limit))
+    hotwords = run_with_cli_errors(
+        lambda: list_asr_hotwords(db_path=db_path, limit=limit)
+    )
     output_path = output or db_path.parent / "asr_hotwords.json"
     written = run_with_cli_errors(lambda: write_hotword_artifact(output_path, hotwords))
     typer.echo("ASR hotwords exported.")
@@ -246,34 +324,63 @@ def export_command(
 
 @hotwords_app.command("status")
 def status_command(
-    target_model: str = typer.Option("fun-asr", "--target-model", help="DashScope ASR target model."),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    target_model: str = typer.Option(
+        "fun-asr", "--target-model", help="DashScope ASR target model."
+    ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
     limit: int = typer.Option(500, "--limit", min=1),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show local hotword hash and cached DashScope vocabulary id."""
-    settings = run_with_cli_errors(lambda: load_settings(require_oss=False, require_dashscope=False))
+    settings = run_with_cli_errors(
+        lambda: load_settings(require_oss=False, require_dashscope=False)
+    )
     status = run_with_cli_errors(
-        lambda: get_asr_hotword_status(settings=settings, target_model=target_model, db_path=lexicon_db, limit=limit)
+        lambda: get_asr_hotword_status(
+            settings=settings,
+            target_model=target_model,
+            db_path=lexicon_db,
+            limit=limit,
+        )
     )
     if as_json:
-        emit_json(_status_payload(status, configured_vocabulary_id=settings.dashscope_asr_vocabulary_id))
+        emit_json(
+            _status_payload(
+                status, configured_vocabulary_id=settings.dashscope_asr_vocabulary_id
+            )
+        )
         return
     _echo_status(status, configured_vocabulary_id=settings.dashscope_asr_vocabulary_id)
 
 
 @hotwords_app.command("sync")
 def sync_command(
-    target_model: str = typer.Option("fun-asr", "--target-model", help="DashScope ASR target model."),
-    output: Optional[Path] = typer.Option(None, "--output", file_okay=True, dir_okay=False),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
-    prefix: str = typer.Option(DEFAULT_HOTWORD_PREFIX, "--prefix", help="DashScope vocabulary prefix."),
-    force: bool = typer.Option(False, "--force", help="Force remote vocabulary update."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Only render local hotword table."),
+    target_model: str = typer.Option(
+        "fun-asr", "--target-model", help="DashScope ASR target model."
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", file_okay=True, dir_okay=False
+    ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
+    prefix: str = typer.Option(
+        DEFAULT_HOTWORD_PREFIX, "--prefix", help="DashScope vocabulary prefix."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Force remote vocabulary update."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Only render local hotword table."
+    ),
     limit: int = typer.Option(500, "--limit", min=1),
 ) -> None:
     """Sync accepted correction hotwords to DashScope and cache the vocabulary id."""
-    settings = run_with_cli_errors(lambda: load_settings(require_oss=False, require_dashscope=not dry_run))
+    settings = run_with_cli_errors(
+        lambda: load_settings(require_oss=False, require_dashscope=not dry_run)
+    )
     summary = run_with_cli_errors(
         lambda: sync_asr_hotwords(
             settings=settings,
@@ -291,13 +398,23 @@ def sync_command(
 
 @hotwords_app.command("clear-cache")
 def clear_cache_command(
-    target_model: str = typer.Option("fun-asr", "--target-model", help="DashScope ASR target model."),
-    endpoint: Optional[str] = typer.Option(None, "--endpoint", help="DashScope base endpoint. Defaults to config."),
-    vocabulary_id: Optional[str] = typer.Option(None, "--vocabulary-id", help="Only clear this cached vocabulary id."),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    target_model: str = typer.Option(
+        "fun-asr", "--target-model", help="DashScope ASR target model."
+    ),
+    endpoint: Optional[str] = typer.Option(
+        None, "--endpoint", help="DashScope base endpoint. Defaults to config."
+    ),
+    vocabulary_id: Optional[str] = typer.Option(
+        None, "--vocabulary-id", help="Only clear this cached vocabulary id."
+    ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
 ) -> None:
     """Clear one cached DashScope vocabulary id."""
-    settings = run_with_cli_errors(lambda: load_settings(require_oss=False, require_dashscope=False))
+    settings = run_with_cli_errors(
+        lambda: load_settings(require_oss=False, require_dashscope=False)
+    )
     resolved_endpoint = endpoint or settings.dashscope_base_url
     state = run_with_cli_errors(
         lambda: delete_asr_vocabulary_state(
@@ -318,13 +435,17 @@ def clear_cache_command(
 
 @hotwords_app.command("remote-list")
 def remote_list_command(
-    prefix: Optional[str] = typer.Option(DEFAULT_HOTWORD_PREFIX, "--prefix", help="DashScope vocabulary prefix filter."),
+    prefix: Optional[str] = typer.Option(
+        DEFAULT_HOTWORD_PREFIX, "--prefix", help="DashScope vocabulary prefix filter."
+    ),
     page_index: int = typer.Option(0, "--page-index", min=0),
     page_size: int = typer.Option(10, "--page-size", min=1, max=100),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """List remote DashScope hotword vocabularies."""
-    settings = run_with_cli_errors(lambda: load_settings(require_oss=False, require_dashscope=True))
+    settings = run_with_cli_errors(
+        lambda: load_settings(require_oss=False, require_dashscope=True)
+    )
     rows = run_with_cli_errors(
         lambda: list_remote_asr_vocabularies(
             settings=settings,
@@ -334,7 +455,14 @@ def remote_list_command(
         )
     )
     if as_json:
-        emit_json({"prefix": prefix, "page_index": page_index, "page_size": page_size, "vocabularies": rows})
+        emit_json(
+            {
+                "prefix": prefix,
+                "page_index": page_index,
+                "page_size": page_size,
+                "vocabularies": rows,
+            }
+        )
         return
     typer.echo(f"Remote ASR vocabularies: {len(rows)}")
     if not rows:
@@ -350,8 +478,14 @@ def remote_show_command(
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show one remote DashScope hotword vocabulary."""
-    settings = run_with_cli_errors(lambda: load_settings(require_oss=False, require_dashscope=True))
-    payload = run_with_cli_errors(lambda: query_remote_asr_vocabulary(settings=settings, vocabulary_id=vocabulary_id))
+    settings = run_with_cli_errors(
+        lambda: load_settings(require_oss=False, require_dashscope=True)
+    )
+    payload = run_with_cli_errors(
+        lambda: query_remote_asr_vocabulary(
+            settings=settings, vocabulary_id=vocabulary_id
+        )
+    )
     if as_json:
         emit_json({"vocabulary_id": vocabulary_id, "remote": payload})
         return
@@ -362,19 +496,37 @@ def remote_show_command(
 def remote_delete_command(
     vocabulary_id: str = typer.Argument(..., help="DashScope vocabulary id."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Confirm remote deletion."),
-    clear_cache: bool = typer.Option(False, "--clear-cache", help="Also clear the matching local cache entry."),
-    target_model: str = typer.Option("fun-asr", "--target-model", help="DashScope ASR target model for cache clearing."),
-    endpoint: Optional[str] = typer.Option(None, "--endpoint", help="DashScope base endpoint. Defaults to config."),
-    lexicon_db: Optional[Path] = typer.Option(None, "--lexicon-db", help="Override lexicon SQLite path."),
+    clear_cache: bool = typer.Option(
+        False, "--clear-cache", help="Also clear the matching local cache entry."
+    ),
+    target_model: str = typer.Option(
+        "fun-asr",
+        "--target-model",
+        help="DashScope ASR target model for cache clearing.",
+    ),
+    endpoint: Optional[str] = typer.Option(
+        None, "--endpoint", help="DashScope base endpoint. Defaults to config."
+    ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
 ) -> None:
     """Delete one remote DashScope hotword vocabulary."""
     if not yes:
         run_with_cli_errors(lambda: _require_delete_confirmation(vocabulary_id))
-    settings = run_with_cli_errors(lambda: load_settings(require_oss=False, require_dashscope=True))
-    run_with_cli_errors(lambda: delete_remote_asr_vocabulary(settings=settings, vocabulary_id=vocabulary_id))
+    settings = run_with_cli_errors(
+        lambda: load_settings(require_oss=False, require_dashscope=True)
+    )
+    run_with_cli_errors(
+        lambda: delete_remote_asr_vocabulary(
+            settings=settings, vocabulary_id=vocabulary_id
+        )
+    )
     typer.echo(f"Deleted remote ASR vocabulary: {vocabulary_id}")
     if clear_cache:
-        _clear_deleted_remote_cache(settings, target_model, endpoint, vocabulary_id, lexicon_db)
+        _clear_deleted_remote_cache(
+            settings, target_model, endpoint, vocabulary_id, lexicon_db
+        )
 
 
 def _terms_table(terms: list[LexiconTerm]) -> Table:
@@ -419,7 +571,9 @@ def _echo_terms_plain(terms: list[LexiconTerm]) -> None:
         )
         for term in terms
     ]
-    echo_plain_table(("id", "term", "category", "status", "aliases", "contexts", "updated"), rows)
+    echo_plain_table(
+        ("id", "term", "category", "status", "aliases", "contexts", "updated"), rows
+    )
 
 
 def _echo_term_detail(db_path: Path, detail: LexiconTermDetail) -> None:
@@ -436,7 +590,9 @@ def _echo_term_detail(db_path: Path, detail: LexiconTermDetail) -> None:
     _echo_contexts(detail)
 
 
-def _echo_delete_preview(db_path: Path, detail: LexiconTermDetail, *, permanent: bool) -> None:
+def _echo_delete_preview(
+    db_path: Path, detail: LexiconTermDetail, *, permanent: bool
+) -> None:
     """
     Print the exact lexicon term that is about to be deleted.
 
@@ -457,12 +613,18 @@ def _echo_delete_preview(db_path: Path, detail: LexiconTermDetail, *, permanent:
         f"[b]DB[/b]        {escape(str(db_path))}",
     ]
     lines.extend(_context_preview_lines(detail))
-    cli_console(width=120).print(Panel("\n".join(lines), title="Lexicon Delete Review", border_style="yellow"))
+    cli_console(width=120).print(
+        Panel("\n".join(lines), title="Lexicon Delete Review", border_style="yellow")
+    )
 
 
 def _delete_confirmation_text(permanent: bool) -> str:
     """Return the final delete confirmation prompt."""
-    action = "permanently delete this lexicon term" if permanent else "deactivate this lexicon term"
+    action = (
+        "permanently delete this lexicon term"
+        if permanent
+        else "deactivate this lexicon term"
+    )
     return f"Proceed to {action}?"
 
 
@@ -517,7 +679,9 @@ def _context_line(context) -> str:
 def _echo_stats(stats: LexiconStats) -> None:
     """Print local lexicon statistics."""
     total_terms = stats.active_terms + stats.inactive_terms
-    typer.echo(f"Terms: {stats.active_terms} active / {stats.inactive_terms} inactive / {total_terms} total")
+    typer.echo(
+        f"Terms: {stats.active_terms} active / {stats.inactive_terms} inactive / {total_terms} total"
+    )
     typer.echo(f"Aliases: {stats.aliases}")
     typer.echo(f"Contexts: {stats.contexts}")
     typer.echo(f"ASR hotwords: {stats.hotwords}")
@@ -527,7 +691,9 @@ def _echo_stats(stats: LexiconStats) -> None:
 def _write_json(output: Path, payload: dict) -> Path:
     """Write JSON payload to disk."""
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return output
 
 
@@ -559,7 +725,11 @@ def _status_text(status: str) -> str:
 
 def _echo_sync_summary(summary) -> None:
     """Print a hotword synchronization summary."""
-    status = "dry run" if summary.dry_run else ("updated" if summary.changed else "unchanged")
+    status = (
+        "dry run"
+        if summary.dry_run
+        else ("updated" if summary.changed else "unchanged")
+    )
     typer.echo(f"ASR hotword sync {status}.")
     typer.echo(f"Lexicon DB: {summary.db_path}")
     typer.echo(f"Target model: {summary.target_model}")
@@ -570,7 +740,9 @@ def _echo_sync_summary(summary) -> None:
         typer.echo(f"Artifact: {summary.artifact_path}")
 
 
-def _echo_status(status: AsrHotwordStatus, *, configured_vocabulary_id: str | None) -> None:
+def _echo_status(
+    status: AsrHotwordStatus, *, configured_vocabulary_id: str | None
+) -> None:
     """Print local hotword and cache status."""
     typer.echo("ASR hotword status.")
     typer.echo(f"Lexicon DB: {status.db_path}")
@@ -589,7 +761,9 @@ def _echo_status(status: AsrHotwordStatus, *, configured_vocabulary_id: str | No
     typer.echo(f"Cached updated: {status.cached_state.updated_at or '<unknown>'}")
 
 
-def _status_payload(status: AsrHotwordStatus, *, configured_vocabulary_id: str | None) -> dict:
+def _status_payload(
+    status: AsrHotwordStatus, *, configured_vocabulary_id: str | None
+) -> dict:
     """Build machine-readable hotword status output."""
     return {
         "lexicon_db": status.db_path,
@@ -646,7 +820,9 @@ def _echo_remote_vocabulary(vocabulary_id: str, payload: dict) -> None:
 
 def _require_delete_confirmation(vocabulary_id: str) -> None:
     """Require explicit confirmation for remote deletion."""
-    raise ValueError(f"Refusing to delete remote ASR vocabulary {vocabulary_id}. Pass --yes to confirm.")
+    raise ValueError(
+        f"Refusing to delete remote ASR vocabulary {vocabulary_id}. Pass --yes to confirm."
+    )
 
 
 def _clear_deleted_remote_cache(

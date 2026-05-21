@@ -30,6 +30,8 @@ SAMPLE_PANE_RESERVED_ROWS = 5
 COLUMNS = ("speakers", "samples")
 FOCUSED_PANE_CLASS = "focused-pane"
 UNFOCUSED_PANE_CLASS = "unfocused-pane"
+
+
 def browse_status() -> str:
     """Return localized voiceprint-library status text."""
     return tr(
@@ -266,7 +268,9 @@ class VoiceprintLibraryApp(App[None]):
             return
         sample = self._selected_sample()
         if sample is None:
-            self._set_status(tr("No sample for this speaker.", "当前 speaker 没有样本。"))
+            self._set_status(
+                tr("No sample for this speaker.", "当前 speaker 没有样本。")
+            )
             return
         try:
             self._play_sample(sample)
@@ -319,7 +323,9 @@ class VoiceprintLibraryApp(App[None]):
         page_size = self._sample_page_size()
         current_start = _sample_page_start(speaker.selected_sample_index, page_size)
         last_start = _last_sample_page_start(len(speaker.samples), page_size)
-        speaker.selected_sample_index = _clamp(current_start + delta * page_size, 0, last_start)
+        speaker.selected_sample_index = _clamp(
+            current_start + delta * page_size, 0, last_start
+        )
         self._refresh()
 
     def _refresh(self) -> None:
@@ -349,8 +355,14 @@ class VoiceprintLibraryApp(App[None]):
                 f"[b]Library[/b]  speakers {len(self.session.speakers)} | samples {sample_count} | embedded {embedded}/{sample_count}",
                 f"[b]声纹库[/b]   speaker {len(self.session.speakers)} | 样本 {sample_count} | embedding {embedded}/{sample_count}",
             ),
-            tr(f"[b]Focus[/b]    {escape(_selected_speaker_summary(speaker))}", f"[b]当前[/b]     {escape(_selected_speaker_summary(speaker))}"),
-            tr(f"[b]Sample[/b]   {escape(_selected_sample_summary(sample))}", f"[b]样本[/b]     {escape(_selected_sample_summary(sample))}"),
+            tr(
+                f"[b]Focus[/b]    {escape(_selected_speaker_summary(speaker))}",
+                f"[b]当前[/b]     {escape(_selected_speaker_summary(speaker))}",
+            ),
+            tr(
+                f"[b]Sample[/b]   {escape(_selected_sample_summary(sample))}",
+                f"[b]样本[/b]     {escape(_selected_sample_summary(sample))}",
+            ),
         ]
         return "\n".join(lines)
 
@@ -358,7 +370,9 @@ class VoiceprintLibraryApp(App[None]):
         """Render the speaker list."""
         lines = [self._pane_title(tr("Voiceprint speakers", "声纹人员"), "speakers")]
         if not self.session.speakers:
-            lines.append(tr("[yellow]No voiceprints recorded.[/]", "[yellow]尚未录入声纹。[/]"))
+            lines.append(
+                tr("[yellow]No voiceprints recorded.[/]", "[yellow]尚未录入声纹。[/]")
+            )
             return "\n".join(lines)
         for index, speaker in enumerate(self.session.speakers):
             marker = ">" if index == self.selected_speaker_index else " "
@@ -373,19 +387,32 @@ class VoiceprintLibraryApp(App[None]):
     def _sample_pane(self) -> str:
         """Render samples for the selected speaker."""
         speaker = self._speaker()
-        title = tr("Samples", "样本") if speaker is None else tr(f"{speaker.name} samples", f"{speaker.name} 样本")
+        title = (
+            tr("Samples", "样本")
+            if speaker is None
+            else tr(f"{speaker.name} samples", f"{speaker.name} 样本")
+        )
         lines = [self._pane_title(title, "samples")]
         if speaker is None:
-            lines.append(tr("[yellow]No speaker selected.[/]", "[yellow]未选择 speaker。[/]"))
+            lines.append(
+                tr("[yellow]No speaker selected.[/]", "[yellow]未选择 speaker。[/]")
+            )
             return "\n".join(lines)
         page_start, samples = self._visible_samples(speaker)
         for offset, sample in enumerate(samples):
             index = page_start + offset
             prefix = ">" if index == speaker.selected_sample_index else " "
             line = f"{prefix} #{index + 1} {_sample_line(sample)}"
-            lines.append(f"[reverse]{escape(line)}[/]" if prefix == ">" else escape(line))
+            lines.append(
+                f"[reverse]{escape(line)}[/]" if prefix == ">" else escape(line)
+            )
         if not samples:
-            lines.append(tr("[yellow]No samples for this speaker.[/]", "[yellow]当前 speaker 没有样本。[/]"))
+            lines.append(
+                tr(
+                    "[yellow]No samples for this speaker.[/]",
+                    "[yellow]当前 speaker 没有样本。[/]",
+                )
+            )
         lines.append("")
         lines.append(self._sample_page_footer(speaker, page_start))
         return "\n".join(lines)
@@ -400,7 +427,12 @@ class VoiceprintLibraryApp(App[None]):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self._set_status(tr(f"Playing {sample.speaker_name} sample {sample.public_id}.", f"正在播放 {sample.speaker_name} 的样本 {sample.public_id}。"))
+        self._set_status(
+            tr(
+                f"Playing {sample.speaker_name} sample {sample.public_id}.",
+                f"正在播放 {sample.speaker_name} 的样本 {sample.public_id}。",
+            )
+        )
 
     def _stop_playback(self) -> None:
         """Stop the current playback child process if it is still running."""
@@ -432,7 +464,9 @@ class VoiceprintLibraryApp(App[None]):
             return None
         return speaker.samples[speaker.selected_sample_index]
 
-    def _visible_samples(self, speaker: VoiceprintSpeakerEntry) -> tuple[int, list[VoiceprintSampleRow]]:
+    def _visible_samples(
+        self, speaker: VoiceprintSpeakerEntry
+    ) -> tuple[int, list[VoiceprintSampleRow]]:
         """Return the current sample page start and rows."""
         page_size = self._sample_page_size()
         page_start = _sample_page_start(speaker.selected_sample_index, page_size)
@@ -447,7 +481,9 @@ class VoiceprintLibraryApp(App[None]):
             return DEFAULT_SAMPLE_PAGE_SIZE
         return max(1, pane_height - SAMPLE_PANE_RESERVED_ROWS)
 
-    def _sample_page_footer(self, speaker: VoiceprintSpeakerEntry, page_start: int) -> str:
+    def _sample_page_footer(
+        self, speaker: VoiceprintSpeakerEntry, page_start: int
+    ) -> str:
         """Render pagination status for the sample pane."""
         page_size = self._sample_page_size()
         page_count = _sample_page_count(len(speaker.samples), page_size)
@@ -494,7 +530,10 @@ def load_voiceprint_library_session(
         samples_by_speaker[sample.speaker_id].append(sample)
     return VoiceprintLibrarySession(
         db_path=db_path,
-        speakers=[_speaker_entry(row, samples_by_speaker.get(row.speaker_id, [])) for row in speakers],
+        speakers=[
+            _speaker_entry(row, samples_by_speaker.get(row.speaker_id, []))
+            for row in speakers
+        ],
         page_size=page_size,
     )
 
@@ -533,7 +572,9 @@ def render_voiceprint_library_summary(session: VoiceprintLibrarySession) -> str:
     return "\n".join(lines)
 
 
-def _speaker_entry(row: VoiceprintSpeakerRow, samples: list[VoiceprintSampleRow]) -> VoiceprintSpeakerEntry:
+def _speaker_entry(
+    row: VoiceprintSpeakerRow, samples: list[VoiceprintSampleRow]
+) -> VoiceprintSpeakerEntry:
     """Build a mutable speaker entry from store rows."""
     return VoiceprintSpeakerEntry(
         speaker_id=row.speaker_id,
@@ -560,13 +601,11 @@ def _selected_speaker_summary(speaker: VoiceprintSpeakerEntry | None) -> str:
     """Render selected speaker summary."""
     if speaker is None:
         return "-"
-    return (
-        tr(
-            f"{speaker.name} id={speaker.public_id} | samples {speaker.sample_count} | "
-            f"projects {speaker.project_count} | models {speaker.embedding_model_count}",
-            f"{speaker.name} id={speaker.public_id} | 样本 {speaker.sample_count} | "
-            f"项目 {speaker.project_count} | 模型 {speaker.embedding_model_count}",
-        )
+    return tr(
+        f"{speaker.name} id={speaker.public_id} | samples {speaker.sample_count} | "
+        f"projects {speaker.project_count} | models {speaker.embedding_model_count}",
+        f"{speaker.name} id={speaker.public_id} | 样本 {speaker.sample_count} | "
+        f"项目 {speaker.project_count} | 模型 {speaker.embedding_model_count}",
     )
 
 
@@ -574,7 +613,10 @@ def _selected_sample_summary(sample: VoiceprintSampleRow | None) -> str:
     """Render selected sample summary."""
     if sample is None:
         return "-"
-    return tr(f"sample_id {sample.public_id} | clip {sample.clip_path}", f"样本ID {sample.public_id} | 文件 {sample.clip_path}")
+    return tr(
+        f"sample_id {sample.public_id} | clip {sample.clip_path}",
+        f"样本ID {sample.public_id} | 文件 {sample.clip_path}",
+    )
 
 
 def _sample_line(sample: VoiceprintSampleRow) -> str:
@@ -582,7 +624,9 @@ def _sample_line(sample: VoiceprintSampleRow) -> str:
     start = format_ms_timestamp(sample.source_begin_time_ms)
     end = format_ms_timestamp(sample.source_end_time_ms)
     text = _trim_text(sample.transcript_text)
-    return f"{sample.project_id} speaker {sample.project_speaker_id} {start}-{end} {text}"
+    return (
+        f"{sample.project_id} speaker {sample.project_speaker_id} {start}-{end} {text}"
+    )
 
 
 def _sample_page_start(selected_index: int, page_size: int) -> int:

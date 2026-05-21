@@ -171,7 +171,9 @@ def _typer_completion_script(shell: CompletionShell) -> str:
     Returns:
         Completion script that asks the CLI for command-tree completions.
     """
-    return get_completion_script(prog_name=COMMAND_NAME, complete_var=COMPLETE_VAR, shell=shell.value)
+    return get_completion_script(
+        prog_name=COMMAND_NAME, complete_var=COMPLETE_VAR, shell=shell.value
+    )
 
 
 def _csh_script() -> str:
@@ -216,15 +218,27 @@ def _install_completion(
         Installation result.
     """
     if shell not in INSTALLABLE_SHELLS:
-        raise typer.BadParameter("Install is supported for bash, zsh, fish, powershell, and pwsh.")
-    target_path = target.expanduser().resolve() if target else _default_completion_target(shell)
-    executable_dir = bin_dir.expanduser().resolve() if bin_dir else _detect_cli_bin_dir()
+        raise typer.BadParameter(
+            "Install is supported for bash, zsh, fish, powershell, and pwsh."
+        )
+    target_path = (
+        target.expanduser().resolve() if target else _default_completion_target(shell)
+    )
+    executable_dir = (
+        bin_dir.expanduser().resolve() if bin_dir else _detect_cli_bin_dir()
+    )
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(_profile_script(shell, executable_dir), encoding="utf-8")
     target_path.chmod(0o644)
     rc_path = _startup_file(shell)
-    rc_updated = _ensure_startup_loads_completion(shell, target_path, rc_path) if update_rc and rc_path else False
-    return CompletionInstallResult(shell=shell, target_path=target_path, rc_path=rc_path, rc_updated=rc_updated)
+    rc_updated = (
+        _ensure_startup_loads_completion(shell, target_path, rc_path)
+        if update_rc and rc_path
+        else False
+    )
+    return CompletionInstallResult(
+        shell=shell, target_path=target_path, rc_path=rc_path, rc_updated=rc_updated
+    )
 
 
 def _default_completion_target(shell: CompletionShell) -> Path:
@@ -271,7 +285,13 @@ def _profile_script(shell: CompletionShell, bin_dir: Path) -> str:
     Returns:
         Shell script fragment.
     """
-    lines = [_script_header(shell), _path_export(shell, bin_dir), "", _completion_script(shell), ""]
+    lines = [
+        _script_header(shell),
+        _path_export(shell, bin_dir),
+        "",
+        _completion_script(shell),
+        "",
+    ]
     return "\n".join(lines)
 
 
@@ -346,7 +366,9 @@ def _startup_file(shell: CompletionShell) -> Path | None:
     return None
 
 
-def _ensure_startup_loads_completion(shell: CompletionShell, target_path: Path, rc_path: Path) -> bool:
+def _ensure_startup_loads_completion(
+    shell: CompletionShell, target_path: Path, rc_path: Path
+) -> bool:
     """
     Ensure a startup file sources the installed completion fragment.
 
@@ -361,7 +383,11 @@ def _ensure_startup_loads_completion(shell: CompletionShell, target_path: Path, 
     existing = rc_path.read_text(encoding="utf-8") if rc_path.exists() else ""
     loader = _startup_loader(shell, target_path)
     marker = f"{RC_MARKER_PREFIX}: {shell.value}"
-    if marker in existing or str(target_path) in existing or _legacy_loader_present(shell, existing):
+    if (
+        marker in existing
+        or str(target_path) in existing
+        or _legacy_loader_present(shell, existing)
+    ):
         return False
     rc_path.parent.mkdir(parents=True, exist_ok=True)
     with rc_path.open("a", encoding="utf-8") as rc_file:
@@ -384,7 +410,9 @@ def _startup_loader(shell: CompletionShell, target_path: Path) -> str:
         profile_dir = target_path.parent
         return f'for f in "{profile_dir}"/*.zshrc(N); do\n  source "$f"\ndone'
     if shell == CompletionShell.bash:
-        return f'for f in "{target_path.parent}"/*.bash; do\n  [ -r "$f" ] && . "$f"\ndone'
+        return (
+            f'for f in "{target_path.parent}"/*.bash; do\n  [ -r "$f" ] && . "$f"\ndone'
+        )
     return f". {_powershell_quote(str(target_path))}"
 
 
@@ -419,7 +447,9 @@ def _activation_hint(result: CompletionInstallResult) -> str:
     if result.shell == CompletionShell.fish:
         return "Restart fish or open a new shell."
     if result.shell in {CompletionShell.powershell, CompletionShell.pwsh}:
-        return f"Restart PowerShell or run: . {_powershell_quote(str(result.target_path))}"
+        return (
+            f"Restart PowerShell or run: . {_powershell_quote(str(result.target_path))}"
+        )
     return f"Restart {result.shell.value} or run: source {shlex.quote(str(result.target_path))}"
 
 
@@ -445,7 +475,9 @@ def _command_names() -> tuple[str, ...]:
     return (COMMAND_NAME,)
 
 
-def _nested_subcommand_rules(command: click.Command) -> list[tuple[str, tuple[str, ...]]]:
+def _nested_subcommand_rules(
+    command: click.Command,
+) -> list[tuple[str, tuple[str, ...]]]:
     """
     Return subcommand lists for each nested Click group.
 
@@ -477,7 +509,9 @@ def _subcommands(command: click.Command) -> tuple[str, ...]:
     """
     if not isinstance(command, click.Group):
         return ("--help",)
-    return tuple(name for name, child in command.commands.items() if not child.hidden) + ("--help",)
+    return tuple(
+        name for name, child in command.commands.items() if not child.hidden
+    ) + ("--help",)
 
 
 def _words(values: tuple[str, ...]) -> str:

@@ -13,9 +13,13 @@ from textual.widgets import Header, Static
 
 from app.core.project_models import ProjectListItem
 from app.core.project_refs import list_projects
-from app.core.project_workflow import load_project_workflow_summary, project_outputs_text
+from app.core.project_workflow import (
+    load_project_workflow_summary,
+    project_outputs_text,
+)
 from app.presentation.tui.i18n import tr
 from app.presentation.time_format import format_local_minute
+
 
 def shortcut_help() -> str:
     """Return localized project-picker shortcut help."""
@@ -172,7 +176,9 @@ class _ProjectPickerBase:
         """Exit with the selected project path."""
         project = self._project()
         if project is None:
-            self.query_one("#status", Static).update(tr("No project selected.", "未选择项目。"))
+            self.query_one("#status", Static).update(
+                tr("No project selected.", "未选择项目。")
+            )
             return
         self._finish(project.project_dir)
 
@@ -205,7 +211,9 @@ class _ProjectPickerBase:
     def _overview_pane(self) -> str:
         """Render project list summary."""
         selected = self._project()
-        selected_text = "-" if selected is None else f"{selected.project_id} | {selected.title}"
+        selected_text = (
+            "-" if selected is None else f"{selected.project_id} | {selected.title}"
+        )
         return "\n".join(
             [
                 f"{tr('[b]Projects[/b]', '[b]项目[/b]')} {escape(str(self.session.projects_dir))}",
@@ -218,11 +226,15 @@ class _ProjectPickerBase:
         """Render selectable project rows."""
         lines = [tr("[b]Project List[/b]", "[b]项目列表[/b]")]
         if not self.session.projects:
-            lines.append(tr("[yellow]No projects found.[/]", "[yellow]没有找到项目。[/]"))
+            lines.append(
+                tr("[yellow]No projects found.[/]", "[yellow]没有找到项目。[/]")
+            )
             return "\n".join(lines)
         for index, project in enumerate(self.session.projects):
             marker = ">" if index == self.selected_project_index else " "
-            workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
+            workflow = load_project_workflow_summary(
+                project.project_dir, project_ref=project.project_id
+            )
             row = (
                 f"{marker} {project.project_id} | {format_local_minute(project.updated_at)} | "
                 f"{workflow.state} | {project.title}"
@@ -234,18 +246,40 @@ class _ProjectPickerBase:
         """Render detail for the selected project."""
         project = self._project()
         if project is None:
-            return tr("[b]Detail[/b]\nNo project selected.", "[b]详情[/b]\n未选择项目。")
-        workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
+            return tr(
+                "[b]Detail[/b]\nNo project selected.", "[b]详情[/b]\n未选择项目。"
+            )
+        workflow = load_project_workflow_summary(
+            project.project_dir, project_ref=project.project_id
+        )
         return "\n".join(
             [
                 tr("[b]Detail[/b]", "[b]详情[/b]"),
-                tr(f"Project ID: {escape(project.project_id)}", f"项目 ID：{escape(project.project_id)}"),
+                tr(
+                    f"Project ID: {escape(project.project_id)}",
+                    f"项目 ID：{escape(project.project_id)}",
+                ),
                 tr(f"Title: {escape(project.title)}", f"标题：{escape(project.title)}"),
-                tr(f"State: {escape(workflow.state)}", f"状态：{escape(workflow.state)}"),
-                tr(f"Next: {escape(workflow.next_command_short)}", f"下一步：{escape(workflow.next_command_short)}"),
-                tr(f"Artifacts: {escape(project_outputs_text(workflow.outputs))}", f"产物：{escape(project_outputs_text(workflow.outputs))}"),
-                tr(f"Path: {escape(str(project.project_dir))}", f"路径：{escape(str(project.project_dir))}"),
-                tr(f"Open: meeting-asr project review {escape(project.project_id)}", f"打开：meeting-asr project review {escape(project.project_id)}"),
+                tr(
+                    f"State: {escape(workflow.state)}",
+                    f"状态：{escape(workflow.state)}",
+                ),
+                tr(
+                    f"Next: {escape(workflow.next_command_short)}",
+                    f"下一步：{escape(workflow.next_command_short)}",
+                ),
+                tr(
+                    f"Artifacts: {escape(project_outputs_text(workflow.outputs))}",
+                    f"产物：{escape(project_outputs_text(workflow.outputs))}",
+                ),
+                tr(
+                    f"Path: {escape(str(project.project_dir))}",
+                    f"路径：{escape(str(project.project_dir))}",
+                ),
+                tr(
+                    f"Open: meeting-asr project review {escape(project.project_id)}",
+                    f"打开：meeting-asr project review {escape(project.project_id)}",
+                ),
             ]
         )
 
@@ -278,7 +312,9 @@ class ProjectPickerScreen(_ProjectPickerBase, ModalScreen[Path | None]):
         self.dismiss(project_dir)
 
 
-def load_project_picker_session(projects_dir: Path | None = None) -> ProjectPickerSession:
+def load_project_picker_session(
+    projects_dir: Path | None = None,
+) -> ProjectPickerSession:
     """
     Load projects for the picker TUI.
 
@@ -289,7 +325,9 @@ def load_project_picker_session(projects_dir: Path | None = None) -> ProjectPick
         Project picker session.
     """
     result = list_projects(projects_dir)
-    return ProjectPickerSession(projects_dir=result.projects_dir, projects=result.projects)
+    return ProjectPickerSession(
+        projects_dir=result.projects_dir, projects=result.projects
+    )
 
 
 def run_project_picker_tui(session: ProjectPickerSession) -> Path | None:
@@ -320,7 +358,9 @@ def render_project_picker_summary(session: ProjectPickerSession) -> str:
         lines.append("No projects found.")
         return "\n".join(lines)
     for project in session.projects:
-        workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
+        workflow = load_project_workflow_summary(
+            project.project_dir, project_ref=project.project_id
+        )
         lines.append(
             f"{project.project_id} | {workflow.state} | {workflow.next_command_short} | "
             f"{project_outputs_text(workflow.outputs)} | {project.title} | {project.project_dir}"

@@ -10,7 +10,16 @@ import typer
 from typer.completion import completion_init
 from typer.main import get_command
 
-from app.commands import completion, config, doctor, lexicon, oss, paths, project, voiceprint
+from app.commands import (
+    completion,
+    config,
+    doctor,
+    lexicon,
+    oss,
+    paths,
+    project,
+    voiceprint,
+)
 from app.completion_helpers import complete_cli_language
 from app.presentation.cli.help import render_help
 from app.presentation.cli.i18n import configure_cli_language
@@ -83,15 +92,21 @@ def root(
         is_eager=True,
         help="Show version and exit.",
     ),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable colored Rich output."),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose diagnostic logs."),
+    no_color: bool = typer.Option(
+        False, "--no-color", help="Disable colored Rich output."
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable verbose diagnostic logs."
+    ),
     lang: str | None = typer.Option(
         None,
         "--lang",
         help="Help language: auto, en, or zh.",
         autocompletion=complete_cli_language,
     ),
-    help_: bool = typer.Option(False, "--help", "-h", help="Show this message and exit."),
+    help_: bool = typer.Option(
+        False, "--help", "-h", help="Show this message and exit."
+    ),
 ) -> None:
     """Configure root command options."""
     try:
@@ -112,7 +127,9 @@ def help_command(ctx: typer.Context) -> None:
     render_help(command, command_path)
 
 
-def _resolve_help_command(root_command: click.Command, command_path: tuple[str, ...]) -> click.Command:
+def _resolve_help_command(
+    root_command: click.Command, command_path: tuple[str, ...]
+) -> click.Command:
     """
     Resolve a nested command path for ``meeting-asr help``.
 
@@ -126,10 +143,14 @@ def _resolve_help_command(root_command: click.Command, command_path: tuple[str, 
     command = root_command
     for name in command_path:
         if not isinstance(command, click.Group):
-            raise click.UsageError(f"`{' '.join(command_path)}` is not a command group.")
+            raise click.UsageError(
+                f"`{' '.join(command_path)}` is not a command group."
+            )
         child = command.commands.get(name)
         if child is None:
-            raise click.UsageError(f"No such command for help: {' '.join(command_path)}")
+            raise click.UsageError(
+                f"No such command for help: {' '.join(command_path)}"
+            )
         command = child
     return command
 
@@ -137,9 +158,18 @@ def _resolve_help_command(root_command: click.Command, command_path: tuple[str, 
 app.command("doctor", context_settings=HELP_CONTEXT)(doctor.command)
 app.command(
     "help",
-    context_settings={**HELP_CONTEXT, "allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={
+        **HELP_CONTEXT,
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+    },
 )(help_command)
-app.add_typer(config.app, name="config", help="Manage global XDG configuration.", context_settings=HELP_CONTEXT)
+app.add_typer(
+    config.app,
+    name="config",
+    help="Manage global XDG configuration.",
+    context_settings=HELP_CONTEXT,
+)
 app.add_typer(
     project.app,
     name="project",
@@ -158,7 +188,12 @@ app.add_typer(
     help="Manage the cross-project correction lexicon.",
     context_settings=HELP_CONTEXT,
 )
-app.add_typer(oss.app, name="oss", help="Upload, sign, and configure OSS objects.", context_settings=HELP_CONTEXT)
+app.add_typer(
+    oss.app,
+    name="oss",
+    help="Upload, sign, and configure OSS objects.",
+    context_settings=HELP_CONTEXT,
+)
 app.add_typer(
     completion.app,
     name="completion",

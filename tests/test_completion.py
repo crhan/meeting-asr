@@ -48,7 +48,9 @@ def test_detect_cli_bin_dir_preserves_user_facing_symlink(
 ) -> None:
     """Completion PATH should use ~/.local/bin, not the uv tool private venv bin."""
     user_bin = tmp_path / "home" / ".local" / "bin"
-    tool_bin = tmp_path / "home" / ".local" / "share" / "uv" / "tools" / "meeting-asr" / "bin"
+    tool_bin = (
+        tmp_path / "home" / ".local" / "share" / "uv" / "tools" / "meeting-asr" / "bin"
+    )
     user_bin.mkdir(parents=True)
     tool_bin.mkdir(parents=True)
     tool_executable = tool_bin / "meeting-asr"

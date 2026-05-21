@@ -26,7 +26,9 @@ def test_propose_vocabulary_corrections_parses_dashscope_json(monkeypatch) -> No
         return '{"understanding":"艾赛应为 iSee","corrections":[{"id":"c1","corrected_text":"我们看 iSee 系统。"}]}'
 
     monkeypatch.setattr("app.correction_llm.generate_chat_text", fake_call)
-    settings = Settings(dashscope_api_key="key", dashscope_base_url="https://dashscope.example.com")
+    settings = Settings(
+        dashscope_api_key="key", dashscope_base_url="https://dashscope.example.com"
+    )
 
     result = propose_vocabulary_corrections(
         samples=[
@@ -128,9 +130,13 @@ def test_propose_transcript_polish_does_not_retry_read_timeout(monkeypatch) -> N
     monkeypatch.setattr("app.correction_llm.generate_chat_text", fake_call)
     settings = Settings(dashscope_api_key="key", dashscope_base_url=None)
 
-    with pytest.raises(RuntimeError, match="Operation failed after 1 retryable attempts"):
+    with pytest.raises(
+        RuntimeError, match="Operation failed after 1 retryable attempts"
+    ):
         propose_transcript_polish(
-            candidates=[LlmCorrectionCandidate("c1", 1, "米汤", "需要记录入参和出参。")],
+            candidates=[
+                LlmCorrectionCandidate("c1", 1, "米汤", "需要记录入参和出参。")
+            ],
             settings=settings,
             model="qwen-test",
         )
@@ -167,7 +173,9 @@ def test_load_json_object_tolerates_unescaped_control_chars(monkeypatch) -> None
     assert result.items[0].corrected_text == "第一行\n第二行"
 
 
-def test_load_json_object_salvages_items_when_response_is_truncated(monkeypatch) -> None:
+def test_load_json_object_salvages_items_when_response_is_truncated(
+    monkeypatch,
+) -> None:
     """Truncated mid-array response should still surface every complete item."""
 
     # Two complete items, then a half-written third item (mid-key). Real
@@ -197,11 +205,13 @@ def test_load_json_object_salvages_around_one_bad_item(monkeypatch) -> None:
 
     # Middle item has an unescaped " inside corrected_text — JSON parse fails
     # at that record but the others are intact JSON objects.
-    bad_inner = '{"id":"c1","corrected_text":"含"号的句子","change_type":"typo","reason":"r1"}'
+    bad_inner = (
+        '{"id":"c1","corrected_text":"含"号的句子","change_type":"typo","reason":"r1"}'
+    )
     content = (
         '{"understanding":"修字","corrections":['
         '{"id":"c0","corrected_text":"OK0","change_type":"typo","reason":"r0"},'
-        f'{bad_inner},'
+        f"{bad_inner},"
         '{"id":"c2","corrected_text":"OK2","change_type":"typo","reason":"r2"}]}'
     )
     monkeypatch.setattr("app.correction_llm.generate_chat_text", lambda **_: content)

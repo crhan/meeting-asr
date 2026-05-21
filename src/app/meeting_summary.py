@@ -93,7 +93,9 @@ def render_meeting_summary_markdown(summary: MeetingSummary) -> str:
     return "\n".join(lines)
 
 
-def _call_generation(*, model: str, settings: Settings, system_prompt: str, prompt: str) -> str:
+def _call_generation(
+    *, model: str, settings: Settings, system_prompt: str, prompt: str
+) -> str:
     """Call DashScope text generation and return message content."""
 
     def _call() -> str:
@@ -127,7 +129,7 @@ def _build_memory_prompt(result: TranscriptResult) -> str:
     transcript = render_speaker_text(result).strip() or result.full_text.strip()
     transcript = _bound_transcript(transcript)
     return (
-        "请根据下面这场会议的真实转写，输出 JSON：{\"title\": \"...\", \"summary\": \"...\", \"keywords\": [\"...\", ...]}。\n"
+        '请根据下面这场会议的真实转写，输出 JSON：{"title": "...", "summary": "...", "keywords": ["...", ...]}。\n'
         "\n"
         "三个字段都必须严格满足以下规则：\n"
         "\n"
@@ -184,7 +186,9 @@ def _load_summary_json(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", cleaned, flags=re.S)
         if match is None:
-            raise RuntimeError(f"DashScope summary response was not JSON: {text}") from None
+            raise RuntimeError(
+                f"DashScope summary response was not JSON: {text}"
+            ) from None
         payload = json.loads(match.group(0))
     if not isinstance(payload, dict):
         raise RuntimeError("DashScope summary response JSON must be an object.")
@@ -222,4 +226,3 @@ def _normalize_keywords(value: object) -> list[str]:
 def _bullet_lines(items: list[str]) -> list[str]:
     """Render a list as Markdown bullets."""
     return [f"- {item}" for item in items] if items else ["- 无"]
-

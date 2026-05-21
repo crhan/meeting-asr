@@ -20,7 +20,9 @@ from app.project_tui import (
 def test_project_picker_session_lists_history(tmp_path: Path) -> None:
     """Project picker data should come from the same project store as project list."""
     projects_dir = tmp_path / "projects"
-    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Selector Demo")
+    project_dir = _sample_project(
+        tmp_path, projects_dir=projects_dir, title="Selector Demo"
+    )
     manifest = load_manifest(project_dir)
 
     session = load_project_picker_session(projects_dir)
@@ -35,7 +37,9 @@ def test_project_picker_session_lists_history(tmp_path: Path) -> None:
 def test_project_picker_tui_returns_selected_project(tmp_path: Path) -> None:
     """Enter should return the selected project root to the caller."""
     projects_dir = tmp_path / "projects"
-    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Selector Demo")
+    project_dir = _sample_project(
+        tmp_path, projects_dir=projects_dir, title="Selector Demo"
+    )
     session = load_project_picker_session(projects_dir)
     app = ProjectPickerApp(session)
 
@@ -55,7 +59,9 @@ def test_project_picker_tui_returns_selected_project(tmp_path: Path) -> None:
 def test_project_picker_screen_returns_selected_project(tmp_path: Path) -> None:
     """The same picker should be embeddable inside other TUI workflows."""
     projects_dir = tmp_path / "projects"
-    project_dir = _sample_project(tmp_path, projects_dir=projects_dir, title="Embedded Selector")
+    project_dir = _sample_project(
+        tmp_path, projects_dir=projects_dir, title="Embedded Selector"
+    )
     session = load_project_picker_session(projects_dir)
     selected: list[Path | None] = []
     app = ProjectPickerApp(session)
@@ -82,7 +88,9 @@ def test_project_picker_tui_question_mark_shows_help(tmp_path: Path) -> None:
             await pilot.pause()
 
             help_screen = pilot.app.screen
-            help_text = str(help_screen.query_one("#project-picker-help", Static).render())
+            help_text = str(
+                help_screen.query_one("#project-picker-help", Static).render()
+            )
 
             assert isinstance(help_screen, ProjectPickerHelpScreen)
             assert "Project List Shortcuts" in help_text

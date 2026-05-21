@@ -33,7 +33,11 @@ def should_disable_color() -> bool:
     Returns:
         True when root options or terminal environment request plain output.
     """
-    return _NO_COLOR_REQUESTED or "NO_COLOR" in os.environ or os.environ.get("TERM", "").lower() == "dumb"
+    return (
+        _NO_COLOR_REQUESTED
+        or "NO_COLOR" in os.environ
+        or os.environ.get("TERM", "").lower() == "dumb"
+    )
 
 
 def should_enable_verbose_logs() -> bool:

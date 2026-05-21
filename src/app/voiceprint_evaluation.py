@@ -10,8 +10,16 @@ from typing import Any
 from app.core.project_refs import list_projects
 from app.project_manager import load_manifest
 from app.speaker_labeling import load_ignored_speakers
-from app.speaker_match_status import best_candidate_name, best_candidate_score, match_threshold
-from app.speaker_matching import SpeakerMatchSummary, match_project_speakers, preview_project_speaker_matches
+from app.speaker_match_status import (
+    best_candidate_name,
+    best_candidate_score,
+    match_threshold,
+)
+from app.speaker_matching import (
+    SpeakerMatchSummary,
+    match_project_speakers,
+    preview_project_speaker_matches,
+)
 
 DEFAULT_DECLINE_THRESHOLD = 0.05
 DEFAULT_HISTORICAL_LIMIT = 20
@@ -34,7 +42,9 @@ class VoiceprintScoreChange:
     @property
     def is_critical(self) -> bool:
         """Return whether this change can indicate a wrong identity."""
-        return self.status in {"changed-best", "lost-candidate"} or self.is_below_threshold
+        return (
+            self.status in {"changed-best", "lost-candidate"} or self.is_below_threshold
+        )
 
     @property
     def is_warning(self) -> bool:
@@ -212,14 +222,31 @@ def _historical_evaluations(
     limit: int,
 ) -> list[VoiceprintProjectEvaluation]:
     """Dry-run matching for historical projects with existing match files."""
-    projects = [item.project_dir for item in list_projects(project_root.parent).projects]
-    candidates = [item for item in projects if item.resolve() != project_root and _match_path(item).exists()]
+    projects = [
+        item.project_dir for item in list_projects(project_root.parent).projects
+    ]
+    candidates = [
+        item
+        for item in projects
+        if item.resolve() != project_root and _match_path(item).exists()
+    ]
     evaluations: list[VoiceprintProjectEvaluation] = []
     for candidate in candidates[:limit]:
         before = _load_match_rows(candidate)
-        after = _preview_matches(candidate, store_dir, provider, model, threshold, sample_count, max_seconds, padding_seconds)
+        after = _preview_matches(
+            candidate,
+            store_dir,
+            provider,
+            model,
+            threshold,
+            sample_count,
+            max_seconds,
+            padding_seconds,
+        )
         if after is not None:
-            evaluations.append(_project_evaluation(candidate, False, before, after, decline_threshold))
+            evaluations.append(
+                _project_evaluation(candidate, False, before, after, decline_threshold)
+            )
     return evaluations
 
 
@@ -265,10 +292,14 @@ def _project_evaluation(
         for item in after.matches
         if item.speaker_id not in ignored_speaker_ids
     )
-    return VoiceprintProjectEvaluation(project_dir, manifest.project_id, manifest.title, current, changes)
+    return VoiceprintProjectEvaluation(
+        project_dir, manifest.project_id, manifest.title, current, changes
+    )
 
 
-def _score_change(match: object, before: dict[str, Any] | None, decline_threshold: float) -> VoiceprintScoreChange:
+def _score_change(
+    match: object, before: dict[str, Any] | None, decline_threshold: float
+) -> VoiceprintScoreChange:
     """Compare one speaker match row before and after embedding."""
     before_name = best_candidate_name(before or {})
     before_score = best_candidate_score(before or {})
@@ -323,7 +354,11 @@ def _load_match_rows(project_dir: Path) -> dict[int, dict[str, Any]]:
         return {}
     payload = json.loads(path.read_text(encoding="utf-8"))
     rows = payload.get("matches", []) if isinstance(payload, dict) else []
-    return {int(row["speaker_id"]): dict(row) for row in rows if isinstance(row, dict) and "speaker_id" in row}
+    return {
+        int(row["speaker_id"]): dict(row)
+        for row in rows
+        if isinstance(row, dict) and "speaker_id" in row
+    }
 
 
 def _ignored_speaker_ids(project_dir: Path, manifest: Any) -> set[int]:

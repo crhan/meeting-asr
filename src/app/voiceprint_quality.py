@@ -68,12 +68,22 @@ class VoiceprintQualityPerson:
     @property
     def suspicious_count(self) -> int:
         """Return number of active samples marked warning or critical."""
-        return sum(1 for item in self.samples if item.status == VOICEPRINT_SAMPLE_STATUS_ACTIVE and item.label in {"warning", "critical"})
+        return sum(
+            1
+            for item in self.samples
+            if item.status == VOICEPRINT_SAMPLE_STATUS_ACTIVE
+            and item.label in {"warning", "critical"}
+        )
 
     @property
     def critical_count(self) -> int:
         """Return number of active samples marked critical."""
-        return sum(1 for item in self.samples if item.status == VOICEPRINT_SAMPLE_STATUS_ACTIVE and item.label == "critical")
+        return sum(
+            1
+            for item in self.samples
+            if item.status == VOICEPRINT_SAMPLE_STATUS_ACTIVE
+            and item.label == "critical"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,15 +135,24 @@ def analyze_voiceprint_quality(
     Returns:
         Voiceprint quality report.
     """
-    _provider, resolved_model = resolve_voiceprint_embedding_options(provider=provider, model=model)
+    _provider, resolved_model = resolve_voiceprint_embedding_options(
+        provider=provider, model=model
+    )
     db_path = get_voiceprint_db_path(store_dir)
     rows = list_voiceprint_embeddings(resolved_model, db_path, include_inactive=True)
     grouped = _group_rows(rows, speaker)
     people = tuple(
-        _person_quality(rows, critical_score=critical_score, warning_score=warning_score, min_cluster_size=min_cluster_size)
+        _person_quality(
+            rows,
+            critical_score=critical_score,
+            warning_score=warning_score,
+            min_cluster_size=min_cluster_size,
+        )
         for rows in grouped.values()
     )
-    return VoiceprintQualityReport(db_path, resolved_model, tuple(sorted(people, key=_person_sort_key)))
+    return VoiceprintQualityReport(
+        db_path, resolved_model, tuple(sorted(people, key=_person_sort_key))
+    )
 
 
 def _group_rows(rows: list[object], speaker: str | None) -> dict[int, list[object]]:
@@ -141,7 +160,10 @@ def _group_rows(rows: list[object], speaker: str | None) -> dict[int, list[objec
     grouped: dict[int, list[object]] = defaultdict(list)
     normalized_filter = speaker.strip().casefold() if speaker else None
     for row in rows:
-        if normalized_filter and normalized_filter not in {row.speaker_public_id.casefold(), row.speaker_name.casefold()}:
+        if normalized_filter and normalized_filter not in {
+            row.speaker_public_id.casefold(),
+            row.speaker_name.casefold(),
+        }:
             continue
         grouped[row.speaker_id].append(row)
     return grouped
@@ -156,9 +178,19 @@ def _person_quality(
 ) -> VoiceprintQualityPerson:
     """Build quality diagnostics for one person."""
     first = rows[0]
-    active_rows = [row for row in rows if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES]
-    centroid = _centroid([row.vector for row in active_rows]) if len(active_rows) >= min_cluster_size else None
-    scores = [_cosine(_normalize(row.vector), centroid) for row in active_rows] if centroid is not None else []
+    active_rows = [
+        row for row in rows if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
+    ]
+    centroid = (
+        _centroid([row.vector for row in active_rows])
+        if len(active_rows) >= min_cluster_size
+        else None
+    )
+    scores = (
+        [_cosine(_normalize(row.vector), centroid) for row in active_rows]
+        if centroid is not None
+        else []
+    )
     mean_score = statistics.mean(scores) if scores else None
     stdev_score = statistics.pstdev(scores) if len(scores) > 1 else None
     samples = tuple(
@@ -195,7 +227,9 @@ def _sample_quality(
 ) -> VoiceprintQualitySample:
     """Score one sample against the active cluster centroid."""
     if row.sample_status not in VOICEPRINT_MATCHING_SAMPLE_STATUSES:
-        return _quality_sample(row, None, row.sample_status, f"status={row.sample_status}")
+        return _quality_sample(
+            row, None, row.sample_status, f"status={row.sample_status}"
+        )
     if centroid is None:
         if row.sample_status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
             return _quality_sample(row, None, "verified", "human verified active")
@@ -203,7 +237,11 @@ def _sample_quality(
     score = _cosine(_normalize(row.vector), centroid)
     if row.sample_status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
         return _quality_sample(row, score, "verified", "human verified active")
-    statistical_limit = None if mean_score is None or stdev_score is None else mean_score - 2 * stdev_score
+    statistical_limit = (
+        None
+        if mean_score is None or stdev_score is None
+        else mean_score - 2 * stdev_score
+    )
     if score < critical_score:
         return _quality_sample(row, score, "critical", f"score<{critical_score:.2f}")
     if statistical_limit is not None and score < statistical_limit:
@@ -213,7 +251,9 @@ def _sample_quality(
     return _quality_sample(row, score, "ok", "cluster-consistent")
 
 
-def _quality_sample(row: object, score: float | None, label: str, reason: str) -> VoiceprintQualitySample:
+def _quality_sample(
+    row: object, score: float | None, label: str, reason: str
+) -> VoiceprintQualitySample:
     """Build one quality sample row."""
     return VoiceprintQualitySample(
         row.sample_id,
@@ -253,11 +293,17 @@ def _cosine(left: list[float], right: list[float]) -> float:
 
 def _person_sort_key(person: VoiceprintQualityPerson) -> tuple[int, str]:
     """Sort people with suspicious samples first."""
-    return (-person.critical_count, -person.suspicious_count, person.speaker_name.casefold())
+    return (
+        -person.critical_count,
+        -person.suspicious_count,
+        person.speaker_name.casefold(),
+    )
 
 
 def _sample_sort_key(sample: VoiceprintQualitySample) -> tuple[int, float, str]:
     """Sort suspicious samples first, then by score."""
-    severity = {"critical": 0, "warning": 1, "ok": 2, "verified": 3, "unknown": 4}.get(sample.label, 5)
+    severity = {"critical": 0, "warning": 1, "ok": 2, "verified": 3, "unknown": 4}.get(
+        sample.label, 5
+    )
     score = sample.score if sample.score is not None else 999.0
     return (severity, score, sample.sample_public_id)

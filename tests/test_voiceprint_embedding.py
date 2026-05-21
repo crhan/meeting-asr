@@ -57,7 +57,9 @@ def test_local_speechbrain_embedding_uses_load_audio_and_encode_batch(
     classifier = _FakeSpeechBrainClassifier()
     clip_path = tmp_path / "clip.wav"
     clip_path.write_bytes(b"fake wav")
-    monkeypatch.setattr(voiceprint_embedding, "_load_speechbrain_classifier", lambda: classifier)
+    monkeypatch.setattr(
+        voiceprint_embedding, "_load_speechbrain_classifier", lambda: classifier
+    )
 
     vector = voiceprint_embedding._embed_audio_with_local_speechbrain(clip_path)
 
@@ -86,7 +88,9 @@ def test_speechbrain_loader_hides_model_fetch_info(
     assert "Fetch hyperparams.yaml" not in captured.err
 
 
-def test_embed_voiceprint_samples_uses_normalized_audio(monkeypatch, tmp_path: Path) -> None:
+def test_embed_voiceprint_samples_uses_normalized_audio(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Embedding should read the normalized derived clip, not the original clip."""
     store_dir = _store(tmp_path)
     normalized_path = store_dir / "normalized" / "v-test" / "clip.wav"
@@ -101,16 +105,22 @@ def test_embed_voiceprint_samples_uses_normalized_audio(monkeypatch, tmp_path: P
         embedded_paths.append(path)
         return [0.1, 0.2]
 
-    monkeypatch.setattr(voiceprint_embedding, "ensure_normalized_voiceprint_sample", fake_normalize)
+    monkeypatch.setattr(
+        voiceprint_embedding, "ensure_normalized_voiceprint_sample", fake_normalize
+    )
     monkeypatch.setattr(voiceprint_embedding, "embed_audio_file", fake_embed)
 
-    summary = embed_voiceprint_samples(store_dir=store_dir, provider=None, model=None, rebuild=False)
+    summary = embed_voiceprint_samples(
+        store_dir=store_dir, provider=None, model=None, rebuild=False
+    )
 
     assert summary.model == LOCAL_SPEECHBRAIN_MODEL
     assert embedded_paths == [normalized_path]
 
 
-def _capture_speechbrain_fetch_logger() -> tuple[logging.Logger, tuple[int, list[logging.Handler], bool]]:
+def _capture_speechbrain_fetch_logger() -> tuple[
+    logging.Logger, tuple[int, list[logging.Handler], bool]
+]:
     """Capture SpeechBrain fetch logger output for a test."""
     logger = logging.getLogger("speechbrain.utils.fetching")
     original_state = (logger.level, list(logger.handlers), logger.propagate)
@@ -121,7 +131,9 @@ def _capture_speechbrain_fetch_logger() -> tuple[logging.Logger, tuple[int, list
     return logger, original_state
 
 
-def _restore_logger(logger: logging.Logger, state: tuple[int, list[logging.Handler], bool]) -> None:
+def _restore_logger(
+    logger: logging.Logger, state: tuple[int, list[logging.Handler], bool]
+) -> None:
     """Restore a logger after a test."""
     level, handlers, propagate = state
     logger.handlers = handlers

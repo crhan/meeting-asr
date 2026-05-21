@@ -14,14 +14,26 @@ from app.project_manager import create_project, load_manifest
 runner = CliRunner()
 
 
-def test_project_trash_restore_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_project_trash_restore_round_trip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A safely deleted project should be restorable from trash."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     projects_dir = tmp_path / "projects"
     project_dir = _sample_project(tmp_path, projects_dir, "Review Me")
     manifest = load_manifest(project_dir)
 
-    delete_result = runner.invoke(app, ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--yes"])
+    delete_result = runner.invoke(
+        app,
+        [
+            "project",
+            "delete",
+            manifest.project_id,
+            "--projects-dir",
+            str(projects_dir),
+            "--yes",
+        ],
+    )
     trash_list_result = runner.invoke(app, ["project", "trash", "list"])
     trash_plain_result = runner.invoke(app, ["project", "trash", "list", "--plain"])
     trash_json_result = runner.invoke(app, ["project", "trash", "list", "--json"])
@@ -29,9 +41,18 @@ def test_project_trash_restore_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_p
     project_missing_after_delete = not project_dir.exists()
     restore_result = runner.invoke(
         app,
-        ["project", "trash", "restore", manifest.project_id, "--projects-dir", str(projects_dir)],
+        [
+            "project",
+            "trash",
+            "restore",
+            manifest.project_id,
+            "--projects-dir",
+            str(projects_dir),
+        ],
     )
-    project_list_result = runner.invoke(app, ["project", "list", "--projects-dir", str(projects_dir)])
+    project_list_result = runner.invoke(
+        app, ["project", "list", "--projects-dir", str(projects_dir)]
+    )
 
     assert delete_result.exit_code == 0
     assert "Project moved to trash." in delete_result.output
@@ -42,7 +63,10 @@ def test_project_trash_restore_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "No." not in trash_list_result.output
     assert "Review Me" in trash_list_result.output
     assert trash_plain_result.exit_code == 0
-    assert trash_plain_result.output.splitlines()[0] == "project_id\tstatus\ttrashed\ttitle\ttrash_dir"
+    assert (
+        trash_plain_result.output.splitlines()[0]
+        == "project_id\tstatus\ttrashed\ttitle\ttrash_dir"
+    )
     assert f"{manifest.project_id}\tcreated\t" in trash_plain_result.output
     assert "Review Me" in trash_plain_result.output
     assert "╭" not in trash_plain_result.output
@@ -51,7 +75,9 @@ def test_project_trash_restore_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "number" not in trash_payload["projects"][0]
     assert trash_payload["projects"][0]["project_id"] == manifest.project_id
     assert trash_payload["projects"][0]["title"] == "Review Me"
-    assert trash_payload["projects"][0]["restore_project_dir"] == str(project_dir.resolve())
+    assert trash_payload["projects"][0]["restore_project_dir"] == str(
+        project_dir.resolve()
+    )
     assert restore_result.exit_code == 0
     assert "Project restored." in restore_result.output
     assert project_dir.exists()
@@ -68,8 +94,20 @@ def test_project_trash_purge_removes_trashed_project(
     project_dir = _sample_project(tmp_path, projects_dir, "Purge Me")
     manifest = load_manifest(project_dir)
 
-    delete_result = runner.invoke(app, ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--yes"])
-    purge_result = runner.invoke(app, ["project", "trash", "purge", manifest.project_id, "--yes"])
+    delete_result = runner.invoke(
+        app,
+        [
+            "project",
+            "delete",
+            manifest.project_id,
+            "--projects-dir",
+            str(projects_dir),
+            "--yes",
+        ],
+    )
+    purge_result = runner.invoke(
+        app, ["project", "trash", "purge", manifest.project_id, "--yes"]
+    )
     trash_list_result = runner.invoke(app, ["project", "trash", "list"])
 
     assert delete_result.exit_code == 0
@@ -89,8 +127,20 @@ def test_project_trash_cleanup_can_remove_all(
     project_dir = _sample_project(tmp_path, projects_dir, "Cleanup Me")
     manifest = load_manifest(project_dir)
 
-    delete_result = runner.invoke(app, ["project", "delete", manifest.project_id, "--projects-dir", str(projects_dir), "--yes"])
-    cleanup_result = runner.invoke(app, ["project", "trash", "cleanup", "--older-than-days", "0", "--yes"])
+    delete_result = runner.invoke(
+        app,
+        [
+            "project",
+            "delete",
+            manifest.project_id,
+            "--projects-dir",
+            str(projects_dir),
+            "--yes",
+        ],
+    )
+    cleanup_result = runner.invoke(
+        app, ["project", "trash", "cleanup", "--older-than-days", "0", "--yes"]
+    )
     trash_list_result = runner.invoke(app, ["project", "trash", "list"])
 
     assert delete_result.exit_code == 0

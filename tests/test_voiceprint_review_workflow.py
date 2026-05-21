@@ -6,11 +6,17 @@ from pathlib import Path
 
 from app.presentation.tui import voiceprint_review_workflow
 from app.voiceprint_embedding import VoiceprintEmbedSummary
-from app.voiceprint_evaluation import VoiceprintEvaluationSummary, VoiceprintProjectEvaluation, VoiceprintScoreChange
+from app.voiceprint_evaluation import (
+    VoiceprintEvaluationSummary,
+    VoiceprintProjectEvaluation,
+    VoiceprintScoreChange,
+)
 from app.voiceprints import VoiceprintCaptureSummary, VoiceprintClip, VoiceprintSpeaker
 
 
-def test_voiceprint_review_workflow_can_roll_back_pending_files(monkeypatch, tmp_path: Path) -> None:
+def test_voiceprint_review_workflow_can_roll_back_pending_files(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Rejecting a workflow should restore DB, project files, match file, and clips."""
     project_dir = tmp_path / "project"
     store_dir = tmp_path / "voiceprints"
@@ -29,11 +35,19 @@ def test_voiceprint_review_workflow_can_roll_back_pending_files(monkeypatch, tmp
         _write_file(clip_path, "new clip")
         _write_file(manifest_path, "new manifest")
         _write_file(match_path, "new match")
-        return VoiceprintCaptureSummary(store_dir, db_path, store_dir / "clips", planned.speakers, False)
+        return VoiceprintCaptureSummary(
+            store_dir, db_path, store_dir / "clips", planned.speakers, False
+        )
 
-    monkeypatch.setattr(voiceprint_review_workflow, "persist_voiceprint_capture_selection", fake_capture)
-    monkeypatch.setattr(voiceprint_review_workflow, "embed_voiceprint_samples", _fake_embed)
-    monkeypatch.setattr(voiceprint_review_workflow, "evaluate_voiceprint_embedding", _fake_evaluation)
+    monkeypatch.setattr(
+        voiceprint_review_workflow, "persist_voiceprint_capture_selection", fake_capture
+    )
+    monkeypatch.setattr(
+        voiceprint_review_workflow, "embed_voiceprint_samples", _fake_embed
+    )
+    monkeypatch.setattr(
+        voiceprint_review_workflow, "evaluate_voiceprint_embedding", _fake_evaluation
+    )
 
     summary = voiceprint_review_workflow.run_voiceprint_review_workflow(
         project_dir=project_dir,
@@ -167,7 +181,10 @@ def test_current_project_changed_best_is_rendered_as_expected_improvement() -> N
 
     rendered = voiceprint_review_workflow._current_evaluation_text(evaluation)
 
-    assert "[green]Speaker B: 华璟 0.564 -> 黄睿 0.843 (+0.279) changed-best threshold=0.750[/]" in rendered
+    assert (
+        "[green]Speaker B: 华璟 0.564 -> 黄睿 0.843 (+0.279) changed-best threshold=0.750[/]"
+        in rendered
+    )
     assert "[red]Speaker B" not in rendered
 
 
@@ -209,7 +226,9 @@ def test_historical_risk_details_are_capped_to_keep_actions_visible() -> None:
     assert "... 2 more risky change(s) omitted" in rendered
 
 
-def _planned_capture(store_dir: Path, db_path: Path, clip_path: Path) -> VoiceprintCaptureSummary:
+def _planned_capture(
+    store_dir: Path, db_path: Path, clip_path: Path
+) -> VoiceprintCaptureSummary:
     """Build a planned capture summary for one clip."""
     clip = VoiceprintClip(
         clip_path,
@@ -232,7 +251,9 @@ def _planned_capture(store_dir: Path, db_path: Path, clip_path: Path) -> Voicepr
 def _fake_embed(**kwargs) -> VoiceprintEmbedSummary:
     """Return a deterministic embedding summary."""
     store_dir = Path(kwargs["store_dir"])
-    return VoiceprintEmbedSummary(store_dir / "voiceprints.sqlite", "local-speechbrain", "test-model", 1, 0)
+    return VoiceprintEmbedSummary(
+        store_dir / "voiceprints.sqlite", "local-speechbrain", "test-model", 1, 0
+    )
 
 
 def _fake_evaluation(*args, **kwargs) -> VoiceprintEvaluationSummary:
@@ -242,7 +263,11 @@ def _fake_evaluation(*args, **kwargs) -> VoiceprintEvaluationSummary:
         "project-1",
         "Project",
         True,
-        (VoiceprintScoreChange(0, "Speaker A", "Alice", 0.6, "Alice", 0.8, 0.2, "improved"),),
+        (
+            VoiceprintScoreChange(
+                0, "Speaker A", "Alice", 0.6, "Alice", 0.8, 0.2, "improved"
+            ),
+        ),
     )
     return VoiceprintEvaluationSummary(current, ())
 

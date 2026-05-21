@@ -24,7 +24,9 @@ from app.voiceprint_store import (
 VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN = "local-speechbrain"
 DEFAULT_VOICEPRINT_PROVIDER = VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
 LOCAL_SPEECHBRAIN_BASE_MODEL = "speechbrain-spkrec-ecapa-voxceleb"
-LOCAL_SPEECHBRAIN_MODEL = f"{LOCAL_SPEECHBRAIN_BASE_MODEL}+{VOICEPRINT_AUDIO_PREPROCESS_VERSION}"
+LOCAL_SPEECHBRAIN_MODEL = (
+    f"{LOCAL_SPEECHBRAIN_BASE_MODEL}+{VOICEPRINT_AUDIO_PREPROCESS_VERSION}"
+)
 SUPPORTED_VOICEPRINT_PROVIDERS = (VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,)
 
 _PROVIDER_ALIASES = {
@@ -71,28 +73,40 @@ def embed_voiceprint_samples(
     Returns:
         Embedding summary.
     """
-    resolved_provider, resolved_model = resolve_voiceprint_embedding_options(provider=provider, model=model)
+    resolved_provider, resolved_model = resolve_voiceprint_embedding_options(
+        provider=provider, model=model
+    )
     db_path = get_voiceprint_db_path(store_dir)
     samples = list_all_voiceprint_samples(db_path)
-    embedded_ids = set() if rebuild else list_embedded_sample_ids(resolved_model, db_path)
+    embedded_ids = (
+        set() if rebuild else list_embedded_sample_ids(resolved_model, db_path)
+    )
     embedded_count = 0
     skipped_count = 0
-    emit_progress(progress, "Embedding voiceprint samples", total=len(samples), completed=0)
+    emit_progress(
+        progress, "Embedding voiceprint samples", total=len(samples), completed=0
+    )
     for sample in samples:
         if sample.sample_id in embedded_ids:
             skipped_count += 1
             emit_progress(progress, "Skipping existing voiceprint embedding", advance=1)
             continue
-        normalized_path = ensure_normalized_voiceprint_sample(sample, store_dir=store_dir)
+        normalized_path = ensure_normalized_voiceprint_sample(
+            sample, store_dir=store_dir
+        )
         vector = embed_audio_file(normalized_path, provider=resolved_provider)
         upsert_voiceprint_embedding(sample.sample_id, resolved_model, vector, db_path)
         embedded_count += 1
         emit_progress(progress, "Embedded voiceprint sample", advance=1)
     emit_progress(progress, "Voiceprint embeddings ready")
-    return VoiceprintEmbedSummary(db_path, resolved_provider, resolved_model, embedded_count, skipped_count)
+    return VoiceprintEmbedSummary(
+        db_path, resolved_provider, resolved_model, embedded_count, skipped_count
+    )
 
 
-def resolve_voiceprint_embedding_options(*, provider: str | None, model: str | None) -> tuple[str, str]:
+def resolve_voiceprint_embedding_options(
+    *, provider: str | None, model: str | None
+) -> tuple[str, str]:
     """
     Resolve provider and model names from CLI options plus global config.
 
@@ -122,7 +136,9 @@ def resolve_voiceprint_provider(provider: str | None) -> str:
     normalized = _PROVIDER_ALIASES.get(provider.strip().lower())
     if normalized is None:
         supported = ", ".join(SUPPORTED_VOICEPRINT_PROVIDERS)
-        raise ValueError(f"Unsupported voiceprint embedding provider: {provider}. Supported providers: {supported}")
+        raise ValueError(
+            f"Unsupported voiceprint embedding provider: {provider}. Supported providers: {supported}"
+        )
     return normalized
 
 
@@ -185,7 +201,9 @@ def _load_speechbrain_classifier() -> Any:
                     raise RuntimeError(_speechbrain_install_message()) from exc
             _SPEECHBRAIN_CLASSIFIER = EncoderClassifier.from_hparams(
                 source="speechbrain/spkrec-ecapa-voxceleb",
-                savedir=str(get_cache_dir() / "models" / "speechbrain" / "spkrec-ecapa-voxceleb"),
+                savedir=str(
+                    get_cache_dir() / "models" / "speechbrain" / "spkrec-ecapa-voxceleb"
+                ),
             )
         return _SPEECHBRAIN_CLASSIFIER
 

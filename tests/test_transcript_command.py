@@ -28,7 +28,9 @@ def test_project_transcript_show_auto_prefers_corrected_output(tmp_path: Path) -
     """Auto mode should prefer accepted local correction outputs when present."""
     project_dir = _sample_project(tmp_path)
     _write_transcript_outputs(project_dir)
-    (project_dir / "exports" / "transcript_named_corrected.txt").write_text("欧丁: iSee\n", encoding="utf-8")
+    (project_dir / "exports" / "transcript_named_corrected.txt").write_text(
+        "欧丁: iSee\n", encoding="utf-8"
+    )
 
     result = runner.invoke(app, ["project", "transcript", "show", str(project_dir)])
 
@@ -45,7 +47,14 @@ def test_project_transcript_show_accepts_project_id(tmp_path: Path) -> None:
 
     result = runner.invoke(
         app,
-        ["project", "transcript", "show", manifest.project_id, "--projects-dir", str(projects_dir)],
+        [
+            "project",
+            "transcript",
+            "show",
+            manifest.project_id,
+            "--projects-dir",
+            str(projects_dir),
+        ],
     )
 
     assert result.exit_code == 0
@@ -57,7 +66,9 @@ def test_transcript_path_prefers_named_srt(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path)
     _write_transcript_outputs(project_dir)
 
-    result = runner.invoke(app, ["project", "transcript", "path", str(project_dir), "--kind", "srt"])
+    result = runner.invoke(
+        app, ["project", "transcript", "path", str(project_dir), "--kind", "srt"]
+    )
 
     assert result.exit_code == 0
     assert result.output.strip() == str(project_dir / "exports" / "subtitle_named.srt")
@@ -83,7 +94,9 @@ def test_transcript_list_prints_json(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path)
     _write_transcript_outputs(project_dir)
 
-    result = runner.invoke(app, ["project", "transcript", "list", str(project_dir), "--json"])
+    result = runner.invoke(
+        app, ["project", "transcript", "list", str(project_dir), "--json"]
+    )
     payload = json.loads(result.output)
 
     assert result.exit_code == 0
@@ -101,7 +114,9 @@ def test_transcript_list_prints_plain_rows(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path)
     _write_transcript_outputs(project_dir)
 
-    result = runner.invoke(app, ["project", "transcript", "list", str(project_dir), "--plain"])
+    result = runner.invoke(
+        app, ["project", "transcript", "list", str(project_dir), "--plain"]
+    )
 
     assert result.exit_code == 0
     assert result.output.splitlines()[0] == "kind\tstatus\tpath"
@@ -128,7 +143,9 @@ def test_transcript_show_can_select_plain_output(tmp_path: Path) -> None:
     project_dir = _sample_project(tmp_path)
     _write_transcript_outputs(project_dir)
 
-    result = runner.invoke(app, ["project", "transcript", "show", str(project_dir), "--kind", "plain"])
+    result = runner.invoke(
+        app, ["project", "transcript", "show", str(project_dir), "--kind", "plain"]
+    )
 
     assert result.exit_code == 0
     assert result.output == "纯文本\n"
@@ -165,7 +182,9 @@ def _write_transcript_outputs(project_dir: Path) -> None:
     exports_dir.mkdir(exist_ok=True)
     asr_dir.mkdir(exist_ok=True)
     (exports_dir / "transcript.txt").write_text("纯文本\n", encoding="utf-8")
-    (exports_dir / "transcript_speakers.txt").write_text("Speaker A: 你好\n", encoding="utf-8")
+    (exports_dir / "transcript_speakers.txt").write_text(
+        "Speaker A: 你好\n", encoding="utf-8"
+    )
     (exports_dir / "transcript_named.txt").write_text("欧丁: 你好\n", encoding="utf-8")
     (exports_dir / "subtitle.srt").write_text("anonymous srt\n", encoding="utf-8")
     (exports_dir / "subtitle_named.srt").write_text("named srt\n", encoding="utf-8")

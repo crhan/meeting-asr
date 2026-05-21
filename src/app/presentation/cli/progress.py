@@ -65,7 +65,11 @@ def run_with_progress(
     if not _should_render_progress(console, enabled):
         reporter = _LineProgressReporter(console) if structured_log else None
         return run_with_cli_errors(lambda: operation(reporter))
-    return run_with_cli_errors(lambda: _run_with_rich_progress(operation, console, description, total, structured_log))
+    return run_with_cli_errors(
+        lambda: _run_with_rich_progress(
+            operation, console, description, total, structured_log
+        )
+    )
 
 
 def _run_with_rich_progress(
@@ -107,7 +111,9 @@ def _run_with_rich_progress(
             step_started_at=now,
             workflow_started_at=now,
         )
-        renderer = _RichProgressRenderer(progress, task_id, now, structured_log=structured_log)
+        renderer = _RichProgressRenderer(
+            progress, task_id, now, structured_log=structured_log
+        )
 
         def report(event: CliProgressEvent) -> None:
             renderer.report(event)
@@ -177,7 +183,9 @@ class _RichProgressRenderer:
             self._apply_workflow_event(event)
             return
         if self.workflow_enabled and self.current_step_index is not None:
-            _apply_progress_event(self.progress, self.step_task_ids[self.current_step_index], event)
+            _apply_progress_event(
+                self.progress, self.step_task_ids[self.current_step_index], event
+            )
             return
         _apply_progress_event(self.progress, self.fallback_task_id, event)
 
@@ -202,7 +210,9 @@ class _RichProgressRenderer:
 
     def _apply_workflow_event(self, event: CliProgressEvent) -> None:
         """Apply an event that identifies a workflow step."""
-        self._ensure_workflow(event.step_total or event.step_index or 1, event.step_descriptions)
+        self._ensure_workflow(
+            event.step_total or event.step_index or 1, event.step_descriptions
+        )
         step_index = event.step_index or 1
         if step_index != self.current_step_index:
             if self.current_step_index is not None:
@@ -211,7 +221,9 @@ class _RichProgressRenderer:
             self._start_step(step_index)
         _apply_progress_event(self.progress, self.step_task_ids[step_index], event)
 
-    def _ensure_workflow(self, step_total: int, step_descriptions: tuple[str, ...]) -> None:
+    def _ensure_workflow(
+        self, step_total: int, step_descriptions: tuple[str, ...]
+    ) -> None:
         """Create persistent step rows once."""
         if self.workflow_enabled:
             self._apply_workflow_plan(step_descriptions)
@@ -298,7 +310,9 @@ def _apply_progress_event(progress: Progress, task_id, event: CliProgressEvent) 
         updates["step_label"] = _format_step_label(event.step_index, event.step_total)
         updates["step_started_at"] = time.monotonic()
     if event.description is not None:
-        display_description, detail_label = _split_progress_description(event.description)
+        display_description, detail_label = _split_progress_description(
+            event.description
+        )
         updates["description"] = display_description
         updates["detail_label"] = detail_label
     if event.reset_total:
@@ -314,7 +328,9 @@ def _apply_progress_event(progress: Progress, task_id, event: CliProgressEvent) 
         progress.advance(task_id, event.advance)
 
 
-def _reset_progress_task(progress: Progress, task_id, event: CliProgressEvent, fields: dict[str, object]) -> None:
+def _reset_progress_task(
+    progress: Progress, task_id, event: CliProgressEvent, fields: dict[str, object]
+) -> None:
     """
     Reset per-step progress without resetting the workflow clock.
 
@@ -431,7 +447,10 @@ class _WorkflowBarColumn(ProgressColumn):
         Returns:
             Bar renderable or blank text.
         """
-        if task.fields.get("row_kind") == "total" or task.fields.get("step_state") == "pending":
+        if (
+            task.fields.get("row_kind") == "total"
+            or task.fields.get("step_state") == "pending"
+        ):
             return Text("")
         return self._bar.render(task)
 
@@ -488,7 +507,10 @@ class _StepElapsedColumn(_ElapsedColumn):
         Returns:
             Duration text or blank text for non-step rows.
         """
-        if task.fields.get("row_kind") == "total" or task.fields.get("step_state") == "pending":
+        if (
+            task.fields.get("row_kind") == "total"
+            or task.fields.get("step_state") == "pending"
+        ):
             return Text("")
         return _render_step_elapsed(task)
 
@@ -525,8 +547,12 @@ def _render_step_elapsed(task: Task) -> Text:
     if not isinstance(started_at, int | float):
         started_at = task.start_time or time.monotonic()
     finished_at = task.fields.get("step_finished_at")
-    end_at = float(finished_at) if isinstance(finished_at, int | float) else time.monotonic()
-    return Text(_format_elapsed_seconds(end_at - float(started_at)), style="progress.elapsed")
+    end_at = (
+        float(finished_at) if isinstance(finished_at, int | float) else time.monotonic()
+    )
+    return Text(
+        _format_elapsed_seconds(end_at - float(started_at)), style="progress.elapsed"
+    )
 
 
 def _render_total_elapsed(task: Task) -> Text:
@@ -542,7 +568,10 @@ def _render_total_elapsed(task: Task) -> Text:
     started_at = task.fields.get("workflow_started_at")
     if not isinstance(started_at, int | float):
         started_at = task.start_time or time.monotonic()
-    return Text(_format_elapsed_seconds(time.monotonic() - float(started_at)), style="progress.elapsed")
+    return Text(
+        _format_elapsed_seconds(time.monotonic() - float(started_at)),
+        style="progress.elapsed",
+    )
 
 
 def _progress_layout(console: Console) -> _ProgressLayout:
@@ -559,10 +588,15 @@ def _progress_layout(console: Console) -> _ProgressLayout:
     fixed_width = PROGRESS_DESCRIPTION_BASE_WIDTH + PROGRESS_BAR_BASE_WIDTH
     fixed_width += PROGRESS_ELAPSED_WIDTH + PROGRESS_COLUMN_GAP_WIDTH
     if target_width <= fixed_width:
-        bar_width = max(PROGRESS_BAR_MIN_WIDTH, min(PROGRESS_BAR_BASE_WIDTH, target_width // 6))
+        bar_width = max(
+            PROGRESS_BAR_MIN_WIDTH, min(PROGRESS_BAR_BASE_WIDTH, target_width // 6)
+        )
         description_width = max(
             PROGRESS_DESCRIPTION_MIN_WIDTH,
-            target_width - bar_width - PROGRESS_ELAPSED_WIDTH - PROGRESS_COLUMN_GAP_WIDTH,
+            target_width
+            - bar_width
+            - PROGRESS_ELAPSED_WIDTH
+            - PROGRESS_COLUMN_GAP_WIDTH,
         )
         return _ProgressLayout(target_width, description_width, bar_width)
 
@@ -571,7 +605,10 @@ def _progress_layout(console: Console) -> _ProgressLayout:
         PROGRESS_DESCRIPTION_MAX_WIDTH - PROGRESS_DESCRIPTION_BASE_WIDTH,
         int(extra_width * 0.65),
     )
-    bar_extra = min(PROGRESS_BAR_MAX_WIDTH - PROGRESS_BAR_BASE_WIDTH, extra_width - description_extra)
+    bar_extra = min(
+        PROGRESS_BAR_MAX_WIDTH - PROGRESS_BAR_BASE_WIDTH,
+        extra_width - description_extra,
+    )
     return _ProgressLayout(
         console_width=target_width,
         description_width=PROGRESS_DESCRIPTION_BASE_WIDTH + description_extra,
@@ -615,7 +652,9 @@ def _format_step_label(step_index: int, step_total: int | None) -> str:
     return f"[{step_index}/{step_total}]"
 
 
-def _planned_step_description(step_index: int, step_descriptions: tuple[str, ...]) -> str:
+def _planned_step_description(
+    step_index: int, step_descriptions: tuple[str, ...]
+) -> str:
     """
     Return a planned step description, falling back to a numbered placeholder.
 
@@ -665,7 +704,11 @@ def _is_workflow_event(event: CliProgressEvent) -> bool:
     Returns:
         True for numbered multi-step workflow events.
     """
-    return event.step_index is not None and event.step_total is not None and event.step_total > 1
+    return (
+        event.step_index is not None
+        and event.step_total is not None
+        and event.step_total > 1
+    )
 
 
 def _progress_log_line(event: CliProgressEvent) -> str:
@@ -711,7 +754,9 @@ def _safe_log_value(key: str, value: object) -> str:
     """
     text = str(value)
     lowered = key.lower()
-    if any(secret in lowered for secret in ("token", "secret", "signature", "access_key")):
+    if any(
+        secret in lowered for secret in ("token", "secret", "signature", "access_key")
+    ):
         return "<redacted>"
     if "url" in lowered and "?" in text:
         return text.split("?", 1)[0] + "?<redacted>"
@@ -741,7 +786,9 @@ def _split_progress_description(description: str) -> tuple[str, str]:
     Returns:
         Tuple of ``(main_action, detail_label)``.
     """
-    segments = [segment.strip() for segment in description.split(" | ") if segment.strip()]
+    segments = [
+        segment.strip() for segment in description.split(" | ") if segment.strip()
+    ]
     if not segments:
         return description, ""
     main_action, task_id = _extract_trailing_task_id(segments[0])
@@ -761,7 +808,9 @@ def _extract_trailing_task_id(text: str) -> tuple[str, str | None]:
     Returns:
         ``(cleaned_text, task_id)`` when an id is found, otherwise ``(text, None)``.
     """
-    match = re.fullmatch(r"(?P<label>.+) \((?P<token>[0-9A-Za-z][0-9A-Za-z_.:-]{7,})\)", text)
+    match = re.fullmatch(
+        r"(?P<label>.+) \((?P<token>[0-9A-Za-z][0-9A-Za-z_.:-]{7,})\)", text
+    )
     if match is None:
         return text, None
     return match.group("label"), match.group("token")

@@ -140,10 +140,19 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
     def compose(self) -> ComposeResult:
         """Build the identity selection modal."""
         with Vertical(id="identity-box"):
-            yield Static(tr(f"Edit Identity | {self.speaker_label}", f"编辑身份 | {self.speaker_label}"), id="identity-title")
+            yield Static(
+                tr(
+                    f"Edit Identity | {self.speaker_label}",
+                    f"编辑身份 | {self.speaker_label}",
+                ),
+                id="identity-title",
+            )
             yield Static(self._context_text(), id="identity-context")
             yield IdentityInput(
-                placeholder=tr("Type to filter people, or +Name to create", "输入过滤人员，或用 +名字 新建"),
+                placeholder=tr(
+                    "Type to filter people, or +Name to create",
+                    "输入过滤人员，或用 +名字 新建",
+                ),
                 id="identity-search",
             )
             yield Static(id="identity-list")
@@ -178,7 +187,11 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
         """Accept the highlighted person."""
         person = self._selected_person()
         if person is not None:
-            self.dismiss(IdentitySelection(person.person_id, _display_public_id(person), person.name))
+            self.dismiss(
+                IdentitySelection(
+                    person.person_id, _display_public_id(person), person.name
+                )
+            )
 
     def action_cancel_identity(self) -> None:
         """Cancel identity selection."""
@@ -191,20 +204,36 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
             return
         exact = find_person_by_name(value, self.people) if value else None
         if exact is not None:
-            self.dismiss(IdentitySelection(exact.person_id, _display_public_id(exact), exact.name))
+            self.dismiss(
+                IdentitySelection(
+                    exact.person_id, _display_public_id(exact), exact.name
+                )
+            )
             return
         person = self._selected_person()
         if person is not None:
-            self.dismiss(IdentitySelection(person.person_id, _display_public_id(person), person.name))
+            self.dismiss(
+                IdentitySelection(
+                    person.person_id, _display_public_id(person), person.name
+                )
+            )
             return
         self.query_one("#identity-status", Static).update(
-            tr(f"Unknown person: {escape(value)}. Use +Name to create.", f"未知人员：{escape(value)}。使用 +名字 新建。")
+            tr(
+                f"Unknown person: {escape(value)}. Use +Name to create.",
+                f"未知人员：{escape(value)}。使用 +名字 新建。",
+            )
         )
 
     def _create_person(self, name: str) -> None:
         """Create a new stable person explicitly."""
         if not name:
-            self.query_one("#identity-status", Static).update(tr("New person name is empty. Use +Name.", "新人员姓名为空。请使用 +名字。"))
+            self.query_one("#identity-status", Static).update(
+                tr(
+                    "New person name is empty. Use +Name.",
+                    "新人员姓名为空。请使用 +名字。",
+                )
+            )
             return
         duplicate = find_person_by_name(name, self.people)
         if duplicate is not None:
@@ -218,9 +247,16 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
         try:
             row = create_voiceprint_person(name, get_voiceprint_db_path(self.store_dir))
         except Exception as exc:  # noqa: BLE001
-            self.query_one("#identity-status", Static).update(tr(f"Failed to create person: {escape(str(exc))}", f"创建人员失败：{escape(str(exc))}"))
+            self.query_one("#identity-status", Static).update(
+                tr(
+                    f"Failed to create person: {escape(str(exc))}",
+                    f"创建人员失败：{escape(str(exc))}",
+                )
+            )
             return
-        self.dismiss(IdentitySelection(row.speaker_id, row.public_id, row.name, created=True))
+        self.dismiss(
+            IdentitySelection(row.speaker_id, row.public_id, row.name, created=True)
+        )
 
     def _move_selection(self, delta: int) -> None:
         """Move highlighted person within the filtered list."""
@@ -228,7 +264,9 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
         if not people:
             self.selected_index = 0
         else:
-            self.selected_index = max(0, min(self.selected_index + delta, len(people) - 1))
+            self.selected_index = max(
+                0, min(self.selected_index + delta, len(people) - 1)
+            )
         self._refresh()
 
     def _refresh(self) -> None:
@@ -266,8 +304,17 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
     def _context_text(self) -> str:
         """Render current identity and match context."""
         public_id = _known_public_id(self.people, self.current_person_id)
-        person = f"person {public_id}" if public_id is not None else tr("no person id", "无人员 ID")
-        lines = [tr(f"Current: [green]{escape(self.current_name)}[/] ([dim]{person}[/])", f"当前：[green]{escape(self.current_name)}[/] ([dim]{person}[/])")]
+        person = (
+            f"person {public_id}"
+            if public_id is not None
+            else tr("no person id", "无人员 ID")
+        )
+        lines = [
+            tr(
+                f"Current: [green]{escape(self.current_name)}[/] ([dim]{person}[/])",
+                f"当前：[green]{escape(self.current_name)}[/] ([dim]{person}[/])",
+            )
+        ]
         if self.match is not None:
             lines.extend(render_match_lines(self.match))
         return "\n".join(lines)
@@ -277,7 +324,10 @@ class IdentityEditScreen(ModalScreen[IdentitySelection | None]):
         query = self.search_query.strip()
         if query.startswith("+"):
             name = escape(query[1:].strip() or tr("Name", "名字"))
-            return tr(f"Enter creates new stable person: {name}", f"Enter 新建稳定人员：{name}")
+            return tr(
+                f"Enter creates new stable person: {name}",
+                f"Enter 新建稳定人员：{name}",
+            )
         return tr(
             "Up/Down select | Enter choose highlighted/exact person | +Name create | Esc cancel",
             "↑/↓ 选择 | Enter 选择高亮/精确匹配人员 | +名字 新建 | Esc 取消",
@@ -316,7 +366,14 @@ def _scored_people(
         for person in people
     ]
     rows.extend(_missing_match_people(rows, match))
-    return sorted(rows, key=lambda item: (_score_rank(item.score), item.name.casefold(), item.person_id))
+    return sorted(
+        rows,
+        key=lambda item: (
+            _score_rank(item.score),
+            item.name.casefold(),
+            item.person_id,
+        ),
+    )
 
 
 def _person_score(
@@ -330,7 +387,9 @@ def _person_score(
     return score_by_name.get(_normalize_name(person.name))
 
 
-def _score_maps(match: SpeakerMatchCandidate | None) -> tuple[dict[int, float], dict[str, float]]:
+def _score_maps(
+    match: SpeakerMatchCandidate | None,
+) -> tuple[dict[int, float], dict[str, float]]:
     """Return best known scores by person id and normalized name."""
     scores_by_id = {}
     scores_by_name = {}
@@ -345,13 +404,17 @@ def _score_maps(match: SpeakerMatchCandidate | None) -> tuple[dict[int, float], 
     return scores_by_id, scores_by_name
 
 
-def _remember_score(scores: dict[int, float], person_id: int | None, score: float | None) -> None:
+def _remember_score(
+    scores: dict[int, float], person_id: int | None, score: float | None
+) -> None:
     """Store the best score for one person id."""
     if person_id is not None and score is not None:
         scores[person_id] = max(score, scores.get(person_id, score))
 
 
-def _remember_name_score(scores: dict[str, float], name: str, score: float | None) -> None:
+def _remember_name_score(
+    scores: dict[str, float], name: str, score: float | None
+) -> None:
     """Store the best score for one normalized person name."""
     if name and score is not None:
         normalized = _normalize_name(name)
@@ -370,7 +433,11 @@ def _missing_match_people(
     for candidate in match.candidates:
         if candidate.person_id is not None and candidate.person_id not in known_ids:
             public_id = candidate.person_public_id or f"legacy-{candidate.person_id}"
-            missing.append(ScoredPerson(candidate.person_id, public_id, candidate.name, candidate.score))
+            missing.append(
+                ScoredPerson(
+                    candidate.person_id, public_id, candidate.name, candidate.score
+                )
+            )
             known_ids.add(candidate.person_id)
     return missing
 
@@ -387,7 +454,9 @@ def _score_text(score: float | None) -> str:
     return "score -" if score is None else f"score {score:.3f}"
 
 
-def _visible_window(people: list[ScoredPerson], selected_index: int) -> tuple[int, list[ScoredPerson]]:
+def _visible_window(
+    people: list[ScoredPerson], selected_index: int
+) -> tuple[int, list[ScoredPerson]]:
     """Return a visible list window around the selected row."""
     if len(people) <= IDENTITY_LIST_LIMIT:
         return 0, people

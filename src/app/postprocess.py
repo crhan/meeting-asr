@@ -60,13 +60,24 @@ def parse_transcription_result(raw_json: dict[str, Any]) -> TranscriptResult:
     Returns:
         Normalized transcript result.
     """
-    parsed_sentences = [_segment_from_payload(item, idx) for idx, item in enumerate(_find_sentence_payloads(raw_json))]
+    parsed_sentences = [
+        _segment_from_payload(item, idx)
+        for idx, item in enumerate(_find_sentence_payloads(raw_json))
+    ]
     sentences = [item for item in parsed_sentences if item is not None]
     has_sentence_payloads = bool(sentences)
     sentences = filter_filler_speakers(sentences)
-    full_text = "".join(sentence.text for sentence in sentences) if has_sentence_payloads else (_find_text(raw_json) or "")
-    detected = detect_speaker_ids(TranscriptResult(full_text=full_text, sentences=sentences, detected_speakers=[]))
-    return TranscriptResult(full_text=full_text, sentences=sentences, detected_speakers=detected)
+    full_text = (
+        "".join(sentence.text for sentence in sentences)
+        if has_sentence_payloads
+        else (_find_text(raw_json) or "")
+    )
+    detected = detect_speaker_ids(
+        TranscriptResult(full_text=full_text, sentences=sentences, detected_speakers=[])
+    )
+    return TranscriptResult(
+        full_text=full_text, sentences=sentences, detected_speakers=detected
+    )
 
 
 def speaker_id_to_label(speaker_id: int | None) -> str:
@@ -127,7 +138,12 @@ def render_plain_text(result: TranscriptResult) -> str:
     """
     if result.full_text.strip():
         return result.full_text.strip() + "\n"
-    return "\n".join(sentence.text for sentence in result.sentences if sentence.text.strip()) + "\n"
+    return (
+        "\n".join(
+            sentence.text for sentence in result.sentences if sentence.text.strip()
+        )
+        + "\n"
+    )
 
 
 def render_speaker_text(result: TranscriptResult) -> str:
@@ -147,7 +163,9 @@ def render_speaker_text(result: TranscriptResult) -> str:
             continue
         start = format_ms_timestamp(sentence.begin_time_ms)
         end = format_ms_timestamp(sentence.end_time_ms)
-        lines.append(f"[{start} - {end}] {speaker_id_to_label(sentence.speaker_id)}: {text}")
+        lines.append(
+            f"[{start} - {end}] {speaker_id_to_label(sentence.speaker_id)}: {text}"
+        )
     return "\n".join(lines) + ("\n" if lines else "")
 
 
@@ -161,7 +179,9 @@ def detect_speaker_ids(result: TranscriptResult) -> list[int]:
     Returns:
         Sorted speaker ids.
     """
-    speakers = {item.speaker_id for item in result.sentences if item.speaker_id is not None}
+    speakers = {
+        item.speaker_id for item in result.sentences if item.speaker_id is not None
+    }
     return sorted(speakers)
 
 
@@ -178,10 +198,17 @@ def filter_filler_speakers(sentences: list[SentenceSegment]) -> list[SentenceSeg
     filler_speakers = _filler_speaker_ids(sentences)
     if not filler_speakers:
         return sentences
-    return [sentence for sentence in sentences if sentence.speaker_id not in filler_speakers]
+    return [
+        sentence for sentence in sentences if sentence.speaker_id not in filler_speakers
+    ]
 
 
-def _can_merge(first: SentenceSegment, second: SentenceSegment, max_gap_ms: int, same_speaker_only: bool) -> bool:
+def _can_merge(
+    first: SentenceSegment,
+    second: SentenceSegment,
+    max_gap_ms: int,
+    same_speaker_only: bool,
+) -> bool:
     """Return whether two segments can be merged."""
     if same_speaker_only and first.speaker_id != second.speaker_id:
         return False
@@ -214,7 +241,9 @@ def _is_filler_speaker_track(sentences: list[SentenceSegment]) -> bool:
     if sum(len(text) for text in normalized_texts) > LOW_INFORMATION_MAX_TOTAL_CHARS:
         return False
     meaningful_segments = [
-        text for text in normalized_texts if len(_semantic_remainder(text)) >= MEANINGFUL_REMAINDER_CHARS
+        text
+        for text in normalized_texts
+        if len(_semantic_remainder(text)) >= MEANINGFUL_REMAINDER_CHARS
     ]
     return len(meaningful_segments) <= max(1, len(sentences) // 4)
 
@@ -254,7 +283,13 @@ def _find_sentence_payloads(raw_json: dict[str, Any]) -> list[dict[str, Any]]:
     for key in ("output", "result", "data"):
         nested = raw_json.get(key)
         if isinstance(nested, dict):
-            candidates.extend([nested.get("transcripts"), nested.get("sentences"), nested.get("results")])
+            candidates.extend(
+                [
+                    nested.get("transcripts"),
+                    nested.get("sentences"),
+                    nested.get("results"),
+                ]
+            )
     return _flatten_sentences(candidates)
 
 
@@ -265,23 +300,46 @@ def _flatten_sentences(candidates: list[Any]) -> list[dict[str, Any]]:
         if isinstance(candidate, list):
             for entry in candidate:
                 if isinstance(entry, dict) and isinstance(entry.get("sentences"), list):
-                    items.extend(item for item in entry["sentences"] if isinstance(item, dict))
+                    items.extend(
+                        item for item in entry["sentences"] if isinstance(item, dict)
+                    )
                 elif isinstance(entry, dict):
                     items.append(entry)
-        elif isinstance(candidate, dict) and isinstance(candidate.get("sentences"), list):
-            items.extend(item for item in candidate["sentences"] if isinstance(item, dict))
+        elif isinstance(candidate, dict) and isinstance(
+            candidate.get("sentences"), list
+        ):
+            items.extend(
+                item for item in candidate["sentences"] if isinstance(item, dict)
+            )
     return items
 
 
-def _segment_from_payload(payload: dict[str, Any], fallback_id: int) -> SentenceSegment | None:
+def _segment_from_payload(
+    payload: dict[str, Any], fallback_id: int
+) -> SentenceSegment | None:
     """Build one segment from a loose DashScope sentence payload."""
-    text = str(payload.get("text") or payload.get("sentence") or payload.get("transcript") or "").strip()
+    text = str(
+        payload.get("text")
+        or payload.get("sentence")
+        or payload.get("transcript")
+        or ""
+    ).strip()
     if not text:
         return None
-    begin = _to_int(payload.get("begin_time") or payload.get("begin_time_ms") or payload.get("start_time"))
-    end = _to_int(payload.get("end_time") or payload.get("end_time_ms") or payload.get("stop_time"))
+    begin = _to_int(
+        payload.get("begin_time")
+        or payload.get("begin_time_ms")
+        or payload.get("start_time")
+    )
+    end = _to_int(
+        payload.get("end_time")
+        or payload.get("end_time_ms")
+        or payload.get("stop_time")
+    )
     speaker = _optional_int(payload.get("speaker_id"))
-    sentence_id = _optional_int(payload.get("sentence_id") or payload.get("id")) or fallback_id
+    sentence_id = (
+        _optional_int(payload.get("sentence_id") or payload.get("id")) or fallback_id
+    )
     return SentenceSegment(
         begin_time_ms=begin,
         end_time_ms=max(end, begin),
@@ -309,7 +367,7 @@ def _to_int(value: Any) -> int:
     """Coerce a time value to integer milliseconds."""
     try:
         return int(float(value))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0
 
 
@@ -317,5 +375,5 @@ def _optional_int(value: Any) -> int | None:
     """Coerce optional integer values."""
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None

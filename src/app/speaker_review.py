@@ -34,13 +34,21 @@ def build_preview_command(
     video_path = _existing_path(video, "Video")
     subtitle_path = _existing_path(subtitle, "Subtitle")
     if mpv := shutil.which("mpv"):
-        return _mpv_preview_command(mpv, video_path, subtitle_path, start_seconds, duration_seconds)
+        return _mpv_preview_command(
+            mpv, video_path, subtitle_path, start_seconds, duration_seconds
+        )
     iina_cli = _find_iina_cli()
     if iina_cli:
-        return _iina_preview_command(iina_cli, video_path, subtitle_path, start_seconds, duration_seconds)
+        return _iina_preview_command(
+            iina_cli, video_path, subtitle_path, start_seconds, duration_seconds
+        )
     if _ffplay_supports_subtitles_filter():
-        return _ffplay_preview_command(video_path, subtitle_path, start_seconds, duration_seconds)
-    raise RuntimeError("No supported subtitle preview player found. Install mpv, IINA, or ffplay.")
+        return _ffplay_preview_command(
+            video_path, subtitle_path, start_seconds, duration_seconds
+        )
+    raise RuntimeError(
+        "No supported subtitle preview player found. Install mpv, IINA, or ffplay."
+    )
 
 
 def _mpv_preview_command(
@@ -63,7 +71,13 @@ def _mpv_preview_command(
     Returns:
         Command argv.
     """
-    command = [mpv, "--resume-playback=no", f"--sub-file={subtitle}", "--sid=1", f"--start={start_seconds:.3f}"]
+    command = [
+        mpv,
+        "--resume-playback=no",
+        f"--sub-file={subtitle}",
+        "--sid=1",
+        f"--start={start_seconds:.3f}",
+    ]
     if duration_seconds is not None:
         command.append(f"--length={duration_seconds:.3f}")
     command.append(str(video))
@@ -91,7 +105,12 @@ def _iina_preview_command(
         Command argv.
     """
     _stage_iina_subtitle(video, subtitle)
-    raw_options = ["--resume-playback=no", "--sub-auto=fuzzy", "--sid=1", f"--start={start_seconds:.3f}"]
+    raw_options = [
+        "--resume-playback=no",
+        "--sub-auto=fuzzy",
+        "--sid=1",
+        f"--start={start_seconds:.3f}",
+    ]
     if duration_seconds is not None:
         raw_options.append(f"--length={duration_seconds:.3f}")
     return [iina_cli, "--no-stdin", str(video), "--", *raw_options]
@@ -115,7 +134,9 @@ def _ffplay_preview_command(
     Returns:
         Command argv.
     """
-    subtitle_filter = f"subtitles=filename='{_escape_subtitle_path_for_ffmpeg(subtitle)}'"
+    subtitle_filter = (
+        f"subtitles=filename='{_escape_subtitle_path_for_ffmpeg(subtitle)}'"
+    )
     command = [
         "ffplay",
         "-hide_banner",
@@ -182,10 +203,14 @@ def build_audio_preview_command(
             command.extend(["-t", f"{duration_seconds:.3f}"])
         command.extend(["-i", str(media_path)])
         return command
-    raise RuntimeError("No supported audio preview player found. Install mpv or ffplay.")
+    raise RuntimeError(
+        "No supported audio preview player found. Install mpv or ffplay."
+    )
 
 
-def preview_start_seconds(sentences_json: Path, speaker_id: int | None, padding_seconds: int) -> float:
+def preview_start_seconds(
+    sentences_json: Path, speaker_id: int | None, padding_seconds: int
+) -> float:
     """
     Resolve preview start time.
 
@@ -268,7 +293,9 @@ def _find_first_segment_time_ms(sentences_json: Path, speaker_id: int) -> int:
     for segment in result.sentences:
         if segment.speaker_id == speaker_id:
             return segment.begin_time_ms
-    raise typer.BadParameter(f"speaker_id={speaker_id} was not found in {sentences_json}")
+    raise typer.BadParameter(
+        f"speaker_id={speaker_id} was not found in {sentences_json}"
+    )
 
 
 def _find_iina_cli() -> str | None:
@@ -320,7 +347,12 @@ def _ffplay_supports_subtitles_filter() -> bool:
     """Return whether ffplay has subtitles filter."""
     if shutil.which("ffplay") is None:
         return False
-    completed = subprocess.run(["ffplay", "-hide_banner", "-filters"], capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        ["ffplay", "-hide_banner", "-filters"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     return " subtitles " in completed.stdout
 
 

@@ -63,21 +63,56 @@ def write_correction_proposal_files(
     proposal_dir = paths.root / "tmp" / REVIEW_DIR
     proposal_dir.mkdir(parents=True, exist_ok=True)
     stem = f"proposal_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    diff_path = _write_diff(proposal_dir, stem, source.result, proposed, speaker_mapping)
+    diff_path = _write_diff(
+        proposal_dir, stem, source.result, proposed, speaker_mapping
+    )
     proposal_path = _write_markdown(
-        proposal_dir, stem, manifest, understanding, sample_changes, proposed_changes, diff_path, model, model_error
+        proposal_dir,
+        stem,
+        manifest,
+        understanding,
+        sample_changes,
+        proposed_changes,
+        diff_path,
+        model,
+        model_error,
     )
     json_path = _write_json(
-        proposal_dir, stem, paths, manifest, source, review_path, sample_changes, proposed_changes, understanding,
-        proposal_path, diff_path, model, model_error, options
+        proposal_dir,
+        stem,
+        paths,
+        manifest,
+        source,
+        review_path,
+        sample_changes,
+        proposed_changes,
+        understanding,
+        proposal_path,
+        diff_path,
+        model,
+        model_error,
+        options,
     )
     return _proposal_record(
-        manifest, options, review_path, proposal_path, diff_path, json_path, source, sample_changes, proposed_changes,
-        understanding, model, model_error, paths.root
+        manifest,
+        options,
+        review_path,
+        proposal_path,
+        diff_path,
+        json_path,
+        source,
+        sample_changes,
+        proposed_changes,
+        understanding,
+        model,
+        model_error,
+        paths.root,
     )
 
 
-def load_correction_proposal(paths: ProjectPaths, proposal_path: Path | None) -> CorrectionProposal:
+def load_correction_proposal(
+    paths: ProjectPaths, proposal_path: Path | None
+) -> CorrectionProposal:
     """
     Load a pending correction proposal JSON file.
 
@@ -119,7 +154,9 @@ def _write_diff(
     """Write unified diff for the proposal."""
     before = _diff_lines(original, speaker_mapping)
     after = _diff_lines(proposed, speaker_mapping)
-    diff_text = "".join(difflib.unified_diff(before, after, fromfile="before", tofile="proposed", n=3))
+    diff_text = "".join(
+        difflib.unified_diff(before, after, fromfile="before", tofile="proposed", n=3)
+    )
     return safe_write_text(proposal_dir / f"{stem}.diff", diff_text)
 
 
@@ -135,7 +172,15 @@ def _write_markdown(
     model_error: str | None,
 ) -> Path:
     """Write the human-readable proposal markdown file."""
-    markdown = _render_markdown(manifest, understanding, sample_changes, proposed_changes, diff_path, model, model_error)
+    markdown = _render_markdown(
+        manifest,
+        understanding,
+        sample_changes,
+        proposed_changes,
+        diff_path,
+        model,
+        model_error,
+    )
     return safe_write_text(proposal_dir / f"{stem}.md", markdown)
 
 
@@ -157,8 +202,18 @@ def _write_json(
 ) -> Path:
     """Write the machine-readable proposal JSON file."""
     payload = _payload(
-        paths.root, manifest, source, review_path, sample_changes, proposed_changes, understanding, proposal_path,
-        diff_path, model, model_error, options
+        paths.root,
+        manifest,
+        source,
+        review_path,
+        sample_changes,
+        proposed_changes,
+        understanding,
+        proposal_path,
+        diff_path,
+        model,
+        model_error,
+        options,
     )
     return safe_write_json(proposal_dir / f"{stem}.json", payload)
 
@@ -206,7 +261,11 @@ def _render_markdown(
     model_error: str | None,
 ) -> str:
     """Render a human-reviewable correction proposal."""
-    lines = ["# Meeting-ASR Vocabulary Correction Proposal", "", f"Project ID: {manifest.project_id}"]
+    lines = [
+        "# Meeting-ASR Vocabulary Correction Proposal",
+        "",
+        f"Project ID: {manifest.project_id}",
+    ]
     lines.extend([f"Title: {manifest.title}", f"Model: {model}"])
     if model_error:
         lines.append(f"Model fallback: {model_error}")
@@ -249,7 +308,9 @@ def _payload(
         "sample_changes": [_change_payload(change) for change in sample_changes],
         "proposed_changes": [_change_payload(change) for change in proposed_changes],
         "understanding": [asdict(item) for item in understanding],
-        "asr_hotwords": dashscope_vocabulary(hotwords_from_understanding(understanding, category=options.category)),
+        "asr_hotwords": dashscope_vocabulary(
+            hotwords_from_understanding(understanding, category=options.category)
+        ),
     }
 
 
@@ -289,8 +350,15 @@ def _change_lines(changes: list[CorrectionChange]) -> list[str]:
         return _change_lines_grouped(changes)
     lines = ["## Proposed Changes"]
     for index, change in enumerate(changes):
-        lines.extend(["", f"### [{index}] sentence_id={change.sentence_id} speaker={change.speaker_name}"])
-        lines.extend([f"- Before: {change.original_text}", f"- After: {change.corrected_text}"])
+        lines.extend(
+            [
+                "",
+                f"### [{index}] sentence_id={change.sentence_id} speaker={change.speaker_name}",
+            ]
+        )
+        lines.extend(
+            [f"- Before: {change.original_text}", f"- After: {change.corrected_text}"]
+        )
     return lines
 
 
@@ -302,7 +370,10 @@ def _change_lines_grouped(changes: list[CorrectionChange]) -> list[str]:
         groups.setdefault(primary, []).append((index, change))
     lines = ["## Proposed Changes (grouped by change_type)"]
     lines.append("")
-    lines.append("Counts: " + " / ".join(f"{ty}={len(items)}" for ty, items in sorted(groups.items())))
+    lines.append(
+        "Counts: "
+        + " / ".join(f"{ty}={len(items)}" for ty, items in sorted(groups.items()))
+    )
     for ty in sorted(groups):
         items = groups[ty]
         lines.extend(["", f"### {ty} ({len(items)})"])

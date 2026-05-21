@@ -38,30 +38,57 @@ def test_voiceprint_capture_writes_xdg_store_and_sqlite(
 
     result = runner.invoke(
         app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
 
     manifest = load_manifest(project_dir)
     assert result.exit_code == 0
     assert "Captured voiceprint samples: 2" in result.output
     assert "Next steps:" in result.output
-    assert f"meeting-asr voiceprint embed --store-dir {store_dir.resolve()}" in result.output
+    assert (
+        f"meeting-asr voiceprint embed --store-dir {store_dir.resolve()}"
+        in result.output
+    )
     assert "meeting-asr voiceprint list" in result.output
     assert (store_dir / "voiceprints.sqlite").exists()
-    assert (store_dir / "clips" / manifest.project_id / "speaker_0" / "clip_001.wav").exists()
+    assert (
+        store_dir / "clips" / manifest.project_id / "speaker_0" / "clip_001.wav"
+    ).exists()
     assert not (project_dir / "speakers" / "voiceprints").exists()
     assert manifest.speakers["voiceprints"]["sample_count"] == 2
-    project_samples = list_voiceprint_samples_for_project(manifest.project_id, get_voiceprint_db_path(store_dir))
+    project_samples = list_voiceprint_samples_for_project(
+        manifest.project_id, get_voiceprint_db_path(store_dir)
+    )
     assert len(project_samples) == 2
     assert {sample.project_id for sample in project_samples} == {manifest.project_id}
 
-    list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
-    list_plain_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir), "--plain"])
+    list_result = runner.invoke(
+        app, ["voiceprint", "list", "--store-dir", str(store_dir)]
+    )
+    list_plain_result = runner.invoke(
+        app, ["voiceprint", "list", "--store-dir", str(store_dir), "--plain"]
+    )
     speaker_id = _speaker_id_from_list(list_result.output, "欧丁")
-    show_result = runner.invoke(app, ["voiceprint", "show", speaker_id, "--store-dir", str(store_dir)])
-    show_by_name_result = runner.invoke(app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)])
-    list_json_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir), "--json"])
-    show_json_result = runner.invoke(app, ["voiceprint", "show", speaker_id, "--store-dir", str(store_dir), "--json"])
+    show_result = runner.invoke(
+        app, ["voiceprint", "show", speaker_id, "--store-dir", str(store_dir)]
+    )
+    show_by_name_result = runner.invoke(
+        app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)]
+    )
+    list_json_result = runner.invoke(
+        app, ["voiceprint", "list", "--store-dir", str(store_dir), "--json"]
+    )
+    show_json_result = runner.invoke(
+        app, ["voiceprint", "show", speaker_id, "--store-dir", str(store_dir), "--json"]
+    )
     list_payload = json.loads(list_json_result.output)
     show_payload = json.loads(show_json_result.output)
 
@@ -106,15 +133,31 @@ def test_voiceprint_people_lifecycle_uses_stable_ids(tmp_path: Path) -> None:
     """People commands should create and rename by stable id, not by display name."""
     store_dir = tmp_path / "voiceprints"
 
-    add_result = runner.invoke(app, ["voiceprint", "people", "add", "欧丁", "--store-dir", str(store_dir)])
-    duplicate_result = runner.invoke(app, ["voiceprint", "people", "add", "欧丁", "--store-dir", str(store_dir)])
-    list_result = runner.invoke(app, ["voiceprint", "people", "list", "--store-dir", str(store_dir)])
+    add_result = runner.invoke(
+        app, ["voiceprint", "people", "add", "欧丁", "--store-dir", str(store_dir)]
+    )
+    duplicate_result = runner.invoke(
+        app, ["voiceprint", "people", "add", "欧丁", "--store-dir", str(store_dir)]
+    )
+    list_result = runner.invoke(
+        app, ["voiceprint", "people", "list", "--store-dir", str(store_dir)]
+    )
     person_id = _speaker_id_from_list(list_result.output, "欧丁")
     rename_result = runner.invoke(
         app,
-        ["voiceprint", "people", "rename", person_id, "欧丁-新版", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "people",
+            "rename",
+            person_id,
+            "欧丁-新版",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
-    show_result = runner.invoke(app, ["voiceprint", "people", "show", person_id, "--store-dir", str(store_dir)])
+    show_result = runner.invoke(
+        app, ["voiceprint", "people", "show", person_id, "--store-dir", str(store_dir)]
+    )
 
     assert add_result.exit_code == 0
     assert "Person ID:" in add_result.output
@@ -139,14 +182,29 @@ def test_voiceprint_browse_summary_uses_global_store(
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
     runner.invoke(
         app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
 
-    result = runner.invoke(app, ["voiceprint", "browse", "--summary", "--store-dir", str(store_dir)])
-    tui_result = runner.invoke(app, ["voiceprint", "browse", "--store-dir", str(store_dir)])
+    result = runner.invoke(
+        app, ["voiceprint", "browse", "--summary", "--store-dir", str(store_dir)]
+    )
+    tui_result = runner.invoke(
+        app, ["voiceprint", "browse", "--store-dir", str(store_dir)]
+    )
 
     assert result.exit_code == 0
-    assert f"Voiceprint library: {store_dir.resolve() / 'voiceprints.sqlite'}" in result.output
+    assert (
+        f"Voiceprint library: {store_dir.resolve() / 'voiceprints.sqlite'}"
+        in result.output
+    )
     assert "Speakers: 2 | Samples: 2 | Embedded: 0/2" in result.output
     assert "欧丁 id=" in result.output
     assert tui_result.exit_code != 0
@@ -165,15 +223,27 @@ def test_voiceprint_capture_skips_anonymous_speaker_labels(
 
     result = runner.invoke(
         app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
 
     manifest = load_manifest(project_dir)
-    list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
+    list_result = runner.invoke(
+        app, ["voiceprint", "list", "--store-dir", str(store_dir)]
+    )
 
     assert result.exit_code == 0
     assert "Captured voiceprint samples: 1" in result.output
-    assert (store_dir / "clips" / manifest.project_id / "speaker_0" / "clip_001.wav").exists()
+    assert (
+        store_dir / "clips" / manifest.project_id / "speaker_0" / "clip_001.wav"
+    ).exists()
     assert not (store_dir / "clips" / manifest.project_id / "speaker_2").exists()
     assert "Speakers: 1 | Samples: 1 | Embedded samples: 0/1" in list_result.output
     assert "欧丁" in list_result.output
@@ -188,10 +258,23 @@ def test_voiceprint_capture_uses_project_person_map(
     project_dir = _sample_project(tmp_path)
     store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
     _write_partially_named_speaker_inputs(project_dir)
-    add_result = runner.invoke(app, ["voiceprint", "people", "add", "欧丁", "--store-dir", str(store_dir)])
+    add_result = runner.invoke(
+        app, ["voiceprint", "people", "add", "欧丁", "--store-dir", str(store_dir)]
+    )
     public_id = add_result.output.split("Person ID:", 1)[1].strip().splitlines()[0]
     person_payload = json.loads(
-        runner.invoke(app, ["voiceprint", "people", "show", public_id, "--store-dir", str(store_dir), "--json"]).output
+        runner.invoke(
+            app,
+            [
+                "voiceprint",
+                "people",
+                "show",
+                public_id,
+                "--store-dir",
+                str(store_dir),
+                "--json",
+            ],
+        ).output
     )
     person_id = int(person_payload["speaker_id"])
     (project_dir / "speakers" / "speaker_person_map.json").write_text(
@@ -202,11 +285,21 @@ def test_voiceprint_capture_uses_project_person_map(
 
     result = runner.invoke(
         app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
 
     manifest = load_manifest(project_dir)
-    samples = list_voiceprint_samples_for_project(manifest.project_id, get_voiceprint_db_path(store_dir))
+    samples = list_voiceprint_samples_for_project(
+        manifest.project_id, get_voiceprint_db_path(store_dir)
+    )
 
     assert result.exit_code == 0
     assert f"person {public_id}" in result.output
@@ -226,12 +319,29 @@ def test_voiceprint_play_dry_run_prints_clip_command(
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
     runner.invoke(
         app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
 
     result = runner.invoke(
         app,
-        ["voiceprint", "play", "欧丁", "--sample", "1", "--store-dir", str(store_dir), "--dry-run"],
+        [
+            "voiceprint",
+            "play",
+            "欧丁",
+            "--sample",
+            "1",
+            "--store-dir",
+            str(store_dir),
+            "--dry-run",
+        ],
     )
 
     assert result.exit_code == 0
@@ -247,15 +357,29 @@ def test_voiceprint_embed_stores_sample_embeddings(
     store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
     _write_named_speaker_inputs(project_dir)
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
-    monkeypatch.setattr("app.voiceprint_embedding.embed_audio_file", _fake_embed_audio_file)
+    monkeypatch.setattr(
+        "app.voiceprint_embedding.embed_audio_file", _fake_embed_audio_file
+    )
     runner.invoke(
         app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
 
     result = runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
-    list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
-    embeddings = list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, get_voiceprint_db_path(store_dir))
+    list_result = runner.invoke(
+        app, ["voiceprint", "list", "--store-dir", str(store_dir)]
+    )
+    embeddings = list_voiceprint_embeddings(
+        LOCAL_SPEECHBRAIN_MODEL, get_voiceprint_db_path(store_dir)
+    )
 
     assert result.exit_code == 0
     assert "Provider: local-speechbrain" in result.output
@@ -295,17 +419,29 @@ def test_voiceprint_quality_flags_outliers_and_quarantine_excludes_embedding(
     store_dir = _quality_store(tmp_path)
     db_path = get_voiceprint_db_path(store_dir)
 
-    result = runner.invoke(app, ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir)])
-    json_result = runner.invoke(app, ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir), "--json"])
+    result = runner.invoke(
+        app, ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir)]
+    )
+    json_result = runner.invoke(
+        app, ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir), "--json"]
+    )
     payload = json.loads(json_result.output)
     critical_sample = next(
-        sample for sample in payload["people"][0]["samples"] if sample["label"] == "critical"
+        sample
+        for sample in payload["people"][0]["samples"]
+        if sample["label"] == "critical"
     )
-    update_voiceprint_sample_status(critical_sample["sample_public_id"], "quarantined", db_path)
+    update_voiceprint_sample_status(
+        critical_sample["sample_public_id"], "quarantined", db_path
+    )
 
     active_embeddings = list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)
-    all_embeddings = list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path, include_inactive=True)
-    show_result = runner.invoke(app, ["voiceprint", "show", "Alice", "--store-dir", str(store_dir)])
+    all_embeddings = list_voiceprint_embeddings(
+        LOCAL_SPEECHBRAIN_MODEL, db_path, include_inactive=True
+    )
+    show_result = runner.invoke(
+        app, ["voiceprint", "show", "Alice", "--store-dir", str(store_dir)]
+    )
 
     assert result.exit_code == 0
     assert "Suspicious: 1 | Critical: 1" in result.output
@@ -323,12 +459,25 @@ def test_voiceprint_quality_verified_active_keeps_matching_without_risk(
     """Human-verified outliers should stay matchable without raising quality risk."""
     store_dir = _quality_store(tmp_path)
     db_path = get_voiceprint_db_path(store_dir)
-    payload = json.loads(runner.invoke(app, ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir), "--json"]).output)
-    critical_sample = next(sample for sample in payload["people"][0]["samples"] if sample["label"] == "critical")
+    payload = json.loads(
+        runner.invoke(
+            app,
+            ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir), "--json"],
+        ).output
+    )
+    critical_sample = next(
+        sample
+        for sample in payload["people"][0]["samples"]
+        if sample["label"] == "critical"
+    )
 
-    update_voiceprint_sample_status(critical_sample["sample_public_id"], "verified-active", db_path)
+    update_voiceprint_sample_status(
+        critical_sample["sample_public_id"], "verified-active", db_path
+    )
 
-    verified_result = runner.invoke(app, ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir), "--json"])
+    verified_result = runner.invoke(
+        app, ["voiceprint", "quality", "Alice", "--store-dir", str(store_dir), "--json"]
+    )
     verified_payload = json.loads(verified_result.output)
     verified_sample = next(
         sample
@@ -357,12 +506,39 @@ def test_voiceprint_delete_sample_removes_row_and_clip(
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
     runner.invoke(
         app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
-    clip_path = store_dir / "clips" / load_manifest(project_dir).project_id / "speaker_0" / "clip_002.wav"
+    clip_path = (
+        store_dir
+        / "clips"
+        / load_manifest(project_dir).project_id
+        / "speaker_0"
+        / "clip_002.wav"
+    )
 
-    result = runner.invoke(app, ["voiceprint", "delete-sample", "欧丁", "--sample", "1", "--store-dir", str(store_dir)])
-    show_result = runner.invoke(app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)])
+    result = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "delete-sample",
+            "欧丁",
+            "--sample",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
+    )
+    show_result = runner.invoke(
+        app, ["voiceprint", "show", "欧丁", "--store-dir", str(store_dir)]
+    )
 
     assert result.exit_code == 0
     assert "Deleted sample:" in result.output
@@ -382,17 +558,45 @@ def test_voiceprint_delete_speaker_removes_all_samples(
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
     runner.invoke(
         app,
-        ["voiceprint", "capture", str(project_dir), "--sample-count", "1", "--store-dir", str(store_dir)],
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
     )
-    clip_path = store_dir / "clips" / load_manifest(project_dir).project_id / "speaker_1" / "clip_001.wav"
+    clip_path = (
+        store_dir
+        / "clips"
+        / load_manifest(project_dir).project_id
+        / "speaker_1"
+        / "clip_001.wav"
+    )
 
     speaker_id = _speaker_id_from_list(
-        runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)]).output,
+        runner.invoke(
+            app, ["voiceprint", "list", "--store-dir", str(store_dir)]
+        ).output,
         "敬悦",
     )
 
-    result = runner.invoke(app, ["voiceprint", "delete-speaker", speaker_id, "--store-dir", str(store_dir), "--yes"])
-    list_result = runner.invoke(app, ["voiceprint", "list", "--store-dir", str(store_dir)])
+    result = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "delete-speaker",
+            speaker_id,
+            "--store-dir",
+            str(store_dir),
+            "--yes",
+        ],
+    )
+    list_result = runner.invoke(
+        app, ["voiceprint", "list", "--store-dir", str(store_dir)]
+    )
 
     assert result.exit_code == 0
     assert f"Deleted speaker: 敬悦 (id {speaker_id})" in result.output
@@ -468,9 +672,27 @@ def _write_named_speaker_inputs(project_dir: Path) -> None:
         "full_text": "大家好。收到。",
         "detected_speakers": [0, 1],
         "sentences": [
-            {"begin_time_ms": 0, "end_time_ms": 1000, "text": "短句。", "speaker_id": 0, "sentence_id": 1},
-            {"begin_time_ms": 2000, "end_time_ms": 8000, "text": "这是一段更适合作为样本的话。", "speaker_id": 0, "sentence_id": 2},
-            {"begin_time_ms": 9000, "end_time_ms": 12000, "text": "收到，我补充一下。", "speaker_id": 1, "sentence_id": 3},
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 1000,
+                "text": "短句。",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 2000,
+                "end_time_ms": 8000,
+                "text": "这是一段更适合作为样本的话。",
+                "speaker_id": 0,
+                "sentence_id": 2,
+            },
+            {
+                "begin_time_ms": 9000,
+                "end_time_ms": 12000,
+                "text": "收到，我补充一下。",
+                "speaker_id": 1,
+                "sentence_id": 3,
+            },
         ],
     }
     (project_dir / "asr" / "sentences.json").write_text(
@@ -489,8 +711,20 @@ def _write_partially_named_speaker_inputs(project_dir: Path) -> None:
         "full_text": "大家好。还有一个人。",
         "detected_speakers": [0, 2],
         "sentences": [
-            {"begin_time_ms": 0, "end_time_ms": 3000, "text": "我是欧丁。", "speaker_id": 0, "sentence_id": 1},
-            {"begin_time_ms": 4000, "end_time_ms": 7000, "text": "这个人还没有确认。", "speaker_id": 2, "sentence_id": 2},
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 3000,
+                "text": "我是欧丁。",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 4000,
+                "end_time_ms": 7000,
+                "text": "这个人还没有确认。",
+                "speaker_id": 2,
+                "sentence_id": 2,
+            },
         ],
     }
     (project_dir / "asr" / "sentences.json").write_text(
@@ -538,7 +772,9 @@ def _quality_store(tmp_path: Path) -> Path:
     rows = list_voiceprint_samples_for_project("project-quality", db_path)
     vectors = ([1.0, 0.0], [0.98, 0.02], [0.99, 0.01], [0.0, 1.0])
     for row, vector in zip(rows, vectors, strict=True):
-        upsert_voiceprint_embedding(row.sample_id, LOCAL_SPEECHBRAIN_MODEL, vector, db_path)
+        upsert_voiceprint_embedding(
+            row.sample_id, LOCAL_SPEECHBRAIN_MODEL, vector, db_path
+        )
     return store_dir
 
 
@@ -550,7 +786,9 @@ def _stored_sample(
     index: int,
 ) -> StoredVoiceprintSample:
     """Build one stored sample fixture."""
-    clip_path = store_dir / "clips" / "project-quality" / "speaker_0" / f"clip_{index:03d}.wav"
+    clip_path = (
+        store_dir / "clips" / "project-quality" / "speaker_0" / f"clip_{index:03d}.wav"
+    )
     clip_path.parent.mkdir(parents=True, exist_ok=True)
     clip_path.write_bytes(f"{speaker_name}-{index}".encode())
     return StoredVoiceprintSample(
@@ -598,7 +836,11 @@ def _speaker_id_from_list(output: str, name: str) -> str:
         if name not in line:
             continue
         columns = [column.strip() for column in line.split("|")]
-        if len(columns) >= 2 and columns[1] == name and _is_voiceprint_public_id(columns[0]):
+        if (
+            len(columns) >= 2
+            and columns[1] == name
+            and _is_voiceprint_public_id(columns[0])
+        ):
             return columns[0]
         cells = [cell.strip() for cell in line.split("│") if cell.strip()]
         if len(cells) >= 2 and cells[1] == name and _is_voiceprint_public_id(cells[0]):

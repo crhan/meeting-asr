@@ -8,10 +8,15 @@ from pathlib import Path
 from app import voiceprint_evaluation
 from app.project_manager import create_project
 from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
-from app.voiceprint_evaluation import VoiceprintScoreChange, evaluate_voiceprint_embedding
+from app.voiceprint_evaluation import (
+    VoiceprintScoreChange,
+    evaluate_voiceprint_embedding,
+)
 
 
-def test_evaluate_voiceprint_embedding_updates_current_and_flags_history(monkeypatch, tmp_path: Path) -> None:
+def test_evaluate_voiceprint_embedding_updates_current_and_flags_history(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Evaluation should persist current rematch and dry-run historical regressions."""
     projects_dir = tmp_path / "projects"
     current = _project(projects_dir, tmp_path / "current.mp4", "Current")
@@ -24,11 +29,19 @@ def test_evaluate_voiceprint_embedding_updates_current_and_flags_history(monkeyp
         calls.append(project_dir)
         return _summary(project_dir, best_name="Alice", score=0.79)
 
-    def fake_preview_project_speaker_matches(project_dir: Path, **kwargs) -> SpeakerMatchSummary:
+    def fake_preview_project_speaker_matches(
+        project_dir: Path, **kwargs
+    ) -> SpeakerMatchSummary:
         return _summary(project_dir, best_name="Alice", score=0.70)
 
-    monkeypatch.setattr(voiceprint_evaluation, "match_project_speakers", fake_match_project_speakers)
-    monkeypatch.setattr(voiceprint_evaluation, "preview_project_speaker_matches", fake_preview_project_speaker_matches)
+    monkeypatch.setattr(
+        voiceprint_evaluation, "match_project_speakers", fake_match_project_speakers
+    )
+    monkeypatch.setattr(
+        voiceprint_evaluation,
+        "preview_project_speaker_matches",
+        fake_preview_project_speaker_matches,
+    )
 
     summary = evaluate_voiceprint_embedding(
         current,
@@ -47,7 +60,9 @@ def test_evaluate_voiceprint_embedding_updates_current_and_flags_history(monkeyp
     assert summary.historical_warning_count == 0
 
 
-def test_evaluate_voiceprint_embedding_skips_ignored_speakers(monkeypatch, tmp_path: Path) -> None:
+def test_evaluate_voiceprint_embedding_skips_ignored_speakers(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Ignored project speakers should not appear in voiceprint risk checks."""
     projects_dir = tmp_path / "projects"
     current = _project(projects_dir, tmp_path / "current.mp4", "Current")
@@ -60,11 +75,19 @@ def test_evaluate_voiceprint_embedding_skips_ignored_speakers(monkeypatch, tmp_p
     def fake_match_project_speakers(project_dir: Path, **kwargs) -> SpeakerMatchSummary:
         return _summary(project_dir, best_name="Bob", score=0.20)
 
-    def fake_preview_project_speaker_matches(project_dir: Path, **kwargs) -> SpeakerMatchSummary:
+    def fake_preview_project_speaker_matches(
+        project_dir: Path, **kwargs
+    ) -> SpeakerMatchSummary:
         return _summary(project_dir, best_name="Bob", score=0.20)
 
-    monkeypatch.setattr(voiceprint_evaluation, "match_project_speakers", fake_match_project_speakers)
-    monkeypatch.setattr(voiceprint_evaluation, "preview_project_speaker_matches", fake_preview_project_speaker_matches)
+    monkeypatch.setattr(
+        voiceprint_evaluation, "match_project_speakers", fake_match_project_speakers
+    )
+    monkeypatch.setattr(
+        voiceprint_evaluation,
+        "preview_project_speaker_matches",
+        fake_preview_project_speaker_matches,
+    )
 
     summary = evaluate_voiceprint_embedding(
         current,
@@ -157,4 +180,10 @@ def _summary(project_dir: Path, *, best_name: str, score: float) -> SpeakerMatch
         best_name if accepted else None,
         0.75,
     )
-    return SpeakerMatchSummary(project_dir / "speakers" / "speaker_matches.json", "local-speechbrain", "test-model", 0.75, [match])
+    return SpeakerMatchSummary(
+        project_dir / "speakers" / "speaker_matches.json",
+        "local-speechbrain",
+        "test-model",
+        0.75,
+        [match],
+    )

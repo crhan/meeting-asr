@@ -53,7 +53,9 @@ def speaker_match_rows(
     """
     ignored_set = set(ignored_speaker_ids or ())
     return tuple(
-        _speaker_match_row(match, default_threshold=default_threshold, ignored_speaker_ids=ignored_set)
+        _speaker_match_row(
+            match, default_threshold=default_threshold, ignored_speaker_ids=ignored_set
+        )
         for match in matches
     )
 
@@ -70,7 +72,9 @@ def render_speaker_match_table(rows: tuple[SpeakerMatchRow, ...]) -> Table | Non
     """
     if not rows:
         return None
-    table = Table(title=_table_title(rows), box=box.SIMPLE_HEAVY, show_edge=False, pad_edge=False)
+    table = Table(
+        title=_table_title(rows), box=box.SIMPLE_HEAVY, show_edge=False, pad_edge=False
+    )
     table.add_column("Speaker", style="bold", no_wrap=True)
     table.add_column("Status", no_wrap=True)
     table.add_column("Candidate", no_wrap=True)
@@ -138,7 +142,7 @@ def _match_label(match: object) -> str:
     speaker_id = _field(match, "speaker_id")
     try:
         return speaker_id_to_label(int(speaker_id))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return "Speaker"
 
 

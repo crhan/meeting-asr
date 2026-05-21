@@ -19,7 +19,9 @@ from app.voiceprint_store import (
 )
 
 
-def create_voiceprint_person(name: str, db_path: Path | None = None) -> VoiceprintSpeakerRow:
+def create_voiceprint_person(
+    name: str, db_path: Path | None = None
+) -> VoiceprintSpeakerRow:
     """
     Create a new voiceprint person with a stable database id.
 
@@ -42,7 +44,9 @@ def create_voiceprint_person(name: str, db_path: Path | None = None) -> Voicepri
         _ensure_schema(connection)
         existing = _speaker_by_name(connection, name)
         if existing is not None:
-            raise ValueError(f"Person already exists: {existing.name} (id {existing.public_id}).")
+            raise ValueError(
+                f"Person already exists: {existing.name} (id {existing.public_id})."
+            )
         cursor = connection.execute(
             """
             INSERT INTO voiceprint_speakers (public_id, name, normalized_name, created_at, updated_at)
@@ -56,7 +60,9 @@ def create_voiceprint_person(name: str, db_path: Path | None = None) -> Voicepri
     return created
 
 
-def get_voiceprint_person(person_ref: int | str, db_path: Path | None = None) -> VoiceprintSpeakerRow | None:
+def get_voiceprint_person(
+    person_ref: int | str, db_path: Path | None = None
+) -> VoiceprintSpeakerRow | None:
     """
     Load one voiceprint person by stable id.
 
@@ -80,7 +86,9 @@ def get_voiceprint_person(person_ref: int | str, db_path: Path | None = None) ->
         return _find_speaker(connection, person_ref)
 
 
-def rename_voiceprint_person(person_ref: int | str, name: str, db_path: Path | None = None) -> VoiceprintSpeakerRow:
+def rename_voiceprint_person(
+    person_ref: int | str, name: str, db_path: Path | None = None
+) -> VoiceprintSpeakerRow:
     """
     Rename an existing voiceprint person by stable id.
 
@@ -106,12 +114,18 @@ def rename_voiceprint_person(person_ref: int | str, name: str, db_path: Path | N
     with sqlite3.connect(database_path) as connection:
         _configure_connection(connection)
         _ensure_schema(connection)
-        existing = _speaker_by_id(connection, person_ref) if isinstance(person_ref, int) else _find_speaker(connection, person_ref)
+        existing = (
+            _speaker_by_id(connection, person_ref)
+            if isinstance(person_ref, int)
+            else _find_speaker(connection, person_ref)
+        )
         if existing is None:
             raise LookupError(f"No voiceprint person found for id: {person_ref}")
         duplicate = _speaker_by_name(connection, name)
         if duplicate is not None and duplicate.speaker_id != existing.speaker_id:
-            raise ValueError(f"Person name already belongs to id {duplicate.public_id}: {duplicate.name}.")
+            raise ValueError(
+                f"Person name already belongs to id {duplicate.public_id}: {duplicate.name}."
+            )
         connection.execute(
             """
             UPDATE voiceprint_speakers

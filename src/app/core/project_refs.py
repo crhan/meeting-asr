@@ -54,7 +54,9 @@ def _dedupe_projects_by_id(projects: list[ProjectListItem]) -> list[ProjectListI
     best_by_id: dict[str, ProjectListItem] = {}
     for project in projects:
         existing = best_by_id.get(project.project_id)
-        if existing is None or _project_reuse_rank(project) > _project_reuse_rank(existing):
+        if existing is None or _project_reuse_rank(project) > _project_reuse_rank(
+            existing
+        ):
             best_by_id[project.project_id] = project
     return list(best_by_id.values())
 
@@ -97,7 +99,9 @@ def _timestamp_or_none(value: str | None) -> float | None:
         return None
 
 
-def resolve_project_ref(project_ref: Path | str, projects_dir: Path | None = None) -> Path:
+def resolve_project_ref(
+    project_ref: Path | str, projects_dir: Path | None = None
+) -> Path:
     """
     Resolve a project path, id, or title.
 
@@ -115,10 +119,18 @@ def resolve_project_ref(project_ref: Path | str, projects_dir: Path | None = Non
     if _looks_like_path(ref_text, ref_path):
         return _resolve_project_path(ref_path)
     projects = list_projects(projects_dir).projects
-    exact = [project for project in projects if _matches_project_ref(project, ref_text, partial=False)]
+    exact = [
+        project
+        for project in projects
+        if _matches_project_ref(project, ref_text, partial=False)
+    ]
     if exact:
         return _single_project_match(ref_text, exact)
-    partial = [project for project in projects if _matches_project_ref(project, ref_text, partial=True)]
+    partial = [
+        project
+        for project in projects
+        if _matches_project_ref(project, ref_text, partial=True)
+    ]
     if partial:
         return _single_project_match(ref_text, partial)
     raise FileNotFoundError(f"Project not found by path, id, or title: {ref_text}")
@@ -147,7 +159,9 @@ def find_project_by_source(
     matches = []
     for project in list_projects(projects_dir).projects:
         manifest = _load_manifest_or_none(project.project_dir)
-        if manifest and _source_manifest_matches(source_path, source_sha256, variant, manifest):
+        if manifest and _source_manifest_matches(
+            source_path, source_sha256, variant, manifest
+        ):
             matches.append(project)
     if not matches:
         return None
@@ -177,7 +191,12 @@ def _load_manifest_or_none(project_dir: Path) -> ProjectManifest | None:
 
 def _looks_like_path(ref_text: str, path: Path) -> bool:
     """Return whether a reference should be treated as a filesystem path."""
-    return path.exists() or path.is_absolute() or ref_text in {".", ".."} or "/" in ref_text
+    return (
+        path.exists()
+        or path.is_absolute()
+        or ref_text in {".", ".."}
+        or "/" in ref_text
+    )
 
 
 def _resolve_project_path(path: Path) -> Path:
@@ -200,7 +219,11 @@ def _source_manifest_matches(
         return False
     if _same_original_source_path(source, manifest.source.original_path):
         return True
-    return bool(source_sha256 and manifest.source.sha256 and manifest.source.sha256 == source_sha256)
+    return bool(
+        source_sha256
+        and manifest.source.sha256
+        and manifest.source.sha256 == source_sha256
+    )
 
 
 def _same_original_source_path(source: Path, original_path: str | None) -> bool:
@@ -223,7 +246,9 @@ def _project_reuse_rank(project: ProjectListItem) -> tuple[int, str, str]:
     return status_rank.get(project.status, 0), project.updated_at, project.created_at
 
 
-def _matches_project_ref(project: ProjectListItem, ref_text: str, *, partial: bool) -> bool:
+def _matches_project_ref(
+    project: ProjectListItem, ref_text: str, *, partial: bool
+) -> bool:
     """Return whether a project matches a text reference."""
     targets = (project.project_id, project.title, project.project_dir.name)
     normalized_ref = ref_text.casefold()
@@ -236,5 +261,7 @@ def _single_project_match(ref_text: str, projects: list[ProjectListItem]) -> Pat
     """Resolve a non-path project reference."""
     if len(projects) == 1:
         return projects[0].project_dir
-    choices = ", ".join(f"{project.project_id} ({project.title})" for project in projects[:5])
+    choices = ", ".join(
+        f"{project.project_id} ({project.title})" for project in projects[:5]
+    )
     raise ValueError(f"Project reference is ambiguous: {ref_text}. Matches: {choices}")

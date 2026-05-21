@@ -71,13 +71,17 @@ def set_command(
     value: str = typer.Argument(..., help="Config value."),
 ) -> None:
     """Set one global config value."""
-    normalized_key, written_path = run_with_cli_errors(lambda: set_config_value(key, value))
+    normalized_key, written_path = run_with_cli_errors(
+        lambda: set_config_value(key, value)
+    )
     typer.echo(f"Set {normalized_key} in {written_path}")
 
 
 @app.command("unset")
 def unset_command(
-    key: str = typer.Argument(..., help="Config key to remove.", autocompletion=complete_config_key),
+    key: str = typer.Argument(
+        ..., help="Config key to remove.", autocompletion=complete_config_key
+    ),
 ) -> None:
     """Unset one global config value."""
     normalized_key, written_path = run_with_cli_errors(lambda: unset_config_value(key))
@@ -87,8 +91,12 @@ def unset_command(
 @app.command("import-env")
 def import_env(
     env_file: Path = typer.Argument(Path(".env"), help="Legacy dotenv file to import."),
-    overwrite: bool = typer.Option(False, "--overwrite", help="Replace existing config values."),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Replace existing config values."
+    ),
 ) -> None:
     """Import a legacy .env file into the XDG global config."""
-    imported_count, written_path = run_with_cli_errors(lambda: import_env_file(env_file, overwrite=overwrite))
+    imported_count, written_path = run_with_cli_errors(
+        lambda: import_env_file(env_file, overwrite=overwrite)
+    )
     typer.echo(f"Imported {imported_count} value(s) into {written_path}")

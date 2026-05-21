@@ -12,7 +12,10 @@ from app.dashscope_chat import generate_chat_text, resolve_chat_endpoint
 
 def test_resolve_chat_endpoint_uses_builtin_model_routes() -> None:
     """Known model families should route without network probing."""
-    settings = Settings(dashscope_api_key="key", dashscope_base_url="https://dashscope.aliyuncs.com/api/v1")
+    settings = Settings(
+        dashscope_api_key="key",
+        dashscope_base_url="https://dashscope.aliyuncs.com/api/v1",
+    )
 
     assert resolve_chat_endpoint("qwen-plus", settings) == "generation"
     assert resolve_chat_endpoint("qwen3-max", settings) == "generation"
@@ -51,7 +54,9 @@ def test_resolve_chat_endpoint_rejects_unknown_config_value() -> None:
         resolve_chat_endpoint("qwen-test", settings)
 
 
-def test_generate_chat_text_uses_multimodal_route_without_generation_probe(monkeypatch) -> None:
+def test_generate_chat_text_uses_multimodal_route_without_generation_probe(
+    monkeypatch,
+) -> None:
     """Qwen3.6 should call native multimodal directly, not try Generation first."""
     multimodal_calls = []
 
@@ -68,10 +73,17 @@ def test_generate_chat_text_uses_multimodal_route_without_generation_probe(monke
             output={"choices": [{"message": {"content": [{"text": "OK"}]}}]},
         )
 
-    monkeypatch.setattr("app.dashscope_chat.Generation.call", unexpected_generation_call)
-    monkeypatch.setattr("app.dashscope_chat.MultiModalConversation.call", fake_multimodal_call)
+    monkeypatch.setattr(
+        "app.dashscope_chat.Generation.call", unexpected_generation_call
+    )
+    monkeypatch.setattr(
+        "app.dashscope_chat.MultiModalConversation.call", fake_multimodal_call
+    )
     monkeypatch.setattr("app.dashscope_chat.requests.post", unexpected_post)
-    settings = Settings(dashscope_api_key="key", dashscope_base_url="https://dashscope.aliyuncs.com/api/v1")
+    settings = Settings(
+        dashscope_api_key="key",
+        dashscope_base_url="https://dashscope.aliyuncs.com/api/v1",
+    )
 
     result = generate_chat_text(
         settings=settings,
@@ -83,7 +95,9 @@ def test_generate_chat_text_uses_multimodal_route_without_generation_probe(monke
     )
 
     assert result == "OK"
-    assert multimodal_calls[0]["messages"] == [{"role": "user", "content": [{"text": "只回复 OK"}]}]
+    assert multimodal_calls[0]["messages"] == [
+        {"role": "user", "content": [{"text": "只回复 OK"}]}
+    ]
     assert multimodal_calls[0]["enable_thinking"] is False
 
 
@@ -106,10 +120,16 @@ def test_generate_chat_text_uses_compatible_route_when_configured(monkeypatch) -
         raise AssertionError("Generation.call should not run for compatible route.")
 
     def unexpected_multimodal_call(**kwargs):
-        raise AssertionError("MultiModalConversation.call should not run for compatible route.")
+        raise AssertionError(
+            "MultiModalConversation.call should not run for compatible route."
+        )
 
-    monkeypatch.setattr("app.dashscope_chat.Generation.call", unexpected_generation_call)
-    monkeypatch.setattr("app.dashscope_chat.MultiModalConversation.call", unexpected_multimodal_call)
+    monkeypatch.setattr(
+        "app.dashscope_chat.Generation.call", unexpected_generation_call
+    )
+    monkeypatch.setattr(
+        "app.dashscope_chat.MultiModalConversation.call", unexpected_multimodal_call
+    )
     monkeypatch.setattr("app.dashscope_chat.requests.post", fake_post)
     settings = Settings(
         dashscope_api_key="key",
@@ -127,7 +147,10 @@ def test_generate_chat_text_uses_compatible_route_when_configured(monkeypatch) -
     )
 
     assert result == "OK"
-    assert compatible_calls[0][0] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    assert (
+        compatible_calls[0][0]
+        == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    )
     assert compatible_calls[0][1]["json"] == {
         "model": "qwen3.6-plus",
         "messages": [{"role": "user", "content": "只回复 OK"}],

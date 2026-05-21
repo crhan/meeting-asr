@@ -38,7 +38,9 @@ class EmbeddingAudioStats:
     clipping_ratio: float
 
 
-def normalize_voiceprint_samples(*, store_dir: Path | None, rebuild: bool) -> VoiceprintNormalizeSummary:
+def normalize_voiceprint_samples(
+    *, store_dir: Path | None, rebuild: bool
+) -> VoiceprintNormalizeSummary:
     """
     Normalize all stored voiceprint samples into a deterministic derived directory.
 
@@ -54,8 +56,13 @@ def normalize_voiceprint_samples(*, store_dir: Path | None, rebuild: bool) -> Vo
     processed_count = 0
     skipped_count = 0
     for sample in samples:
-        normalized_path = normalized_voiceprint_sample_path(sample, store_dir=resolved_store_dir)
-        if _normalized_sample_is_current(sample.clip_path, normalized_path) and not rebuild:
+        normalized_path = normalized_voiceprint_sample_path(
+            sample, store_dir=resolved_store_dir
+        )
+        if (
+            _normalized_sample_is_current(sample.clip_path, normalized_path)
+            and not rebuild
+        ):
             skipped_count += 1
             continue
         normalize_voiceprint_sample(sample, store_dir=resolved_store_dir)
@@ -68,7 +75,9 @@ def normalize_voiceprint_samples(*, store_dir: Path | None, rebuild: bool) -> Vo
     )
 
 
-def normalize_voiceprint_sample(sample: VoiceprintSampleRow, *, store_dir: Path | None) -> Path:
+def normalize_voiceprint_sample(
+    sample: VoiceprintSampleRow, *, store_dir: Path | None
+) -> Path:
     """
     Normalize one stored sample for embedding.
 
@@ -81,7 +90,9 @@ def normalize_voiceprint_sample(sample: VoiceprintSampleRow, *, store_dir: Path 
     """
     output_path = normalized_voiceprint_sample_path(sample, store_dir=store_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = output_path.with_name(f"{output_path.stem}.norm-tmp{output_path.suffix}")
+    temp_path = output_path.with_name(
+        f"{output_path.stem}.norm-tmp{output_path.suffix}"
+    )
     try:
         _run_ffmpeg(_normalize_command(sample.clip_path, temp_path))
         trim_embedding_audio_silence(temp_path, output_path)
@@ -107,7 +118,7 @@ def trim_embedding_audio_silence(source: Path, output: Path) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
     try:
         params, frames = _read_wav_frames(source)
-    except (EOFError, OSError, wave.Error):
+    except EOFError, OSError, wave.Error:
         output.write_bytes(source.read_bytes())
         return output
     if params.sampwidth != 2 or params.nchannels != 1 or not frames:
@@ -140,7 +151,7 @@ def embedding_audio_stats(path: Path) -> EmbeddingAudioStats | None:
     """
     try:
         params, frames = _read_wav_frames(path)
-    except (EOFError, OSError, wave.Error):
+    except EOFError, OSError, wave.Error:
         return None
     if params.sampwidth != 2 or params.nchannels != 1 or not frames:
         return None
@@ -152,7 +163,9 @@ def embedding_audio_stats(path: Path) -> EmbeddingAudioStats | None:
     clipped = 0
     voiced = 0
     for offset in range(0, len(frames), 2):
-        value = int.from_bytes(frames[offset : offset + 2], "little", signed=True) / 32768.0
+        value = (
+            int.from_bytes(frames[offset : offset + 2], "little", signed=True) / 32768.0
+        )
         absolute = abs(value)
         total_square += value * value
         if absolute < EMBEDDING_SILENCE_THRESHOLD:
@@ -170,7 +183,9 @@ def embedding_audio_stats(path: Path) -> EmbeddingAudioStats | None:
     )
 
 
-def ensure_normalized_voiceprint_sample(sample: VoiceprintSampleRow, *, store_dir: Path | None) -> Path:
+def ensure_normalized_voiceprint_sample(
+    sample: VoiceprintSampleRow, *, store_dir: Path | None
+) -> Path:
     """
     Return a current normalized sample, rebuilding stale derived audio.
 
@@ -187,7 +202,9 @@ def ensure_normalized_voiceprint_sample(sample: VoiceprintSampleRow, *, store_di
     return normalize_voiceprint_sample(sample, store_dir=store_dir)
 
 
-def normalized_voiceprint_sample_path(sample: VoiceprintSampleRow, *, store_dir: Path | None) -> Path:
+def normalized_voiceprint_sample_path(
+    sample: VoiceprintSampleRow, *, store_dir: Path | None
+) -> Path:
     """
     Return the deterministic normalized WAV path for a sample.
 
@@ -198,7 +215,9 @@ def normalized_voiceprint_sample_path(sample: VoiceprintSampleRow, *, store_dir:
     Returns:
         Derived normalized WAV path.
     """
-    return normalized_voiceprint_dir(_resolve_store_dir(store_dir)) / sample.clip_rel_path
+    return (
+        normalized_voiceprint_dir(_resolve_store_dir(store_dir)) / sample.clip_rel_path
+    )
 
 
 def normalized_voiceprint_clip_path(clip_path: Path, *, store_dir: Path | None) -> Path:
@@ -229,7 +248,9 @@ def voiceprint_playback_clip_path(clip_path: Path, *, store_dir: Path | None) ->
         Normalized clip path when available, otherwise the original clip path.
     """
     try:
-        normalized_path = normalized_voiceprint_clip_path(clip_path, store_dir=store_dir)
+        normalized_path = normalized_voiceprint_clip_path(
+            clip_path, store_dir=store_dir
+        )
     except ValueError:
         return clip_path
     return normalized_path if normalized_path.exists() else clip_path
@@ -245,7 +266,11 @@ def normalized_voiceprint_dir(store_dir: Path | None) -> Path:
     Returns:
         Versioned normalized sample directory.
     """
-    return _resolve_store_dir(store_dir) / VOICEPRINT_NORMALIZED_DIR / VOICEPRINT_AUDIO_PREPROCESS_VERSION
+    return (
+        _resolve_store_dir(store_dir)
+        / VOICEPRINT_NORMALIZED_DIR
+        / VOICEPRINT_AUDIO_PREPROCESS_VERSION
+    )
 
 
 def _normalize_command(source: Path, output: Path) -> list[str]:
@@ -304,7 +329,9 @@ def _voiced_sample_bounds(frames: bytes) -> tuple[int | None, int | None]:
     first: int | None = None
     last: int | None = None
     for index, offset in enumerate(range(0, len(frames), 2)):
-        value = int.from_bytes(frames[offset : offset + 2], "little", signed=True) / 32768.0
+        value = (
+            int.from_bytes(frames[offset : offset + 2], "little", signed=True) / 32768.0
+        )
         if abs(value) < EMBEDDING_SILENCE_THRESHOLD:
             continue
         if first is None:
@@ -318,10 +345,14 @@ def _run_ffmpeg(command: list[str]) -> None:
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
     except FileNotFoundError as exc:
-        raise RuntimeError("ffmpeg was not found in PATH. Install ffmpeg first.") from exc
+        raise RuntimeError(
+            "ffmpeg was not found in PATH. Install ffmpeg first."
+        ) from exc
     if completed.returncode != 0:
         stderr = completed.stderr.strip()
-        raise RuntimeError(f"ffmpeg failed with exit code {completed.returncode}: {stderr}")
+        raise RuntimeError(
+            f"ffmpeg failed with exit code {completed.returncode}: {stderr}"
+        )
 
 
 def _normalized_sample_is_current(source: Path, output: Path) -> bool:

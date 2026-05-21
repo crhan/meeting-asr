@@ -55,9 +55,20 @@ def list_trashed_projects() -> ProjectTrashListResult:
         return ProjectTrashListResult(trash_dir, [])
     if not trash_dir.is_dir():
         raise NotADirectoryError(f"Project trash path is not a directory: {trash_dir}")
-    projects = [_trashed_project_item(child) for child in trash_dir.iterdir() if _is_project_dir(child)]
+    projects = [
+        _trashed_project_item(child)
+        for child in trash_dir.iterdir()
+        if _is_project_dir(child)
+    ]
     projects = [project for project in projects if project is not None]
-    projects.sort(key=lambda project: (project.trashed_at, project.updated_at, project.project_id), reverse=True)
+    projects.sort(
+        key=lambda project: (
+            project.trashed_at,
+            project.updated_at,
+            project.project_id,
+        ),
+        reverse=True,
+    )
     return ProjectTrashListResult(trash_dir, projects)
 
 
@@ -147,13 +158,23 @@ def resolve_trashed_project_ref(trash_ref: str | Path) -> TrashedProjectListItem
     if _looks_like_path(ref_text, ref_path):
         return _trashed_project_path_match(ref_path)
     projects = list_trashed_projects().projects
-    exact = [project for project in projects if _matches_trash_ref(project, ref_text, partial=False)]
+    exact = [
+        project
+        for project in projects
+        if _matches_trash_ref(project, ref_text, partial=False)
+    ]
     if exact:
         return _single_trash_match(ref_text, exact)
-    partial = [project for project in projects if _matches_trash_ref(project, ref_text, partial=True)]
+    partial = [
+        project
+        for project in projects
+        if _matches_trash_ref(project, ref_text, partial=True)
+    ]
     if partial:
         return _single_trash_match(ref_text, partial)
-    raise FileNotFoundError(f"Trashed project not found: {ref_text}. Run `meeting-asr project trash list`.")
+    raise FileNotFoundError(
+        f"Trashed project not found: {ref_text}. Run `meeting-asr project trash list`."
+    )
 
 
 def get_project_trash_dir() -> Path:
@@ -166,7 +187,9 @@ def get_project_trash_dir() -> Path:
     return get_data_dir() / "trash" / "projects"
 
 
-def _write_trash_metadata(trash_dir: Path, original_project_dir: Path, trashed_at: datetime) -> None:
+def _write_trash_metadata(
+    trash_dir: Path, original_project_dir: Path, trashed_at: datetime
+) -> None:
     """Persist restore metadata next to the trashed project."""
     payload = {
         "schema_version": TRASH_SCHEMA_VERSION,
@@ -215,7 +238,9 @@ def _load_manifest(project_dir: Path) -> ProjectManifest:
     """Load the manifest from one project directory."""
     payload = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError(f"Project manifest must contain a JSON object: {project_dir / 'project.json'}")
+        raise ValueError(
+            f"Project manifest must contain a JSON object: {project_dir / 'project.json'}"
+        )
     return ProjectManifest.from_dict(payload)
 
 
@@ -238,7 +263,11 @@ def _metadata_trashed_at(trash_dir: Path, metadata: dict[str, Any]) -> str:
     parsed = _trash_stamp_from_name(trash_dir.name)
     if parsed is not None:
         return parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
-    return datetime.fromtimestamp(trash_dir.stat().st_mtime, UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return (
+        datetime.fromtimestamp(trash_dir.stat().st_mtime, UTC)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _metadata_restore_dir(trash_dir: Path, metadata: dict[str, Any]) -> Path:
@@ -246,7 +275,9 @@ def _metadata_restore_dir(trash_dir: Path, metadata: dict[str, Any]) -> Path:
     raw_value = metadata.get("original_project_dir")
     if isinstance(raw_value, str) and raw_value.strip():
         return Path(raw_value).expanduser().resolve()
-    return (get_default_projects_dir().resolve() / _original_project_name(trash_dir.name)).resolve()
+    return (
+        get_default_projects_dir().resolve() / _original_project_name(trash_dir.name)
+    ).resolve()
 
 
 def _restore_destination(
@@ -258,7 +289,9 @@ def _restore_destination(
     if project_dir is not None:
         return project_dir.expanduser().resolve()
     if projects_dir is not None:
-        return (projects_dir.expanduser().resolve() / item.restore_project_dir.name).resolve()
+        return (
+            projects_dir.expanduser().resolve() / item.restore_project_dir.name
+        ).resolve()
     return item.restore_project_dir
 
 
@@ -269,7 +302,12 @@ def _is_project_dir(path: Path) -> bool:
 
 def _looks_like_path(ref_text: str, path: Path) -> bool:
     """Return whether a reference should be treated as a filesystem path."""
-    return path.exists() or path.is_absolute() or "/" in ref_text or ref_text in {".", ".."}
+    return (
+        path.exists()
+        or path.is_absolute()
+        or "/" in ref_text
+        or ref_text in {".", ".."}
+    )
 
 
 def _trashed_project_path_match(path: Path) -> TrashedProjectListItem:
@@ -279,24 +317,39 @@ def _trashed_project_path_match(path: Path) -> TrashedProjectListItem:
         item = _trashed_project_item(resolved)
         if item is not None:
             return item
-    raise FileNotFoundError(f"Trashed project manifest does not exist: {resolved / 'project.json'}")
+    raise FileNotFoundError(
+        f"Trashed project manifest does not exist: {resolved / 'project.json'}"
+    )
 
 
-def _matches_trash_ref(project: TrashedProjectListItem, ref_text: str, *, partial: bool) -> bool:
+def _matches_trash_ref(
+    project: TrashedProjectListItem, ref_text: str, *, partial: bool
+) -> bool:
     """Return whether a trashed project matches a text reference."""
-    targets = (project.project_id, project.title, project.trash_dir.name, project.restore_project_dir.name)
+    targets = (
+        project.project_id,
+        project.title,
+        project.trash_dir.name,
+        project.restore_project_dir.name,
+    )
     normalized_ref = ref_text.casefold()
     if partial:
         return any(normalized_ref in target.casefold() for target in targets)
     return any(normalized_ref == target.casefold() for target in targets)
 
 
-def _single_trash_match(ref_text: str, projects: list[TrashedProjectListItem]) -> TrashedProjectListItem:
+def _single_trash_match(
+    ref_text: str, projects: list[TrashedProjectListItem]
+) -> TrashedProjectListItem:
     """Resolve one non-path trash reference."""
     if len(projects) == 1:
         return projects[0]
-    choices = ", ".join(f"{project.project_id} ({project.title})" for project in projects[:5])
-    raise ValueError(f"Trash project reference is ambiguous: {ref_text}. Matches: {choices}")
+    choices = ", ".join(
+        f"{project.project_id} ({project.title})" for project in projects[:5]
+    )
+    raise ValueError(
+        f"Trash project reference is ambiguous: {ref_text}. Matches: {choices}"
+    )
 
 
 def _original_project_name(trash_name: str) -> str:
@@ -311,7 +364,9 @@ def _trash_stamp_from_name(trash_name: str) -> datetime | None:
     if len(trash_name) <= 16 or trash_name[16] != "_":
         return None
     try:
-        return datetime.strptime(trash_name[:16], TRASH_STAMP_FORMAT).replace(tzinfo=UTC)
+        return datetime.strptime(trash_name[:16], TRASH_STAMP_FORMAT).replace(
+            tzinfo=UTC
+        )
     except ValueError:
         return None
 

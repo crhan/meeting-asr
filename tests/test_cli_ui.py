@@ -49,7 +49,9 @@ def test_reset_progress_event_clears_finished_unknown_total() -> None:
 def test_long_progress_description_moves_metadata_to_detail_line() -> None:
     """Long poll metadata should not stay in the primary progress prefix."""
     progress = Progress(console=Console(file=io.StringIO()))
-    task_id = progress.add_task("submitted", total=1, step_label="[4/10]", detail_label="")
+    task_id = progress.add_task(
+        "submitted", total=1, step_label="[4/10]", detail_label=""
+    )
 
     cli_ui._apply_progress_event(
         progress,
@@ -75,7 +77,9 @@ def test_long_progress_description_moves_metadata_to_detail_line() -> None:
 
 def test_progress_description_split_handles_eta_without_task_id() -> None:
     """ETA metadata should become detail even when there is no task id."""
-    main_action, detail_label = cli_ui._split_progress_description("Uploading audio to OSS | ETA ~8s | medium n=3")
+    main_action, detail_label = cli_ui._split_progress_description(
+        "Uploading audio to OSS | ETA ~8s | medium n=3"
+    )
 
     assert main_action == "Uploading audio to OSS"
     assert detail_label == "ETA ~8s | medium n=3"
@@ -105,7 +109,9 @@ def test_workflow_renderer_keeps_step_rows_and_total_row(monkeypatch) -> None:
         )
     )
     now = 8.0
-    renderer.report(CliProgressEvent("Step two", step_index=2, step_total=3, reset_total=True))
+    renderer.report(
+        CliProgressEvent("Step two", step_index=2, step_total=3, reset_total=True)
+    )
     now = 11.0
 
     step_one = progress._tasks[renderer.step_task_ids[1]]
@@ -128,7 +134,9 @@ def test_total_elapsed_column_uses_workflow_clock(monkeypatch) -> None:
     """Total elapsed time should keep moving even when the Rich task is finished."""
     monkeypatch.setattr(cli_ui.time, "monotonic", lambda: 100.0)
     progress = Progress(console=Console(file=io.StringIO()))
-    task_id = progress.add_task("done", total=1, completed=1, workflow_started_at=40.0, row_kind="total")
+    task_id = progress.add_task(
+        "done", total=1, completed=1, workflow_started_at=40.0, row_kind="total"
+    )
     task = progress.tasks[0]
 
     progress.update(task_id, completed=1)

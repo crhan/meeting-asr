@@ -72,7 +72,9 @@ class SpeakerClusterDiagnostic:
     component_count: int
     component_sizes: tuple[int, ...]
     warnings: tuple[str, ...]
-    samples: dict[SegmentScoreKey, SpeakerClusterSampleScore] = field(default_factory=dict)
+    samples: dict[SegmentScoreKey, SpeakerClusterSampleScore] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(slots=True)
@@ -126,8 +128,12 @@ class SpeakerReviewSession:
     people: tuple[KnownPerson, ...] = ()
     store_dir: Path | None = None
     projects_dir: Path | None = None
-    cluster_diagnostics: dict[int, SpeakerClusterDiagnostic] = field(default_factory=dict)
-    sample_identity_scores: dict[int, dict[SegmentScoreKey, SpeakerSampleIdentityScore]] = field(default_factory=dict)
+    cluster_diagnostics: dict[int, SpeakerClusterDiagnostic] = field(
+        default_factory=dict
+    )
+    sample_identity_scores: dict[
+        int, dict[SegmentScoreKey, SpeakerSampleIdentityScore]
+    ] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

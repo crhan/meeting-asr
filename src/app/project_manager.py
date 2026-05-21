@@ -55,9 +55,21 @@ from app.core.oss_upload import (
     estimate_oss_upload,
     record_oss_upload,
 )
-from app.infra.dashscope_asr import download_transcription_json, submit_transcription, wait_transcription
-from app.infra.ffmpeg import SUPPORTED_AUDIO_FORMATS, extract_audio_for_asr, probe_media_duration_seconds
-from app.meeting_summary import MeetingSummary, generate_meeting_summary, render_meeting_summary_markdown
+from app.infra.dashscope_asr import (
+    download_transcription_json,
+    submit_transcription,
+    wait_transcription,
+)
+from app.infra.ffmpeg import (
+    SUPPORTED_AUDIO_FORMATS,
+    extract_audio_for_asr,
+    probe_media_duration_seconds,
+)
+from app.meeting_summary import (
+    MeetingSummary,
+    generate_meeting_summary,
+    render_meeting_summary_markdown,
+)
 from app.models import TranscriptResult
 from app.postprocess import (
     merge_adjacent_sentences,
@@ -76,7 +88,12 @@ from app.speaker_labeling import (
     write_speaker_mapping,
 )
 from app.srt_utils import build_srt
-from app.uploader import SIGNED_URL_EXPIRES_SECONDS, presign_oss_object, upload_file_to_oss
+from app.uploader import (
+    SIGNED_URL_EXPIRES_SECONDS,
+    oss_object_exists,
+    presign_oss_object,
+    upload_file_to_oss,
+)
 from app.utils import ensure_directory, safe_write_json, safe_write_text
 
 PROJECT_DIRS = ("source", "audio", "asr", "speakers", "exports", "logs", "tmp")
@@ -88,6 +105,15 @@ tmp/
 asr/raw_result.json
 *.signed-url
 """
+PROJECT_AUDIO_FILENAMES = ("audio.flac", "audio.wav", "audio.mp3", "audio.m4a")
+SOURCE_AUDIO_EXTENSIONS = SUPPORTED_AUDIO_FORMATS | {
+    "aac",
+    "m4a",
+    "mp3",
+    "ogg",
+    "opus",
+    "wma",
+}
 DOWNSTREAM_OUTPUT_KEYS = (
     "meeting_summary",
     "meeting_summary_json",
@@ -120,7 +146,9 @@ DOWNSTREAM_ARTIFACT_PATHS = (
 DOWNSTREAM_SPEAKER_KEYS = ("mapped", "person_map", "matches", "voiceprints")
 
 LOGGER = logging.getLogger(__name__)
-_TITLE_TIME_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?\b\s*")
+_TITLE_TIME_PREFIX_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?\b\s*"
+)
 
 
 def create_project(
@@ -160,7 +188,9 @@ def create_project(
     created_at = _now_iso()
     resolved_sha256 = source_sha256 or _sha256_file(source, progress)
     resolved_variant = _normalize_project_variant(variant)
-    root = _resolve_project_root(source, projects_dir, project_dir, resolved_sha256, resolved_variant)
+    root = _resolve_project_root(
+        source, projects_dir, project_dir, resolved_sha256, resolved_variant
+    )
     if (root / "project.json").exists():
         raise FileExistsError(f"Project already exists: {root}")
     _create_project_dirs(root)
@@ -256,7 +286,9 @@ def create_or_reuse_project(
     )
     if existing is not None:
         emit_progress(progress, "Using existing project", total=1, completed=1)
-        return ProjectCreateSummary(existing, _load_reused_manifest(existing, title), False)
+        return ProjectCreateSummary(
+            existing, _load_reused_manifest(existing, title), False
+        )
     source = input_path.expanduser().resolve()
     source_sha256 = _sha256_file(source, progress)
     existing = _find_existing_project_for_create(
@@ -268,7 +300,9 @@ def create_or_reuse_project(
     )
     if existing is not None:
         emit_progress(progress, "Using existing project", total=1, completed=1)
-        return ProjectCreateSummary(existing, _load_reused_manifest(existing, title), False)
+        return ProjectCreateSummary(
+            existing, _load_reused_manifest(existing, title), False
+        )
     manifest = create_project(
         input_path,
         title=title,
@@ -280,7 +314,9 @@ def create_or_reuse_project(
         source_sha256=source_sha256,
         progress=progress,
     )
-    project_root = _resolve_project_root(source, projects_dir, project_dir, source_sha256, resolved_variant)
+    project_root = _resolve_project_root(
+        source, projects_dir, project_dir, source_sha256, resolved_variant
+    )
     return ProjectCreateSummary(project_root, manifest, True)
 
 
@@ -294,18 +330,25 @@ def _find_existing_project_for_create(
 ) -> Path | None:
     """Find an existing project across the normal parent and explicit path parent."""
     for parent in _project_reuse_parents(projects_dir, project_dir):
-        existing = find_project_by_source(input_path, parent, source_sha256=source_sha256, variant=variant)
+        existing = find_project_by_source(
+            input_path, parent, source_sha256=source_sha256, variant=variant
+        )
         if existing is not None:
             return existing
     return None
 
 
-def _project_reuse_parents(projects_dir: Path | None, project_dir: Path | None) -> tuple[Path | None, ...]:
+def _project_reuse_parents(
+    projects_dir: Path | None, project_dir: Path | None
+) -> tuple[Path | None, ...]:
     """Return project parent directories that define the reuse namespace."""
     parents: list[Path | None] = [projects_dir]
     if project_dir is not None:
         explicit_parent = project_dir.expanduser().resolve().parent
-        if projects_dir is None or explicit_parent != projects_dir.expanduser().resolve():
+        if (
+            projects_dir is None
+            or explicit_parent != projects_dir.expanduser().resolve()
+        ):
             parents.append(explicit_parent)
     return tuple(parents)
 
@@ -318,14 +361,20 @@ def _load_reused_manifest(project_dir: Path, title: str | None) -> ProjectManife
     cleaned_title = title.strip()
     if not cleaned_title:
         raise ValueError("Project title must not be empty.")
-    normalized_title = _title_with_meeting_time(cleaned_title, manifest.source.meeting_time)
-    if manifest.title == normalized_title and manifest.title_source == TITLE_SOURCE_MANUAL:
+    normalized_title = _title_with_meeting_time(
+        cleaned_title, manifest.source.meeting_time
+    )
+    if (
+        manifest.title == normalized_title
+        and manifest.title_source == TITLE_SOURCE_MANUAL
+    ):
         return manifest
     manifest.title = normalized_title
     manifest.title_source = TITLE_SOURCE_MANUAL
     manifest.title_model = None
     save_manifest(project_dir, manifest)
     return manifest
+
 
 def load_manifest(project_dir: Path) -> ProjectManifest:
     """
@@ -337,8 +386,11 @@ def load_manifest(project_dir: Path) -> ProjectManifest:
     Returns:
         Parsed manifest.
     """
-    payload = json.loads(project_paths(project_dir).manifest.read_text(encoding="utf-8"))
+    payload = json.loads(
+        project_paths(project_dir).manifest.read_text(encoding="utf-8")
+    )
     return ProjectManifest.from_dict(payload)
+
 
 def save_manifest(project_dir: Path, manifest: ProjectManifest) -> Path:
     """
@@ -548,6 +600,7 @@ def _run_with_stage_heartbeat(
                     external_ids=external_ids,
                 )
 
+
 def update_project_metadata(
     project_dir: Path,
     *,
@@ -585,6 +638,7 @@ def update_project_metadata(
     save_manifest(paths.root, manifest)
     return ProjectUpdateSummary(paths.root, manifest)
 
+
 def delete_project(project_dir: Path, *, permanent: bool) -> ProjectDeleteSummary:
     """
     Delete a project, moving it to Meeting-ASR trash by default.
@@ -604,6 +658,7 @@ def delete_project(project_dir: Path, *, permanent: bool) -> ProjectDeleteSummar
     destination = move_project_to_trash(paths.root)
     return ProjectDeleteSummary(paths.root, destination, False)
 
+
 def project_paths(project_dir: Path) -> ProjectPaths:
     """
     Resolve project paths.
@@ -615,6 +670,7 @@ def project_paths(project_dir: Path) -> ProjectPaths:
         Project paths.
     """
     return ProjectPaths(root=project_dir.expanduser().resolve())
+
 
 def ensure_project_dirs(project_dir: Path) -> ProjectPaths:
     """
@@ -629,6 +685,7 @@ def ensure_project_dirs(project_dir: Path) -> ProjectPaths:
     paths = project_paths(project_dir)
     _create_project_dirs(paths.root)
     return paths
+
 
 def prepare_project_audio(
     project_dir: Path,
@@ -651,13 +708,18 @@ def prepare_project_audio(
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
     audio_path = paths.audio_dir / f"audio.{normalized_format}"
+    source_path = resolve_project_source_path(paths.root, manifest)
     emit_progress(progress, "Extracting 16 kHz mono audio")
-    extract_audio_for_asr(resolve_project_source_path(paths.root, manifest), audio_path, audio_format=normalized_format)
+    extract_audio_for_asr(source_path, audio_path, audio_format=normalized_format)
     emit_progress(progress, "Audio ready", advance=1)
     manifest.audio = _audio_metadata(audio_path, normalized_format)
     manifest.status = "prepared"
+    _prune_project_source_after_audio(
+        paths, manifest, source_path, audio_path, progress
+    )
     save_manifest(paths.root, manifest)
     return audio_path
+
 
 def transcribe_project(
     project_dir: Path,
@@ -684,7 +746,9 @@ def transcribe_project(
     manifest = load_manifest(project_dir)
     input_file = _project_input_file(paths.root, manifest)
     transcribe_steps = step_total or 6
-    manifest = record_project_stage(paths.root, stage="audio extraction", input_file=input_file)
+    manifest = record_project_stage(
+        paths.root, stage="audio extraction", input_file=input_file
+    )
     _emit_stage_event(
         progress,
         manifest=manifest,
@@ -734,7 +798,9 @@ def transcribe_project(
         stage="OSS upload/sign",
         input_file=input_file,
         external_ids=signed_external,
-        last_success="signed URL ready" if file_url_source == "oss_signed_url" else "file URL ready",
+        last_success="signed URL ready"
+        if file_url_source == "oss_signed_url"
+        else "file URL ready",
         heartbeat=True,
     )
     _emit_heartbeat_event(
@@ -744,11 +810,15 @@ def transcribe_project(
         stage="OSS upload/sign",
         input_file=input_file,
         elapsed_seconds=0.0,
-        last_success="signed URL ready" if file_url_source == "oss_signed_url" else "file URL ready",
+        last_success="signed URL ready"
+        if file_url_source == "oss_signed_url"
+        else "file URL ready",
         next_action="submit ASR task",
         external_ids=signed_external,
     )
-    manifest = record_project_stage(paths.root, stage="ASR submit", input_file=input_file)
+    manifest = record_project_stage(
+        paths.root, stage="ASR submit", input_file=input_file
+    )
     _emit_stage_event(
         progress,
         manifest=manifest,
@@ -771,14 +841,18 @@ def transcribe_project(
         last_success="DashScope task submitted",
         heartbeat=True,
     )
-    emit_progress(progress, f"DashScope task submitted: {task_id}", completed=1, total=1)
+    emit_progress(
+        progress, f"DashScope task submitted: {task_id}", completed=1, total=1
+    )
     audio_duration_seconds = _audio_duration_seconds(paths.root, manifest, audio_path)
     cost = estimate_asr_cost(
         model=options.model,
         base_url=settings.dashscope_base_url,
         audio_duration_seconds=audio_duration_seconds,
     )
-    wait_estimate = estimate_dashscope_wait(settings, model=options.model, audio_duration_seconds=audio_duration_seconds)
+    wait_estimate = estimate_dashscope_wait(
+        settings, model=options.model, audio_duration_seconds=audio_duration_seconds
+    )
     manifest = load_manifest(paths.root)
     manifest = record_project_stage(
         paths.root,
@@ -885,7 +959,9 @@ def transcribe_project(
     _invalidate_downstream_artifacts(paths, manifest)
     _write_project_asr_outputs(paths, raw_result, parsed_result, options.generate_srt)
     emit_progress(progress, "Transcription complete", completed=1, total=1)
-    _record_asr_metadata(manifest, task_id, file_url_source, options, parsed_result, hotwords, cost)
+    _record_asr_metadata(
+        manifest, task_id, file_url_source, options, parsed_result, hotwords, cost
+    )
     manifest.status = "transcribed"
     save_manifest(paths.root, manifest)
     return ProjectTranscribeSummary(
@@ -896,6 +972,7 @@ def transcribe_project(
         len(parsed_result.sentences),
         cost,
     )
+
 
 def apply_project_speakers(
     project_dir: Path,
@@ -923,14 +1000,24 @@ def apply_project_speakers(
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
     result = load_transcript_result(paths.asr_dir / "sentences.json")
-    existing_mapping = {} if replace_existing else _load_existing_speaker_mapping(paths.speakers_dir / "speaker_map.json")
+    existing_mapping = (
+        {}
+        if replace_existing
+        else _load_existing_speaker_mapping(paths.speakers_dir / "speaker_map.json")
+    )
     explicit_mapping = _merge_speaker_mapping(result, mappings)
-    resolved_mapping = _merge_speaker_mapping(result, existing_mapping | explicit_mapping)
-    mapping_path = write_speaker_mapping(paths.speakers_dir / "speaker_map.json", resolved_mapping)
+    resolved_mapping = _merge_speaker_mapping(
+        result, existing_mapping | explicit_mapping
+    )
+    mapping_path = write_speaker_mapping(
+        paths.speakers_dir / "speaker_map.json", resolved_mapping
+    )
     if ignored_speaker_ids is not None:
         _write_project_ignored_speakers(paths, manifest, result, ignored_speaker_ids)
     person_map_path = paths.speakers_dir / "speaker_person_map.json"
-    existing_person_mapping = {} if replace_existing else load_speaker_person_mapping(person_map_path)
+    existing_person_mapping = (
+        {} if replace_existing else load_speaker_person_mapping(person_map_path)
+    )
     stored_person_mapping = _resolve_speaker_person_mapping(
         resolved_mapping,
         existing_mapping,
@@ -940,7 +1027,9 @@ def apply_project_speakers(
     )
     if stored_person_mapping:
         write_speaker_person_mapping(person_map_path, stored_person_mapping)
-        manifest.speakers["person_map"] = {str(key): value for key, value in sorted(stored_person_mapping.items())}
+        manifest.speakers["person_map"] = {
+            str(key): value for key, value in sorted(stored_person_mapping.items())
+        }
     else:
         if person_map_path.exists():
             person_map_path.unlink()
@@ -949,7 +1038,10 @@ def apply_project_speakers(
         paths.exports_dir / "transcript_named.txt",
         render_named_speaker_text(result, resolved_mapping),
     )
-    srt_path = safe_write_text(paths.exports_dir / "subtitle_named.srt", render_named_srt(result, resolved_mapping))
+    srt_path = safe_write_text(
+        paths.exports_dir / "subtitle_named.srt",
+        render_named_srt(result, resolved_mapping),
+    )
     corrected_result = _load_corrected_result(paths)
     if corrected_result is not None:
         corrected_transcript_path = safe_write_text(
@@ -960,10 +1052,16 @@ def apply_project_speakers(
             paths.exports_dir / "subtitle_named_corrected.srt",
             render_named_srt(corrected_result, resolved_mapping),
         )
-        manifest.outputs["corrected_named_transcript"] = _relative_path(paths.root, corrected_transcript_path)
-        manifest.outputs["corrected_named_subtitle"] = _relative_path(paths.root, corrected_srt_path)
+        manifest.outputs["corrected_named_transcript"] = _relative_path(
+            paths.root, corrected_transcript_path
+        )
+        manifest.outputs["corrected_named_subtitle"] = _relative_path(
+            paths.root, corrected_srt_path
+        )
     manifest.speakers["detected_ids"] = result.detected_speakers
-    manifest.speakers["mapped"] = {str(key): value for key, value in sorted(resolved_mapping.items())}
+    manifest.speakers["mapped"] = {
+        str(key): value for key, value in sorted(resolved_mapping.items())
+    }
     manifest.outputs["named_transcript"] = _relative_path(paths.root, transcript_path)
     manifest.outputs["named_subtitle"] = _relative_path(paths.root, srt_path)
     manifest.status = "corrected" if corrected_result is not None else "named"
@@ -979,7 +1077,11 @@ def _write_project_ignored_speakers(
 ) -> None:
     """Persist explicit ignored-speaker state for project review."""
     active_speakers = set(result.detected_speakers)
-    ignored = {int(speaker_id) for speaker_id in speaker_ids if int(speaker_id) in active_speakers}
+    ignored = {
+        int(speaker_id)
+        for speaker_id in speaker_ids
+        if int(speaker_id) in active_speakers
+    }
     ignore_path = paths.speakers_dir / "speaker_ignore.json"
     if ignored:
         write_ignored_speakers(ignore_path, ignored)
@@ -1022,7 +1124,9 @@ def summarize_project(
     input_file = _project_input_file(paths.root, manifest)
     result = load_transcript_result(paths.asr_dir / "sentences.json")
     settings = load_settings(require_oss=False)
-    model_label = model or getattr(settings, "dashscope_summary_model", "configured-default")
+    model_label = model or getattr(
+        settings, "dashscope_summary_model", "configured-default"
+    )
     manifest = record_project_stage(
         paths.root,
         stage="summary",
@@ -1052,13 +1156,26 @@ def summarize_project(
         )
     except Exception as exc:
         message = _project_stage_recovery_message(manifest.project_id, "summary", exc)
-        record_project_stage(paths.root, stage="summary", input_file=input_file, last_error=message, heartbeat=True)
+        record_project_stage(
+            paths.root,
+            stage="summary",
+            input_file=input_file,
+            last_error=message,
+            heartbeat=True,
+        )
         raise RuntimeError(message) from exc
-    json_path = safe_write_json(paths.exports_dir / "meeting_summary.json", summary.to_dict())
-    summary_path = safe_write_text(paths.exports_dir / "meeting_summary.md", render_meeting_summary_markdown(summary))
+    json_path = safe_write_json(
+        paths.exports_dir / "meeting_summary.json", summary.to_dict()
+    )
+    summary_path = safe_write_text(
+        paths.exports_dir / "meeting_summary.md",
+        render_meeting_summary_markdown(summary),
+    )
     title_updated = bool(update_title and _can_replace_title(manifest, summary))
     if title_updated:
-        manifest.title = _title_with_meeting_time(summary.title, manifest.source.meeting_time)
+        manifest.title = _title_with_meeting_time(
+            summary.title, manifest.source.meeting_time
+        )
         manifest.title_source = TITLE_SOURCE_LLM
         manifest.title_model = summary.model
     elif _looks_like_legacy_custom_title(manifest):
@@ -1067,7 +1184,10 @@ def summarize_project(
     _record_meeting_summary(manifest, paths, summary, summary_path, json_path)
     save_manifest(paths.root, manifest)
     emit_progress(progress, "Meeting memory index ready", completed=1, total=1)
-    return ProjectMeetingSummary(paths.root, summary.title, summary_path, json_path, summary.model, title_updated)
+    return ProjectMeetingSummary(
+        paths.root, summary.title, summary_path, json_path, summary.model, title_updated
+    )
+
 
 def init_project_git(project_dir: Path) -> Path:
     """
@@ -1081,8 +1201,11 @@ def init_project_git(project_dir: Path) -> Path:
     """
     paths = ensure_project_dirs(project_dir)
     gitignore_path = safe_write_text(paths.root / ".gitignore", PROJECT_GITIGNORE)
-    subprocess.run(["git", "init"], cwd=paths.root, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "init"], cwd=paths.root, check=True, capture_output=True, text=True
+    )
     return gitignore_path
+
 
 def resolve_project_source_path(project_root: Path, manifest: ProjectManifest) -> Path:
     """
@@ -1119,14 +1242,16 @@ def resolve_project_audio_path(project_root: Path, manifest: ProjectManifest) ->
             resolved = project_root / resolved
         if resolved.exists():
             return resolved.resolve()
-    for name in ("audio.flac", "audio.wav", "audio.mp3", "audio.m4a"):
+    for name in PROJECT_AUDIO_FILENAMES:
         candidate = project_root / "audio" / name
         if candidate.exists():
             return candidate.resolve()
     return resolve_project_source_path(project_root, manifest)
 
 
-def parse_mapping_items(mappings: list[str], known_speakers: set[int]) -> dict[int, str]:
+def parse_mapping_items(
+    mappings: list[str], known_speakers: set[int]
+) -> dict[int, str]:
     """
     Parse ``speaker_id=name`` mapping CLI values.
 
@@ -1141,9 +1266,12 @@ def parse_mapping_items(mappings: list[str], known_speakers: set[int]) -> dict[i
     for item in mappings:
         speaker_id, name = _parse_mapping_item(item)
         if speaker_id not in known_speakers:
-            raise typer.BadParameter(f"speaker_id={speaker_id} is not present in the transcript.")
+            raise typer.BadParameter(
+                f"speaker_id={speaker_id} is not present in the transcript."
+            )
         resolved[speaker_id] = name
     return resolved
+
 
 def _initial_manifest(
     source: Path,
@@ -1172,7 +1300,9 @@ def _initial_manifest(
             path=_relative_path(project_root, source),
             filename=source.name,
             size_bytes=stat.st_size,
-            mtime=datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds"),
+            mtime=datetime.fromtimestamp(stat.st_mtime)
+            .astimezone()
+            .isoformat(timespec="seconds"),
             sha256=source_sha256,
             meeting_time=meeting_time,
             original_path=str(original_source),
@@ -1181,7 +1311,10 @@ def _initial_manifest(
         speakers={"detected_ids": [], "mapped": {}},
     )
 
-def _copy_source_into_project(source: Path, root: Path, progress: CliProgressReporter | None) -> Path:
+
+def _copy_source_into_project(
+    source: Path, root: Path, progress: CliProgressReporter | None
+) -> Path:
     """Copy source media into the project directory."""
     target = root / "source" / source.name
     if source.resolve() == target.resolve():
@@ -1192,7 +1325,10 @@ def _copy_source_into_project(source: Path, root: Path, progress: CliProgressRep
     _copy_file_with_progress(source, target, progress)
     return target
 
-def _copy_file_with_progress(source: Path, target: Path, progress: CliProgressReporter | None) -> None:
+
+def _copy_file_with_progress(
+    source: Path, target: Path, progress: CliProgressReporter | None
+) -> None:
     """
     Copy a file in chunks while reporting byte progress.
 
@@ -1216,6 +1352,7 @@ def _copy_file_with_progress(source: Path, target: Path, progress: CliProgressRe
         target.unlink(missing_ok=True)
         raise
 
+
 def _resolve_project_root(
     source: Path,
     projects_dir: Path | None,
@@ -1229,11 +1366,13 @@ def _resolve_project_root(
     base_dir = _projects_parent_dir(projects_dir)
     return (base_dir / _build_project_id(source_sha256, variant)).resolve()
 
+
 def _create_project_dirs(root: Path) -> None:
     """Create the project root and standard child directories."""
     ensure_directory(root)
     for name in PROJECT_DIRS:
         ensure_directory(root / name)
+
 
 def _build_project_id(source_sha256: str, variant: str | None = None) -> str:
     """Build a stable project id from source content."""
@@ -1253,24 +1392,30 @@ def _normalize_project_variant(variant: str | None) -> str | None:
         raise ValueError("Project variant must contain ASCII letters or numbers.")
     return slug[:40]
 
+
 def _slugify(value: str) -> str:
     """Convert a title into a filesystem-safe slug while preserving CJK text."""
     cleaned = "".join(char.lower() if char.isalnum() else "-" for char in value.strip())
     return re.sub(r"-+", "-", cleaned).strip("-") or "project"
 
+
 def _now_iso() -> str:
     """Return the current local timestamp."""
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
+
 def _sha256_file(path: Path, progress: CliProgressReporter | None = None) -> str:
     """Compute SHA-256 without loading the whole file into memory."""
     digest = hashlib.sha256()
-    emit_progress(progress, "Hashing source media", total=path.stat().st_size, completed=0)
+    emit_progress(
+        progress, "Hashing source media", total=path.stat().st_size, completed=0
+    )
     with path.open("rb") as source_file:
         for chunk in iter(lambda: source_file.read(1024 * 1024), b""):
             digest.update(chunk)
             emit_progress(progress, advance=len(chunk))
     return digest.hexdigest()
+
 
 def _normalize_audio_format(audio_format: str) -> str:
     """Validate a project audio format."""
@@ -1278,7 +1423,10 @@ def _normalize_audio_format(audio_format: str) -> str:
     if normalized in SUPPORTED_AUDIO_FORMATS:
         return normalized
     supported = ", ".join(sorted(SUPPORTED_AUDIO_FORMATS))
-    raise typer.BadParameter(f"Unsupported audio format: {audio_format}. Supported formats: {supported}.")
+    raise typer.BadParameter(
+        f"Unsupported audio format: {audio_format}. Supported formats: {supported}."
+    )
+
 
 def _audio_metadata(audio_path: Path, audio_format: str) -> dict[str, Any]:
     """Build project audio metadata."""
@@ -1294,7 +1442,28 @@ def _audio_metadata(audio_path: Path, audio_format: str) -> dict[str, Any]:
         metadata["duration_seconds"] = duration_seconds
     return metadata
 
-def _audio_duration_seconds(root: Path, manifest: ProjectManifest, audio_path: Path) -> float | None:
+
+def _project_audio_metadata(root: Path, audio_path: Path) -> dict[str, Any]:
+    """Build metadata for an existing project audio file."""
+    audio_format = audio_path.suffix.lower().lstrip(".") or "unknown"
+    if audio_format in SUPPORTED_AUDIO_FORMATS:
+        metadata = _audio_metadata(audio_path, audio_format)
+        metadata["path"] = _relative_path(root, audio_path)
+        return metadata
+    metadata: dict[str, Any] = {
+        "path": _relative_path(root, audio_path),
+        "format": audio_format,
+        "size_bytes": audio_path.stat().st_size,
+    }
+    duration_seconds = _probe_duration_safely(audio_path)
+    if duration_seconds is not None:
+        metadata["duration_seconds"] = duration_seconds
+    return metadata
+
+
+def _audio_duration_seconds(
+    root: Path, manifest: ProjectManifest, audio_path: Path
+) -> float | None:
     """
     Return the project audio duration and backfill manifest metadata when possible.
 
@@ -1316,6 +1485,7 @@ def _audio_duration_seconds(root: Path, manifest: ProjectManifest, audio_path: P
     save_manifest(root, manifest)
     return duration_seconds
 
+
 def _probe_duration_safely(path: Path) -> float | None:
     """
     Probe media duration without failing the transcription workflow.
@@ -1332,6 +1502,7 @@ def _probe_duration_safely(path: Path) -> float | None:
         LOGGER.debug("Unable to probe media duration for %s: %s", path, exc)
         return None
 
+
 def _ensure_project_audio(
     paths: ProjectPaths,
     manifest: ProjectManifest,
@@ -1340,11 +1511,41 @@ def _ensure_project_audio(
 ) -> Path:
     """Return existing project audio or generate it."""
     normalized_format = _normalize_audio_format(audio_format)
-    existing_path = _manifest_audio_path(paths.root, manifest, normalized_format)
-    if existing_path and existing_path.exists():
+    existing_path = _existing_project_audio_path(paths, manifest, normalized_format)
+    if existing_path:
+        _sync_manifest_audio_metadata(paths.root, manifest, existing_path)
         emit_progress(progress, "Using existing project audio", advance=1)
         return existing_path
-    return prepare_project_audio(paths.root, audio_format=normalized_format, progress=progress)
+    return prepare_project_audio(
+        paths.root, audio_format=normalized_format, progress=progress
+    )
+
+
+def _existing_project_audio_path(
+    paths: ProjectPaths, manifest: ProjectManifest, audio_format: str
+) -> Path | None:
+    """Find reusable project audio, preferring the requested format."""
+    exact_path = _manifest_audio_path(paths.root, manifest, audio_format)
+    if exact_path and exact_path.exists():
+        return exact_path
+    stored_path = _manifest_stored_audio_path(paths.root, manifest)
+    if stored_path and stored_path.exists():
+        return stored_path
+    for name in PROJECT_AUDIO_FILENAMES:
+        candidate = paths.audio_dir / name
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
+def _sync_manifest_audio_metadata(
+    root: Path, manifest: ProjectManifest, audio_path: Path
+) -> None:
+    """Persist the actual reusable project audio path when metadata is stale."""
+    metadata = _project_audio_metadata(root, audio_path)
+    if manifest.audio != metadata:
+        manifest.audio = metadata
+        save_manifest(root, manifest)
 
 
 class _HeartbeatThrottle:
@@ -1394,7 +1595,11 @@ def _handle_asr_poll_event(
     emit_dashscope_wait_poll(progress, task_id=task_id, estimate=estimate, event=event)
     if not heartbeat.should_emit(event.elapsed_seconds):
         return
-    external_ids = {"dashscope_task_id": task_id, "model": model, "status": event.status or "unknown"}
+    external_ids = {
+        "dashscope_task_id": task_id,
+        "model": model,
+        "status": event.status or "unknown",
+    }
     record_project_stage(
         paths.root,
         stage="ASR polling",
@@ -1418,17 +1623,23 @@ def _handle_asr_poll_event(
 
 def _project_input_file(root: Path, manifest: ProjectManifest) -> str:
     """Return the best source input path for progress logs."""
-    return manifest.source.original_path or str(resolve_project_source_path(root, manifest))
+    return manifest.source.original_path or str(
+        resolve_project_source_path(root, manifest)
+    )
 
 
-def _oss_stage_external_ids(manifest: ProjectManifest, audio_path: Path, should_upload: bool) -> dict[str, object]:
+def _oss_stage_external_ids(
+    manifest: ProjectManifest, audio_path: Path, should_upload: bool
+) -> dict[str, object]:
     """Return non-secret OSS stage identifiers."""
     if not should_upload:
         return {"file_url_source": "provided_url"}
     return {"oss_object_key": _project_oss_object_key(manifest, audio_path)}
 
 
-def _signed_url_external_ids(manifest: ProjectManifest, file_url_source: str) -> dict[str, object]:
+def _signed_url_external_ids(
+    manifest: ProjectManifest, file_url_source: str
+) -> dict[str, object]:
     """Return non-secret signed URL status fields."""
     if file_url_source != "oss_signed_url":
         return {"file_url_source": file_url_source}
@@ -1455,7 +1666,9 @@ def _asr_recovery_message(project_id: str, task_id: str, error: Exception) -> st
     )
 
 
-def _project_stage_recovery_message(project_id: str, stage: str, error: Exception) -> str:
+def _project_stage_recovery_message(
+    project_id: str, stage: str, error: Exception
+) -> str:
     """Return a generic project stage failure with recovery commands."""
     return (
         f"Project run failed: project_id={project_id} stage={stage} error={error}. "
@@ -1463,12 +1676,121 @@ def _project_stage_recovery_message(project_id: str, stage: str, error: Exceptio
         f"Review: meeting-asr project review {project_id}."
     )
 
-def _manifest_audio_path(root: Path, manifest: ProjectManifest, audio_format: str) -> Path | None:
+
+def _manifest_audio_path(
+    root: Path, manifest: ProjectManifest, audio_format: str
+) -> Path | None:
     """Resolve audio path from manifest metadata."""
-    audio_path = manifest.audio.get("path")
-    if audio_path and manifest.audio.get("format") == audio_format:
-        return (root / str(audio_path)).resolve()
+    if manifest.audio.get("format") == audio_format:
+        return _manifest_stored_audio_path(root, manifest)
     return None
+
+
+def _manifest_stored_audio_path(root: Path, manifest: ProjectManifest) -> Path | None:
+    """Resolve the manifest audio path regardless of stored audio format."""
+    audio_path = manifest.audio.get("path")
+    if isinstance(audio_path, str) and audio_path.strip():
+        resolved = Path(audio_path)
+        if not resolved.is_absolute():
+            resolved = root / resolved
+        return resolved.resolve()
+    return None
+
+
+def _prune_project_source_after_audio(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    source_path: Path,
+    audio_path: Path,
+    progress: CliProgressReporter | None,
+) -> None:
+    """
+    Remove the project-managed video copy after ASR audio exists.
+
+    Args:
+        paths: Project paths.
+        manifest: Loaded project manifest to mutate.
+        source_path: Source file used for extraction.
+        audio_path: Generated project audio file.
+        progress: Optional progress reporter.
+
+    Returns:
+        None.
+    """
+    if not _should_prune_project_source(paths.root, manifest, source_path, audio_path):
+        return
+    try:
+        source_path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        LOGGER.warning("Unable to remove staged source media %s: %s", source_path, exc)
+        manifest.runtime = {
+            **manifest.runtime,
+            "source_cleanup": {
+                "failed_project_source": _relative_path(paths.root, source_path),
+                "kept_audio": _relative_path(paths.root, audio_path),
+                "failed_at": _now_iso(),
+                "error": str(exc),
+            },
+        }
+        emit_progress(
+            progress,
+            f"Could not remove staged source media ({type(exc).__name__}: {exc})",
+        )
+        return
+    manifest.runtime = {
+        **manifest.runtime,
+        "source_cleanup": {
+            "removed_project_source": _relative_path(paths.root, source_path),
+            "kept_audio": _relative_path(paths.root, audio_path),
+            "removed_at": _now_iso(),
+        },
+    }
+    emit_progress(progress, "Removed staged source media after audio extraction")
+
+
+def _should_prune_project_source(
+    project_root: Path,
+    manifest: ProjectManifest,
+    source_path: Path,
+    audio_path: Path,
+) -> bool:
+    """Return whether the staged source can be safely removed."""
+    if not source_path.exists() or not audio_path.exists():
+        return False
+    if source_path.resolve() == audio_path.resolve():
+        return False
+    if _is_audio_source(source_path):
+        return False
+    if _source_is_original_input(manifest, source_path):
+        return False
+    return _is_project_managed_source(project_root, source_path)
+
+
+def _is_project_managed_source(project_root: Path, source_path: Path) -> bool:
+    """Return whether a source path lives inside this project's source directory."""
+    try:
+        source_path.resolve().relative_to((project_root / "source").resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _is_audio_source(source_path: Path) -> bool:
+    """Return whether a source file suffix should be treated as already-audio."""
+    return source_path.suffix.lower().lstrip(".") in SOURCE_AUDIO_EXTENSIONS
+
+
+def _source_is_original_input(manifest: ProjectManifest, source_path: Path) -> bool:
+    """Return whether the staged source is also the user's original input path."""
+    if not manifest.source.original_path:
+        return False
+    return (
+        Path(manifest.source.original_path).expanduser().resolve()
+        == source_path.resolve()
+    )
+
 
 def _parse_project_oss_upload(value: str | bool, file_url: str | None) -> bool:
     """Resolve OSS upload mode."""
@@ -1483,6 +1805,7 @@ def _parse_project_oss_upload(value: str | bool, file_url: str | None) -> bool:
         return False
     raise typer.BadParameter("--oss-upload must be auto, true, or false.")
 
+
 def _resolve_project_file_url(
     paths,
     manifest,
@@ -1495,26 +1818,35 @@ def _resolve_project_file_url(
     """Resolve the HTTP URL submitted to DashScope without storing signed URLs."""
     if not should_upload:
         if not options.file_url:
-            raise typer.BadParameter("--file-url is required when --oss-upload is false.")
+            raise typer.BadParameter(
+                "--file-url is required when --oss-upload is false."
+            )
         manifest.oss = {"mode": "provided_url"}
         emit_progress(progress, "Using provided file URL", advance=1)
         return options.file_url, "provided_url"
     object_key = _project_oss_object_key(manifest, audio_path)
     if _can_reuse_project_oss_object(manifest, object_key):
         try:
-            return _presign_project_oss_object(paths, manifest, settings, object_key, progress)
+            return _presign_project_oss_object(
+                paths, manifest, settings, object_key, progress
+            )
         except Exception as error:
             emit_progress(
                 progress,
                 f"Existing OSS object presign failed; uploading audio instead ({type(error).__name__}: {error})",
                 advance=1,
             )
-    return _upload_project_audio_to_oss(paths, manifest, audio_path, settings, object_key, progress)
+    return _upload_project_audio_to_oss(
+        paths, manifest, audio_path, settings, object_key, progress
+    )
 
 
 def _can_reuse_project_oss_object(manifest: ProjectManifest, object_key: str) -> bool:
     """Return true when manifest points at this project's current audio object."""
-    return manifest.oss.get("mode") == "oss_signed_url" and manifest.oss.get("object_key") == object_key
+    return (
+        manifest.oss.get("mode") == "oss_signed_url"
+        and manifest.oss.get("object_key") == object_key
+    )
 
 
 def _presign_project_oss_object(
@@ -1525,6 +1857,8 @@ def _presign_project_oss_object(
     progress: CliProgressReporter | None,
 ) -> tuple[str, str]:
     """Presign an already uploaded project audio object and refresh manifest metadata."""
+    if not oss_object_exists(object_key, settings=settings):
+        raise FileNotFoundError(f"OSS object no longer exists: {object_key}")
     file_url = presign_oss_object(
         object_key,
         settings=settings,
@@ -1576,10 +1910,15 @@ def _upload_project_audio_to_oss(
     expires_at = datetime.now(UTC) + timedelta(seconds=SIGNED_URL_EXPIRES_SECONDS)
     manifest.oss = _oss_metadata(settings.oss_bucket_name, object_key, expires_at)
     save_manifest(paths.root, manifest)
-    emit_progress(progress, "Audio uploaded to OSS", total=size_bytes, completed=size_bytes)
+    emit_progress(
+        progress, "Audio uploaded to OSS", total=size_bytes, completed=size_bytes
+    )
     return file_url, "oss_signed_url"
 
-def _oss_metadata(bucket_name: str | None, object_key: str, expires_at: datetime) -> dict[str, str | None]:
+
+def _oss_metadata(
+    bucket_name: str | None, object_key: str, expires_at: datetime
+) -> dict[str, str | None]:
     """Build non-secret OSS metadata."""
     return {
         "mode": "oss_signed_url",
@@ -1587,6 +1926,7 @@ def _oss_metadata(bucket_name: str | None, object_key: str, expires_at: datetime
         "object_key": object_key,
         "signed_url_expires_at": expires_at.isoformat(timespec="seconds"),
     }
+
 
 def _submit_project_task(
     settings,
@@ -1606,9 +1946,15 @@ def _submit_project_task(
         disfluency_removal_enabled=options.disfluency_removal,
     )
 
-def _resolve_project_asr_hotwords(settings, options: ProjectTranscribeOptions) -> AsrHotwordResolution:
+
+def _resolve_project_asr_hotwords(
+    settings, options: ProjectTranscribeOptions
+) -> AsrHotwordResolution:
     """Resolve ASR hotwords for one project transcription."""
-    return resolve_asr_hotwords(mode=options.asr_hotwords, settings=settings, target_model=options.model)
+    return resolve_asr_hotwords(
+        mode=options.asr_hotwords, settings=settings, target_model=options.model
+    )
+
 
 def _extract_task_id(task_response) -> str:
     """Extract task ID from a DashScope submission response."""
@@ -1617,8 +1963,11 @@ def _extract_task_id(task_response) -> str:
     if task_id is None and isinstance(output, dict):
         task_id = output.get("task_id")
     if not task_id:
-        raise RuntimeError("DashScope task submission succeeded but task_id is missing.")
+        raise RuntimeError(
+            "DashScope task submission succeeded but task_id is missing."
+        )
     return str(task_id)
+
 
 def _write_project_asr_outputs(
     paths: ProjectPaths,
@@ -1629,12 +1978,22 @@ def _write_project_asr_outputs(
     """Write structured project ASR and export outputs."""
     safe_write_json(paths.asr_dir / "raw_result.json", raw_result)
     safe_write_json(paths.asr_dir / "sentences.json", _sentences_payload(parsed_result))
-    safe_write_text(paths.exports_dir / "transcript.txt", render_plain_text(parsed_result))
-    safe_write_text(paths.exports_dir / "transcript_speakers.txt", _render_merged_speaker_text(parsed_result))
+    safe_write_text(
+        paths.exports_dir / "transcript.txt", render_plain_text(parsed_result)
+    )
+    safe_write_text(
+        paths.exports_dir / "transcript_speakers.txt",
+        _render_merged_speaker_text(parsed_result),
+    )
     if generate_srt:
-        safe_write_text(paths.exports_dir / "subtitle.srt", build_srt(parsed_result.sentences))
+        safe_write_text(
+            paths.exports_dir / "subtitle.srt", build_srt(parsed_result.sentences)
+        )
 
-def _invalidate_downstream_artifacts(paths: ProjectPaths, manifest: ProjectManifest) -> None:
+
+def _invalidate_downstream_artifacts(
+    paths: ProjectPaths, manifest: ProjectManifest
+) -> None:
     """
     Remove artifacts that depend on a previous ASR result.
 
@@ -1659,6 +2018,7 @@ def _invalidate_downstream_artifacts(paths: ProjectPaths, manifest: ProjectManif
     # into the next project list render.
     manifest.meeting_keywords = []
 
+
 def _unlink_project_file(project_root: Path, stored_path: str) -> None:
     """
     Delete one project-local file when it exists.
@@ -1673,6 +2033,7 @@ def _unlink_project_file(project_root: Path, stored_path: str) -> None:
     path = _project_local_file(project_root, stored_path)
     if path is not None and (path.is_file() or path.is_symlink()):
         path.unlink()
+
 
 def _project_local_file(project_root: Path, stored_path: str) -> Path | None:
     """
@@ -1693,6 +2054,7 @@ def _project_local_file(project_root: Path, stored_path: str) -> Path | None:
     except ValueError:
         return None
     return candidate
+
 
 def _record_asr_metadata(
     manifest,
@@ -1725,6 +2087,7 @@ def _record_asr_metadata(
     manifest.outputs.update(_default_output_paths())
     manifest.speakers["detected_ids"] = parsed_result.detected_speakers
 
+
 def _record_meeting_summary(
     manifest: ProjectManifest,
     paths: ProjectPaths,
@@ -1750,6 +2113,7 @@ def _record_meeting_summary(
     manifest.outputs["meeting_summary_json"] = _relative_path(paths.root, json_path)
     manifest.meeting_keywords = list(summary.keywords)
 
+
 def _can_replace_title(manifest: ProjectManifest, summary: MeetingSummary) -> bool:
     """
     Return whether an auto-generated summary title should replace the manifest title.
@@ -1774,14 +2138,21 @@ def _looks_like_legacy_source_title(manifest: ProjectManifest) -> bool:
     """Infer whether an old manifest title still came from the source filename."""
     current_title = manifest.title.strip()
     source_stem = Path(manifest.source.filename).stem.strip()
-    return manifest.title_source == TITLE_SOURCE_UNKNOWN and current_title == source_stem
+    return (
+        manifest.title_source == TITLE_SOURCE_UNKNOWN and current_title == source_stem
+    )
 
 
 def _looks_like_legacy_custom_title(manifest: ProjectManifest) -> bool:
     """Infer whether an old unknown title should be treated as manually preserved."""
     current_title = manifest.title.strip()
     source_stem = Path(manifest.source.filename).stem.strip()
-    return manifest.title_source == TITLE_SOURCE_UNKNOWN and bool(current_title) and current_title != source_stem
+    return (
+        manifest.title_source == TITLE_SOURCE_UNKNOWN
+        and bool(current_title)
+        and current_title != source_stem
+    )
+
 
 def _default_output_paths() -> dict[str, str]:
     """Return standard project output paths."""
@@ -1793,6 +2164,7 @@ def _default_output_paths() -> dict[str, str]:
         "subtitle": "exports/subtitle.srt",
     }
 
+
 def _sentences_payload(parsed_result: TranscriptResult) -> dict[str, Any]:
     """Build normalized sentence JSON payload."""
     return {
@@ -1800,6 +2172,7 @@ def _sentences_payload(parsed_result: TranscriptResult) -> dict[str, Any]:
         "detected_speakers": parsed_result.detected_speakers,
         "sentences": [sentence.to_dict() for sentence in parsed_result.sentences],
     }
+
 
 def _render_merged_speaker_text(parsed_result: TranscriptResult) -> str:
     """Render merged anonymous speaker transcript text."""
@@ -1810,13 +2183,18 @@ def _render_merged_speaker_text(parsed_result: TranscriptResult) -> str:
     )
     return render_speaker_text(merged_result)
 
-def _merge_speaker_mapping(result: TranscriptResult, mappings: dict[int, str]) -> dict[int, str]:
+
+def _merge_speaker_mapping(
+    result: TranscriptResult, mappings: dict[int, str]
+) -> dict[int, str]:
     """Return explicit mappings for active speakers only."""
     active_speakers = set(result.detected_speakers)
     resolved: dict[int, str] = {}
     for speaker_id, name in mappings.items():
         name_text = name.strip()
-        if speaker_id not in active_speakers or name_text == speaker_id_to_label(speaker_id):
+        if speaker_id not in active_speakers or name_text == speaker_id_to_label(
+            speaker_id
+        ):
             continue
         resolved[speaker_id] = name_text
     return resolved
@@ -1848,28 +2226,39 @@ def _resolve_speaker_person_mapping(
         if person_id > 0:
             resolved[speaker_id] = person_id
             continue
-        unchanged_existing_name = existing_speaker_mapping.get(speaker_id) == speaker_name
+        unchanged_existing_name = (
+            existing_speaker_mapping.get(speaker_id) == speaker_name
+        )
         if unchanged_existing_name and speaker_id in existing_person_mapping:
             resolved[speaker_id] = existing_person_mapping[speaker_id]
     return resolved
 
+
 def _parse_mapping_item(item: str) -> tuple[int, str]:
     """Parse one speaker mapping value."""
     if "=" not in item:
-        raise typer.BadParameter(f"Invalid --map value: {item}. Expected speaker_id=name.")
+        raise typer.BadParameter(
+            f"Invalid --map value: {item}. Expected speaker_id=name."
+        )
     raw_key, raw_value = item.split("=", 1)
     if not raw_key.strip() or not raw_value.strip():
-        raise typer.BadParameter(f"Invalid --map value: {item}. Expected speaker_id=name.")
+        raise typer.BadParameter(
+            f"Invalid --map value: {item}. Expected speaker_id=name."
+        )
     try:
         return int(raw_key.strip()), raw_value.strip()
     except ValueError as exc:
-        raise typer.BadParameter(f"Speaker id must be an integer in --map: {item}") from exc
+        raise typer.BadParameter(
+            f"Speaker id must be an integer in --map: {item}"
+        ) from exc
+
 
 def _parse_languages(language: str | None) -> list[str]:
     """Parse comma-separated language hints."""
     if not language:
         return []
     return [item.strip() for item in language.split(",") if item.strip()]
+
 
 def _relative_path(root: Path, path: Path) -> str:
     """Return a project-relative POSIX path."""

@@ -12,11 +12,20 @@ from app.speaker_cluster_quality import (
 )
 from app.speaker_labeling import SentenceReassignmentSpec
 from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
-from app.speaker_sample_matching import SpeakerSampleMatch, SpeakerSampleMatchReport, SpeakerSampleMatchSummary
-from app.speaker_stabilization import _sentence_reassignments, stabilize_project_speakers
+from app.speaker_sample_matching import (
+    SpeakerSampleMatch,
+    SpeakerSampleMatchReport,
+    SpeakerSampleMatchSummary,
+)
+from app.speaker_stabilization import (
+    _sentence_reassignments,
+    stabilize_project_speakers,
+)
 
 
-def test_sentence_reassignments_use_identity_conflict_with_project_target(tmp_path: Path) -> None:
+def test_sentence_reassignments_use_identity_conflict_with_project_target(
+    tmp_path: Path,
+) -> None:
     """A strong sample conflict should become a concrete sentence reassignment."""
     sample_summary = _sample_summary(status="identity-conflict", best_other_person_id=2)
     cluster_summary = _cluster_summary(status="conflict", nearest_speaker_id=1)
@@ -42,16 +51,27 @@ def test_sentence_reassignments_skip_cluster_contradiction() -> None:
     assert _sentence_reassignments(sample_summary, cluster_summary) == []
 
 
-def test_stabilize_project_speakers_applies_and_refreshes(monkeypatch, tmp_path: Path) -> None:
+def test_stabilize_project_speakers_applies_and_refreshes(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Stabilization should apply conflicts and refresh diagnostics for the next pass."""
     project_dir = tmp_path / "project"
     project_dir.mkdir()
     calls: list[str] = []
 
     diagnostics = [
-        (_cluster_summary(status="conflict", nearest_speaker_id=1), _sample_summary("identity-conflict", 2)),
-        (_cluster_summary(status="ok", nearest_speaker_id=None), _sample_summary("identity-ok", None)),
-        (_cluster_summary(status="ok", nearest_speaker_id=None), _sample_summary("identity-ok", None)),
+        (
+            _cluster_summary(status="conflict", nearest_speaker_id=1),
+            _sample_summary("identity-conflict", 2),
+        ),
+        (
+            _cluster_summary(status="ok", nearest_speaker_id=None),
+            _sample_summary("identity-ok", None),
+        ),
+        (
+            _cluster_summary(status="ok", nearest_speaker_id=None),
+            _sample_summary("identity-ok", None),
+        ),
     ]
 
     def fake_refresh(*args, **kwargs):
@@ -69,17 +89,26 @@ def test_stabilize_project_speakers_applies_and_refreshes(monkeypatch, tmp_path:
         )
 
     monkeypatch.setattr("app.speaker_stabilization._refresh_diagnostics", fake_refresh)
-    monkeypatch.setattr("app.speaker_stabilization.apply_project_sentence_reassignments", fake_apply)
-    monkeypatch.setattr("app.speaker_stabilization.apply_project_speakers", lambda *args, **kwargs: calls.append("names"))
+    monkeypatch.setattr(
+        "app.speaker_stabilization.apply_project_sentence_reassignments", fake_apply
+    )
+    monkeypatch.setattr(
+        "app.speaker_stabilization.apply_project_speakers",
+        lambda *args, **kwargs: calls.append("names"),
+    )
 
-    summary = stabilize_project_speakers(project_dir, store_dir=None, model=None, iterations=2, sample_workers=3)
+    summary = stabilize_project_speakers(
+        project_dir, store_dir=None, model=None, iterations=2, sample_workers=3
+    )
 
     assert calls == ["refresh", "apply:1", "names", "refresh", "refresh"]
     assert summary.reassignment_count == 1
     assert summary.final_match_summary is not None
 
 
-def _sample_summary(status: str, best_other_person_id: int | None) -> SpeakerSampleMatchSummary:
+def _sample_summary(
+    status: str, best_other_person_id: int | None
+) -> SpeakerSampleMatchSummary:
     """Build a minimal sample-match summary with two assigned project speakers."""
     conflict = SpeakerSampleMatch(
         speaker_id=0,
@@ -107,14 +136,18 @@ def _sample_summary(status: str, best_other_person_id: int | None) -> SpeakerSam
         conflict_margin=0.08,
         ambiguous_margin=0.05,
         reports=[
-            SpeakerSampleMatchReport(0, "Speaker A", 1, "Alice", 1, {status: 1}, [conflict]),
+            SpeakerSampleMatchReport(
+                0, "Speaker A", 1, "Alice", 1, {status: 1}, [conflict]
+            ),
             SpeakerSampleMatchReport(1, "Speaker B", 2, "Bob", 0, {}, []),
         ],
         verdict="identity-conflict",
     )
 
 
-def _cluster_summary(status: str, nearest_speaker_id: int | None) -> SpeakerClusterQualitySummary:
+def _cluster_summary(
+    status: str, nearest_speaker_id: int | None
+) -> SpeakerClusterQualitySummary:
     """Build a minimal cluster summary containing the same sentence identity."""
     sample = SpeakerClusterSampleScore(
         index=1,

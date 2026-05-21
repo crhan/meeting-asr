@@ -10,7 +10,9 @@ from app.config import Settings
 from app.uploader import upload_file_to_oss
 
 
-def test_upload_file_to_oss_forwards_progress_callback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_upload_file_to_oss_forwards_progress_callback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """The uploader should expose oss2 byte progress to callers."""
     source = tmp_path / "audio.wav"
     source.write_bytes(b"12345678")
@@ -26,8 +28,13 @@ def test_upload_file_to_oss_forwards_progress_callback(monkeypatch: pytest.Monke
         progress_callback=lambda consumed, total: events.append((consumed, total)),
     )
 
-    assert url == "https://signed.example.com/meeting-asr/projects/p-demo/audio.wav?expires=600"
-    assert bucket.uploaded == [("meeting-asr/projects/p-demo/audio.wav", str(source.resolve()))]
+    assert (
+        url
+        == "https://signed.example.com/meeting-asr/projects/p-demo/audio.wav?expires=600"
+    )
+    assert bucket.uploaded == [
+        ("meeting-asr/projects/p-demo/audio.wav", str(source.resolve()))
+    ]
     assert events == [(4, 8), (8, 8)]
 
 
@@ -38,7 +45,9 @@ class FakeBucket:
         """Create an empty fake bucket."""
         self.uploaded: list[tuple[str, str]] = []
 
-    def put_object_from_file(self, key: str, filename: str, progress_callback=None) -> None:
+    def put_object_from_file(
+        self, key: str, filename: str, progress_callback=None
+    ) -> None:
         """
         Record the upload and simulate oss2 byte progress.
 

@@ -149,7 +149,9 @@ def get_voiceprint_db_path(store_dir: Path | None = None) -> Path:
     return _resolve_store_dir(store_dir) / VOICEPRINT_DB_FILENAME
 
 
-def store_voiceprint_samples(samples: list[StoredVoiceprintSample], db_path: Path | None = None) -> Path:
+def store_voiceprint_samples(
+    samples: list[StoredVoiceprintSample], db_path: Path | None = None
+) -> Path:
     """
     Store voiceprint sample metadata in SQLite.
 
@@ -204,7 +206,9 @@ def list_voiceprint_speakers(db_path: Path | None = None) -> list[VoiceprintSpea
     return [_speaker_row(row) for row in rows]
 
 
-def list_voiceprint_samples(speaker: str, db_path: Path | None = None) -> list[VoiceprintSampleRow]:
+def list_voiceprint_samples(
+    speaker: str, db_path: Path | None = None
+) -> list[VoiceprintSampleRow]:
     """
     List samples for one speaker name or id.
 
@@ -242,7 +246,9 @@ def list_voiceprint_samples(speaker: str, db_path: Path | None = None) -> list[V
     return [_sample_row(row) for row in rows]
 
 
-def list_all_voiceprint_samples(db_path: Path | None = None) -> list[VoiceprintSampleRow]:
+def list_all_voiceprint_samples(
+    db_path: Path | None = None,
+) -> list[VoiceprintSampleRow]:
     """
     List all stored voiceprint samples.
 
@@ -274,7 +280,9 @@ def list_all_voiceprint_samples(db_path: Path | None = None) -> list[VoiceprintS
     return [_sample_row(row) for row in rows]
 
 
-def list_voiceprint_samples_for_project(project_id: str, db_path: Path | None = None) -> list[VoiceprintSampleRow]:
+def list_voiceprint_samples_for_project(
+    project_id: str, db_path: Path | None = None
+) -> list[VoiceprintSampleRow]:
     """
     List voiceprint samples captured from one project.
 
@@ -326,11 +334,15 @@ def list_embedded_sample_ids(model: str, db_path: Path | None = None) -> set[int
     with sqlite3.connect(database_path) as connection:
         _configure_connection(connection)
         _ensure_schema(connection)
-        rows = connection.execute("SELECT sample_id FROM voiceprint_embeddings WHERE model = ?", (model,)).fetchall()
+        rows = connection.execute(
+            "SELECT sample_id FROM voiceprint_embeddings WHERE model = ?", (model,)
+        ).fetchall()
     return {int(row["sample_id"]) for row in rows}
 
 
-def upsert_voiceprint_embedding(sample_id: int, model: str, vector: list[float], db_path: Path | None = None) -> None:
+def upsert_voiceprint_embedding(
+    sample_id: int, model: str, vector: list[float], db_path: Path | None = None
+) -> None:
     """
     Store one voiceprint embedding.
 
@@ -380,7 +392,9 @@ def list_voiceprint_embeddings(
     with sqlite3.connect(database_path) as connection:
         _configure_connection(connection)
         _ensure_schema(connection)
-        rows = connection.execute(_embedding_rows_sql(include_inactive=include_inactive), (model,)).fetchall()
+        rows = connection.execute(
+            _embedding_rows_sql(include_inactive=include_inactive), (model,)
+        ).fetchall()
     return [_embedding_row(row) for row in rows]
 
 
@@ -406,14 +420,18 @@ def update_voiceprint_sample_status(
     with sqlite3.connect(database_path) as connection:
         _configure_connection(connection)
         _ensure_schema(connection)
-        row = connection.execute(_sample_by_public_id_sql(), (sample_public_id,)).fetchone()
+        row = connection.execute(
+            _sample_by_public_id_sql(), (sample_public_id,)
+        ).fetchone()
         if row is None:
             raise LookupError(f"No voiceprint sample found for id: {sample_public_id}")
         connection.execute(
             "UPDATE voiceprint_samples SET sample_status = ?, updated_at = ? WHERE public_id = ?",
             (status, _now_iso(), sample_public_id),
         )
-        updated = connection.execute(_sample_by_public_id_sql(), (sample_public_id,)).fetchone()
+        updated = connection.execute(
+            _sample_by_public_id_sql(), (sample_public_id,)
+        ).fetchone()
     if updated is None:
         raise LookupError(f"No voiceprint sample found for id: {sample_public_id}")
     return _sample_row(updated)
@@ -444,7 +462,9 @@ def delete_voiceprint_sample(
     with sqlite3.connect(database_path) as connection:
         _configure_connection(connection)
         _ensure_schema(connection)
-        connection.execute("DELETE FROM voiceprint_samples WHERE id = ?", (row.sample_id,))
+        connection.execute(
+            "DELETE FROM voiceprint_samples WHERE id = ?", (row.sample_id,)
+        )
         _delete_empty_speaker(connection, row.speaker_id)
     return _deleted_sample(row, delete_clip)
 
@@ -532,7 +552,9 @@ def delete_voiceprint_speaker(
     with sqlite3.connect(database_path) as connection:
         _configure_connection(connection)
         _ensure_schema(connection)
-        connection.execute("DELETE FROM voiceprint_speakers WHERE id = ?", (rows[0].speaker_id,))
+        connection.execute(
+            "DELETE FROM voiceprint_speakers WHERE id = ?", (rows[0].speaker_id,)
+        )
     return [_deleted_sample(row, delete_clips) for row in rows]
 
 
@@ -593,12 +615,21 @@ def _ensure_sample_status_column(connection: sqlite3.Connection) -> None:
     Args:
         connection: SQLite connection.
     """
-    columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(voiceprint_samples)").fetchall()}
+    columns = {
+        str(row["name"])
+        for row in connection.execute(
+            "PRAGMA table_info(voiceprint_samples)"
+        ).fetchall()
+    }
     if "sample_status" not in columns:
-        connection.execute("ALTER TABLE voiceprint_samples ADD COLUMN sample_status TEXT NOT NULL DEFAULT 'active'")
+        connection.execute(
+            "ALTER TABLE voiceprint_samples ADD COLUMN sample_status TEXT NOT NULL DEFAULT 'active'"
+        )
 
 
-def _upsert_sample(connection: sqlite3.Connection, sample: StoredVoiceprintSample) -> None:
+def _upsert_sample(
+    connection: sqlite3.Connection, sample: StoredVoiceprintSample
+) -> None:
     """
     Upsert one voiceprint sample.
 
@@ -611,7 +642,12 @@ def _upsert_sample(connection: sqlite3.Connection, sample: StoredVoiceprintSampl
     speaker_id = _speaker_id_for_sample(connection, sample, now)
     if _has_duplicate_clip_hash(connection, sample, speaker_id, clip_sha256):
         return
-    connection.execute(UPSERT_SAMPLE_SQL, _sample_values(sample, speaker_id, new_sample_public_id(connection), clip_sha256, now))
+    connection.execute(
+        UPSERT_SAMPLE_SQL,
+        _sample_values(
+            sample, speaker_id, new_sample_public_id(connection), clip_sha256, now
+        ),
+    )
 
 
 def _has_duplicate_clip_hash(
@@ -739,7 +775,9 @@ def _upsert_speaker(connection: sqlite3.Connection, name: str, now: str) -> int:
     return int(row["id"])
 
 
-def _find_speaker(connection: sqlite3.Connection, speaker: str) -> VoiceprintSpeakerRow | None:
+def _find_speaker(
+    connection: sqlite3.Connection, speaker: str
+) -> VoiceprintSpeakerRow | None:
     """
     Find a stored speaker by id first, then by normalized name.
 
@@ -761,7 +799,9 @@ def _find_speaker(connection: sqlite3.Connection, speaker: str) -> VoiceprintSpe
     return _speaker_by_name(connection, speaker)
 
 
-def _speaker_by_public_id(connection: sqlite3.Connection, public_id: str) -> VoiceprintSpeakerRow | None:
+def _speaker_by_public_id(
+    connection: sqlite3.Connection, public_id: str
+) -> VoiceprintSpeakerRow | None:
     """
     Find one speaker by public id.
 
@@ -775,11 +815,15 @@ def _speaker_by_public_id(connection: sqlite3.Connection, public_id: str) -> Voi
     stripped = public_id.strip().lower()
     if not valid_person_public_id(stripped):
         return None
-    row = connection.execute(_speaker_summary_sql("speakers.public_id = ?"), (stripped,)).fetchone()
+    row = connection.execute(
+        _speaker_summary_sql("speakers.public_id = ?"), (stripped,)
+    ).fetchone()
     return _optional_speaker_row(row)
 
 
-def _speaker_by_id(connection: sqlite3.Connection, speaker_id: int) -> VoiceprintSpeakerRow | None:
+def _speaker_by_id(
+    connection: sqlite3.Connection, speaker_id: int
+) -> VoiceprintSpeakerRow | None:
     """
     Find one speaker by database id.
 
@@ -797,7 +841,9 @@ def _speaker_by_id(connection: sqlite3.Connection, speaker_id: int) -> Voiceprin
     return _optional_speaker_row(row)
 
 
-def _speaker_by_name(connection: sqlite3.Connection, name: str) -> VoiceprintSpeakerRow | None:
+def _speaker_by_name(
+    connection: sqlite3.Connection, name: str
+) -> VoiceprintSpeakerRow | None:
     """
     Find one speaker by normalized display name.
 
@@ -930,7 +976,11 @@ def _embedding_rows_sql(*, include_inactive: bool = False) -> str:
     Returns:
         SQL query.
     """
-    status_filter = "" if include_inactive else "AND samples.sample_status IN ('active', 'verified-active')"
+    status_filter = (
+        ""
+        if include_inactive
+        else "AND samples.sample_status IN ('active', 'verified-active')"
+    )
     return f"""
         SELECT samples.id AS sample_id, samples.public_id AS sample_public_id,
                speakers.id AS speaker_id, speakers.public_id AS speaker_public_id,
@@ -1024,7 +1074,9 @@ def _unpack_vector(payload: bytes) -> list[float]:
     return list(struct.unpack(f"<{len(payload) // 4}f", payload))
 
 
-def _select_sample_number(rows: list[VoiceprintSampleRow], sample_number: int, name: str) -> VoiceprintSampleRow:
+def _select_sample_number(
+    rows: list[VoiceprintSampleRow], sample_number: int, name: str
+) -> VoiceprintSampleRow:
     """
     Select one sample by one-based display number.
 
@@ -1037,7 +1089,9 @@ def _select_sample_number(rows: list[VoiceprintSampleRow], sample_number: int, n
         Selected sample row.
     """
     if sample_number < 1 or sample_number > len(rows):
-        raise IndexError(f"Sample {sample_number} is out of range for {name}. Available: {len(rows)}.")
+        raise IndexError(
+            f"Sample {sample_number} is out of range for {name}. Available: {len(rows)}."
+        )
     return rows[sample_number - 1]
 
 
@@ -1060,10 +1114,14 @@ def _delete_empty_speaker(connection: sqlite3.Connection, speaker_id: int) -> No
         (speaker_id,),
     ).fetchone()
     if row is not None and int(row["sample_count"]) == 0:
-        connection.execute("DELETE FROM voiceprint_speakers WHERE id = ?", (int(row["id"]),))
+        connection.execute(
+            "DELETE FROM voiceprint_speakers WHERE id = ?", (int(row["id"]),)
+        )
 
 
-def _deleted_sample(row: VoiceprintSampleRow, delete_clip: bool) -> DeletedVoiceprintSample:
+def _deleted_sample(
+    row: VoiceprintSampleRow, delete_clip: bool
+) -> DeletedVoiceprintSample:
     """
     Delete a clip file when requested and return a summary.
 

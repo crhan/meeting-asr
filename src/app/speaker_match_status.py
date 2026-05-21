@@ -25,13 +25,19 @@ def voiceprint_match_status(match: object) -> str:
         return MATCH_STATUS_MATCHED
     if best_candidate_name(match):
         return MATCH_STATUS_BELOW_THRESHOLD
-    score = _float_field(match, "best_score") if _field(match, "best_score") is not None else _float_field(match, "score")
+    score = (
+        _float_field(match, "best_score")
+        if _field(match, "best_score") is not None
+        else _float_field(match, "score")
+    )
     if score is not None and score > 0:
         return MATCH_STATUS_BELOW_THRESHOLD
     return MATCH_STATUS_NO_CANDIDATE
 
 
-def effective_match_status(match: object, *, ignored_speaker_ids: Collection[int] | None = None) -> str:
+def effective_match_status(
+    match: object, *, ignored_speaker_ids: Collection[int] | None = None
+) -> str:
     """
     Return the user-facing match status after merging explicit ignore state.
 
@@ -63,7 +69,7 @@ def speaker_id_from_match(match: object) -> int | None:
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -79,7 +85,9 @@ def accepted_match_name(match: object) -> str | None:
     """
     if not bool(_field(match, "accepted")):
         return None
-    return _clean_name(_field(match, "accepted_name")) or _clean_name(_field(match, "name"))
+    return _clean_name(_field(match, "accepted_name")) or _clean_name(
+        _field(match, "name")
+    )
 
 
 def best_candidate_name(match: object) -> str | None:
@@ -112,11 +120,19 @@ def best_candidate_score(match: object) -> float | None:
     """
     best_name = best_candidate_name(match)
     if best_name is None:
-        score = _float_field(match, "best_score") if _field(match, "best_score") is not None else _float_field(match, "score")
+        score = (
+            _float_field(match, "best_score")
+            if _field(match, "best_score") is not None
+            else _float_field(match, "score")
+        )
         if score is not None and score > 0 and not bool(_field(match, "accepted")):
             return score
         return None
-    return _float_field(match, "best_score") if _field(match, "best_score") is not None else _float_field(match, "score")
+    return (
+        _float_field(match, "best_score")
+        if _field(match, "best_score") is not None
+        else _float_field(match, "score")
+    )
 
 
 def match_threshold(match: object, default: float | None = None) -> float | None:
@@ -148,7 +164,7 @@ def _float_field(match: object, key: str) -> float | None:
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 

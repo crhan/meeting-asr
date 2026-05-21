@@ -106,7 +106,9 @@ def propose_vocabulary_corrections(
         )
 
     content = retry(_call, attempts=3, delay_seconds=1.0)
-    return _parse_result(content, model=model, candidate_ids={item.candidate_id for item in candidates})
+    return _parse_result(
+        content, model=model, candidate_ids={item.candidate_id for item in candidates}
+    )
 
 
 def propose_transcript_polish(
@@ -142,7 +144,9 @@ def propose_transcript_polish(
         )
 
     content = retry(_call, attempts=1, delay_seconds=1.0)
-    return _parse_result(content, model=model, candidate_ids={item.candidate_id for item in candidates})
+    return _parse_result(
+        content, model=model, candidate_ids={item.candidate_id for item in candidates}
+    )
 
 
 def propose_transcript_polish_strict(
@@ -183,7 +187,9 @@ def propose_transcript_polish_strict(
         )
 
     content = retry(_call, attempts=attempts, delay_seconds=2.0)
-    return _parse_strict_polish(content, model=model, candidate_ids={item.candidate_id for item in candidates})
+    return _parse_strict_polish(
+        content, model=model, candidate_ids={item.candidate_id for item in candidates}
+    )
 
 
 def infer_vocabulary_replacements(
@@ -260,7 +266,9 @@ def _polish_strict_system_prompt() -> str:
     )
 
 
-def _build_prompt(samples: list[LlmCorrectionSample], candidates: list[LlmCorrectionCandidate]) -> str:
+def _build_prompt(
+    samples: list[LlmCorrectionSample], candidates: list[LlmCorrectionCandidate]
+) -> str:
     """
     Build a bounded correction prompt.
 
@@ -377,11 +385,11 @@ def _build_polish_strict_prompt(candidates: list[LlmCorrectionCandidate]) -> str
         "\n"
         "【输出格式】\n"
         "  {\n"
-        "    \"understanding\": \"本批次主修了哪些类型\",\n"
-        "    \"corrections\": [\n"
-        "      {\"id\": \"c123\", \"corrected_text\": \"...\","
-        " \"change_type\": \"typo|term|case|punct|dup|filler|restart|emphasis\","
-        " \"reason\": \"为什么\"}\n"
+        '    "understanding": "本批次主修了哪些类型",\n'
+        '    "corrections": [\n'
+        '      {"id": "c123", "corrected_text": "...",'
+        ' "change_type": "typo|term|case|punct|dup|filler|restart|emphasis",'
+        ' "reason": "为什么"}\n'
         "    ]\n"
         "  }\n"
         "无需修改的句子不要返回。\n"
@@ -435,7 +443,9 @@ def _candidate_payload(candidate: LlmCorrectionCandidate) -> dict[str, object]:
     }
 
 
-def _parse_result(text: str, *, model: str, candidate_ids: set[str]) -> LlmCorrectionResult:
+def _parse_result(
+    text: str, *, model: str, candidate_ids: set[str]
+) -> LlmCorrectionResult:
     """
     Parse model JSON into a validated correction result.
 
@@ -453,7 +463,9 @@ def _parse_result(text: str, *, model: str, candidate_ids: set[str]) -> LlmCorre
     return LlmCorrectionResult(understanding, corrections, model)
 
 
-def _parse_strict_polish(text: str, *, model: str, candidate_ids: set[str]) -> LlmStrictPolishResult:
+def _parse_strict_polish(
+    text: str, *, model: str, candidate_ids: set[str]
+) -> LlmStrictPolishResult:
     """
     Parse strict polish JSON into per-item results with change_type.
 
@@ -475,7 +487,9 @@ def _parse_strict_polish(text: str, *, model: str, candidate_ids: set[str]) -> L
                 continue
             candidate_id = str(entry.get("id") or "")
             corrected_text = str(entry.get("corrected_text") or "").strip()
-            change_type = str(entry.get("change_type") or "").strip().lower() or "unknown"
+            change_type = (
+                str(entry.get("change_type") or "").strip().lower() or "unknown"
+            )
             reason = str(entry.get("reason") or "").strip()
             if candidate_id in candidate_ids and corrected_text:
                 items.append(
@@ -625,4 +639,3 @@ def _parse_corrections(value: object, candidate_ids: set[str]) -> dict[str, str]
         if candidate_id in candidate_ids and corrected_text:
             parsed[candidate_id] = corrected_text
     return parsed
-

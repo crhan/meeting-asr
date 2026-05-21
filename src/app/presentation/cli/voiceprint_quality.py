@@ -5,7 +5,11 @@ from __future__ import annotations
 from rich import box
 from rich.table import Table
 
-from app.voiceprint_quality import VoiceprintQualityPerson, VoiceprintQualityReport, VoiceprintQualitySample
+from app.voiceprint_quality import (
+    VoiceprintQualityPerson,
+    VoiceprintQualityReport,
+    VoiceprintQualitySample,
+)
 
 
 def voiceprint_quality_payload(report: VoiceprintQualityReport) -> dict[str, object]:
@@ -125,11 +129,16 @@ def _risk_text(person: VoiceprintQualityPerson) -> str:
 def _worst_samples_text(person: VoiceprintQualityPerson) -> str:
     """Render worst samples for one person."""
     rows = [
-        sample for sample in person.samples if sample.status == "active" and sample.label in {"critical", "warning"}
+        sample
+        for sample in person.samples
+        if sample.status == "active" and sample.label in {"critical", "warning"}
     ][:3]
     if not rows:
         return "-"
-    return "\n".join(f"{sample.sample_public_id} {_score_text(sample.score)} {sample.label}" for sample in rows)
+    return "\n".join(
+        f"{sample.sample_public_id} {_score_text(sample.score)} {sample.label}"
+        for sample in rows
+    )
 
 
 def _score_text(score: float | None) -> str:

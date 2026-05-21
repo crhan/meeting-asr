@@ -24,7 +24,10 @@ from app.postprocess import speaker_id_to_label
 from app.speaker_match_status import best_candidate_name
 from app.speaker_review import build_audio_preview_command
 from app.voiceprint_embedding import VoiceprintEmbedSummary, embed_voiceprint_samples
-from app.presentation.tui.project import ProjectPickerScreen, load_project_picker_session
+from app.presentation.tui.project import (
+    ProjectPickerScreen,
+    load_project_picker_session,
+)
 from app.presentation.tui.speaker_correction import (
     CorrectionQueuedScreen,
     SentenceCorrectionEdit,
@@ -65,7 +68,10 @@ from app.presentation.tui.speaker_save import (
     speaker_ignore_changes,
     speaker_name_changes,
 )
-from app.presentation.tui.speaker_session import load_speaker_review_session, load_voiceprint_review_progress
+from app.presentation.tui.speaker_session import (
+    load_speaker_review_session,
+    load_voiceprint_review_progress,
+)
 from app.presentation.tui.speaker_timeline import (
     SpeakerPickOption,
     SpeakerPickScreen,
@@ -234,9 +240,16 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self,
         session: SpeakerReviewSession,
         *,
-        save_handler: Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
-        accept_handler: Callable[[Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome] | None = None,
-        project_save_handler: Callable[[Path, SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
+        save_handler: Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome]
+        | None = None,
+        accept_handler: Callable[
+            [Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome
+        ]
+        | None = None,
+        project_save_handler: Callable[
+            [Path, SpeakerReviewDecision], SpeakerReviewSaveOutcome
+        ]
+        | None = None,
         project_accept_handler: Callable[
             [Path, Path | None, tuple[int, ...] | None],
             SpeakerReviewSaveOutcome,
@@ -266,7 +279,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.playback_timer: Any | None = None
         self.known_people = list(session.people)
         self.correction_edits: list[SentenceCorrectionEdit] = []
-        self.correction_original_text_by_segment = _capture_correction_text_baseline(session.speakers)
+        self.correction_original_text_by_segment = _capture_correction_text_baseline(
+            session.speakers
+        )
         self.identity_baseline = _identity_snapshot(session.speakers)
         self.view_mode = VIEW_MODE_SPEAKERS
         self.sample_filter_mode = SAMPLE_FILTER_ALL
@@ -375,18 +390,29 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def action_accept_match(self) -> None:
         """Accept the current voiceprint match candidate."""
         speaker = self._speaker()
-        candidate = None if speaker.match is None else best_candidate_name(speaker.match)
+        candidate = (
+            None if speaker.match is None else best_candidate_name(speaker.match)
+        )
         if candidate is None:
-            self._set_status(tr("No usable match for this speaker.", "当前 speaker 没有可用匹配。"))
+            self._set_status(
+                tr("No usable match for this speaker.", "当前 speaker 没有可用匹配。")
+            )
             return
         person_id = None if speaker.match is None else speaker.match.best_person_id
         if person_id is None:
             person = find_person_by_name(candidate, self.known_people)
             person_id = None if person is None else person.person_id
         person_public_id = _known_person_public_id(self.known_people, person_id)
-        person_public_id = person_public_id or (None if speaker.match is None else speaker.match.best_person_public_id)
+        person_public_id = person_public_id or (
+            None if speaker.match is None else speaker.match.best_person_public_id
+        )
         self._set_speaker_identity(speaker, candidate, person_id, person_public_id)
-        self._set_status(tr(f"Accepted match for {speaker.label}: {candidate}.", f"已接受 {speaker.label} 的匹配：{candidate}。"))
+        self._set_status(
+            tr(
+                f"Accepted match for {speaker.label}: {candidate}.",
+                f"已接受 {speaker.label} 的匹配：{candidate}。",
+            )
+        )
         self._refresh()
 
     def action_ignore_speaker(self) -> None:
@@ -411,22 +437,38 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def action_switch_project(self) -> None:
         """Open the embedded project picker and switch review context."""
         if self._has_unsaved_review_changes():
-            self._set_status(tr("Save current project changes with s before switching projects.", "切换项目之前请先按 s 保存当前项目修改。"))
+            self._set_status(
+                tr(
+                    "Save current project changes with s before switching projects.",
+                    "切换项目之前请先按 s 保存当前项目修改。",
+                )
+            )
             return
         try:
             picker_session = load_project_picker_session(self.session.projects_dir)
         except Exception as exc:  # noqa: BLE001
-            self._set_status(tr(f"Project switch unavailable: {exc}", f"项目切换不可用：{exc}"))
+            self._set_status(
+                tr(f"Project switch unavailable: {exc}", f"项目切换不可用：{exc}")
+            )
             return
         if not picker_session.projects:
-            self._set_status(tr("No projects found to switch to.", "没有可切换的项目。"))
+            self._set_status(
+                tr("No projects found to switch to.", "没有可切换的项目。")
+            )
             return
-        self.push_screen(ProjectPickerScreen(picker_session), self._handle_project_switch)
+        self.push_screen(
+            ProjectPickerScreen(picker_session), self._handle_project_switch
+        )
 
     def action_toggle_sample_filter(self) -> None:
         """Cycle sample filters in grouped speaker view."""
         if self.view_mode == VIEW_MODE_TIMELINE:
-            self._set_status(tr("Sample filter only applies to speaker samples view.", "筛选只作用于 speaker 分组样本视图。"))
+            self._set_status(
+                tr(
+                    "Sample filter only applies to speaker samples view.",
+                    "筛选只作用于 speaker 分组样本视图。",
+                )
+            )
             return
         self.sample_filter_mode = _next_sample_filter_mode(self.sample_filter_mode)
         self._snap_selected_sample_to_filter(self._speaker())
@@ -437,7 +479,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def action_voiceprint_review(self) -> None:
         """Open the embedded voiceprint review screen from project review."""
         if self._has_unsaved_speaker_names():
-            self._set_status(tr("Save speaker names with s before opening voiceprint review.", "打开声纹 Review 前请先按 s 保存 speaker 姓名。"))
+            self._set_status(
+                tr(
+                    "Save speaker names with s before opening voiceprint review.",
+                    "打开声纹 Review 前请先按 s 保存 speaker 姓名。",
+                )
+            )
             return
         try:
             session, planned = load_voiceprint_review_session(
@@ -447,7 +494,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 return_hint=tr("return to Project Review", "返回 Project Review"),
             )
         except Exception as exc:  # noqa: BLE001
-            self._set_status(tr(f"Voiceprint review unavailable: {exc}", f"声纹 Review 不可用：{exc}"))
+            self._set_status(
+                tr(
+                    f"Voiceprint review unavailable: {exc}",
+                    f"声纹 Review 不可用：{exc}",
+                )
+            )
             return
         self.push_screen(
             VoiceprintReviewScreen(
@@ -462,7 +514,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def action_rematch_speakers(self) -> None:
         """Rerun speaker matching against the current global voiceprint library."""
         if self._has_unsaved_review_changes():
-            self._set_status(tr("Save current review changes with s before rematching speakers.", "重新匹配前请先按 s 保存当前 review 修改。"))
+            self._set_status(
+                tr(
+                    "Save current review changes with s before rematching speakers.",
+                    "重新匹配前请先按 s 保存当前 review 修改。",
+                )
+            )
             return
         self._stop_playback()
         processing_screen = SpeakerRematchProcessingScreen()
@@ -497,7 +554,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 )
             )
             return
-        self._set_status(tr("Embedding voiceprint samples...", "正在生成声纹 embedding..."))
+        self._set_status(
+            tr("Embedding voiceprint samples...", "正在生成声纹 embedding...")
+        )
         self.run_worker(
             lambda: embed_voiceprint_samples(
                 store_dir=self.session.store_dir,
@@ -551,7 +610,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             return
         segment = self._active_segment()
         speaker = self._speaker_for_segment(segment)
-        original_text = self.correction_original_text_by_segment.get(segment_key(segment), segment.text.strip())
+        original_text = self.correction_original_text_by_segment.get(
+            segment_key(segment), segment.text.strip()
+        )
         self.push_screen(
             SentenceCorrectionScreen(
                 speaker_label=speaker.label,
@@ -589,7 +650,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 current_speaker_id=source.speaker_id,
                 options=options,
             ),
-            lambda choice: self._handle_speaker_reassignment(segment, source.speaker_id, choice),
+            lambda choice: self._handle_speaker_reassignment(
+                segment, source.speaker_id, choice
+            ),
         )
 
     def action_quit_review(self) -> None:
@@ -629,9 +692,13 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             return
         speaker = self._speaker()
         self._remember_known_person(selection)
-        self._set_speaker_identity(speaker, selection.name, selection.person_id, selection.public_id)
+        self._set_speaker_identity(
+            speaker, selection.name, selection.person_id, selection.public_id
+        )
         action = tr("Created", "已创建") if selection.created else tr("Set", "已设置")
-        self._set_status(f"{action} {speaker.label} -> {selection.name} {selection.public_id}.")
+        self._set_status(
+            f"{action} {speaker.label} -> {selection.name} {selection.public_id}."
+        )
         self._refresh()
 
     def _handle_project_switch(self, project_dir: Path | None) -> None:
@@ -640,7 +707,12 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._set_status(tr("Project switch canceled.", "已取消项目切换。"))
             return
         if project_dir.resolve() == self.session.project_dir.resolve():
-            self._set_status(tr("Already reviewing the selected project.", "已经在 review 当前选中的项目。"))
+            self._set_status(
+                tr(
+                    "Already reviewing the selected project.",
+                    "已经在 review 当前选中的项目。",
+                )
+            )
             return
         try:
             session = load_speaker_review_session(
@@ -650,7 +722,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 allow_correction=self.session.allow_correction,
             )
         except Exception as exc:  # noqa: BLE001
-            self._set_status(tr(f"Project switch failed: {exc}", f"项目切换失败：{exc}"))
+            self._set_status(
+                tr(f"Project switch failed: {exc}", f"项目切换失败：{exc}")
+            )
             return
         self._stop_playback()
         self.session = session
@@ -658,13 +732,20 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.focused_column = "speakers"
         self.known_people = list(session.people)
         self.correction_edits.clear()
-        self.correction_original_text_by_segment = _capture_correction_text_baseline(session.speakers)
+        self.correction_original_text_by_segment = _capture_correction_text_baseline(
+            session.speakers
+        )
         self.identity_baseline = _identity_snapshot(session.speakers)
         self.original_speaker_by_segment = capture_speaker_baseline(session.speakers)
         self.view_mode = VIEW_MODE_SPEAKERS
         self.timeline_selected_index = 0
         self._apply_view_mode()
-        self._enter_browse_mode(tr(f"Switched to project {session.overview.project_id}.", f"已切换到项目 {session.overview.project_id}。"))
+        self._enter_browse_mode(
+            tr(
+                f"Switched to project {session.overview.project_id}.",
+                f"已切换到项目 {session.overview.project_id}。",
+            )
+        )
         self._refresh()
 
     def _handle_speaker_reassignment(
@@ -675,21 +756,38 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     ) -> None:
         """Move a sentence to another speaker after the picker resolves."""
         if new_speaker_id is None:
-            self._set_status(tr("Speaker reassignment canceled.", "已取消 speaker 重新指派。"))
+            self._set_status(
+                tr("Speaker reassignment canceled.", "已取消 speaker 重新指派。")
+            )
             return
         if new_speaker_id == source_speaker_id:
-            self._set_status(tr("Same speaker chosen; no change.", "选择的还是当前 speaker，不做改动。"))
+            self._set_status(
+                tr(
+                    "Same speaker chosen; no change.",
+                    "选择的还是当前 speaker，不做改动。",
+                )
+            )
             return
         source = speaker_by_id(self.session.speakers, source_speaker_id)
         target = speaker_by_id(self.session.speakers, new_speaker_id)
         if source is None:
-            self._set_status(tr("Reassignment target unavailable.", "无法找到重新指派的目标 speaker。"))
+            self._set_status(
+                tr(
+                    "Reassignment target unavailable.",
+                    "无法找到重新指派的目标 speaker。",
+                )
+            )
             return
         if target is None:
             target = _new_review_speaker(new_speaker_id)
             self.session.speakers.append(target)
         if not move_segment_between_speakers(source, target, segment):
-            self._set_status(tr("Sentence not found on its current speaker.", "未在当前 speaker 中找到该句子。"))
+            self._set_status(
+                tr(
+                    "Sentence not found on its current speaker.",
+                    "未在当前 speaker 中找到该句子。",
+                )
+            )
             return
         target.ignored = False
         if not target.current_name.strip():
@@ -749,10 +847,14 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         speaker = self._speaker()
         indices = self._filtered_sample_indices(speaker)
         if not indices:
-            self._set_status(tr("No samples match the current filter.", "当前筛选下没有 sample。"))
+            self._set_status(
+                tr("No samples match the current filter.", "当前筛选下没有 sample。")
+            )
             return
         position = _filtered_sample_position(indices, speaker.selected_sample_index)
-        speaker.selected_sample_index = indices[_clamp(position + delta, 0, len(indices) - 1)]
+        speaker.selected_sample_index = indices[
+            _clamp(position + delta, 0, len(indices) - 1)
+        ]
         self._refresh()
 
     def _move_sample_page(self, delta: int) -> None:
@@ -760,7 +862,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         speaker = self._speaker()
         indices = self._filtered_sample_indices(speaker)
         if not indices:
-            self._set_status(tr("No samples match the current filter.", "当前筛选下没有 sample。"))
+            self._set_status(
+                tr("No samples match the current filter.", "当前筛选下没有 sample。")
+            )
             return
         page_size = self._sample_page_size()
         position = _filtered_sample_position(indices, speaker.selected_sample_index)
@@ -876,7 +980,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             return
         speaker = self._speaker()
         if speaker.segments:
-            sample_index = _clamp(speaker.selected_sample_index, 0, speaker.segment_count - 1)
+            sample_index = _clamp(
+                speaker.selected_sample_index, 0, speaker.segment_count - 1
+            )
             target = speaker.segments[sample_index]
             self._sync_timeline_to_segment(target, rows=rows)
             return
@@ -903,7 +1009,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             rows = self._timeline_rows()
             if not rows:
                 raise RuntimeError("Timeline has no sentences to operate on.")
-            self.timeline_selected_index = max(0, min(self.timeline_selected_index, len(rows) - 1))
+            self.timeline_selected_index = max(
+                0, min(self.timeline_selected_index, len(rows) - 1)
+            )
             return rows[self.timeline_selected_index].segment
         return self._selected_sample()
 
@@ -913,7 +1021,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             rows = self._timeline_rows()
             if not rows:
                 return None
-            self.timeline_selected_index = max(0, min(self.timeline_selected_index, len(rows) - 1))
+            self.timeline_selected_index = max(
+                0, min(self.timeline_selected_index, len(rows) - 1)
+            )
             return rows[self.timeline_selected_index].segment
         speaker = self._speaker()
         if not speaker.segments:
@@ -935,14 +1045,18 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             for seg in speaker.segments:
                 key = segment_key(seg)
                 original = self.original_speaker_by_segment.get(key)
-                current = seg.speaker_id if seg.speaker_id is not None else speaker.speaker_id
+                current = (
+                    seg.speaker_id if seg.speaker_id is not None else speaker.speaker_id
+                )
                 if original is not None and original != current:
                     keys.add(key)
         return keys
 
     def _overview_pane(self) -> str:
         """Render stable project and workflow state."""
-        return render_overview_pane(self.session.speakers, self.session.overview, self._speaker())
+        return render_overview_pane(
+            self.session.speakers, self.session.overview, self._speaker()
+        )
 
     def _speaker_pane(self) -> str:
         """Render the left speaker list."""
@@ -962,7 +1076,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _sample_pane(self) -> str:
         """Render the selected speaker samples."""
         speaker = self._speaker()
-        lines = [self._pane_title(tr(f"{speaker.label} samples", f"{speaker.label} samples"), "samples")]
+        lines = [
+            self._pane_title(
+                tr(f"{speaker.label} samples", f"{speaker.label} samples"), "samples"
+            )
+        ]
         lines.append(
             render_selected_speaker_line(speaker)
             + " | "
@@ -970,12 +1088,18 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         )
         page_start, rows = self._visible_segment_rows(speaker)
         if not rows:
-            lines.append(f"[dim]当前筛选「{escape(_sample_filter_label(self.sample_filter_mode))}」下没有 sample。按 f 切换筛选。[/]")
+            lines.append(
+                f"[dim]当前筛选「{escape(_sample_filter_label(self.sample_filter_mode))}」下没有 sample。按 f 切换筛选。[/]"
+            )
         for index, segment in rows:
             prefix = ">" if index == speaker.selected_sample_index else " "
             time_range = _segment_time_range(segment)
             text = _trim_sample_text(segment.text)
-            playing = "[bold magenta]PLAY[/]" if self._playing_segment_key() == segment_key(segment) else "[dim]    [/]"
+            playing = (
+                "[bold magenta]PLAY[/]"
+                if self._playing_segment_key() == segment_key(segment)
+                else "[dim]    [/]"
+            )
             meta_line = (
                 f"{prefix} {playing} [cyan]{time_range}[/] "
                 f"{_sample_cluster_badge(self._cluster_sample_score(speaker, segment))} "
@@ -999,7 +1123,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Start playback for the selected segment."""
         self._stop_playback()
         start_seconds = max(0.0, segment.begin_time_ms / 1000.0 - 0.5)
-        duration_seconds = max(2.0, (segment.end_time_ms - segment.begin_time_ms) / 1000.0 + 1.0)
+        duration_seconds = max(
+            2.0, (segment.end_time_ms - segment.begin_time_ms) / 1000.0 + 1.0
+        )
         clip_path = _ensure_preview_clip(
             self.session.project_dir,
             self.session.source_media,
@@ -1050,7 +1176,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             label = state.label
             self.playback_state = None
             self._stop_playback_timer()
-            self._set_status(tr(f"Finished playing sample {label}.", f"已播放完成：{label}。"))
+            self._set_status(
+                tr(f"Finished playing sample {label}.", f"已播放完成：{label}。")
+            )
             self._refresh()
             return
         self._set_status(_playback_status_text(state))
@@ -1106,7 +1234,13 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 
     def _ignored_speaker_ids(self) -> tuple[int, ...]:
         """Return project speaker ids deliberately kept anonymous."""
-        return tuple(sorted(speaker.speaker_id for speaker in self.session.speakers if is_ignored(speaker)))
+        return tuple(
+            sorted(
+                speaker.speaker_id
+                for speaker in self.session.speakers
+                if is_ignored(speaker)
+            )
+        )
 
     def _decision(self) -> SpeakerReviewDecision:
         """Build the current save decision."""
@@ -1137,7 +1271,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 if key in seen:
                     continue
                 original = self.original_speaker_by_segment.get(key)
-                current = seg.speaker_id if seg.speaker_id is not None else speaker.speaker_id
+                current = (
+                    seg.speaker_id if seg.speaker_id is not None else speaker.speaker_id
+                )
                 if original is None or original == current:
                     continue
                 out.append(
@@ -1155,7 +1291,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _upsert_correction_edit(self, edit: SentenceCorrectionEdit) -> bool:
         """Insert, replace, or remove one staged edit by sentence identity."""
         if edit.corrected_text == edit.original_text:
-            self.correction_edits = [staged for staged in self.correction_edits if not _same_edit(staged, edit)]
+            self.correction_edits = [
+                staged
+                for staged in self.correction_edits
+                if not _same_edit(staged, edit)
+            ]
             return False
         for index, staged in enumerate(self.correction_edits):
             if _same_edit(staged, edit):
@@ -1175,7 +1315,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         summary = outcome.correction_summary
         if summary is not None and summary.accepted:
             self.correction_edits.clear()
-            self.correction_original_text_by_segment = _capture_correction_text_baseline(self.session.speakers)
+            self.correction_original_text_by_segment = (
+                _capture_correction_text_baseline(self.session.speakers)
+            )
             base = tr(
                 "Saved names and accepted transcript correction.",
                 "已保存姓名并接受文字修正。",
@@ -1203,19 +1345,27 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         )
         self.session = replace(self.session, overview=overview)
         self.identity_baseline = _identity_snapshot(self.session.speakers)
-        self.original_speaker_by_segment = capture_speaker_baseline(self.session.speakers)
+        self.original_speaker_by_segment = capture_speaker_baseline(
+            self.session.speakers
+        )
 
-    def _save_handler_for_current_project(self) -> Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome]:
+    def _save_handler_for_current_project(
+        self,
+    ) -> Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome]:
         """Return a save handler bound to the currently visible project."""
         if self.project_save_handler is not None:
-            return lambda decision: self.project_save_handler(self.session.project_dir, decision)
+            return lambda decision: self.project_save_handler(
+                self.session.project_dir, decision
+            )
         if self.save_handler is not None:
             return self.save_handler
         raise RuntimeError("Save handler is not configured.")
 
     def _accept_handler_for_current_project(
         self,
-    ) -> Callable[[Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome] | None:
+    ) -> (
+        Callable[[Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome] | None
+    ):
         """Return a correction accept handler bound to the current project."""
         if self.project_accept_handler is not None:
             return lambda proposal_path, selected_indices: self.project_accept_handler(
@@ -1225,11 +1375,15 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             )
         return self.accept_handler
 
-    def _handle_voiceprint_review_workflow(self, summary: VoiceprintReviewWorkflowSummary) -> None:
+    def _handle_voiceprint_review_workflow(
+        self, summary: VoiceprintReviewWorkflowSummary
+    ) -> None:
         """Refresh Project Review after embedded Voiceprint Review completes."""
         overview = replace(
             self.session.overview,
-            voiceprint=load_voiceprint_review_progress(self.session.overview.project_id, self.session.store_dir),
+            voiceprint=load_voiceprint_review_progress(
+                self.session.overview.project_id, self.session.store_dir
+            ),
             match_file_exists=True,
         )
         self.session = replace(self.session, overview=overview)
@@ -1276,11 +1430,17 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self._dismiss_rematch_processing()
         self.session = result.session
         self.known_people = list(result.session.people)
-        self.selected_speaker_index = _speaker_index_by_id(result.session.speakers, selected_speaker_id)
+        self.selected_speaker_index = _speaker_index_by_id(
+            result.session.speakers, selected_speaker_id
+        )
         self.focused_column = "speakers"
-        self.correction_original_text_by_segment = _capture_correction_text_baseline(result.session.speakers)
+        self.correction_original_text_by_segment = _capture_correction_text_baseline(
+            result.session.speakers
+        )
         self.identity_baseline = _identity_snapshot(result.session.speakers)
-        self.original_speaker_by_segment = capture_speaker_baseline(result.session.speakers)
+        self.original_speaker_by_segment = capture_speaker_baseline(
+            result.session.speakers
+        )
         self.view_mode = VIEW_MODE_SPEAKERS
         self.timeline_selected_index = 0
         self._apply_view_mode()
@@ -1296,7 +1456,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         """Refresh project voiceprint progress after embedding finishes."""
         overview = replace(
             self.session.overview,
-            voiceprint=load_voiceprint_review_progress(self.session.overview.project_id, self.session.store_dir),
+            voiceprint=load_voiceprint_review_progress(
+                self.session.overview.project_id, self.session.store_dir
+            ),
         )
         self.session = replace(self.session, overview=overview)
         self._set_status(
@@ -1317,7 +1479,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 return True
             if current_ignored:
                 continue
-            if (speaker.current_name.strip() or speaker.label) != saved.get(speaker.speaker_id):
+            if (speaker.current_name.strip() or speaker.label) != saved.get(
+                speaker.speaker_id
+            ):
                 return True
         return False
 
@@ -1345,7 +1509,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
     def _remember_known_person(self, selection: IdentitySelection) -> None:
         """Keep newly-created or match-only people available in later modal opens."""
         if find_person_by_name(selection.name, self.known_people) is None:
-            self.known_people.append(KnownPerson(selection.person_id, selection.name, selection.public_id))
+            self.known_people.append(
+                KnownPerson(selection.person_id, selection.name, selection.public_id)
+            )
 
     def _speaker(self) -> ReviewSpeaker:
         """Return the selected speaker."""
@@ -1357,7 +1523,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         index = self._selected_sample_index(speaker)
         return speaker.segments[index]
 
-    def _cluster_diagnostic(self, speaker: ReviewSpeaker) -> SpeakerClusterDiagnostic | None:
+    def _cluster_diagnostic(
+        self, speaker: ReviewSpeaker
+    ) -> SpeakerClusterDiagnostic | None:
         """Return optional cluster diagnostics for one speaker."""
         return self.session.cluster_diagnostics.get(speaker.speaker_id)
 
@@ -1378,7 +1546,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         segment: SentenceSegment,
     ) -> SpeakerSampleIdentityScore | None:
         """Return optional sample-level identity match score for one visible row."""
-        return self.session.sample_identity_scores.get(speaker.speaker_id, {}).get(segment_key(segment))
+        return self.session.sample_identity_scores.get(speaker.speaker_id, {}).get(
+            segment_key(segment)
+        )
 
     def _replace_segment_text(self, edit: SentenceCorrectionEdit) -> None:
         """Update the in-memory sample text after a TUI correction."""
@@ -1411,7 +1581,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             if self._sample_matches_filter(speaker, segment)
         ]
 
-    def _sample_matches_filter(self, speaker: ReviewSpeaker, segment: SentenceSegment) -> bool:
+    def _sample_matches_filter(
+        self, speaker: ReviewSpeaker, segment: SentenceSegment
+    ) -> bool:
         """Return whether one sample should be visible in the current filter."""
         return _sample_matches_filter(
             self.sample_filter_mode,
@@ -1419,12 +1591,16 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._sample_identity_score(speaker, segment),
         )
 
-    def _visible_segments(self, speaker: ReviewSpeaker) -> tuple[int, list[SentenceSegment]]:
+    def _visible_segments(
+        self, speaker: ReviewSpeaker
+    ) -> tuple[int, list[SentenceSegment]]:
         """Return the current sample page start and segments."""
         page_start, rows = self._visible_segment_rows(speaker)
         return page_start, [segment for _index, segment in rows]
 
-    def _visible_segment_rows(self, speaker: ReviewSpeaker) -> tuple[int, list[tuple[int, SentenceSegment]]]:
+    def _visible_segment_rows(
+        self, speaker: ReviewSpeaker
+    ) -> tuple[int, list[tuple[int, SentenceSegment]]]:
         """Return visible sample rows with their original speaker indices."""
         page_size = self._sample_page_size()
         indices = self._filtered_sample_indices(speaker)
@@ -1434,7 +1610,9 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         speaker.selected_sample_index = indices[position]
         page_start = _sample_page_start(position, page_size)
         visible_indices = indices[page_start : page_start + page_size]
-        return page_start, [(index, speaker.segments[index]) for index in visible_indices]
+        return page_start, [
+            (index, speaker.segments[index]) for index in visible_indices
+        ]
 
     def _sample_page_size(self) -> int:
         """Return the number of sample rows that fit in the pane."""
@@ -1458,7 +1636,11 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             sample_range = f"{start}-{end}/{filtered_count}"
         else:
             sample_range = "0/0"
-        total = "" if filtered_count == speaker.segment_count else f" total={speaker.segment_count}"
+        total = (
+            ""
+            if filtered_count == speaker.segment_count
+            else f" total={speaker.segment_count}"
+        )
         return (
             f"Page {page_number}/{page_count}  Samples {sample_range}{total}  "
             f"筛选={_sample_filter_label(self.sample_filter_mode)}  f 切换筛选"
@@ -1484,9 +1666,16 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
 def run_speaker_review_tui(
     session: SpeakerReviewSession,
     *,
-    save_handler: Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
-    accept_handler: Callable[[Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome] | None = None,
-    project_save_handler: Callable[[Path, SpeakerReviewDecision], SpeakerReviewSaveOutcome] | None = None,
+    save_handler: Callable[[SpeakerReviewDecision], SpeakerReviewSaveOutcome]
+    | None = None,
+    accept_handler: Callable[
+        [Path | None, tuple[int, ...] | None], SpeakerReviewSaveOutcome
+    ]
+    | None = None,
+    project_save_handler: Callable[
+        [Path, SpeakerReviewDecision], SpeakerReviewSaveOutcome
+    ]
+    | None = None,
     project_accept_handler: Callable[
         [Path, Path | None, tuple[int, ...] | None],
         SpeakerReviewSaveOutcome,
@@ -1585,13 +1774,18 @@ def _sample_cluster_badge(score: SpeakerClusterSampleScore | None) -> str:
     value = _format_optional_score(score.score)
     margin = _format_optional_score(score.margin_score)
     style = _sample_score_style(score.status)
-    if score.nearest_speaker_id is not None and score.status in {"conflict", "ambiguous"}:
+    if score.nearest_speaker_id is not None and score.status in {
+        "conflict",
+        "ambiguous",
+    }:
         label = speaker_id_to_label(score.nearest_speaker_id)
         status = _sample_cluster_status_label(score.status)
         return f"[{style}]分桶={value} 差值={margin} 更像={escape(label)} {escape(status)}[/]"
     if score.margin_score is not None and score.status == "weak-fit":
         return f"[{style}]分桶={value} 差值={margin} 弱证据[/]"
-    return f"[{style}]分桶={value} {escape(_sample_cluster_status_label(score.status))}[/]"
+    return (
+        f"[{style}]分桶={value} {escape(_sample_cluster_status_label(score.status))}[/]"
+    )
 
 
 def _sample_identity_badge(score: SpeakerSampleIdentityScore | None) -> str:
@@ -1667,12 +1861,19 @@ def _sample_matches_filter(
     cluster_status = None if cluster_score is None else cluster_score.status
     identity_status = None if identity_score is None else identity_score.status
     if mode == SAMPLE_FILTER_REVIEW:
-        return cluster_status in {"conflict", "ambiguous", "critical"} or identity_status in {
+        return cluster_status in {
+            "conflict",
+            "ambiguous",
+            "critical",
+        } or identity_status in {
             "identity-conflict",
             "identity-ambiguous",
         }
     if mode == SAMPLE_FILTER_LOW:
-        return cluster_status in {"weak-fit", "warning"} or identity_status == "identity-weak"
+        return (
+            cluster_status in {"weak-fit", "warning"}
+            or identity_status == "identity-weak"
+        )
     return True
 
 
@@ -1719,7 +1920,11 @@ def _format_optional_score(value: float | None) -> str:
 def _playback_status_text(state: PlaybackState) -> str:
     """Render a human-readable playback progress line."""
     elapsed = max(0.0, time.monotonic() - state.started_at)
-    duration = state.duration_seconds if state.duration_seconds and state.duration_seconds > 0 else None
+    duration = (
+        state.duration_seconds
+        if state.duration_seconds and state.duration_seconds > 0
+        else None
+    )
     text = _trim_sample_text(state.text, limit=56)
     if duration is None:
         return tr(
@@ -1771,7 +1976,9 @@ def _capture_correction_text_baseline(
     return baseline
 
 
-def _known_person_public_id(people: list[KnownPerson], person_id: int | None) -> str | None:
+def _known_person_public_id(
+    people: list[KnownPerson], person_id: int | None
+) -> str | None:
     """Return a known public id for an internal person id."""
     if person_id is None:
         return None
@@ -1789,7 +1996,9 @@ def _speaker_index_by_id(speakers: list[ReviewSpeaker], speaker_id: int) -> int:
     return 0
 
 
-def _speaker_pick_options_with_new(speakers: list[ReviewSpeaker]) -> list[SpeakerPickOption]:
+def _speaker_pick_options_with_new(
+    speakers: list[ReviewSpeaker],
+) -> list[SpeakerPickOption]:
     """Return existing speaker picker options plus one anonymous new speaker."""
     options = speaker_pick_options(speakers)
     new_speaker_id = _next_review_speaker_id(speakers)
@@ -1824,7 +2033,9 @@ def _new_review_speaker(speaker_id: int) -> ReviewSpeaker:
     )
 
 
-def _identity_snapshot(speakers: list[ReviewSpeaker]) -> dict[int, tuple[str, bool, int | None, str | None]]:
+def _identity_snapshot(
+    speakers: list[ReviewSpeaker],
+) -> dict[int, tuple[str, bool, int | None, str | None]]:
     """Return the current in-TUI speaker identity state."""
     return {
         speaker.speaker_id: (
@@ -1856,12 +2067,20 @@ def _summarize_reassignment_outcome(result: object | None) -> str:
     pieces.append(tr(" Reassignments applied", " 已应用归属变更"))
     if deleted:
         pieces.append(
-            tr(f", {deleted} voiceprint sample(s) invalidated", f"，失效 {deleted} 条声纹样本")
+            tr(
+                f", {deleted} voiceprint sample(s) invalidated",
+                f"，失效 {deleted} 条声纹样本",
+            )
         )
     if rematched:
         pieces.append(tr(", voiceprint matches refreshed", "，声纹匹配已刷新"))
     elif rematch_reason:
-        pieces.append(tr(f", rematch skipped: {rematch_reason}", f"，重新匹配被跳过：{rematch_reason}"))
+        pieces.append(
+            tr(
+                f", rematch skipped: {rematch_reason}",
+                f"，重新匹配被跳过：{rematch_reason}",
+            )
+        )
     pieces.append(".")
     return "".join(pieces)
 
@@ -1907,7 +2126,12 @@ def _ensure_preview_clip(
     clip_path = _preview_clip_path(project_dir, segment)
     if _preview_clip_is_fresh(clip_path, source_media):
         return clip_path
-    extract_audio_clip(source_media, clip_path, start_seconds=start_seconds, duration_seconds=duration_seconds)
+    extract_audio_clip(
+        source_media,
+        clip_path,
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
+    )
     _write_preview_clip_metadata(clip_path, source_media)
     _prune_preview_clips(clip_path.parent, keep_path=clip_path)
     return clip_path
@@ -1932,7 +2156,9 @@ def _preview_clip_is_fresh(clip_path: Path, source_media: Path) -> bool:
     return (
         clip_stat.st_size > 44
         and clip_stat.st_mtime >= source_stat.st_mtime
-        and _preview_clip_metadata_matches(clip_path, source_media, source_stat.st_mtime, source_stat.st_size)
+        and _preview_clip_metadata_matches(
+            clip_path, source_media, source_stat.st_mtime, source_stat.st_size
+        )
     )
 
 
@@ -1947,7 +2173,9 @@ def _write_preview_clip_metadata(clip_path: Path, source_media: Path) -> None:
         "source_mtime": source_stat.st_mtime,
         "source_size": source_stat.st_size,
     }
-    _preview_clip_metadata_path(clip_path).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    _preview_clip_metadata_path(clip_path).write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 def _preview_clip_metadata_matches(
@@ -1958,8 +2186,10 @@ def _preview_clip_metadata_matches(
 ) -> bool:
     """Return whether a cached playback clip was built from this source."""
     try:
-        payload = json.loads(_preview_clip_metadata_path(clip_path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        payload = json.loads(
+            _preview_clip_metadata_path(clip_path).read_text(encoding="utf-8")
+        )
+    except OSError, json.JSONDecodeError:
         return False
     return (
         payload.get("source") == str(source_media.resolve())
@@ -2006,7 +2236,9 @@ def _prune_preview_clips(
         _unlink_preview_clip(path)
 
 
-def _preview_clip_cache_entries(paths: list[Path], keep_path: Path) -> list[tuple[Path, int, float]]:
+def _preview_clip_cache_entries(
+    paths: list[Path], keep_path: Path
+) -> list[tuple[Path, int, float]]:
     """
     Return cache entries sorted by keep-first and newest-first order.
 
@@ -2024,7 +2256,9 @@ def _preview_clip_cache_entries(paths: list[Path], keep_path: Path) -> list[tupl
         except OSError:
             continue
         entries.append((path, stat.st_size, stat.st_mtime))
-    return sorted(entries, key=lambda item: (item[0] == keep_path, item[2]), reverse=True)
+    return sorted(
+        entries, key=lambda item: (item[0] == keep_path, item[2]), reverse=True
+    )
 
 
 def _unlink_preview_clip(path: Path) -> None:

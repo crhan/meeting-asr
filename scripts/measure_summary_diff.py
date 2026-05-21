@@ -89,7 +89,9 @@ def _old_title_prompt(memory_summary: str, topics: list[str]) -> str:
     )
 
 
-def _run_old(result: TranscriptResult, settings) -> tuple[list[CallStat], dict[str, Any]]:
+def _run_old(
+    result: TranscriptResult, settings
+) -> tuple[list[CallStat], dict[str, Any]]:
     """Run the legacy two-call summary pipeline and capture metrics."""
     calls: list[CallStat] = []
     memory_prompt = _old_memory_prompt(result)
@@ -100,7 +102,9 @@ def _run_old(result: TranscriptResult, settings) -> tuple[list[CallStat], dict[s
         system_prompt="你是会议回忆索引助手。只输出 JSON，不要输出 Markdown，不要解释。",
         prompt=memory_prompt,
     )
-    calls.append(CallStat(len(memory_prompt), int((time.perf_counter() - start) * 1000)))
+    calls.append(
+        CallStat(len(memory_prompt), int((time.perf_counter() - start) * 1000))
+    )
 
     try:
         memory_payload = _load_summary_json(raw_memory)
@@ -131,11 +135,15 @@ def _run_old(result: TranscriptResult, settings) -> tuple[list[CallStat], dict[s
     return calls, {"title": title, "summary": memory_summary, "topics": topics}
 
 
-def _run_new(result: TranscriptResult, settings) -> tuple[list[CallStat], dict[str, Any]]:
+def _run_new(
+    result: TranscriptResult, settings
+) -> tuple[list[CallStat], dict[str, Any]]:
     """Run the refactored single-call summary pipeline and capture metrics."""
     transcript = render_speaker_text(result).strip() or result.full_text.strip()
     # The new prompt sends the full transcript; we count what would actually flow.
-    from app.meeting_summary import _build_memory_prompt  # local import keeps measurement explicit
+    from app.meeting_summary import (
+        _build_memory_prompt,
+    )  # local import keeps measurement explicit
 
     prompt = _build_memory_prompt(result)
     start = time.perf_counter()
@@ -169,12 +177,18 @@ def _load_transcript(project_dir: Path) -> TranscriptResult | None:
         )
     detected = [int(item) for item in payload.get("detected_speakers") or []]
     full_text = str(payload.get("full_text") or "")
-    return TranscriptResult(full_text=full_text, sentences=sentences, detected_speakers=detected)
+    return TranscriptResult(
+        full_text=full_text, sentences=sentences, detected_speakers=detected
+    )
 
 
 def _iter_projects(projects_dir: Path, limit: int | None = None) -> list[Path]:
     """Return project directories newest-first up to an optional limit."""
-    paths = [p for p in projects_dir.iterdir() if p.is_dir() and (p / "project.json").exists()]
+    paths = [
+        p
+        for p in projects_dir.iterdir()
+        if p.is_dir() and (p / "project.json").exists()
+    ]
 
     def sort_key(path: Path) -> str:
         try:
@@ -241,7 +255,9 @@ def main() -> int:
     total_old_ms = sum(sum(c.wall_ms for c in r["old_calls"]) for r in rows)
     total_new_ms = sum(sum(c.wall_ms for c in r["new_calls"]) for r in rows)
     print(f"  projects  : {len(rows)}")
-    print(f"  calls     : OLD={total_old_calls}  NEW={total_new_calls}  Δ={total_new_calls - total_old_calls}")
+    print(
+        f"  calls     : OLD={total_old_calls}  NEW={total_new_calls}  Δ={total_new_calls - total_old_calls}"
+    )
     print(
         f"  input chr : OLD={total_old_chars:,}  NEW={total_new_chars:,}  "
         f"Δ={total_new_chars - total_old_chars:+,}"

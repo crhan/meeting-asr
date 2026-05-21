@@ -25,8 +25,14 @@ from app.project_manager import (
 from app.speaker_match_status import voiceprint_match_status
 from app.speaker_labeling import load_transcript_result
 from app.utils import safe_write_json
-from app.voiceprint_audio import VOICEPRINT_AUDIO_PREPROCESS_VERSION, trim_embedding_audio_silence
-from app.voiceprint_embedding import embed_audio_file, resolve_voiceprint_embedding_options
+from app.voiceprint_audio import (
+    VOICEPRINT_AUDIO_PREPROCESS_VERSION,
+    trim_embedding_audio_silence,
+)
+from app.voiceprint_embedding import (
+    embed_audio_file,
+    resolve_voiceprint_embedding_options,
+)
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
 
 
@@ -74,7 +80,11 @@ class SpeakerMatchSummary:
     @property
     def accepted_mapping(self) -> dict[int, str]:
         """Return accepted speaker id to name mapping."""
-        return {item.speaker_id: item.name for item in self.matches if item.accepted and item.name}
+        return {
+            item.speaker_id: item.name
+            for item in self.matches
+            if item.accepted and item.name
+        }
 
     @property
     def accepted_person_mapping(self) -> dict[int, int]:
@@ -157,7 +167,10 @@ def match_project_speakers(
         progress=progress,
     )
     emit_progress(progress, "Writing speaker match suggestions")
-    safe_write_json(summary.match_path, _matches_payload(context.provider, context.model, threshold, summary.matches))
+    safe_write_json(
+        summary.match_path,
+        _matches_payload(context.provider, context.model, threshold, summary.matches),
+    )
     context.manifest.speakers["matches"] = "speakers/speaker_matches.json"
     save_manifest(context.project_root, context.manifest)
     emit_progress(progress, "Speaker matching complete")
@@ -228,7 +241,9 @@ def _build_match_summary(
         progress,
     )
     match_path = context.project_root / "speakers" / "speaker_matches.json"
-    return SpeakerMatchSummary(match_path, context.provider, context.model, threshold, matches)
+    return SpeakerMatchSummary(
+        match_path, context.provider, context.model, threshold, matches
+    )
 
 
 def _match_context(
@@ -249,7 +264,9 @@ def _match_context(
     Returns:
         Context for matching.
     """
-    resolved_provider, resolved_model = resolve_voiceprint_embedding_options(provider=provider, model=model)
+    resolved_provider, resolved_model = resolve_voiceprint_embedding_options(
+        provider=provider, model=model
+    )
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(paths.root)
     result = load_transcript_result(paths.asr_dir / "sentences.json")
@@ -264,7 +281,9 @@ def _match_context(
     )
 
 
-def _known_speaker_vectors(store_dir: Path | None, model: str) -> dict[int, _KnownSpeakerVector]:
+def _known_speaker_vectors(
+    store_dir: Path | None, model: str
+) -> dict[int, _KnownSpeakerVector]:
     """Load averaged known speaker vectors."""
     embeddings = list_voiceprint_embeddings(model, get_voiceprint_db_path(store_dir))
     grouped: dict[int, list[list[float]]] = defaultdict(list)
@@ -300,9 +319,13 @@ def _match_speaker_groups(
 ) -> list[SpeakerMatch]:
     """Match all speakers in a project transcript."""
     speaker_groups = sorted(_segments_by_speaker(segments).items())
-    emit_progress(progress, "Matching project speakers", total=len(speaker_groups), completed=0)
+    emit_progress(
+        progress, "Matching project speakers", total=len(speaker_groups), completed=0
+    )
     if not known:
-        emit_progress(progress, "No voiceprint embeddings found; writing review-only matches")
+        emit_progress(
+            progress, "No voiceprint embeddings found; writing review-only matches"
+        )
         return _unknown_speaker_matches(speaker_groups, threshold)
     if len(speaker_groups) == 1:
         speaker_id, speaker_segments = speaker_groups[0]
@@ -349,7 +372,9 @@ def _match_speaker_groups(
         for future in as_completed(futures):
             speaker_id = futures[future]
             matched_by_id[speaker_id] = future.result()
-            emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)}", advance=1)
+            emit_progress(
+                progress, f"Matched {speaker_id_to_label(speaker_id)}", advance=1
+            )
     return [matched_by_id[speaker_id] for speaker_id, _segments in speaker_groups]
 
 
@@ -383,7 +408,9 @@ def _match_one_speaker_group(
     candidates = _ranked_matches(vector, known, limit=3)
     best = candidates[0] if candidates else None
     accepted = best is not None and best.score >= threshold
-    return _speaker_match_from_best(speaker_id, speaker_segments, best, tuple(candidates), accepted, threshold)
+    return _speaker_match_from_best(
+        speaker_id, speaker_segments, best, tuple(candidates), accepted, threshold
+    )
 
 
 def _speaker_match_from_best(
@@ -397,7 +424,9 @@ def _speaker_match_from_best(
     """Build the persisted match row from a best candidate."""
     accepted_name = best.name if accepted and best is not None else None
     accepted_person_id = best.person_id if accepted and best is not None else None
-    accepted_person_public_id = best.person_public_id if accepted and best is not None else None
+    accepted_person_public_id = (
+        best.person_public_id if accepted and best is not None else None
+    )
     return SpeakerMatch(
         speaker_id,
         speaker_id_to_label(speaker_id),
@@ -453,7 +482,9 @@ def _unknown_speaker_matches(
     ]
 
 
-def _segments_by_speaker(segments: list[SentenceSegment]) -> dict[int, list[SentenceSegment]]:
+def _segments_by_speaker(
+    segments: list[SentenceSegment],
+) -> dict[int, list[SentenceSegment]]:
     """Group usable segments by speaker id."""
     grouped: dict[int, list[SentenceSegment]] = defaultdict(list)
     for segment in segments:
@@ -530,7 +561,9 @@ def _probe_cache_key(
             for segment in segments
         ],
     }
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -546,14 +579,14 @@ def _read_probe_cache(project_root: Path, cache_key: str) -> list[float] | None:
         return None
     try:
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
     vector = payload.get(cache_key) if isinstance(payload, dict) else None
     if not isinstance(vector, list) or not vector:
         return None
     try:
         return [float(item) for item in vector]
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -564,7 +597,7 @@ def _write_probe_cache(project_root: Path, cache_key: str, vector: list[float]) 
     if cache_path.exists():
         try:
             loaded = json.loads(cache_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except OSError, json.JSONDecodeError:
             loaded = {}
         if isinstance(loaded, dict):
             payload = _valid_probe_cache_payload(loaded)
@@ -582,25 +615,41 @@ def _valid_probe_cache_payload(payload: object) -> dict[str, list[float]]:
             continue
         try:
             valid[str(key)] = [float(item) for item in value]
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return valid
 
 
-def _select_segments(segments: list[SentenceSegment], sample_count: int) -> list[SentenceSegment]:
+def _select_segments(
+    segments: list[SentenceSegment], sample_count: int
+) -> list[SentenceSegment]:
     """Select longest segments in timeline order."""
-    longest = sorted(segments, key=lambda item: item.end_time_ms - item.begin_time_ms, reverse=True)[:sample_count]
+    longest = sorted(
+        segments, key=lambda item: item.end_time_ms - item.begin_time_ms, reverse=True
+    )[:sample_count]
     return sorted(longest, key=lambda item: item.begin_time_ms)
 
 
 def _probe_clip_path(project_root: Path, speaker_id: int, index: int) -> Path:
     """Return a deterministic temporary probe clip path."""
-    return project_root / "tmp" / "voiceprint_match" / f"speaker_{speaker_id}" / f"clip_{index:03d}.wav"
+    return (
+        project_root
+        / "tmp"
+        / "voiceprint_match"
+        / f"speaker_{speaker_id}"
+        / f"clip_{index:03d}.wav"
+    )
 
 
 def _probe_embedding_clip_path(project_root: Path, speaker_id: int, index: int) -> Path:
     """Return the preprocessed probe clip path used for embedding."""
-    return project_root / "tmp" / "voiceprint_match" / f"speaker_{speaker_id}" / f"clip_{index:03d}_embedding.wav"
+    return (
+        project_root
+        / "tmp"
+        / "voiceprint_match"
+        / f"speaker_{speaker_id}"
+        / f"clip_{index:03d}_embedding.wav"
+    )
 
 
 def _write_probe_clip(
@@ -615,7 +664,12 @@ def _write_probe_clip(
     max_ms = int(round(max_seconds * 1000))
     start_ms = max(0, segment.begin_time_ms - padding_ms)
     end_ms = min(segment.end_time_ms + padding_ms, start_ms + max_ms)
-    extract_audio_clip(source, output, start_seconds=start_ms / 1000, duration_seconds=(end_ms - start_ms) / 1000)
+    extract_audio_clip(
+        source,
+        output,
+        start_seconds=start_ms / 1000,
+        duration_seconds=(end_ms - start_ms) / 1000,
+    )
 
 
 def _ranked_matches(
@@ -636,7 +690,12 @@ def _ranked_matches(
         Candidates sorted by descending cosine score.
     """
     candidates = [
-        VoiceprintCandidate(item.person_id, item.name, _cosine(vector, item.vector), item.person_public_id)
+        VoiceprintCandidate(
+            item.person_id,
+            item.name,
+            _cosine(vector, item.vector),
+            item.person_public_id,
+        )
         for item in known.values()
     ]
     return sorted(candidates, key=lambda item: item.score, reverse=True)[:limit]
@@ -649,7 +708,10 @@ def _mean_vector(vectors: list[list[float]]) -> list[float]:
     dimension = len(vectors[0])
     if any(len(vector) != dimension for vector in vectors):
         raise ValueError("Embedding vectors must have the same dimension.")
-    return [sum(vector[index] for vector in vectors) / len(vectors) for index in range(dimension)]
+    return [
+        sum(vector[index] for vector in vectors) / len(vectors)
+        for index in range(dimension)
+    ]
 
 
 def _normalize(vector: list[float]) -> list[float]:
@@ -667,7 +729,9 @@ def _cosine(left: list[float], right: list[float]) -> float:
     return sum(left[index] * right[index] for index in range(len(left)))
 
 
-def _matches_payload(provider: str, model: str, threshold: float, matches: list[SpeakerMatch]) -> dict[str, object]:
+def _matches_payload(
+    provider: str, model: str, threshold: float, matches: list[SpeakerMatch]
+) -> dict[str, object]:
     """Build JSON payload for match results."""
     return {
         "provider": provider,

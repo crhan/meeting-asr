@@ -51,8 +51,15 @@ class Settings:
 
 
 CONFIG_KEYS: tuple[ConfigKey, ...] = (
-    ConfigKey("dashscope.api_key", "dashscope_api_key", "DASHSCOPE_API_KEY", secret=True),
-    ConfigKey("dashscope.base_url", "dashscope_base_url", "DASHSCOPE_BASE_URL", default=DEFAULT_DASHSCOPE_BASE_URL),
+    ConfigKey(
+        "dashscope.api_key", "dashscope_api_key", "DASHSCOPE_API_KEY", secret=True
+    ),
+    ConfigKey(
+        "dashscope.base_url",
+        "dashscope_base_url",
+        "DASHSCOPE_BASE_URL",
+        default=DEFAULT_DASHSCOPE_BASE_URL,
+    ),
     ConfigKey(
         "dashscope.summary_model",
         "dashscope_summary_model",
@@ -76,15 +83,26 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "DASHSCOPE_CORRECTION_CONCURRENCY",
         default=str(DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY),
     ),
-    ConfigKey("dashscope.asr_vocabulary_id", "dashscope_asr_vocabulary_id", "DASHSCOPE_ASR_VOCABULARY_ID"),
+    ConfigKey(
+        "dashscope.asr_vocabulary_id",
+        "dashscope_asr_vocabulary_id",
+        "DASHSCOPE_ASR_VOCABULARY_ID",
+    ),
     ConfigKey(
         "correction.polish_auto_accept",
         "correction_polish_auto_accept",
         "MEETING_ASR_POLISH_AUTO_ACCEPT",
         default="false",
     ),
-    ConfigKey("oss.access_key_id", "oss_access_key_id", "OSS_ACCESS_KEY_ID", secret=True),
-    ConfigKey("oss.access_key_secret", "oss_access_key_secret", "OSS_ACCESS_KEY_SECRET", secret=True),
+    ConfigKey(
+        "oss.access_key_id", "oss_access_key_id", "OSS_ACCESS_KEY_ID", secret=True
+    ),
+    ConfigKey(
+        "oss.access_key_secret",
+        "oss_access_key_secret",
+        "OSS_ACCESS_KEY_SECRET",
+        secret=True,
+    ),
     ConfigKey("oss.bucket_name", "oss_bucket_name", "OSS_BUCKET_NAME"),
     ConfigKey("oss.region", "oss_region", "OSS_REGION"),
     ConfigKey("oss.endpoint", "oss_endpoint", "OSS_ENDPOINT"),
@@ -103,7 +121,11 @@ def get_config_path() -> Path:
     Returns:
         ``$XDG_CONFIG_HOME/meeting-asr/config.json`` or fallback.
     """
-    return _xdg_base_dir("XDG_CONFIG_HOME", Path.home() / ".config") / APP_CONFIG_DIR / CONFIG_FILENAME
+    return (
+        _xdg_base_dir("XDG_CONFIG_HOME", Path.home() / ".config")
+        / APP_CONFIG_DIR
+        / CONFIG_FILENAME
+    )
 
 
 def get_data_dir() -> Path:
@@ -113,7 +135,10 @@ def get_data_dir() -> Path:
     Returns:
         ``$XDG_DATA_HOME/meeting-asr`` or fallback.
     """
-    return _xdg_base_dir("XDG_DATA_HOME", Path.home() / ".local" / "share") / APP_CONFIG_DIR
+    return (
+        _xdg_base_dir("XDG_DATA_HOME", Path.home() / ".local" / "share")
+        / APP_CONFIG_DIR
+    )
 
 
 def get_cache_dir() -> Path:
@@ -170,12 +195,17 @@ def save_config_values(values: dict[str, str], path: Path | None = None) -> Path
     normalized_values = _normalize_config_payload(values)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.parent.chmod(0o700)
-    config_path.write_text(json.dumps(normalized_values, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    config_path.write_text(
+        json.dumps(normalized_values, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     config_path.chmod(0o600)
     return config_path
 
 
-def set_config_value(key: str, value: str, path: Path | None = None) -> tuple[str, Path]:
+def set_config_value(
+    key: str, value: str, path: Path | None = None
+) -> tuple[str, Path]:
     """
     Set one global config value.
 
@@ -232,7 +262,9 @@ def normalize_config_key(key: str) -> str:
     raise ValueError(f"Unsupported config key: {key}. Supported keys: {supported}")
 
 
-def load_settings(*, require_oss: bool = False, require_dashscope: bool = True) -> Settings:
+def load_settings(
+    *, require_oss: bool = False, require_dashscope: bool = True
+) -> Settings:
     """
     Load runtime settings from global config and process environment.
 
@@ -245,25 +277,41 @@ def load_settings(*, require_oss: bool = False, require_dashscope: bool = True) 
     """
     values = load_config_values()
     return Settings(
-        dashscope_api_key=_read_value(values, "dashscope.api_key", required=require_dashscope) or "",
-        dashscope_base_url=_read_value(values, "dashscope.base_url", required=False) or DEFAULT_DASHSCOPE_BASE_URL,
+        dashscope_api_key=_read_value(
+            values, "dashscope.api_key", required=require_dashscope
+        )
+        or "",
+        dashscope_base_url=_read_value(values, "dashscope.base_url", required=False)
+        or DEFAULT_DASHSCOPE_BASE_URL,
         dashscope_summary_model=(
-            _read_value(values, "dashscope.summary_model", required=False) or DEFAULT_DASHSCOPE_SUMMARY_MODEL
+            _read_value(values, "dashscope.summary_model", required=False)
+            or DEFAULT_DASHSCOPE_SUMMARY_MODEL
         ),
         dashscope_correction_model=(
-            _read_value(values, "dashscope.correction_model", required=False) or DEFAULT_DASHSCOPE_CORRECTION_MODEL
+            _read_value(values, "dashscope.correction_model", required=False)
+            or DEFAULT_DASHSCOPE_CORRECTION_MODEL
         ),
-        dashscope_model_endpoints=_read_json_mapping(values, "dashscope.model_endpoints"),
+        dashscope_model_endpoints=_read_json_mapping(
+            values, "dashscope.model_endpoints"
+        ),
         dashscope_correction_concurrency=_read_int_value(
             values,
             "dashscope.correction_concurrency",
             minimum=1,
             maximum=MAX_DASHSCOPE_CORRECTION_CONCURRENCY,
         ),
-        dashscope_asr_vocabulary_id=_read_value(values, "dashscope.asr_vocabulary_id", required=False),
-        correction_polish_auto_accept=_read_bool_value(values, "correction.polish_auto_accept"),
-        oss_access_key_id=_read_value(values, "oss.access_key_id", required=require_oss),
-        oss_access_key_secret=_read_value(values, "oss.access_key_secret", required=require_oss),
+        dashscope_asr_vocabulary_id=_read_value(
+            values, "dashscope.asr_vocabulary_id", required=False
+        ),
+        correction_polish_auto_accept=_read_bool_value(
+            values, "correction.polish_auto_accept"
+        ),
+        oss_access_key_id=_read_value(
+            values, "oss.access_key_id", required=require_oss
+        ),
+        oss_access_key_secret=_read_value(
+            values, "oss.access_key_secret", required=require_oss
+        ),
         oss_bucket_name=_read_value(values, "oss.bucket_name", required=require_oss),
         oss_region=_read_value(values, "oss.region", required=require_oss),
         oss_endpoint=_read_value(values, "oss.endpoint", required=require_oss),
@@ -286,7 +334,9 @@ def get_configured_editor(path: Path | None = None) -> str | None:
     return _read_value(values, "ui.editor", required=False)
 
 
-def visible_config_items(*, reveal: bool = False, path: Path | None = None) -> list[tuple[str, str]]:
+def visible_config_items(
+    *, reveal: bool = False, path: Path | None = None
+) -> list[tuple[str, str]]:
     """
     Build display-safe config items.
 
@@ -301,7 +351,9 @@ def visible_config_items(*, reveal: bool = False, path: Path | None = None) -> l
     items: list[tuple[str, str]] = []
     for config_key in CONFIG_KEYS:
         value = _read_value(values, config_key.name, required=False)
-        items.append((config_key.name, _display_value(config_key, value, reveal=reveal)))
+        items.append(
+            (config_key.name, _display_value(config_key, value, reveal=reveal))
+        )
     return items
 
 
@@ -336,7 +388,9 @@ def import_env_file(path: Path, *, overwrite: bool = False) -> tuple[int, Path]:
     return count, save_config_values(values)
 
 
-def _read_value(config_values: dict[str, str], key: str, *, required: bool) -> str | None:
+def _read_value(
+    config_values: dict[str, str], key: str, *, required: bool
+) -> str | None:
     """Read one value from process env, global config, or default."""
     config_key = _KEYS_BY_NAME[key]
     value = os.getenv(config_key.env_name)
@@ -350,7 +404,9 @@ def _read_value(config_values: dict[str, str], key: str, *, required: bool) -> s
     return value or None
 
 
-def _read_int_value(config_values: dict[str, str], key: str, *, minimum: int, maximum: int) -> int:
+def _read_int_value(
+    config_values: dict[str, str], key: str, *, minimum: int, maximum: int
+) -> int:
     """Read and validate one integer config value."""
     value = _read_value(config_values, key, required=False)
     if value is None:
@@ -358,9 +414,13 @@ def _read_int_value(config_values: dict[str, str], key: str, *, minimum: int, ma
     try:
         parsed = int(value)
     except ValueError as exc:
-        raise ValueError(f"Config value {key} must be an integer, got {value!r}") from exc
+        raise ValueError(
+            f"Config value {key} must be an integer, got {value!r}"
+        ) from exc
     if parsed < minimum or parsed > maximum:
-        raise ValueError(f"Config value {key} must be between {minimum} and {maximum}, got {parsed}")
+        raise ValueError(
+            f"Config value {key} must be between {minimum} and {maximum}, got {parsed}"
+        )
     return parsed
 
 
@@ -385,10 +445,16 @@ def _read_json_mapping(config_values: dict[str, str], key: str) -> dict[str, str
     try:
         payload = json.loads(value)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"Config value {key} must be a JSON object, got {value!r}") from exc
+        raise ValueError(
+            f"Config value {key} must be a JSON object, got {value!r}"
+        ) from exc
     if not isinstance(payload, dict):
         raise ValueError(f"Config value {key} must be a JSON object, got {value!r}")
-    return {str(raw_key): str(raw_value).strip() for raw_key, raw_value in payload.items() if str(raw_value).strip()}
+    return {
+        str(raw_key): str(raw_value).strip()
+        for raw_key, raw_value in payload.items()
+        if str(raw_value).strip()
+    }
 
 
 def _xdg_base_dir(env_name: str, fallback: Path) -> Path:

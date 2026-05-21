@@ -43,7 +43,11 @@ def test_polish_eval_catches_model_overreach(tmp_path: Path) -> None:
 
     summary = evaluate_polish_cases(
         cases,
-        {"uncertain": LlmPolishItem("uncertain", "你有一个钉钉投屏。", "term", "猜测修复")},
+        {
+            "uncertain": LlmPolishItem(
+                "uncertain", "你有一个钉钉投屏。", "term", "猜测修复"
+            )
+        },
     )
 
     assert not summary.success
@@ -75,7 +79,9 @@ def test_project_correct_eval_polish_command_fails_on_bad_case(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    result = runner.invoke(app, ["project", "correct", "eval-polish", "--cases", str(cases_path)])
+    result = runner.invoke(
+        app, ["project", "correct", "eval-polish", "--cases", str(cases_path)]
+    )
 
     assert result.exit_code != 0
     assert "FAIL bad" in result.output

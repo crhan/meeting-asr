@@ -8,7 +8,12 @@ import os
 import re
 import time
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, TimeoutError as FutureTimeoutError, wait
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    ThreadPoolExecutor,
+    TimeoutError as FutureTimeoutError,
+    wait,
+)
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +31,10 @@ from app.correction_llm import (
     propose_vocabulary_corrections,
 )
 from app.core.progress import CliProgressReporter, emit_progress
-from app.correction_proposals import load_correction_proposal, write_correction_proposal_files
+from app.correction_proposals import (
+    load_correction_proposal,
+    write_correction_proposal_files,
+)
 from app.correction_types import (
     CorrectionChange,
     CorrectionEditOptions,
@@ -49,8 +57,17 @@ from app.lexicon_store import (
     record_lexicon_contexts,
 )
 from app.models import SentenceSegment, TranscriptResult
-from app.postprocess import detect_speaker_ids, render_plain_text, render_speaker_text, speaker_id_to_label
-from app.speaker_labeling import load_transcript_result, render_named_speaker_text, render_named_srt
+from app.postprocess import (
+    detect_speaker_ids,
+    render_plain_text,
+    render_speaker_text,
+    speaker_id_to_label,
+)
+from app.speaker_labeling import (
+    load_transcript_result,
+    render_named_speaker_text,
+    render_named_srt,
+)
 from app.srt_utils import build_srt
 from app.utils import safe_write_json, safe_write_text
 
@@ -92,7 +109,9 @@ def prepare_editor_correction(
         Correction edit summary.
     """
     source = _load_correction_source(paths, from_original=options.from_original)
-    review_path = options.review_file or _write_review_file(paths, manifest, source.result, speaker_mapping)
+    review_path = options.review_file or _write_review_file(
+        paths, manifest, source.result, speaker_mapping
+    )
     if options.open_editor and options.review_file is None:
         open_editor(review_path, options.editor)
     edited = review_path.read_text(encoding="utf-8")
@@ -100,7 +119,9 @@ def prepare_editor_correction(
     lexicon_db = options.lexicon_db or default_lexicon_db_path()
     if not changes:
         return _empty_summary(review_path, lexicon_db)
-    proposal = _build_proposal(paths, manifest, source, review_path, changes, speaker_mapping, options)
+    proposal = _build_proposal(
+        paths, manifest, source, review_path, changes, speaker_mapping, options
+    )
     if options.open_proposal:
         open_editor(proposal.proposal_path, options.editor)
     return _proposal_summary(proposal, lexicon_db)
@@ -159,15 +180,20 @@ def prepare_inline_corrections(
     """
     source = _load_correction_source(paths, from_original=options.from_original)
     lexicon_db = options.lexicon_db or default_lexicon_db_path()
-    sample_changes = _inline_sample_changes(source.result, correction_edits, speaker_mapping)
+    sample_changes = _inline_sample_changes(
+        source.result, correction_edits, speaker_mapping
+    )
     changed_samples = [
-        change for change in sample_changes
+        change
+        for change in sample_changes
         if change.corrected_text != change.original_text
     ]
     review_path = _write_inline_review_file(paths, manifest, sample_changes)
     if not changed_samples:
         return _empty_summary(review_path, lexicon_db)
-    proposal = _build_proposal(paths, manifest, source, review_path, changed_samples, speaker_mapping, options)
+    proposal = _build_proposal(
+        paths, manifest, source, review_path, changed_samples, speaker_mapping, options
+    )
     if options.open_proposal:
         open_editor(proposal.proposal_path, options.editor)
     return _proposal_summary(proposal, lexicon_db)
@@ -194,7 +220,9 @@ def prepare_transcript_polish(
         Pending polish proposal summary, or a no-change summary.
     """
     source = _load_correction_source(paths, from_original=options.from_original)
-    review_path = options.review_file or _write_polish_review_file(paths, manifest, source.result, speaker_mapping)
+    review_path = options.review_file or _write_polish_review_file(
+        paths, manifest, source.result, speaker_mapping
+    )
     lexicon_db = options.lexicon_db or default_lexicon_db_path()
     proposed_changes, model, model_error = _propose_polish_changes(
         paths,
@@ -205,7 +233,9 @@ def prepare_transcript_polish(
         progress,
     )
     if not proposed_changes:
-        return _empty_summary(review_path, lexicon_db, model=model, model_error=model_error)
+        return _empty_summary(
+            review_path, lexicon_db, model=model, model_error=model_error
+        )
     proposal = _build_polish_proposal(
         paths=paths,
         manifest=manifest,
@@ -248,14 +278,18 @@ def apply_lexicon_corrections(
         return _empty_summary(review_path, lexicon_db, model="local-lexicon")
     source = _load_correction_source(paths, from_original=options.from_original)
     changes = _local_rule_changes(source.result, [], rules, speaker_mapping)
-    emit_progress(progress, f"Applying local vocabulary corrections | changes {len(changes)}")
+    emit_progress(
+        progress, f"Applying local vocabulary corrections | changes {len(changes)}"
+    )
     if not changes:
         return _empty_summary(review_path, lexicon_db, model="local-lexicon")
     review_path = _write_lexicon_review_file(paths, manifest, lexicon_db)
     corrected = _apply_changes(source.result, changes)
     outputs = _write_corrected_outputs(paths, corrected, speaker_mapping, changes)
     understanding = _active_understanding(rules, changes)
-    hotwords_path = _write_accept_hotwords(paths, options.category or "lexicon", understanding)
+    hotwords_path = _write_accept_hotwords(
+        paths, options.category or "lexicon", understanding
+    )
     return CorrectionEditSummary(
         review_path=review_path,
         proposal_path=None,
@@ -304,16 +338,24 @@ def accept_correction_proposal(
     """
     proposal = load_correction_proposal(paths, proposal_path)
     if proposal.project_id != manifest.project_id:
-        raise RuntimeError(f"Correction proposal belongs to another project: {proposal.project_id}")
+        raise RuntimeError(
+            f"Correction proposal belongs to another project: {proposal.project_id}"
+        )
     source = _load_source_path(paths, proposal.source_path)
-    accepted_changes = _selected_changes(proposal.proposed_changes, selected_change_indices)
+    accepted_changes = _selected_changes(
+        proposal.proposed_changes, selected_change_indices
+    )
     _ensure_proposal_changes_fresh(source.result, accepted_changes)
     understanding = _selected_understanding(proposal.understanding, accepted_changes)
     corrected = _apply_changes(source.result, accepted_changes)
-    outputs = _write_corrected_outputs(paths, corrected, speaker_mapping, accepted_changes)
+    outputs = _write_corrected_outputs(
+        paths, corrected, speaker_mapping, accepted_changes
+    )
     hotwords_path = _write_accept_hotwords(paths, proposal.category, understanding)
     database_path = lexicon_db or default_lexicon_db_path()
-    contexts = _lexicon_contexts(accepted_changes, manifest.project_id, proposal.category, proposal.review_path)
+    contexts = _lexicon_contexts(
+        accepted_changes, manifest.project_id, proposal.category, proposal.review_path
+    )
     learned_count = record_lexicon_contexts(contexts, db_path=database_path)
     return CorrectionEditSummary(
         review_path=proposal.review_path,
@@ -338,13 +380,19 @@ def accept_correction_proposal(
     )
 
 
-def _load_correction_source(paths: ProjectPaths, *, from_original: bool) -> CorrectionSource:
+def _load_correction_source(
+    paths: ProjectPaths, *, from_original: bool
+) -> CorrectionSource:
     """Load the preferred correction source transcript."""
     corrected_path = paths.asr_dir / "sentences_corrected.json"
     if corrected_path.exists() and not from_original:
-        return CorrectionSource(load_transcript_result(corrected_path), corrected_path, False)
+        return CorrectionSource(
+            load_transcript_result(corrected_path), corrected_path, False
+        )
     source_path = paths.asr_dir / "sentences.json"
-    return CorrectionSource(load_transcript_result(source_path), source_path, from_original)
+    return CorrectionSource(
+        load_transcript_result(source_path), source_path, from_original
+    )
 
 
 def _load_source_path(paths: ProjectPaths, source_path: Path) -> CorrectionSource:
@@ -365,11 +413,15 @@ def _selected_changes(
     return [change for index, change in enumerate(changes) if index in selected]
 
 
-def _ensure_proposal_changes_fresh(result: TranscriptResult, changes: list[CorrectionChange]) -> None:
+def _ensure_proposal_changes_fresh(
+    result: TranscriptResult, changes: list[CorrectionChange]
+) -> None:
     """Reject accepted changes when the proposal no longer matches its source transcript."""
     if not changes:
         return
-    sentence_by_key = {_sentence_change_key(sentence): sentence for sentence in result.sentences}
+    sentence_by_key = {
+        _sentence_change_key(sentence): sentence for sentence in result.sentences
+    }
     stale: list[tuple[CorrectionChange, str]] = []
     for change in changes:
         key = _change_key(change)
@@ -421,7 +473,9 @@ def _write_accept_hotwords(
 ) -> Path:
     """Write ASR hotwords produced by the accepted correction proposal."""
     hotwords = hotwords_from_understanding(understanding, category=category)
-    return write_hotword_artifact(paths.root / "corrections" / "asr_hotwords.json", hotwords)
+    return write_hotword_artifact(
+        paths.root / "corrections" / "asr_hotwords.json", hotwords
+    )
 
 
 def _empty_summary(
@@ -455,7 +509,9 @@ def _empty_summary(
     )
 
 
-def _proposal_summary(proposal: CorrectionProposal, lexicon_db: Path) -> CorrectionEditSummary:
+def _proposal_summary(
+    proposal: CorrectionProposal, lexicon_db: Path
+) -> CorrectionEditSummary:
     """Build a pending-proposal correction summary."""
     return CorrectionEditSummary(
         review_path=proposal.review_path,
@@ -504,7 +560,9 @@ def _build_proposal(
     options: CorrectionEditOptions,
 ) -> CorrectionProposal:
     """Build and persist a full-document correction proposal."""
-    sample_changes, replacement_model_error = refine_sample_replacements(sample_changes, options)
+    sample_changes, replacement_model_error = refine_sample_replacements(
+        sample_changes, options
+    )
     rules = _unique_replacements(sample_changes)
     proposed_changes, model, model_error = _propose_full_document_changes(
         source.result,
@@ -589,7 +647,9 @@ def _inline_sample_changes(
     ]
 
 
-def _find_inline_sentence(result: TranscriptResult, correction_edit: object) -> SentenceSegment:
+def _find_inline_sentence(
+    result: TranscriptResult, correction_edit: object
+) -> SentenceSegment:
     """Find the source sentence edited by the TUI."""
     sentence_id = _optional_int_from_any(getattr(correction_edit, "sentence_id"))
     speaker_id = _optional_int_from_any(getattr(correction_edit, "speaker_id"))
@@ -603,7 +663,9 @@ def _find_inline_sentence(result: TranscriptResult, correction_edit: object) -> 
             and sentence.end_time_ms == end
         ):
             return sentence
-    raise RuntimeError(f"Inline correction sentence was not found: sentence_id={sentence_id} begin={begin} end={end}")
+    raise RuntimeError(
+        f"Inline correction sentence was not found: sentence_id={sentence_id} begin={begin} end={end}"
+    )
 
 
 def _write_inline_review_file(
@@ -614,7 +676,9 @@ def _write_inline_review_file(
     """Write a compact review file for TUI correction samples."""
     review_dir = paths.root / "tmp" / REVIEW_DIR
     review_dir.mkdir(parents=True, exist_ok=True)
-    review_path = review_dir / f"review_tui_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    review_path = (
+        review_dir / f"review_tui_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    )
     lines = [
         "# Meeting-ASR TUI Vocabulary Correction",
         "",
@@ -645,7 +709,9 @@ def _write_polish_review_file(
     """Write the source snapshot used by an automatic polish proposal."""
     review_dir = paths.root / "tmp" / REVIEW_DIR
     review_dir.mkdir(parents=True, exist_ok=True)
-    review_path = review_dir / f"review_polish_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    review_path = (
+        review_dir / f"review_polish_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    )
     lines = [
         "# Meeting-ASR Transcript Polish Review",
         "",
@@ -663,7 +729,9 @@ def _write_polish_review_file(
     return safe_write_text(review_path, "\n".join(lines))
 
 
-def _write_lexicon_review_file(paths: ProjectPaths, manifest: ProjectManifest, lexicon_db: Path) -> Path:
+def _write_lexicon_review_file(
+    paths: ProjectPaths, manifest: ProjectManifest, lexicon_db: Path
+) -> Path:
     """Write a small trace file for the automatic local lexicon pass."""
     review_path = _lexicon_review_path(paths)
     review_path.parent.mkdir(parents=True, exist_ok=True)
@@ -681,7 +749,12 @@ def _write_lexicon_review_file(paths: ProjectPaths, manifest: ProjectManifest, l
 
 def _lexicon_review_path(paths: ProjectPaths) -> Path:
     """Return the trace path for one automatic local lexicon pass."""
-    return paths.root / "tmp" / REVIEW_DIR / f"review_lexicon_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    return (
+        paths.root
+        / "tmp"
+        / REVIEW_DIR
+        / f"review_lexicon_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    )
 
 
 def _lexicon_replacement_rules(lexicon_db: Path) -> list[CorrectionReplacement]:
@@ -702,7 +775,11 @@ def _active_understanding(
     changes: list[CorrectionChange],
 ) -> list[CorrectionUnderstanding]:
     """Return only local lexicon rules that changed this transcript."""
-    return [item for item in _build_understanding(rules, [], changes) if item.proposed_count > 0]
+    return [
+        item
+        for item in _build_understanding(rules, [], changes)
+        if item.proposed_count > 0
+    ]
 
 
 def _propose_full_document_changes(
@@ -716,11 +793,17 @@ def _propose_full_document_changes(
     if not rules:
         return sample_changes, "local-rules", None
     if not options.use_ai:
-        return _local_rule_changes(result, sample_changes, rules, speaker_mapping), "local-rules", None
+        return (
+            _local_rule_changes(result, sample_changes, rules, speaker_mapping),
+            "local-rules",
+            None,
+        )
     try:
         settings = load_settings(require_oss=False, require_dashscope=True)
         model = options.model or settings.dashscope_correction_model
-        changes = _ai_rule_changes(result, sample_changes, rules, speaker_mapping, settings, model)
+        changes = _ai_rule_changes(
+            result, sample_changes, rules, speaker_mapping, settings, model
+        )
         return changes, model, None
     except Exception as exc:
         changes = _local_rule_changes(result, sample_changes, rules, speaker_mapping)
@@ -748,7 +831,9 @@ def _ai_rule_changes(
             model=model,
         )
         corrected_by_id.update(llm_result.corrected_text_by_id)
-    return _changes_from_llm_result(result, sample_changes, candidates, corrected_by_id, speaker_mapping, rules)
+    return _changes_from_llm_result(
+        result, sample_changes, candidates, corrected_by_id, speaker_mapping, rules
+    )
 
 
 def _propose_polish_changes(
@@ -765,7 +850,9 @@ def _propose_polish_changes(
     try:
         settings = load_settings(require_oss=False, require_dashscope=True)
         model = options.model or settings.dashscope_correction_model
-        concurrency = _polish_concurrency(options.polish_concurrency, settings.dashscope_correction_concurrency)
+        concurrency = _polish_concurrency(
+            options.polish_concurrency, settings.dashscope_correction_concurrency
+        )
         if _polish_use_legacy(options):
             changes = _ai_polish_changes(
                 paths,
@@ -820,10 +907,14 @@ def _ai_polish_changes(
                 concurrency=concurrency,
             )
         )
-        return _changes_from_polish_result(result, candidates, corrected_by_id, speaker_mapping)
+        return _changes_from_polish_result(
+            result, candidates, corrected_by_id, speaker_mapping
+        )
     for index, batch in enumerate(batches, start=1):
         llm_result = _run_polish_batch(
-            lambda batch=batch: propose_transcript_polish(candidates=batch, settings=settings, model=model),
+            lambda batch=batch: propose_transcript_polish(
+                candidates=batch, settings=settings, model=model
+            ),
             paths=paths,
             manifest=manifest,
             model=model,
@@ -832,7 +923,9 @@ def _ai_polish_changes(
             progress=progress,
         )
         corrected_by_id.update(llm_result.corrected_text_by_id)
-    return _changes_from_polish_result(result, candidates, corrected_by_id, speaker_mapping)
+    return _changes_from_polish_result(
+        result, candidates, corrected_by_id, speaker_mapping
+    )
 
 
 def _polish_use_legacy(options: CorrectionEditOptions) -> bool:
@@ -852,7 +945,16 @@ _POLISH_GUARD_MIN_LEN_RATIO = 0.3
 _POLISH_GUARD_BORROW_MIN_LEN = 6
 _POLISH_GUARD_MAX_LEN_DELTA = 30
 _POLISH_GUARD_ASCII_TYPO_MAX_DISTANCE = 3
-_POLISH_ALLOWED_TYPES = {"typo", "term", "case", "punct", "dup", "filler", "restart", "emphasis"}
+_POLISH_ALLOWED_TYPES = {
+    "typo",
+    "term",
+    "case",
+    "punct",
+    "dup",
+    "filler",
+    "restart",
+    "emphasis",
+}
 _POLISH_CHANGE_TYPE_SEP_RE = re.compile(r"[|,+/&\s]+")
 
 
@@ -863,8 +965,13 @@ def _is_change_type_allowed(change_type: str) -> bool:
     """
     if not change_type:
         return False
-    parts = [p.strip().lower() for p in _POLISH_CHANGE_TYPE_SEP_RE.split(change_type) if p.strip()]
+    parts = [
+        p.strip().lower()
+        for p in _POLISH_CHANGE_TYPE_SEP_RE.split(change_type)
+        if p.strip()
+    ]
     return any(part in _POLISH_ALLOWED_TYPES for part in parts)
+
 
 # Words that must NOT be deleted by polish — they are the fact-bearing
 # modifiers that downstream summary agents need in order to distinguish:
@@ -875,13 +982,39 @@ def _is_change_type_allowed(change_type: str) -> bool:
 # '我觉得' is matched as a unit rather than being approved by '觉得'.
 _POLISH_PROTECTED_WORDS: tuple[str, ...] = (
     # attitude / confidence
-    "我觉得", "我认为", "我感觉", "我个人觉得", "我个人认为",
-    "可能", "也许", "或许", "大概", "应该", "似乎", "估计", "好像",
+    "我觉得",
+    "我认为",
+    "我感觉",
+    "我个人觉得",
+    "我个人认为",
+    "可能",
+    "也许",
+    "或许",
+    "大概",
+    "应该",
+    "似乎",
+    "估计",
+    "好像",
     # confirmation seekers
-    "对吧", "对吗", "是不是", "是吧", "你说呢", "你看呢", "你觉得呢",
-    "行不行", "好不好", "是吗",
+    "对吧",
+    "对吗",
+    "是不是",
+    "是吧",
+    "你说呢",
+    "你看呢",
+    "你觉得呢",
+    "行不行",
+    "好不好",
+    "是吗",
     # decision verbs (positive + negative)
-    "同意", "反对", "决定", "确认", "不同意", "不行", "可以", "不可以",
+    "同意",
+    "反对",
+    "决定",
+    "确认",
+    "不同意",
+    "不行",
+    "可以",
+    "不可以",
 )
 
 
@@ -951,7 +1084,9 @@ def _strict_ai_polish_changes(
         first_index, first_error = failed_batches[0]
         wrapped = RuntimeError(first_error)
         raise RuntimeError(
-            _polish_failure_message(manifest.project_id, model, first_index, len(batches), wrapped)
+            _polish_failure_message(
+                manifest.project_id, model, first_index, len(batches), wrapped
+            )
         )
     changes = _strict_polish_changes_from_items(
         paths=paths,
@@ -1108,7 +1243,11 @@ def _emit_strict_polish_parallel_state(
     last_success: str,
 ) -> None:
     """Record and emit one strict polish parallel batch state."""
-    fields = {"model": model, "batch": f"{completed}/{total}", "concurrency": concurrency}
+    fields = {
+        "model": model,
+        "batch": f"{completed}/{total}",
+        "concurrency": concurrency,
+    }
     _record_polish_runtime(paths, manifest, "polish", input_file, fields, last_success)
     _emit_polish_heartbeat(
         progress,
@@ -1143,7 +1282,9 @@ def _strict_polish_changes_from_items(
 ) -> list[CorrectionChange]:
     """Apply guard, build CorrectionChange list, write sidecar metadata."""
     sentences = result.sentences
-    sentence_by_index = {f"c{idx}": (idx, sentence) for idx, sentence in enumerate(sentences)}
+    sentence_by_index = {
+        f"c{idx}": (idx, sentence) for idx, sentence in enumerate(sentences)
+    }
     changes: list[CorrectionChange] = []
     sidecar_rows: list[dict] = []
     for candidate in candidates:
@@ -1197,7 +1338,9 @@ def _strict_polish_changes_from_items(
             }
         )
     _write_strict_polish_sidecar(
-        paths, sidecar_rows, model,
+        paths,
+        sidecar_rows,
+        model,
         failed_batches=failed_batches or [],
         total_batches=total_batches,
     )
@@ -1240,7 +1383,9 @@ def _polish_guard(
     if protected_verdict is not None:
         return protected_verdict
     neighbor_text = _neighbor_text(sentence_index, sentences)
-    if neighbor_text and _has_cross_sentence_borrow(original_text, proposed_text, neighbor_text):
+    if neighbor_text and _has_cross_sentence_borrow(
+        original_text, proposed_text, neighbor_text
+    ):
         return "cross_sentence_borrow"
     return None
 
@@ -1286,7 +1431,9 @@ def _ascii_hallucination_check(original: str, proposed: str) -> str | None:
         return "ascii_hallucination"
     for token in introduced:
         threshold = max(_POLISH_GUARD_ASCII_TYPO_MAX_DISTANCE, len(token) // 2)
-        if not any(_levenshtein(token.lower(), src.lower()) <= threshold for src in orig_tokens):
+        if not any(
+            _levenshtein(token.lower(), src.lower()) <= threshold for src in orig_tokens
+        ):
             return "ascii_hallucination"
     return None
 
@@ -1303,7 +1450,9 @@ def _levenshtein(a: str, b: str) -> int:
     for i, ca in enumerate(a, start=1):
         curr = [i] + [0] * len(b)
         for j, cb in enumerate(b, start=1):
-            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + (0 if ca == cb else 1))
+            curr[j] = min(
+                prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + (0 if ca == cb else 1)
+            )
         prev = curr
     return prev[-1]
 
@@ -1327,7 +1476,9 @@ def _neighbor_text(index: int, sentences: list[SentenceSegment]) -> str:
 _CJK_RUN_RE = re.compile(r"[一-鿿]+")
 
 
-def _has_cross_sentence_borrow(original: str, proposed: str, neighbor_text: str) -> bool:
+def _has_cross_sentence_borrow(
+    original: str, proposed: str, neighbor_text: str
+) -> bool:
     """
     True if any contiguous Chinese chunk in proposed (>= _POLISH_GUARD_BORROW_MIN_LEN)
     is absent from original but present in either immediate neighbor.
@@ -1384,7 +1535,10 @@ def _write_strict_polish_sidecar(
         },
         "items": rows,
     }
-    path = sidecar_dir / f"polish_strict_meta_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{safe_model}.json"
+    path = (
+        sidecar_dir
+        / f"polish_strict_meta_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{safe_model}.json"
+    )
     safe_write_json(path, payload)
 
 
@@ -1444,7 +1598,12 @@ def _run_polish_batches_parallel(
     completed = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_by_index = {
-            executor.submit(propose_transcript_polish, candidates=batch, settings=settings, model=model): index
+            executor.submit(
+                propose_transcript_polish,
+                candidates=batch,
+                settings=settings,
+                model=model,
+            ): index
             for index, batch in enumerate(batches, start=1)
         }
         pending = set(future_by_index)
@@ -1453,8 +1612,19 @@ def _run_polish_batches_parallel(
             if not done:
                 elapsed = time.monotonic() - started_at
                 last_success = f"{completed}/{len(batches)} polish batches complete"
-                heartbeat_fields = {"model": model, "batch": f"{completed}/{len(batches)}", "concurrency": max_workers}
-                _record_polish_runtime(paths, manifest, "polish", input_file, heartbeat_fields, last_success)
+                heartbeat_fields = {
+                    "model": model,
+                    "batch": f"{completed}/{len(batches)}",
+                    "concurrency": max_workers,
+                }
+                _record_polish_runtime(
+                    paths,
+                    manifest,
+                    "polish",
+                    input_file,
+                    heartbeat_fields,
+                    last_success,
+                )
                 _emit_polish_heartbeat(
                     progress,
                     manifest,
@@ -1479,13 +1649,31 @@ def _run_polish_batches_parallel(
                 try:
                     result = future.result()
                 except Exception as exc:
-                    message = _polish_failure_message(manifest.project_id, model, batch_index, len(batches), exc)
-                    error_fields = {"model": model, "batch": f"{batch_index}/{len(batches)}", "concurrency": max_workers}
-                    _record_polish_runtime(paths, manifest, "polish", input_file, error_fields, None, last_error=message)
+                    message = _polish_failure_message(
+                        manifest.project_id, model, batch_index, len(batches), exc
+                    )
+                    error_fields = {
+                        "model": model,
+                        "batch": f"{batch_index}/{len(batches)}",
+                        "concurrency": max_workers,
+                    }
+                    _record_polish_runtime(
+                        paths,
+                        manifest,
+                        "polish",
+                        input_file,
+                        error_fields,
+                        None,
+                        last_error=message,
+                    )
                     raise RuntimeError(message) from exc
                 completed += 1
                 corrected_by_id.update(result.corrected_text_by_id)
-                done_fields = {"model": model, "batch": f"{completed}/{len(batches)}", "concurrency": max_workers}
+                done_fields = {
+                    "model": model,
+                    "batch": f"{completed}/{len(batches)}",
+                    "concurrency": max_workers,
+                }
                 _record_polish_runtime(
                     paths,
                     manifest,
@@ -1519,7 +1707,14 @@ def _run_polish_batch(
     stage = "polish"
     input_file = manifest.source.original_path or manifest.source.path
     fields = {"model": model, "batch": f"{batch_index}/{batch_total}"}
-    _record_polish_runtime(paths, manifest, stage, input_file, fields, f"starting batch {batch_index}/{batch_total}")
+    _record_polish_runtime(
+        paths,
+        manifest,
+        stage,
+        input_file,
+        fields,
+        f"starting batch {batch_index}/{batch_total}",
+    )
     _emit_polish_progress(
         progress,
         completed=batch_index - 1,
@@ -1557,8 +1752,12 @@ def _run_polish_batch(
         )
         return result
     except Exception as exc:
-        message = _polish_failure_message(manifest.project_id, model, batch_index, batch_total, exc)
-        _record_polish_runtime(paths, manifest, stage, input_file, fields, None, last_error=message)
+        message = _polish_failure_message(
+            manifest.project_id, model, batch_index, batch_total, exc
+        )
+        _record_polish_runtime(
+            paths, manifest, stage, input_file, fields, None, last_error=message
+        )
         raise RuntimeError(message) from exc
 
 
@@ -1585,7 +1784,9 @@ def _run_blocking_polish_batch(
                 heartbeat_index += 1
                 elapsed = time.monotonic() - started_at
                 last_success = f"batch request submitted; heartbeat {heartbeat_index}"
-                _record_polish_runtime(paths, manifest, "polish", input_file, fields, last_success)
+                _record_polish_runtime(
+                    paths, manifest, "polish", input_file, fields, last_success
+                )
                 _emit_polish_heartbeat(
                     progress,
                     manifest,
@@ -1654,7 +1855,9 @@ def _emit_polish_heartbeat(
     )
 
 
-def _emit_polish_progress_from_fields(progress: CliProgressReporter | None, fields: dict[str, object]) -> None:
+def _emit_polish_progress_from_fields(
+    progress: CliProgressReporter | None, fields: dict[str, object]
+) -> None:
     """Emit human progress from persisted polish runtime fields."""
     batch = str(fields.get("batch") or "")
     current, total = _parse_batch_progress(batch)
@@ -1734,7 +1937,7 @@ def _positive_int(value: object, *, default: int) -> int:
     """Return a positive integer value or a default."""
     try:
         parsed = int(str(value))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default
     return parsed if parsed > 0 else default
 
@@ -1772,7 +1975,11 @@ def _local_rule_changes(
         proposed_text = text.corrected_text if text is not None else sentence.text
         proposed_text = _apply_rules_to_text(proposed_text, rules)
         if proposed_text != sentence.text.strip():
-            changes.append(_change_from_sentence_with_rules(sentence, proposed_text, speaker_mapping, rules))
+            changes.append(
+                _change_from_sentence_with_rules(
+                    sentence, proposed_text, speaker_mapping, rules
+                )
+            )
     return changes
 
 
@@ -1797,12 +2004,15 @@ def _build_understanding(
     return rows
 
 
-def _replacement_count(changes: list[CorrectionChange], rule: CorrectionReplacement) -> int:
+def _replacement_count(
+    changes: list[CorrectionChange], rule: CorrectionReplacement
+) -> int:
     """Count changes that contain one wrong-to-corrected replacement."""
     return sum(
         1
         for change in changes
-        if rule.wrong_text in change.original_text and rule.corrected_text in change.corrected_text
+        if rule.wrong_text in change.original_text
+        and rule.corrected_text in change.corrected_text
     )
 
 
@@ -1829,7 +2039,9 @@ def _render_review_file(
     return "\n".join(lines)
 
 
-def _unique_replacements(changes: list[CorrectionChange]) -> list[CorrectionReplacement]:
+def _unique_replacements(
+    changes: list[CorrectionChange],
+) -> list[CorrectionReplacement]:
     """Return first-seen replacement rules inferred from sample changes."""
     seen: set[tuple[str, str]] = set()
     replacements = []
@@ -1910,13 +2122,21 @@ def _changes_from_llm_result(
     changes = []
     for index, sentence in enumerate(result.sentences):
         sample_change = sample_by_key.get(_sentence_change_key(sentence))
-        proposed_text = sample_change.corrected_text if sample_change else corrected_by_id.get(f"c{index}")
+        proposed_text = (
+            sample_change.corrected_text
+            if sample_change
+            else corrected_by_id.get(f"c{index}")
+        )
         if f"c{index}" not in candidate_ids and sample_change is None:
             continue
         if not _valid_model_text(sentence.text, proposed_text):
             proposed_text = sample_change.corrected_text if sample_change else None
         if proposed_text and proposed_text != sentence.text.strip():
-            changes.append(_change_from_sentence_with_rules(sentence, proposed_text, speaker_mapping, rules))
+            changes.append(
+                _change_from_sentence_with_rules(
+                    sentence, proposed_text, speaker_mapping, rules
+                )
+            )
     return changes
 
 
@@ -1965,7 +2185,9 @@ def _apply_one_rule_to_text(text: str, rule: CorrectionReplacement) -> str:
     if not rule.wrong_text:
         return text
     if ASCII_TERM_RE.fullmatch(rule.wrong_text):
-        pattern = re.compile(rf"(?<![A-Za-z0-9_+.#-]){re.escape(rule.wrong_text)}(?![A-Za-z0-9_+.#-])")
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_+.#-]){re.escape(rule.wrong_text)}(?![A-Za-z0-9_+.#-])"
+        )
         return pattern.sub(rule.corrected_text, text)
     return text.replace(rule.wrong_text, rule.corrected_text)
 
@@ -1973,7 +2195,9 @@ def _apply_one_rule_to_text(text: str, rule: CorrectionReplacement) -> str:
 def _anchor(sentence: SentenceSegment) -> str:
     """Return a stable HTML anchor for one sentence."""
     fields = {
-        "sentence_id": "" if sentence.sentence_id is None else str(sentence.sentence_id),
+        "sentence_id": ""
+        if sentence.sentence_id is None
+        else str(sentence.sentence_id),
         "speaker_id": "" if sentence.speaker_id is None else str(sentence.speaker_id),
         "begin": str(sentence.begin_time_ms),
         "end": str(sentence.end_time_ms),
@@ -1982,7 +2206,10 @@ def _anchor(sentence: SentenceSegment) -> str:
     payload = " ".join(f"{key}={value}" for key, value in fields.items())
     return f"<!-- meeting-asr: {payload} -->"
 
-def _review_sentence_line(sentence: SentenceSegment, speaker_mapping: dict[int, str]) -> str:
+
+def _review_sentence_line(
+    sentence: SentenceSegment, speaker_mapping: dict[int, str]
+) -> str:
     """Render one editable transcript line."""
     label = _speaker_name(sentence.speaker_id, speaker_mapping)
     return f"[{_plain_timestamp(sentence.begin_time_ms)} - {_plain_timestamp(sentence.end_time_ms)}] {label}: {sentence.text}"
@@ -1995,7 +2222,9 @@ def _extract_changes(
 ) -> list[CorrectionChange]:
     """Extract sentence text changes from an edited review file."""
     edited_by_key = _parse_review_text(edited)
-    original_by_key = {_sentence_key(sentence): sentence for sentence in original.sentences}
+    original_by_key = {
+        _sentence_key(sentence): sentence for sentence in original.sentences
+    }
     changes: list[CorrectionChange] = []
     for key, sentence in original_by_key.items():
         corrected_text = edited_by_key.get(key)
@@ -2037,6 +2266,7 @@ def _parse_review_text(edited: str) -> dict[tuple[int | None, int, int, str], st
                 pending_key = None
     return parsed
 
+
 def _anchor_key(fields_text: str) -> tuple[int | None, int, int, str]:
     """Parse an anchor into a stable sentence key."""
     fields = {}
@@ -2051,9 +2281,16 @@ def _anchor_key(fields_text: str) -> tuple[int | None, int, int, str]:
     text_hash = fields.get("hash") or ""
     return sentence_id, begin, end, text_hash
 
+
 def _sentence_key(sentence: SentenceSegment) -> tuple[int | None, int, int, str]:
     """Return the stable key for one sentence."""
-    return sentence.sentence_id, sentence.begin_time_ms, sentence.end_time_ms, _text_hash(sentence.text)
+    return (
+        sentence.sentence_id,
+        sentence.begin_time_ms,
+        sentence.end_time_ms,
+        _text_hash(sentence.text),
+    )
+
 
 def _line_transcript_text(line: str) -> str | None:
     """Extract editable transcript text from one review line."""
@@ -2064,12 +2301,19 @@ def _line_transcript_text(line: str) -> str | None:
     return stripped or None
 
 
-def _apply_changes(original: TranscriptResult, changes: list[CorrectionChange]) -> TranscriptResult:
+def _apply_changes(
+    original: TranscriptResult, changes: list[CorrectionChange]
+) -> TranscriptResult:
     """Apply sentence-level changes to a transcript result."""
-    changes_by_key = {(change.sentence_id, change.begin_time_ms, change.end_time_ms): change for change in changes}
+    changes_by_key = {
+        (change.sentence_id, change.begin_time_ms, change.end_time_ms): change
+        for change in changes
+    }
     sentences = []
     for sentence in original.sentences:
-        change = changes_by_key.get((sentence.sentence_id, sentence.begin_time_ms, sentence.end_time_ms))
+        change = changes_by_key.get(
+            (sentence.sentence_id, sentence.begin_time_ms, sentence.end_time_ms)
+        )
         text = change.corrected_text if change is not None else sentence.text
         sentences.append(
             SentenceSegment(
@@ -2080,7 +2324,9 @@ def _apply_changes(original: TranscriptResult, changes: list[CorrectionChange]) 
                 sentence_id=sentence.sentence_id,
             )
         )
-    result = TranscriptResult("".join(sentence.text for sentence in sentences), sentences, [])
+    result = TranscriptResult(
+        "".join(sentence.text for sentence in sentences), sentences, []
+    )
     result.detected_speakers = detect_speaker_ids(result)
     return result
 
@@ -2121,11 +2367,15 @@ def _change_key(change: CorrectionChange) -> tuple[int | None, int, int]:
     """Return the sentence identity for a correction change."""
     return change.sentence_id, change.begin_time_ms, change.end_time_ms
 
+
 def _sentence_change_key(sentence: SentenceSegment) -> tuple[int | None, int, int]:
     """Return the correction identity for a transcript sentence."""
     return sentence.sentence_id, sentence.begin_time_ms, sentence.end_time_ms
 
-def _batches(items: list[LlmCorrectionCandidate], size: int) -> list[list[LlmCorrectionCandidate]]:
+
+def _batches(
+    items: list[LlmCorrectionCandidate], size: int
+) -> list[list[LlmCorrectionCandidate]]:
     """Split items into fixed-size batches."""
     return [items[index : index + size] for index in range(0, len(items), size)]
 
@@ -2148,8 +2398,12 @@ def _write_corrected_outputs(
         "changes": [_change_payload(change) for change in changes],
     }
     outputs = {
-        "sentences": safe_write_json(paths.asr_dir / "sentences_corrected.json", payload),
-        "transcript": safe_write_text(paths.exports_dir / "transcript_corrected.txt", render_plain_text(result)),
+        "sentences": safe_write_json(
+            paths.asr_dir / "sentences_corrected.json", payload
+        ),
+        "transcript": safe_write_text(
+            paths.exports_dir / "transcript_corrected.txt", render_plain_text(result)
+        ),
         "speaker_transcript": safe_write_text(
             paths.exports_dir / "transcript_speakers_corrected.txt",
             render_speaker_text(result),
@@ -2162,7 +2416,9 @@ def _write_corrected_outputs(
             paths.exports_dir / "subtitle_named_corrected.srt",
             render_named_srt(result, speaker_mapping),
         ),
-        "anonymous_srt": safe_write_text(paths.exports_dir / "subtitle_corrected.srt", build_srt(result.sentences)),
+        "anonymous_srt": safe_write_text(
+            paths.exports_dir / "subtitle_corrected.srt", build_srt(result.sentences)
+        ),
         "applied": safe_write_json(corrections_dir / "applied.json", applied_payload),
     }
     return outputs
@@ -2209,7 +2465,9 @@ def _lexicon_contexts(
     return contexts
 
 
-def _infer_replacements(original_text: str, corrected_text: str) -> list[CorrectionReplacement]:
+def _infer_replacements(
+    original_text: str, corrected_text: str
+) -> list[CorrectionReplacement]:
     """Infer lexical replacement spans from before/after sentence text."""
     replacements = []
     matcher = difflib.SequenceMatcher(a=original_text, b=corrected_text, autojunk=False)
@@ -2232,7 +2490,9 @@ def _infer_replacements(original_text: str, corrected_text: str) -> list[Correct
             CorrectionReplacement(
                 wrong_text=wrong,
                 corrected_text=right,
-                left_context=original_text[max(0, first_start - 24) : first_start].strip(),
+                left_context=original_text[
+                    max(0, first_start - 24) : first_start
+                ].strip(),
                 right_context=original_text[first_end : first_end + 24].strip(),
             )
         )
@@ -2261,8 +2521,12 @@ def _expand_replacement_span(
     Returns:
         Replacement span offsets after safe term expansion.
     """
-    original_start, original_end = _expand_ascii_term(original_text, original_start, original_end)
-    corrected_start, corrected_end = _expand_ascii_term(corrected_text, corrected_start, corrected_end)
+    original_start, original_end = _expand_ascii_term(
+        original_text, original_start, original_end
+    )
+    corrected_start, corrected_end = _expand_ascii_term(
+        corrected_text, corrected_start, corrected_end
+    )
     return original_start, original_end, corrected_start, corrected_end
 
 
@@ -2298,6 +2562,7 @@ def _speaker_name(speaker_id: int | None, speaker_mapping: dict[int, str]) -> st
         return "Speaker Unknown"
     return speaker_mapping.get(speaker_id, speaker_id_to_label(speaker_id))
 
+
 def _plain_timestamp(ms: int) -> str:
     """Format milliseconds as HH:MM:SS.mmm."""
     value = max(0, int(ms))
@@ -2306,15 +2571,18 @@ def _plain_timestamp(ms: int) -> str:
     seconds, millis = divmod(rem, 1000)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}"
 
+
 def _text_hash(text: str) -> str:
     """Return a compact text hash for sentence anchors."""
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+
 
 def _optional_int(value: str | None) -> int | None:
     """Parse optional integer text."""
     if value is None or value == "":
         return None
     return int(value)
+
 
 def _optional_int_from_any(value: object) -> int | None:
     """Parse optional integer values from JSON."""

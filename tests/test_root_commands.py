@@ -123,7 +123,9 @@ def test_localized_help_leads_with_examples_and_translated_options() -> None:
     create_result = runner.invoke(app, ["--lang", "zh", "project", "create", "--help"])
     update_result = runner.invoke(app, ["--lang", "zh", "project", "update", "--help"])
     delete_result = runner.invoke(app, ["--lang", "zh", "project", "delete", "--help"])
-    hotwords_result = runner.invoke(app, ["--lang", "zh", "lexicon", "hotwords", "sync", "--help"])
+    hotwords_result = runner.invoke(
+        app, ["--lang", "zh", "lexicon", "hotwords", "sync", "--help"]
+    )
 
     assert run_result.exit_code == 0
     assert "示例" in run_result.output
@@ -137,10 +139,16 @@ def test_localized_help_leads_with_examples_and_translated_options() -> None:
     assert "Generate transcript polish proposal after ASR." not in run_result.output
     assert "DashScope model for transcript polish." not in run_result.output
     assert create_result.exit_code == 0
-    assert "meeting-asr project create ~/Downloads/meeting.mp4 --meeting-time" in create_result.output
+    assert (
+        "meeting-asr project create ~/Downloads/meeting.mp4 --meeting-time"
+        in create_result.output
+    )
     assert "2026-05-02T10:00:00+08:00" in create_result.output
     assert update_result.exit_code == 0
-    assert "meeting-asr project update p-292d10c1232b79a0 --meeting-time" in update_result.output
+    assert (
+        "meeting-asr project update p-292d10c1232b79a0 --meeting-time"
+        in update_result.output
+    )
     assert "2026-05-02T10:00:00+08:00" in update_result.output
     assert delete_result.exit_code == 0
     assert "meeting-asr project delete p-292d10c1232b79a0" in delete_result.output
@@ -194,7 +202,9 @@ def test_chinese_parse_errors_are_actionable() -> None:
     argument_result = runner.invoke(app, ["--lang", "zh", "project", "delete"])
 
     assert command_result.exit_code == 2
-    assert "用法: meeting-asr project [OPTIONS] COMMAND [ARGS]..." in command_result.output
+    assert (
+        "用法: meeting-asr project [OPTIONS] COMMAND [ARGS]..." in command_result.output
+    )
     assert "没有这个命令：nope" in command_result.output
     assert "meeting-asr project -h" in command_result.output
     assert "No such command" not in command_result.output

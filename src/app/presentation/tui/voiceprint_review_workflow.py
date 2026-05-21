@@ -15,8 +15,14 @@ from textual.widgets import Static
 
 from app.presentation.tui.i18n import tr
 from app.voiceprint_embedding import VoiceprintEmbedSummary, embed_voiceprint_samples
-from app.voiceprint_evaluation import VoiceprintEvaluationSummary, evaluate_voiceprint_embedding
-from app.voiceprints import VoiceprintCaptureSummary, persist_voiceprint_capture_selection
+from app.voiceprint_evaluation import (
+    VoiceprintEvaluationSummary,
+    evaluate_voiceprint_embedding,
+)
+from app.voiceprints import (
+    VoiceprintCaptureSummary,
+    persist_voiceprint_capture_selection,
+)
 
 CURRENT_CHANGE_DISPLAY_LIMIT = 6
 HISTORICAL_PROJECT_DISPLAY_LIMIT = 3
@@ -46,7 +52,11 @@ class VoiceprintReviewTransaction:
     def rollback(self) -> None:
         """Restore database, project metadata, match file, and captured clips."""
         _restore_file(self.db_path, self.db_backup_path, self.db_existed)
-        _restore_file(self.project_manifest_path, self.project_manifest_backup_path, self.project_manifest_existed)
+        _restore_file(
+            self.project_manifest_path,
+            self.project_manifest_backup_path,
+            self.project_manifest_existed,
+        )
         _restore_file(self.match_path, self.match_backup_path, self.match_existed)
         for clip_path, backup_path, existed in self.clip_backups:
             _restore_file(clip_path, backup_path, existed)
@@ -127,7 +137,9 @@ class VoiceprintReviewResultScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         """Build the result popup."""
-        yield Static(_workflow_summary_text(self.summary), id="voiceprint-review-result")
+        yield Static(
+            _workflow_summary_text(self.summary), id="voiceprint-review-result"
+        )
 
     def on_unmount(self) -> None:
         """Roll back if the modal is closed without an explicit choice."""
@@ -222,9 +234,15 @@ def compact_evaluation_line(summary: VoiceprintEvaluationSummary) -> str:
 def _workflow_summary_text(summary: VoiceprintReviewWorkflowSummary) -> str:
     """Render capture, embedding, and evaluation details."""
     lines = [
-        tr("[b green]Voiceprint embedding complete[/b green]", "[b green]声纹 embedding 已完成[/b green]"),
+        tr(
+            "[b green]Voiceprint embedding complete[/b green]",
+            "[b green]声纹 embedding 已完成[/b green]",
+        ),
         "",
-        tr(f"Captured samples: {summary.capture.sample_count}", f"已采集样本：{summary.capture.sample_count}"),
+        tr(
+            f"Captured samples: {summary.capture.sample_count}",
+            f"已采集样本：{summary.capture.sample_count}",
+        ),
         tr(
             f"Embedded samples: {summary.embedding.embedded_count} new, {summary.embedding.skipped_count} skipped",
             f"Embedding：新增 {summary.embedding.embedded_count} 个，跳过 {summary.embedding.skipped_count} 个",
@@ -234,7 +252,10 @@ def _workflow_summary_text(summary: VoiceprintReviewWorkflowSummary) -> str:
         "",
         _historical_evaluation_text(summary.evaluation),
         "",
-        tr("Press a to accept these embeddings. Press r/Esc/q to roll back.", "按 a 接受这些 embedding。按 r/Esc/q 回滚。"),
+        tr(
+            "Press a to accept these embeddings. Press r/Esc/q to roll back.",
+            "按 a 接受这些 embedding。按 r/Esc/q 回滚。",
+        ),
     ]
     return "\n".join(lines)
 
@@ -243,7 +264,9 @@ def _current_evaluation_text(summary: VoiceprintEvaluationSummary) -> str:
     """Render current-project score changes."""
     current = summary.current
     lines = [tr("[b]Current project score check[/b]", "[b]当前项目分数检查[/b]")]
-    visible_changes = tuple(change for change in current.changes if change.status != "unchanged")
+    visible_changes = tuple(
+        change for change in current.changes if change.status != "unchanged"
+    )
     if not visible_changes:
         lines.append(tr("No material score changes.", "没有实质分数变化。"))
         return "\n".join(lines)
@@ -251,7 +274,12 @@ def _current_evaluation_text(summary: VoiceprintEvaluationSummary) -> str:
         lines.append("  " + _current_score_change_line(change))
     hidden_count = len(visible_changes) - CURRENT_CHANGE_DISPLAY_LIMIT
     if hidden_count > 0:
-        lines.append(tr(f"  [dim]... {hidden_count} more current change(s) omitted.[/]", f"  [dim]... 省略 {hidden_count} 个当前项目变化。[/]"))
+        lines.append(
+            tr(
+                f"  [dim]... {hidden_count} more current change(s) omitted.[/]",
+                f"  [dim]... 省略 {hidden_count} 个当前项目变化。[/]",
+            )
+        )
     return "\n".join(lines)
 
 
@@ -283,7 +311,9 @@ def _historical_severity_summary_line(summary: VoiceprintEvaluationSummary) -> s
 def _historical_risk_lines(summary: VoiceprintEvaluationSummary) -> list[str]:
     """Render risky historical project lines."""
     lines: list[str] = []
-    risky_projects = tuple(project for project in summary.historical if project.risk_count > 0)
+    risky_projects = tuple(
+        project for project in summary.historical if project.risk_count > 0
+    )
     for project in risky_projects[:HISTORICAL_PROJECT_DISPLAY_LIMIT]:
         style = "bold red" if project.critical_count else "yellow"
         label = "CRITICAL" if project.critical_count else "WARNING"
@@ -295,11 +325,23 @@ def _historical_risk_lines(summary: VoiceprintEvaluationSummary) -> list[str]:
             f"{_count_badge('warning', project.warning_count, 'yellow')}"
         )
         lines.append(f"    [{style}]review: meeting-asr project review {project_id}[/]")
-        risky_changes = tuple(change for change in project.changes if change.is_warning or change.is_critical)
-        lines.extend("    " + _score_change_line(change) for change in risky_changes[:HISTORICAL_CHANGE_DISPLAY_LIMIT])
+        risky_changes = tuple(
+            change
+            for change in project.changes
+            if change.is_warning or change.is_critical
+        )
+        lines.extend(
+            "    " + _score_change_line(change)
+            for change in risky_changes[:HISTORICAL_CHANGE_DISPLAY_LIMIT]
+        )
         hidden_change_count = len(risky_changes) - HISTORICAL_CHANGE_DISPLAY_LIMIT
         if hidden_change_count > 0:
-            lines.append(tr(f"    [dim]... {hidden_change_count} more risky change(s) omitted.[/]", f"    [dim]... 省略 {hidden_change_count} 个风险变化。[/]"))
+            lines.append(
+                tr(
+                    f"    [dim]... {hidden_change_count} more risky change(s) omitted.[/]",
+                    f"    [dim]... 省略 {hidden_change_count} 个风险变化。[/]",
+                )
+            )
     hidden_project_count = len(risky_projects) - HISTORICAL_PROJECT_DISPLAY_LIMIT
     if hidden_project_count > 0:
         lines.append(
@@ -323,8 +365,12 @@ def _score_change_line(change) -> str:
     before = _candidate_score_text(change.before_name, change.before_score)
     after = _candidate_score_text(change.after_name, change.after_score)
     delta_text = "" if change.delta is None else f" ({change.delta:+.3f})"
-    status_text = f" {escape(change.status)}" if change.is_warning or change.is_critical else ""
-    threshold_text = "" if change.threshold is None else f" threshold={change.threshold:.3f}"
+    status_text = (
+        f" {escape(change.status)}" if change.is_warning or change.is_critical else ""
+    )
+    threshold_text = (
+        "" if change.threshold is None else f" threshold={change.threshold:.3f}"
+    )
     line = f"{escape(change.label)}: {before} -> {after}{delta_text}{status_text}"
     if change.is_critical:
         return f"[red]{line}{threshold_text}[/]"
@@ -339,7 +385,9 @@ def _current_score_change_line(change) -> str:
     after = _candidate_score_text(change.after_name, change.after_score)
     delta_text = "" if change.delta is None else f" ({change.delta:+.3f})"
     status_text = "" if change.status == "improved" else f" {escape(change.status)}"
-    threshold_text = "" if change.threshold is None else f" threshold={change.threshold:.3f}"
+    threshold_text = (
+        "" if change.threshold is None else f" threshold={change.threshold:.3f}"
+    )
     line = f"{escape(change.label)}: {before} -> {after}{delta_text}{status_text}"
     if change.status in {"improved", "changed-best"}:
         return f"[green]{line}{threshold_text}[/]"
@@ -382,10 +430,15 @@ def _begin_transaction(
         db_existed=_backup_file(planned.db_path, backup_dir / "voiceprints.sqlite"),
         project_manifest_path=project_root / "project.json",
         project_manifest_backup_path=backup_dir / "project.json",
-        project_manifest_existed=_backup_file(project_root / "project.json", backup_dir / "project.json"),
+        project_manifest_existed=_backup_file(
+            project_root / "project.json", backup_dir / "project.json"
+        ),
         match_path=project_root / "speakers" / "speaker_matches.json",
         match_backup_path=backup_dir / "speaker_matches.json",
-        match_existed=_backup_file(project_root / "speakers" / "speaker_matches.json", backup_dir / "speaker_matches.json"),
+        match_existed=_backup_file(
+            project_root / "speakers" / "speaker_matches.json",
+            backup_dir / "speaker_matches.json",
+        ),
         clip_backups=_backup_clips(backup_dir, planned, selected_clip_rel_paths),
     )
 
@@ -401,7 +454,9 @@ def _backup_clips(
         for clip in speaker.clips:
             if clip.rel_path in selected_clip_rel_paths:
                 backup_path = backup_dir / "clips" / clip.rel_path
-                backups.append((clip.path, backup_path, _backup_file(clip.path, backup_path)))
+                backups.append(
+                    (clip.path, backup_path, _backup_file(clip.path, backup_path))
+                )
     return tuple(backups)
 
 

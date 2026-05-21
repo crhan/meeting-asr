@@ -8,7 +8,12 @@ from pathlib import Path
 
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
-from app.project_manager import ProjectManifest, load_manifest, project_paths, resolve_project_audio_path
+from app.project_manager import (
+    ProjectManifest,
+    load_manifest,
+    project_paths,
+    resolve_project_audio_path,
+)
 from app.speaker_labeling import load_ignored_speakers, load_transcript_result
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
@@ -28,8 +33,14 @@ from app.presentation.tui.speaker_models import (
     SpeakerReviewSession,
     SpeakerSampleIdentityScore,
 )
-from app.presentation.tui.speaker_people import load_existing_person_mapping, load_people
-from app.presentation.tui.speaker_status import SpeakerReviewOverview, VoiceprintReviewProgress
+from app.presentation.tui.speaker_people import (
+    load_existing_person_mapping,
+    load_people,
+)
+from app.presentation.tui.speaker_status import (
+    SpeakerReviewOverview,
+    VoiceprintReviewProgress,
+)
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_store import (
     get_voiceprint_db_path,
@@ -109,7 +120,9 @@ def load_speaker_review_session(
     )
 
 
-def load_voiceprint_review_progress(project_id: str, store_dir: Path | None) -> VoiceprintReviewProgress:
+def load_voiceprint_review_progress(
+    project_id: str, store_dir: Path | None
+) -> VoiceprintReviewProgress:
     """
     Load project-scoped voiceprint capture and embedding state.
 
@@ -162,7 +175,9 @@ def _build_review_overview(
     )
 
 
-def _load_embedding_state(db_path: Path) -> tuple[str | None, frozenset[int] | None, str | None]:
+def _load_embedding_state(
+    db_path: Path,
+) -> tuple[str | None, frozenset[int] | None, str | None]:
     """Load embedded sample ids for the configured voiceprint model."""
     try:
         _, model = resolve_voiceprint_embedding_options(provider=None, model=None)
@@ -181,10 +196,14 @@ def _load_review_transcript_result(asr_dir: Path) -> TranscriptResult:
     corrected = asr_dir / "sentences_corrected.json"
     if corrected.exists():
         return load_transcript_result(corrected, include_low_information=True)
-    return load_transcript_result(asr_dir / "sentences.json", include_low_information=True)
+    return load_transcript_result(
+        asr_dir / "sentences.json", include_low_information=True
+    )
 
 
-def _segments_by_speaker(sentences: list[SentenceSegment]) -> dict[int, list[SentenceSegment]]:
+def _segments_by_speaker(
+    sentences: list[SentenceSegment],
+) -> dict[int, list[SentenceSegment]]:
     """Group non-empty transcript segments by speaker id."""
     grouped: dict[int, list[SentenceSegment]] = defaultdict(list)
     for sentence in sentences:
@@ -207,7 +226,7 @@ def _load_cluster_diagnostics(path: Path) -> dict[int, SpeakerClusterDiagnostic]
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return {}
     speakers = payload.get("speakers") if isinstance(payload, dict) else None
     if not isinstance(speakers, list):
@@ -226,7 +245,7 @@ def _cluster_diagnostic(item: object) -> SpeakerClusterDiagnostic | None:
         return None
     try:
         speaker_id = int(item["speaker_id"])
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return None
     samples = _cluster_sample_scores(item.get("samples"))
     return SpeakerClusterDiagnostic(
@@ -239,7 +258,9 @@ def _cluster_diagnostic(item: object) -> SpeakerClusterDiagnostic | None:
         warning_clip_count=_optional_int(item.get("warning_clip_count")),
         critical_clip_count=_optional_int(item.get("critical_clip_count")),
         component_count=_optional_int(item.get("component_count")),
-        component_sizes=tuple(_optional_int(value) for value in _list_values(item.get("component_sizes"))),
+        component_sizes=tuple(
+            _optional_int(value) for value in _list_values(item.get("component_sizes"))
+        ),
         warnings=tuple(str(value) for value in _list_values(item.get("warnings"))),
         samples={sample.key: sample for sample in samples},
     )
@@ -254,7 +275,7 @@ def _cluster_sample_scores(value: object) -> list[SpeakerClusterSampleScore]:
         try:
             begin = int(item["begin_time_ms"])
             end = int(item["end_time_ms"])
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             continue
         sentence_id = item.get("sentence_id")
         rows.append(
@@ -265,7 +286,9 @@ def _cluster_sample_scores(value: object) -> list[SpeakerClusterSampleScore]:
                 score=_optional_float(item.get("centroid_score")),
                 status=str(item.get("status") or "unknown"),
                 text=str(item.get("text") or ""),
-                nearest_speaker_id=_optional_int_or_none(item.get("nearest_speaker_id")),
+                nearest_speaker_id=_optional_int_or_none(
+                    item.get("nearest_speaker_id")
+                ),
                 nearest_score=_optional_float(item.get("nearest_score")),
                 margin_score=_optional_float(item.get("margin_score")),
             )
@@ -273,24 +296,28 @@ def _cluster_sample_scores(value: object) -> list[SpeakerClusterSampleScore]:
     return rows
 
 
-def _load_sample_identity_scores(path: Path) -> dict[int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]]:
+def _load_sample_identity_scores(
+    path: Path,
+) -> dict[int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]]:
     """Load optional per-sample identity match diagnostics."""
     if not path.exists():
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return {}
     speakers = payload.get("speakers") if isinstance(payload, dict) else None
     if not isinstance(speakers, list):
         return {}
-    scores: dict[int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]] = {}
+    scores: dict[
+        int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]
+    ] = {}
     for item in speakers:
         if not isinstance(item, dict):
             continue
         try:
             speaker_id = int(item["speaker_id"])
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             continue
         rows = _sample_identity_score_rows(item.get("samples"))
         scores[speaker_id] = {row.key: row for row in rows}
@@ -306,7 +333,7 @@ def _sample_identity_score_rows(value: object) -> list[SpeakerSampleIdentityScor
         try:
             begin = int(item["begin_time_ms"])
             end = int(item["end_time_ms"])
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             continue
         sentence_id = item.get("sentence_id")
         rows.append(
@@ -338,7 +365,7 @@ def _optional_float(value: object) -> float | None:
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -354,7 +381,7 @@ def _optional_int(value: object) -> int:
     """Convert a JSON scalar to int, defaulting to zero."""
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0
 
 
@@ -364,7 +391,7 @@ def _optional_int_or_none(value: object) -> int | None:
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -405,11 +432,16 @@ def _review_speaker(
     match = matches.get(speaker_id)
     current_name = mapping.get(speaker_id) or accepted_review_name(match) or label
     person_id = person_mapping.get(speaker_id) or accepted_review_person_id(match)
-    person_public_id = person_public_mapping.get(speaker_id) or accepted_review_person_public_id(match)
+    person_public_id = person_public_mapping.get(
+        speaker_id
+    ) or accepted_review_person_public_id(match)
     legacy_ignored = (
         speaker_id in mapping
         and current_name == label
-        and (match is None or voiceprint_match_status(match) != MATCH_STATUS_BELOW_THRESHOLD)
+        and (
+            match is None
+            or voiceprint_match_status(match) != MATCH_STATUS_BELOW_THRESHOLD
+        )
     )
     ignored = speaker_id in ignored_speaker_ids or legacy_ignored
     if ignored:

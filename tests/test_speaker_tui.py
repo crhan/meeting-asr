@@ -48,7 +48,9 @@ from app.presentation.tui.speaker_save import (
     speaker_ignore_changes,
     speaker_name_changes,
 )
-from app.presentation.tui.voiceprint_capture import load_voiceprint_capture_review_session
+from app.presentation.tui.voiceprint_capture import (
+    load_voiceprint_capture_review_session,
+)
 from app.presentation.tui.voiceprint import VoiceprintLibrarySession
 from app.presentation.tui.voiceprint_review import (
     VoiceprintReviewHelpScreen,
@@ -57,7 +59,11 @@ from app.presentation.tui.voiceprint_review import (
     VoiceprintReviewSession,
 )
 from app.presentation.tui.speaker_matches import SpeakerMatchPerson
-from app.voiceprint_evaluation import VoiceprintEvaluationSummary, VoiceprintProjectEvaluation, VoiceprintScoreChange
+from app.voiceprint_evaluation import (
+    VoiceprintEvaluationSummary,
+    VoiceprintProjectEvaluation,
+    VoiceprintScoreChange,
+)
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL, VoiceprintEmbedSummary
 from app.voiceprint_quality import analyze_voiceprint_quality
 from app.speaker_labeling import (
@@ -182,7 +188,9 @@ def test_speaker_review_tui_filters_review_candidates() -> None:
 
             assert app.sample_filter_mode == speaker_tui.SAMPLE_FILTER_REVIEW
             assert app._speaker().selected_sample_index == 1
-            visible = [segment.text for segment in app._visible_segments(app._speaker())[1]]
+            visible = [
+                segment.text for segment in app._visible_segments(app._speaker())[1]
+            ]
             assert visible == ["第二句"]
             pane = app._sample_pane()
             assert "筛选=疑点" in pane
@@ -211,7 +219,9 @@ def test_speaker_review_tui_filters_low_score_samples() -> None:
 
             assert app.sample_filter_mode == speaker_tui.SAMPLE_FILTER_LOW
             assert app._speaker().selected_sample_index == 0
-            visible = [segment.text for segment in app._visible_segments(app._speaker())[1]]
+            visible = [
+                segment.text for segment in app._visible_segments(app._speaker())[1]
+            ]
             assert visible == ["第一句"]
             pane = app._sample_pane()
             assert "筛选=低分" in pane
@@ -367,8 +377,14 @@ def test_project_review_tui_edits_transcript_text_inline() -> None:
             assert "staged" in feedback.plain
             assert "Before: 第一句" in feedback.plain
             assert "After:  第一句修正" in feedback.plain
-            assert any("green" in str(span.style) and "bold" in str(span.style) for span in feedback.spans)
-            assert any("red" in str(span.style) and "bold" in str(span.style) for span in feedback.spans)
+            assert any(
+                "green" in str(span.style) and "bold" in str(span.style)
+                for span in feedback.spans
+            )
+            assert any(
+                "red" in str(span.style) and "bold" in str(span.style)
+                for span in feedback.spans
+            )
             assert app.return_value is None
             assert app._speaker().segments[0].text == "第一句修正"
             assert "run correction" in str(app.query_one("#status", Static).render())
@@ -412,8 +428,14 @@ def test_project_review_tui_keeps_multiple_inline_text_edits() -> None:
 
     assert app.return_value is not None
     assert app.return_value.action == "correct-inline"
-    assert [edit.original_text for edit in app.return_value.correction_edits] == ["第一句", "第二句"]
-    assert [edit.corrected_text for edit in app.return_value.correction_edits] == ["第一句修正", "第二句修正"]
+    assert [edit.original_text for edit in app.return_value.correction_edits] == [
+        "第一句",
+        "第二句",
+    ]
+    assert [edit.corrected_text for edit in app.return_value.correction_edits] == [
+        "第一句修正",
+        "第二句修正",
+    ]
 
 
 def test_project_review_tui_reediting_sentence_diffs_against_loaded_text() -> None:
@@ -433,7 +455,10 @@ def test_project_review_tui_reediting_sentence_diffs_against_loaded_text() -> No
             await pilot.press("e")
             await pilot.pause()
             assert isinstance(app.screen, SentenceCorrectionScreen)
-            assert app.screen.query_one("#correction-input", TextArea).text == "第一句第二版"
+            assert (
+                app.screen.query_one("#correction-input", TextArea).text
+                == "第一句第二版"
+            )
 
             app.screen.query_one("#correction-input", TextArea).text = "第一句第三版"
             await pilot.press("enter")
@@ -456,10 +481,14 @@ def test_project_review_tui_reediting_sentence_diffs_against_loaded_text() -> No
     assert app.return_value.correction_edits == (app.return_value.correction_edit,)
 
 
-def test_project_review_tui_save_handler_keeps_tui_open(monkeypatch, tmp_path: Path) -> None:
+def test_project_review_tui_save_handler_keeps_tui_open(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Project review save should run inside a modal instead of exiting the TUI."""
     seen: list[SpeakerReviewDecision] = []
-    library = VoiceprintLibrarySession(db_path=tmp_path / "voiceprints.sqlite", speakers=[])
+    library = VoiceprintLibrarySession(
+        db_path=tmp_path / "voiceprints.sqlite", speakers=[]
+    )
 
     monkeypatch.setattr(
         speaker_tui,
@@ -478,7 +507,9 @@ def test_project_review_tui_save_handler_keeps_tui_open(monkeypatch, tmp_path: P
 
     def save_handler(decision: SpeakerReviewDecision) -> SpeakerReviewSaveOutcome:
         seen.append(decision)
-        return SpeakerReviewSaveOutcome(Path("speaker_map.json"), Path("transcript.txt"), Path("subtitle.srt"))
+        return SpeakerReviewSaveOutcome(
+            Path("speaker_map.json"), Path("transcript.txt"), Path("subtitle.srt")
+        )
 
     app = SpeakerReviewApp(_session(allow_correction=True), save_handler=save_handler)
 
@@ -491,14 +522,18 @@ def test_project_review_tui_save_handler_keeps_tui_open(monkeypatch, tmp_path: P
             assert isinstance(app.screen, SpeakerReviewSaveScreen)
             assert app.return_value is None
             assert seen and seen[0].saved is True
-            assert "Project review saved" in str(app.screen.query_one("#save-title", Static).render())
+            assert "Project review saved" in str(
+                app.screen.query_one("#save-title", Static).render()
+            )
             save_body = str(app.screen.query_one("#save-body", Static).render())
             assert "Speaker A" in save_body
             assert "<not saved> -> Speaker A" in save_body
             assert "Speaker outputs" not in save_body
             assert "Speaker 产物" not in save_body
             assert "speaker_map.json" not in save_body
-            assert "v capture voiceprints" in str(app.screen.query_one("#save-actions", Static).render())
+            assert "v capture voiceprints" in str(
+                app.screen.query_one("#save-actions", Static).render()
+            )
 
             await pilot.press("v")
             await pilot.pause()
@@ -513,7 +548,9 @@ def test_project_review_tui_save_handler_keeps_tui_open(monkeypatch, tmp_path: P
     asyncio.run(scenario())
 
 
-def test_project_review_tui_embeds_captured_voiceprints(monkeypatch, tmp_path: Path) -> None:
+def test_project_review_tui_embeds_captured_voiceprints(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Project Review should run voiceprint embedding without leaving the TUI."""
     store_dir = tmp_path / "voiceprints"
     embedded: list[Path | None] = []
@@ -528,7 +565,9 @@ def test_project_review_tui_embeds_captured_voiceprints(monkeypatch, tmp_path: P
             skipped_count=1,
         )
 
-    monkeypatch.setattr(speaker_tui, "embed_voiceprint_samples", fake_embed_voiceprint_samples)
+    monkeypatch.setattr(
+        speaker_tui, "embed_voiceprint_samples", fake_embed_voiceprint_samples
+    )
     app = SpeakerReviewApp(_session(with_status=True, store_dir=store_dir))
 
     async def scenario() -> None:
@@ -538,7 +577,9 @@ def test_project_review_tui_embeds_captured_voiceprints(monkeypatch, tmp_path: P
             await pilot.pause()
 
             assert embedded == [store_dir]
-            assert "embedded 2, skipped 1" in str(app.query_one("#status", Static).render())
+            assert "embedded 2, skipped 1" in str(
+                app.query_one("#status", Static).render()
+            )
 
     asyncio.run(scenario())
 
@@ -560,7 +601,9 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
             Path("speaker_map.json"),
             Path("transcript.txt"),
             Path("subtitle.srt"),
-            _correction_summary(accepted=False, diff_path=diff_path, proposal_path=proposal_path),
+            _correction_summary(
+                accepted=False, diff_path=diff_path, proposal_path=proposal_path
+            ),
         )
 
     def accept_handler(
@@ -569,7 +612,9 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
     ) -> SpeakerReviewSaveOutcome:
         accepted_paths.append(proposal_path)
         assert selected_indices == (0,)
-        return SpeakerReviewSaveOutcome(None, None, None, _correction_summary(accepted=True))
+        return SpeakerReviewSaveOutcome(
+            None, None, None, _correction_summary(accepted=True)
+        )
 
     app = SpeakerReviewApp(
         _session(allow_correction=True),
@@ -588,7 +633,9 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
             await pilot.pause()
 
             assert isinstance(app.screen, SpeakerReviewSaveScreen)
-            assert "needs review" in str(app.screen.query_one("#save-title", Static).render())
+            assert "needs review" in str(
+                app.screen.query_one("#save-title", Static).render()
+            )
 
             await pilot.press("d")
             await pilot.pause()
@@ -610,7 +657,9 @@ def test_project_review_tui_accepts_pending_correction_in_modal(tmp_path: Path) 
 
             assert accepted_paths == [proposal_path]
             assert not app.correction_edits
-            assert "correction accepted" in str(app.screen.query_one("#save-title", Static).render())
+            assert "correction accepted" in str(
+                app.screen.query_one("#save-title", Static).render()
+            )
 
     asyncio.run(scenario())
 
@@ -628,7 +677,9 @@ def test_project_review_tui_can_exclude_one_proposed_change(tmp_path: Path) -> N
             Path("speaker_map.json"),
             Path("transcript.txt"),
             Path("subtitle.srt"),
-            _correction_summary(accepted=False, diff_path=diff_path, proposal_path=proposal_path),
+            _correction_summary(
+                accepted=False, diff_path=diff_path, proposal_path=proposal_path
+            ),
         )
 
     def accept_handler(
@@ -636,7 +687,9 @@ def test_project_review_tui_can_exclude_one_proposed_change(tmp_path: Path) -> N
         selected_indices: tuple[int, ...] | None,
     ) -> SpeakerReviewSaveOutcome:
         accepted_indices.append(selected_indices)
-        return SpeakerReviewSaveOutcome(None, None, None, _correction_summary(accepted=True))
+        return SpeakerReviewSaveOutcome(
+            None, None, None, _correction_summary(accepted=True)
+        )
 
     app = SpeakerReviewApp(
         _session(allow_correction=True),
@@ -685,8 +738,12 @@ def test_correction_diff_viewer_uses_standard_vertical_keys(tmp_path: Path) -> N
 
             assert screen.current_change_index == 0
             assert "up/down" in str(screen.query_one("#diff-actions", Static).render())
-            assert "Esc returns" in str(screen.query_one("#diff-actions", Static).render())
-            assert "Enter returns" not in str(screen.query_one("#diff-actions", Static).render())
+            assert "Esc returns" in str(
+                screen.query_one("#diff-actions", Static).render()
+            )
+            assert "Enter returns" not in str(
+                screen.query_one("#diff-actions", Static).render()
+            )
             assert "n/p" not in str(screen.query_one("#diff-actions", Static).render())
 
             await pilot.press("down")
@@ -752,7 +809,9 @@ def test_transcript_correction_input_uses_readline_cursor_keys() -> None:
 
 def test_identity_input_uses_readline_cursor_keys() -> None:
     """Identity edit should share non-destructive cursor keys."""
-    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁", "vpp-0000000000000042"),)))
+    app = SpeakerReviewApp(
+        _session(people=(KnownPerson(42, "欧丁", "vpp-0000000000000042"),))
+    )
 
     async def scenario() -> None:
         async with app.run_test() as pilot:
@@ -771,9 +830,13 @@ def test_identity_input_uses_readline_cursor_keys() -> None:
     asyncio.run(scenario())
 
 
-def test_project_review_tui_opens_embedded_voiceprint_review(monkeypatch, tmp_path: Path) -> None:
+def test_project_review_tui_opens_embedded_voiceprint_review(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Project review should open the shared voiceprint screen without leaving the TUI."""
-    library = VoiceprintLibrarySession(db_path=tmp_path / "voiceprints.sqlite", speakers=[])
+    library = VoiceprintLibrarySession(
+        db_path=tmp_path / "voiceprints.sqlite", speakers=[]
+    )
 
     monkeypatch.setattr(
         speaker_tui,
@@ -791,7 +854,9 @@ def test_project_review_tui_opens_embedded_voiceprint_review(monkeypatch, tmp_pa
     )
 
     async def scenario() -> None:
-        async with SpeakerReviewApp(_session(with_status=True)).run_test(size=(120, 24)) as pilot:
+        async with SpeakerReviewApp(_session(with_status=True)).run_test(
+            size=(120, 24)
+        ) as pilot:
             await pilot.press("v")
             await pilot.pause()
 
@@ -816,10 +881,14 @@ def test_project_review_tui_opens_embedded_voiceprint_review(monkeypatch, tmp_pa
     asyncio.run(scenario())
 
 
-def test_project_review_voiceprint_screen_saves_embeds_and_evaluates(monkeypatch, tmp_path: Path) -> None:
+def test_project_review_voiceprint_screen_saves_embeds_and_evaluates(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Saving in embedded Voiceprint Review should keep capture, embed, and eval in that screen."""
     store_dir = tmp_path / "voiceprints"
-    session = _voiceprint_review_session(tmp_path, return_hint="return to Project Review")
+    session = _voiceprint_review_session(
+        tmp_path, return_hint="return to Project Review"
+    )
     planned = _voiceprint_capture_plan(store_dir)
     completed: list[int] = []
     calls: list[str] = []
@@ -841,7 +910,9 @@ def test_project_review_voiceprint_screen_saves_embeds_and_evaluates(monkeypatch
 
     def fake_embed(**kwargs) -> VoiceprintEmbedSummary:
         calls.append("embed")
-        return VoiceprintEmbedSummary(get_voiceprint_db_path(store_dir), "local-speechbrain", "test-model", 2, 1)
+        return VoiceprintEmbedSummary(
+            get_voiceprint_db_path(store_dir), "local-speechbrain", "test-model", 2, 1
+        )
 
     def fake_evaluate(project_dir, **kwargs) -> VoiceprintEvaluationSummary:
         calls.append("evaluate")
@@ -852,12 +923,20 @@ def test_project_review_voiceprint_screen_saves_embeds_and_evaluates(monkeypatch
         "load_voiceprint_review_session",
         lambda **kwargs: (session, planned),
     )
-    monkeypatch.setattr(voiceprint_review_workflow, "persist_voiceprint_capture_selection", fake_capture)
-    monkeypatch.setattr(voiceprint_review_workflow, "embed_voiceprint_samples", fake_embed)
-    monkeypatch.setattr(voiceprint_review_workflow, "evaluate_voiceprint_embedding", fake_evaluate)
+    monkeypatch.setattr(
+        voiceprint_review_workflow, "persist_voiceprint_capture_selection", fake_capture
+    )
+    monkeypatch.setattr(
+        voiceprint_review_workflow, "embed_voiceprint_samples", fake_embed
+    )
+    monkeypatch.setattr(
+        voiceprint_review_workflow, "evaluate_voiceprint_embedding", fake_evaluate
+    )
 
     async def scenario() -> None:
-        async with SpeakerReviewApp(_session(with_status=True, store_dir=store_dir)).run_test(size=(120, 24)) as pilot:
+        async with SpeakerReviewApp(
+            _session(with_status=True, store_dir=store_dir)
+        ).run_test(size=(120, 24)) as pilot:
             await pilot.press("v")
             await pilot.pause()
 
@@ -869,7 +948,10 @@ def test_project_review_voiceprint_screen_saves_embeds_and_evaluates(monkeypatch
                 if started.is_set():
                     break
 
-            assert isinstance(pilot.app.screen, voiceprint_review_workflow.VoiceprintReviewProcessingScreen)
+            assert isinstance(
+                pilot.app.screen,
+                voiceprint_review_workflow.VoiceprintReviewProcessingScreen,
+            )
             release.set()
 
             for _ in range(10):
@@ -884,16 +966,22 @@ def test_project_review_voiceprint_screen_saves_embeds_and_evaluates(monkeypatch
             await pilot.pause()
 
             assert isinstance(pilot.app.screen, VoiceprintReviewScreen)
-            assert "historical risks 0" in str(pilot.app.screen.query_one("#status", Static).render())
+            assert "historical risks 0" in str(
+                pilot.app.screen.query_one("#status", Static).render()
+            )
             completed.append(1)
 
     asyncio.run(scenario())
     assert completed == [1]
 
 
-def test_project_review_tui_voiceprint_tab_shows_current_view(monkeypatch, tmp_path: Path) -> None:
+def test_project_review_tui_voiceprint_tab_shows_current_view(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Embedded voiceprint review should clearly show the active sub-view."""
-    session = _voiceprint_review_session(tmp_path, return_hint="return to Project Review")
+    session = _voiceprint_review_session(
+        tmp_path, return_hint="return to Project Review"
+    )
 
     monkeypatch.setattr(
         speaker_tui,
@@ -902,12 +990,17 @@ def test_project_review_tui_voiceprint_tab_shows_current_view(monkeypatch, tmp_p
     )
 
     async def scenario() -> None:
-        async with SpeakerReviewApp(_session(with_status=True)).run_test(size=(120, 24)) as pilot:
+        async with SpeakerReviewApp(_session(with_status=True)).run_test(
+            size=(120, 24)
+        ) as pilot:
             await pilot.press("v")
             await pilot.pause()
 
             assert isinstance(pilot.app.screen, VoiceprintReviewScreen)
-            assert "view=[bold cyan]Project candidates" in pilot.app.screen._overview_pane()
+            assert (
+                "view=[bold cyan]Project candidates"
+                in pilot.app.screen._overview_pane()
+            )
             assert "Tab -> Global library" in pilot.app.screen._overview_pane()
 
             await pilot.press("tab")
@@ -934,19 +1027,27 @@ def test_project_review_tui_requires_saved_names_before_voiceprint() -> None:
             await pilot.pause()
 
             assert not isinstance(pilot.app.screen, VoiceprintReviewScreen)
-            assert "Save speaker names" in str(pilot.app.query_one("#status", Static).render())
+            assert "Save speaker names" in str(
+                pilot.app.query_one("#status", Static).render()
+            )
 
     asyncio.run(scenario())
 
 
-def test_project_review_tui_switches_projects_and_saves_active_project(monkeypatch, tmp_path: Path) -> None:
+def test_project_review_tui_switches_projects_and_saves_active_project(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Project switching should reload review state and bind save to the active project."""
     current_dir = (tmp_path / "projects" / "p-current").resolve()
     target_dir = (tmp_path / "projects" / "p-target").resolve()
     current_dir.mkdir(parents=True)
     target_dir.mkdir(parents=True)
-    current_session = _session_for_project(current_dir, project_id="p-current", title="Current")
-    target_session = _session_for_project(target_dir, project_id="p-target", title="Target")
+    current_session = _session_for_project(
+        current_dir, project_id="p-current", title="Current"
+    )
+    target_session = _session_for_project(
+        target_dir, project_id="p-target", title="Target"
+    )
     picker_session = ProjectPickerSession(
         projects_dir=current_dir.parent,
         projects=[
@@ -956,17 +1057,27 @@ def test_project_review_tui_switches_projects_and_saves_active_project(monkeypat
     )
     saved_projects: list[Path] = []
 
-    monkeypatch.setattr(speaker_tui, "load_project_picker_session", lambda projects_dir: picker_session)
+    monkeypatch.setattr(
+        speaker_tui, "load_project_picker_session", lambda projects_dir: picker_session
+    )
     monkeypatch.setattr(
         speaker_tui,
         "load_speaker_review_session",
-        lambda project_dir, **kwargs: target_session if Path(project_dir).resolve() == target_dir else current_session,
+        lambda project_dir, **kwargs: (
+            target_session
+            if Path(project_dir).resolve() == target_dir
+            else current_session
+        ),
     )
 
-    def save_active_project(project_dir: Path, decision: SpeakerReviewDecision) -> SpeakerReviewSaveOutcome:
+    def save_active_project(
+        project_dir: Path, decision: SpeakerReviewDecision
+    ) -> SpeakerReviewSaveOutcome:
         saved_projects.append(project_dir)
         assert decision.project_dir == target_dir
-        return SpeakerReviewSaveOutcome(Path("speaker_map.json"), Path("transcript.txt"), Path("subtitle.srt"))
+        return SpeakerReviewSaveOutcome(
+            Path("speaker_map.json"), Path("transcript.txt"), Path("subtitle.srt")
+        )
 
     app = SpeakerReviewApp(current_session, project_save_handler=save_active_project)
 
@@ -1007,12 +1118,16 @@ def test_project_review_tui_blocks_project_switch_with_unsaved_changes() -> None
             await pilot.pause()
 
             assert not isinstance(app.screen, ProjectPickerScreen)
-            assert "Save current project changes" in str(app.query_one("#status", Static).render())
+            assert "Save current project changes" in str(
+                app.query_one("#status", Static).render()
+            )
 
     asyncio.run(scenario())
 
 
-def test_run_speaker_rematch_refreshes_visible_diagnostics(monkeypatch, tmp_path: Path) -> None:
+def test_run_speaker_rematch_refreshes_visible_diagnostics(
+    monkeypatch, tmp_path: Path
+) -> None:
     """The m action backend should rebuild all diagnostics visible in Project Review."""
     project_dir = (tmp_path / "projects" / "p-current").resolve()
     project_dir.mkdir(parents=True)
@@ -1023,7 +1138,19 @@ def test_run_speaker_rematch_refreshes_visible_diagnostics(monkeypatch, tmp_path
         "local-speechbrain",
         "test-model",
         0.75,
-        [SpeakerMatch(0, "Speaker A", "米汤", 0.91, True, 2, best_name="米汤", best_score=0.91, accepted_name="米汤")],
+        [
+            SpeakerMatch(
+                0,
+                "Speaker A",
+                "米汤",
+                0.91,
+                True,
+                2,
+                best_name="米汤",
+                best_score=0.91,
+                accepted_name="米汤",
+            )
+        ],
     )
     calls: list[str] = []
 
@@ -1052,13 +1179,23 @@ def test_run_speaker_rematch_refreshes_visible_diagnostics(monkeypatch, tmp_path
     def fake_load(project_dir_arg: Path, **kwargs) -> SpeakerReviewSession:
         calls.append("load")
         assert project_dir_arg == project_dir
-        assert kwargs == {"page_size": 7, "store_dir": store_dir, "allow_correction": False}
+        assert kwargs == {
+            "page_size": 7,
+            "store_dir": store_dir,
+            "allow_correction": False,
+        }
         return session
 
     monkeypatch.setattr(speaker_rematch_workflow, "match_project_speakers", fake_match)
-    monkeypatch.setattr(speaker_rematch_workflow, "analyze_project_speaker_clusters", fake_cluster)
-    monkeypatch.setattr(speaker_rematch_workflow, "match_project_speaker_samples", fake_sample_match)
-    monkeypatch.setattr(speaker_rematch_workflow, "load_speaker_review_session", fake_load)
+    monkeypatch.setattr(
+        speaker_rematch_workflow, "analyze_project_speaker_clusters", fake_cluster
+    )
+    monkeypatch.setattr(
+        speaker_rematch_workflow, "match_project_speaker_samples", fake_sample_match
+    )
+    monkeypatch.setattr(
+        speaker_rematch_workflow, "load_speaker_review_session", fake_load
+    )
 
     result = speaker_rematch_workflow.run_speaker_rematch(
         project_dir,
@@ -1071,11 +1208,15 @@ def test_run_speaker_rematch_refreshes_visible_diagnostics(monkeypatch, tmp_path
     assert calls == ["match", "cluster", "sample-match", "load"]
 
 
-def test_project_review_tui_rematches_speakers_and_refreshes(monkeypatch, tmp_path: Path) -> None:
+def test_project_review_tui_rematches_speakers_and_refreshes(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Project Review should rerun voiceprint matching and reload visible matches."""
     current_dir = (tmp_path / "projects" / "p-current").resolve()
     current_dir.mkdir(parents=True)
-    current_session = _session_for_project(current_dir, project_id="p-current", title="Current")
+    current_session = _session_for_project(
+        current_dir, project_id="p-current", title="Current"
+    )
     target_session = replace(
         current_session,
         speakers=[
@@ -1084,7 +1225,9 @@ def test_project_review_tui_rematches_speakers_and_refreshes(monkeypatch, tmp_pa
                 "Speaker A",
                 current_session.speakers[0].segments,
                 "墨泪",
-                SpeakerMatchCandidate("墨泪", 0.91, True, best_name="墨泪", best_score=0.91),
+                SpeakerMatchCandidate(
+                    "墨泪", 0.91, True, best_name="墨泪", best_score=0.91
+                ),
             ),
             current_session.speakers[1],
         ],
@@ -1096,8 +1239,29 @@ def test_project_review_tui_rematches_speakers_and_refreshes(monkeypatch, tmp_pa
         "test-model",
         0.75,
         [
-            SpeakerMatch(0, "Speaker A", "墨泪", 0.91, True, 2, best_name="墨泪", best_score=0.91, accepted_name="墨泪", threshold=0.75),
-            SpeakerMatch(1, "Speaker B", None, 0.64, False, 2, best_name="欧丁", best_score=0.64, threshold=0.75),
+            SpeakerMatch(
+                0,
+                "Speaker A",
+                "墨泪",
+                0.91,
+                True,
+                2,
+                best_name="墨泪",
+                best_score=0.91,
+                accepted_name="墨泪",
+                threshold=0.75,
+            ),
+            SpeakerMatch(
+                1,
+                "Speaker B",
+                None,
+                0.64,
+                False,
+                2,
+                best_name="欧丁",
+                best_score=0.64,
+                threshold=0.75,
+            ),
         ],
     )
     unblock = threading.Event()
@@ -1127,7 +1291,9 @@ def test_project_review_tui_rematches_speakers_and_refreshes(monkeypatch, tmp_pa
 
             assert app.session == target_session
             assert app._speaker().current_name == "墨泪"
-            assert "Rematch complete: matched 1/2" in str(app.query_one("#status", Static).render())
+            assert "Rematch complete: matched 1/2" in str(
+                app.query_one("#status", Static).render()
+            )
 
     asyncio.run(scenario())
 
@@ -1143,22 +1309,45 @@ def test_project_review_tui_rematches_speakers_and_refreshes(monkeypatch, tmp_pa
     ]
 
 
-def test_project_review_tui_rematch_allows_unpersisted_initial_matches(monkeypatch, tmp_path: Path) -> None:
+def test_project_review_tui_rematch_allows_unpersisted_initial_matches(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Derived accepted matches should not be treated as unsaved human edits."""
     project_dir = (tmp_path / "projects" / "p-current").resolve()
     project_dir.mkdir(parents=True)
     session = _session_for_project(project_dir, project_id="p-current", title="Current")
     session.speakers[0].current_name = "墨泪"
-    session.speakers[0].match = SpeakerMatchCandidate("墨泪", 0.91, True, best_name="墨泪", best_score=0.91)
-    session = replace(session, overview=replace(session.overview, saved_names_by_speaker={}))
+    session.speakers[0].match = SpeakerMatchCandidate(
+        "墨泪", 0.91, True, best_name="墨泪", best_score=0.91
+    )
+    session = replace(
+        session, overview=replace(session.overview, saved_names_by_speaker={})
+    )
     summary = SpeakerMatchSummary(
         project_dir / "speakers" / "speaker_matches.json",
         "local-speechbrain",
         "test-model",
         0.75,
-        [SpeakerMatch(0, "Speaker A", "墨泪", 0.91, True, 2, best_name="墨泪", best_score=0.91, accepted_name="墨泪", threshold=0.75)],
+        [
+            SpeakerMatch(
+                0,
+                "Speaker A",
+                "墨泪",
+                0.91,
+                True,
+                2,
+                best_name="墨泪",
+                best_score=0.91,
+                accepted_name="墨泪",
+                threshold=0.75,
+            )
+        ],
     )
-    monkeypatch.setattr(speaker_tui, "run_speaker_rematch", lambda *args, **kwargs: SpeakerRematchResult(summary, session))
+    monkeypatch.setattr(
+        speaker_tui,
+        "run_speaker_rematch",
+        lambda *args, **kwargs: SpeakerRematchResult(summary, session),
+    )
     app = SpeakerReviewApp(session)
 
     async def scenario() -> None:
@@ -1174,7 +1363,13 @@ def test_project_review_tui_rematch_allows_unpersisted_initial_matches(monkeypat
 
 def test_project_review_tui_blocks_rematch_with_unsaved_changes(monkeypatch) -> None:
     """Voiceprint rematch should not discard unsaved human review edits."""
-    monkeypatch.setattr(speaker_tui, "run_speaker_rematch", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected rematch")))
+    monkeypatch.setattr(
+        speaker_tui,
+        "run_speaker_rematch",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("unexpected rematch")
+        ),
+    )
     app = SpeakerReviewApp(_session())
 
     async def scenario() -> None:
@@ -1184,14 +1379,18 @@ def test_project_review_tui_blocks_rematch_with_unsaved_changes(monkeypatch) -> 
             await pilot.pause()
 
             assert not isinstance(app.screen, SpeakerRematchProcessingScreen)
-            assert "Save current review changes" in str(app.query_one("#status", Static).render())
+            assert "Save current review changes" in str(
+                app.query_one("#status", Static).render()
+            )
 
     asyncio.run(scenario())
 
 
 def test_speaker_review_tui_binds_existing_person_by_name() -> None:
     """Typing an existing person name should bind the stable person id."""
-    app = SpeakerReviewApp(_session(people=(KnownPerson(42, "欧丁", "vpp-0000000000000042"),)))
+    app = SpeakerReviewApp(
+        _session(people=(KnownPerson(42, "欧丁", "vpp-0000000000000042"),))
+    )
 
     async def scenario() -> None:
         async with app.run_test() as pilot:
@@ -1286,7 +1485,9 @@ def test_speaker_review_identity_modal_sorts_people_by_score() -> None:
 
             identity = str(app.screen.query_one("#identity-list", Static).render())
 
-            assert identity.index("丰禾") < identity.index("华璟") < identity.index("墨泪")
+            assert (
+                identity.index("丰禾") < identity.index("华璟") < identity.index("墨泪")
+            )
             assert "score 0.910" in identity
             assert "score 0.720" in identity
             assert "score 0.670" in identity
@@ -1311,7 +1512,10 @@ def test_speaker_review_tui_arrow_selects_known_person() -> None:
         best_name="欧丁",
         best_score=0.95,
         best_person_id=42,
-        candidates=(SpeakerMatchPerson(42, "欧丁", 0.95), SpeakerMatchPerson(7, "敬悦", 0.80)),
+        candidates=(
+            SpeakerMatchPerson(42, "欧丁", 0.95),
+            SpeakerMatchPerson(7, "敬悦", 0.80),
+        ),
     )
 
     async def scenario() -> None:
@@ -1346,7 +1550,9 @@ def test_speaker_review_tui_requires_explicit_new_person(tmp_path: Path) -> None
             await pilot.press("enter")
 
             assert app._speaker().current_name == "Speaker A"
-            assert "Unknown person" in str(app.screen.query_one("#identity-status", Static).render())
+            assert "Unknown person" in str(
+                app.screen.query_one("#identity-status", Static).render()
+            )
 
             field.value = "+新同学"
             await pilot.press("enter")
@@ -1367,7 +1573,9 @@ def test_speaker_only_tui_does_not_launch_transcript_correction() -> None:
             await pilot.press("c")
 
             assert pilot.app.return_value is None
-            assert "project review" in str(pilot.app.query_one("#status", Static).render())
+            assert "project review" in str(
+                pilot.app.query_one("#status", Static).render()
+            )
 
     asyncio.run(scenario())
 
@@ -1387,7 +1595,9 @@ def test_speaker_review_tui_recomputes_page_size_after_resize() -> None:
             visible_segments = app._visible_segments(app._speaker())[1]
 
             assert large_page_size > small_page_size
-            assert len(visible_segments) == min(app._speaker().segment_count, large_page_size)
+            assert len(visible_segments) == min(
+                app._speaker().segment_count, large_page_size
+            )
 
     asyncio.run(scenario())
 
@@ -1442,14 +1652,20 @@ def test_speaker_review_tui_plays_selected_sample(monkeypatch) -> None:
     assert captured["start_seconds"] == 0.0
     assert captured["duration_seconds"] == 2.0
     assert captured_paths["source"] == Path("source.mp4")
-    assert captured_paths["media"] == Path("tmp/project_review_playback/speaker_0_sentence_2_2000_2500.wav")
+    assert captured_paths["media"] == Path(
+        "tmp/project_review_playback/speaker_0_sentence_2_2000_2500.wav"
+    )
 
 
-def test_speaker_review_preview_clip_reuses_fresh_cache(monkeypatch, tmp_path: Path) -> None:
+def test_speaker_review_preview_clip_reuses_fresh_cache(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Repeated playback of the same sample should reuse the generated WAV."""
     source = tmp_path / "source.mp4"
     source.write_bytes(b"media")
-    segment = SentenceSegment(begin_time_ms=2000, end_time_ms=2500, text="第二句", speaker_id=0, sentence_id=2)
+    segment = SentenceSegment(
+        begin_time_ms=2000, end_time_ms=2500, text="第二句", speaker_id=0, sentence_id=2
+    )
     calls: list[tuple[float, float]] = []
 
     def fake_extract_audio_clip(
@@ -1496,7 +1712,9 @@ def test_speaker_review_preview_clip_prunes_old_cache(tmp_path: Path) -> None:
         path.write_bytes(b"RIFF" + bytes([index]) * 128)
         os.utime(path, (1000 + index, 1000 + index))
 
-    speaker_tui._prune_preview_clips(cache_dir, keep_path=keep, max_files=2, max_bytes=10_000)
+    speaker_tui._prune_preview_clips(
+        cache_dir, keep_path=keep, max_files=2, max_bytes=10_000
+    )
 
     assert keep.exists()
     assert newest.exists()
@@ -1580,17 +1798,23 @@ def test_speaker_review_tui_pages_samples() -> None:
             app = pilot.app
             speaker = app._speaker()
 
-            assert [segment.text for segment in app._visible_segments(speaker)[1]] == ["第一句"]
+            assert [segment.text for segment in app._visible_segments(speaker)[1]] == [
+                "第一句"
+            ]
 
             await pilot.press("]")
 
             assert speaker.selected_sample_index == 1
-            assert [segment.text for segment in app._visible_segments(speaker)[1]] == ["第二句"]
+            assert [segment.text for segment in app._visible_segments(speaker)[1]] == [
+                "第二句"
+            ]
 
     asyncio.run(scenario())
 
 
-def test_load_speaker_review_session_builds_project_overview_from_disk(tmp_path: Path) -> None:
+def test_load_speaker_review_session_builds_project_overview_from_disk(
+    tmp_path: Path,
+) -> None:
     """Session loading should combine project files, match files, and voiceprint DB state."""
     project_dir, store_dir = _project_with_voiceprint_state(tmp_path)
     _write_cluster_report(project_dir)
@@ -1606,10 +1830,16 @@ def test_load_speaker_review_session_builds_project_overview_from_disk(tmp_path:
     assert overview.saved_names_by_speaker == {0: "欧丁", 1: "Speaker B"}
     assert overview.voiceprint.captured_names_by_speaker == {0: frozenset({"欧丁"})}
     assert len(overview.voiceprint.captured_sample_ids) == 1
-    assert overview.voiceprint.embedded_sample_ids == overview.voiceprint.captured_sample_ids
+    assert (
+        overview.voiceprint.embedded_sample_ids
+        == overview.voiceprint.captured_sample_ids
+    )
     assert session.people_names == ["欧丁"]
     assert session.people[0].person_id == session.speakers[0].person_id
-    assert [speaker.current_name for speaker in session.speakers] == ["欧丁", "Speaker B"]
+    assert [speaker.current_name for speaker in session.speakers] == [
+        "欧丁",
+        "Speaker B",
+    ]
     assert [speaker.ignored for speaker in session.speakers] == [False, True]
     diagnostic = session.cluster_diagnostics[0]
     assert diagnostic.status == "ok"
@@ -1621,10 +1851,14 @@ def test_load_speaker_review_session_builds_project_overview_from_disk(tmp_path:
     assert identity.status == "identity-ok"
 
 
-def test_load_speaker_review_session_prefers_corrected_transcript(tmp_path: Path) -> None:
+def test_load_speaker_review_session_prefers_corrected_transcript(
+    tmp_path: Path,
+) -> None:
     """Project review should reopen the corrected transcript after correction acceptance."""
     project_dir, store_dir = _project_with_voiceprint_state(tmp_path)
-    corrected = json.loads((project_dir / "asr" / "sentences.json").read_text(encoding="utf-8"))
+    corrected = json.loads(
+        (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8")
+    )
     corrected["sentences"][0]["text"] = "你好，我是修正后的欧丁。"
     corrected["full_text"] = "你好，我是修正后的欧丁。收到。"
     (project_dir / "asr" / "sentences_corrected.json").write_text(
@@ -1637,7 +1871,9 @@ def test_load_speaker_review_session_prefers_corrected_transcript(tmp_path: Path
     assert session.speakers[0].segments[0].text == "你好，我是修正后的欧丁。"
 
 
-def test_load_speaker_review_session_keeps_named_low_information_speakers(tmp_path: Path) -> None:
+def test_load_speaker_review_session_keeps_named_low_information_speakers(
+    tmp_path: Path,
+) -> None:
     """Review must show a real attendee even when their track is mostly backchannels."""
     project_dir, store_dir = _project_with_voiceprint_state(tmp_path)
     transcript_path = project_dir / "asr" / "sentences.json"
@@ -1652,7 +1888,9 @@ def test_load_speaker_review_session_keeps_named_low_information_speakers(tmp_pa
             "sentence_id": 3,
         }
     )
-    transcript_path.write_text(json.dumps(transcript, ensure_ascii=False), encoding="utf-8")
+    transcript_path.write_text(
+        json.dumps(transcript, ensure_ascii=False), encoding="utf-8"
+    )
     (project_dir / "speakers" / "speaker_map.json").write_text(
         json.dumps({"0": "欧丁", "1": "Speaker B", "2": "岳周"}, ensure_ascii=False),
         encoding="utf-8",
@@ -1660,8 +1898,16 @@ def test_load_speaker_review_session_keeps_named_low_information_speakers(tmp_pa
 
     session = load_speaker_review_session(project_dir, store_dir=store_dir)
 
-    assert [speaker.label for speaker in session.speakers] == ["Speaker A", "Speaker B", "Speaker C"]
-    assert [speaker.current_name for speaker in session.speakers] == ["欧丁", "Speaker B", "岳周"]
+    assert [speaker.label for speaker in session.speakers] == [
+        "Speaker A",
+        "Speaker B",
+        "Speaker C",
+    ]
+    assert [speaker.current_name for speaker in session.speakers] == [
+        "欧丁",
+        "Speaker B",
+        "岳周",
+    ]
 
 
 def test_save_summary_labels_empty_correction_as_no_changes() -> None:
@@ -1781,7 +2027,9 @@ def _session(
     )
 
 
-def _session_for_project(project_dir: Path, *, project_id: str, title: str) -> SpeakerReviewSession:
+def _session_for_project(
+    project_dir: Path, *, project_id: str, title: str
+) -> SpeakerReviewSession:
     """Build a saved review session bound to a specific project."""
     overview = replace(_overview(with_status=True), project_id=project_id, title=title)
     return replace(
@@ -1792,7 +2040,9 @@ def _session_for_project(project_dir: Path, *, project_id: str, title: str) -> S
     )
 
 
-def _project_list_item(project_dir: Path, project_id: str, title: str) -> ProjectListItem:
+def _project_list_item(
+    project_dir: Path, project_id: str, title: str
+) -> ProjectListItem:
     """Build one project picker row."""
     return ProjectListItem(
         project_dir=project_dir,
@@ -1805,7 +2055,9 @@ def _project_list_item(project_dir: Path, project_id: str, title: str) -> Projec
     )
 
 
-def _voiceprint_review_session(tmp_path: Path, *, return_hint: str) -> VoiceprintReviewSession:
+def _voiceprint_review_session(
+    tmp_path: Path, *, return_hint: str
+) -> VoiceprintReviewSession:
     """Build a minimal embeddable voiceprint review session."""
     store_dir = tmp_path / "voiceprints"
     source_path = tmp_path / "meeting.mp4"
@@ -1816,7 +2068,9 @@ def _voiceprint_review_session(tmp_path: Path, *, return_hint: str) -> Voiceprin
     )
     return VoiceprintReviewSession(
         capture=capture,
-        library=VoiceprintLibrarySession(db_path=get_voiceprint_db_path(store_dir), speakers=[]),
+        library=VoiceprintLibrarySession(
+            db_path=get_voiceprint_db_path(store_dir), speakers=[]
+        ),
         quality=analyze_voiceprint_quality(store_dir=store_dir),
         store_dir=store_dir,
         return_hint=return_hint,
@@ -1851,7 +2105,9 @@ def _evaluation_summary(tmp_path: Path) -> VoiceprintEvaluationSummary:
         "Demo",
         True,
         (
-            VoiceprintScoreChange(0, "Speaker A", "欧丁", 0.61, "欧丁", 0.78, 0.17, "improved"),
+            VoiceprintScoreChange(
+                0, "Speaker A", "欧丁", 0.61, "欧丁", 0.78, 0.17, "improved"
+            ),
         ),
     )
     return VoiceprintEvaluationSummary(current, ())
@@ -1912,7 +2168,9 @@ def _cluster_diagnostics() -> dict[int, SpeakerClusterDiagnostic]:
     }
 
 
-def _sample_identity_scores() -> dict[int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]]:
+def _sample_identity_scores() -> dict[
+    int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]
+]:
     """Build sample identity diagnostics for TUI rendering tests."""
     return {
         0: {
@@ -1946,7 +2204,9 @@ def _sample_identity_scores() -> dict[int, dict[tuple[int | None, int, int], Spe
     }
 
 
-def _sample_identity_scores_with_weak() -> dict[int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]]:
+def _sample_identity_scores_with_weak() -> dict[
+    int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]
+]:
     """Build sample identity diagnostics with a weak first sample."""
     scores = _sample_identity_scores()
     scores[0][(1, 0, 1000)] = SpeakerSampleIdentityScore(
@@ -1977,7 +2237,9 @@ def _correction_summary(
         review_path=Path("review.md"),
         proposal_path=None if no_proposal else Path("proposal.md"),
         proposal_diff_path=None if no_proposal else diff_path or Path("proposal.diff"),
-        proposal_json_path=None if no_proposal else proposal_path or Path("proposal.json"),
+        proposal_json_path=None
+        if no_proposal
+        else proposal_path or Path("proposal.json"),
         change_count=1 if accepted else 0,
         sample_change_count=0 if no_proposal else 1,
         proposed_change_count=0 if no_proposal else 1,
@@ -1987,8 +2249,12 @@ def _correction_summary(
         model_error=None,
         understanding=[],
         corrected_sentences_path=Path("sentences_corrected.json") if accepted else None,
-        corrected_transcript_path=Path("transcript_corrected.txt") if accepted else None,
-        corrected_named_transcript_path=Path("transcript_named_corrected.txt") if accepted else None,
+        corrected_transcript_path=Path("transcript_corrected.txt")
+        if accepted
+        else None,
+        corrected_named_transcript_path=Path("transcript_named_corrected.txt")
+        if accepted
+        else None,
         corrected_srt_path=Path("subtitle_named_corrected.srt") if accepted else None,
         hotwords_path=Path("asr_hotwords.json") if accepted else None,
         applied_path=Path("applied.json") if accepted else None,
@@ -2048,7 +2314,12 @@ def _project_with_voiceprint_state(tmp_path: Path) -> tuple[Path, Path]:
         json.dumps({"0": person_id}, ensure_ascii=False),
         encoding="utf-8",
     )
-    upsert_voiceprint_embedding(sample_id, LOCAL_SPEECHBRAIN_MODEL, [0.1, 0.2], get_voiceprint_db_path(store_dir))
+    upsert_voiceprint_embedding(
+        sample_id,
+        LOCAL_SPEECHBRAIN_MODEL,
+        [0.1, 0.2],
+        get_voiceprint_db_path(store_dir),
+    )
     return project_dir, store_dir
 
 
@@ -2088,7 +2359,9 @@ def _write_project_review_files(project_dir: Path) -> None:
             },
         ],
     }
-    paths.asr_dir.joinpath("sentences.json").write_text(json.dumps(transcript, ensure_ascii=False), encoding="utf-8")
+    paths.asr_dir.joinpath("sentences.json").write_text(
+        json.dumps(transcript, ensure_ascii=False), encoding="utf-8"
+    )
     paths.speakers_dir.joinpath("speaker_map.json").write_text(
         json.dumps({"0": "欧丁", "1": "Speaker B"}, ensure_ascii=False),
         encoding="utf-8",
@@ -2376,7 +2649,9 @@ def test_apply_sentence_reassignments_rewrites_persisted_files(tmp_path: Path) -
             },
         ],
     }
-    (asr_dir / "sentences.json").write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    (asr_dir / "sentences.json").write_text(
+        json.dumps(raw, ensure_ascii=False), encoding="utf-8"
+    )
     corrected = {
         "full_text": "第一句修正。第二句修正。",
         "detected_speakers": [0, 1],
@@ -2414,16 +2689,23 @@ def test_apply_sentence_reassignments_rewrites_persisted_files(tmp_path: Path) -
         ],
     )
 
-    assert {path.name for path in written} == {"sentences.json", "sentences_corrected.json"}
+    assert {path.name for path in written} == {
+        "sentences.json",
+        "sentences_corrected.json",
+    }
     raw_after = json.loads((asr_dir / "sentences.json").read_text(encoding="utf-8"))
-    corrected_after = json.loads((asr_dir / "sentences_corrected.json").read_text(encoding="utf-8"))
+    corrected_after = json.loads(
+        (asr_dir / "sentences_corrected.json").read_text(encoding="utf-8")
+    )
     assert raw_after["sentences"][1]["speaker_id"] == 0
     assert corrected_after["sentences"][1]["speaker_id"] == 0
     # detected_speakers should drop the now-unused speaker.
     assert raw_after["detected_speakers"] == [0]
 
 
-def test_apply_sentence_reassignments_falls_back_to_timing_match(tmp_path: Path) -> None:
+def test_apply_sentence_reassignments_falls_back_to_timing_match(
+    tmp_path: Path,
+) -> None:
     """Sentences without sentence_id should still match by timing."""
     asr_dir = tmp_path / "asr"
     asr_dir.mkdir()
@@ -2437,7 +2719,9 @@ def test_apply_sentence_reassignments_falls_back_to_timing_match(tmp_path: Path)
             }
         ]
     }
-    (asr_dir / "sentences.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    (asr_dir / "sentences.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
 
     apply_sentence_reassignments(
         asr_dir,
@@ -2458,15 +2742,21 @@ def test_apply_sentence_reassignments_falls_back_to_timing_match(tmp_path: Path)
 def test_sentence_reassignment_changes_uses_speaker_names() -> None:
     """The save-modal helper should look up speaker names by current state."""
     speakers = [
-        ReviewSpeaker(0, "Speaker A", [
-            SentenceSegment(
-                begin_time_ms=2000,
-                end_time_ms=2500,
-                text="第二句",
-                speaker_id=0,
-                sentence_id=2,
-            ),
-        ], "惧留孙", None),
+        ReviewSpeaker(
+            0,
+            "Speaker A",
+            [
+                SentenceSegment(
+                    begin_time_ms=2000,
+                    end_time_ms=2500,
+                    text="第二句",
+                    speaker_id=0,
+                    sentence_id=2,
+                ),
+            ],
+            "惧留孙",
+            None,
+        ),
         ReviewSpeaker(1, "Speaker B", [], "欧丁", None),
     ]
     reassignments = [

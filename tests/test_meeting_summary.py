@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from app.config import Settings
-from app.meeting_summary import _parse_summary_text, generate_meeting_summary, render_meeting_summary_markdown
+from app.meeting_summary import (
+    _parse_summary_text,
+    generate_meeting_summary,
+    render_meeting_summary_markdown,
+)
 from app.models import SentenceSegment, TranscriptResult
 
 
@@ -36,7 +40,13 @@ def test_parse_summary_text_caps_to_five_keywords_and_strips_short() -> None:
     )
 
     # "a" is too short; duplicate "飞轮POC" is dropped; result is capped at 5.
-    assert summary.keywords == ["飞轮POC", "518里程碑", "诊断准确率30%", "真实卡单#76", "额外条目"]
+    assert summary.keywords == [
+        "飞轮POC",
+        "518里程碑",
+        "诊断准确率30%",
+        "真实卡单#76",
+        "额外条目",
+    ]
 
 
 def test_render_meeting_summary_markdown_uses_keywords() -> None:
@@ -79,7 +89,11 @@ def test_generate_meeting_summary_uses_single_full_transcript_call(monkeypatch) 
 
     summary = generate_meeting_summary(
         result,
-        settings=Settings(dashscope_api_key="key", dashscope_base_url=None, dashscope_summary_model="qwen-test"),
+        settings=Settings(
+            dashscope_api_key="key",
+            dashscope_base_url=None,
+            dashscope_summary_model="qwen-test",
+        ),
         model=None,
     )
 

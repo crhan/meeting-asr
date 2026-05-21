@@ -111,3 +111,21 @@ def presign_oss_object(
     resolved_settings = settings or load_settings(require_oss=True)
     bucket = build_oss_bucket(resolved_settings)
     return bucket.sign_url("GET", object_key, expires_seconds, slash_safe=True)
+
+
+def oss_object_exists(object_key: str, *, settings: Settings | None = None) -> bool:
+    """
+    Return whether an OSS object currently exists.
+
+    Args:
+        object_key: Existing OSS object key to check.
+        settings: Optional loaded settings.
+
+    Returns:
+        True when the object is still present in OSS.
+    """
+    if not object_key.strip():
+        raise ValueError("OSS object key must not be empty.")
+    resolved_settings = settings or load_settings(require_oss=True)
+    bucket = build_oss_bucket(resolved_settings)
+    return bool(bucket.object_exists(object_key))

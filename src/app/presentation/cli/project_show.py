@@ -23,7 +23,11 @@ from app.core.project_models import (
 )
 from app.core.project_workflow import ProjectWorkflowSummary
 from app.presentation.cli.output import cli_console
-from app.presentation.cli.speaker_match_table import SpeakerMatchRow, render_speaker_match_table, speaker_match_rows
+from app.presentation.cli.speaker_match_table import (
+    SpeakerMatchRow,
+    render_speaker_match_table,
+    speaker_match_rows,
+)
 from app.postprocess import speaker_id_to_label
 from app.speaker_labeling import load_project_ignored_speakers
 from app.speaker_match_status import MATCH_STATUS_IGNORED, MATCH_STATUS_MATCHED
@@ -79,12 +83,16 @@ def _status_panel(view: ProjectShowView) -> Panel:
     grid.add_column(justify="right", no_wrap=True)
     grid.add_row(f"[bold]{view.manifest.title}[/]", f"[bold cyan]{view.project_ref}[/]")
     grid.add_row(f"[dim]{view.project_dir}[/]", f"[{style}]{view.workflow.state}[/]")
-    return Panel(grid, title=f"[bold {style}]Project[/]", border_style=style, expand=False)
+    return Panel(
+        grid, title=f"[bold {style}]Project[/]", border_style=style, expand=False
+    )
 
 
 def _details_table(view: ProjectShowView) -> Table:
     """Build key project metadata rows."""
-    table = Table(title="Details", box=box.SIMPLE_HEAVY, show_edge=False, pad_edge=False)
+    table = Table(
+        title="Details", box=box.SIMPLE_HEAVY, show_edge=False, pad_edge=False
+    )
     table.add_column("Item", style="bold", no_wrap=True)
     table.add_column("Value")
     for item, value in _detail_rows(view):
@@ -130,7 +138,9 @@ def _title_source_label(manifest: ProjectManifest) -> str:
         return "manual"
     if manifest.title_source == TITLE_SOURCE_SOURCE:
         return "source filename"
-    if manifest.title_source == TITLE_SOURCE_UNKNOWN and _has_legacy_custom_title(manifest):
+    if manifest.title_source == TITLE_SOURCE_UNKNOWN and _has_legacy_custom_title(
+        manifest
+    ):
         return "manual (legacy)"
     return "unknown"
 
@@ -149,7 +159,14 @@ def _runtime_rows(manifest: ProjectManifest) -> list[tuple[str, str]]:
         return []
     rows = [
         ("Current stage", str(runtime.get("current_stage") or "-")),
-        ("Stage updated", str(runtime.get("last_heartbeat_at") or runtime.get("stage_started_at") or "-")),
+        (
+            "Stage updated",
+            str(
+                runtime.get("last_heartbeat_at")
+                or runtime.get("stage_started_at")
+                or "-"
+            ),
+        ),
     ]
     external = runtime.get("external_ids")
     if isinstance(external, dict) and external:
@@ -172,7 +189,9 @@ def _external_ids_label(external: dict) -> str:
 
 def _outputs_table(view: ProjectShowView) -> Table:
     """Build output artifact rows."""
-    table = Table(title="Outputs", box=box.SIMPLE_HEAVY, show_edge=False, pad_edge=False)
+    table = Table(
+        title="Outputs", box=box.SIMPLE_HEAVY, show_edge=False, pad_edge=False
+    )
     table.add_column("Artifact", style="bold", no_wrap=True)
     table.add_column("Status", no_wrap=True)
     table.add_column("Command", no_wrap=True)
@@ -183,7 +202,9 @@ def _outputs_table(view: ProjectShowView) -> Table:
 
 def _summary_panel(view: ProjectShowView) -> Panel | None:
     """Build a direct meeting-summary preview when the artifact exists."""
-    row = _manifest_output(view.project_dir, view.manifest, "Memory index", "summary", ("meeting_summary",))
+    row = _manifest_output(
+        view.project_dir, view.manifest, "Memory index", "summary", ("meeting_summary",)
+    )
     if row.path is None:
         return None
     try:
@@ -192,7 +213,12 @@ def _summary_panel(view: ProjectShowView) -> Panel | None:
         return None
     if not content:
         return None
-    return Panel(Markdown(content), title="[bold]Memory Index[/]", border_style="cyan", expand=False)
+    return Panel(
+        Markdown(content),
+        title="[bold]Memory Index[/]",
+        border_style="cyan",
+        expand=False,
+    )
 
 
 def _speaker_match_table(view: ProjectShowView) -> Table | None:
@@ -207,7 +233,7 @@ def _speaker_match_rows(view: ProjectShowView) -> tuple[SpeakerMatchRow, ...]:
         return ()
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return ()
     if not isinstance(payload, dict):
         return ()
@@ -228,7 +254,12 @@ def _output_rows(view: ProjectShowView) -> list[_OutputRow]:
             view.manifest,
             "Final transcript",
             "auto",
-            ("corrected_named_transcript", "named_transcript", "anonymous_transcript", "plain_transcript"),
+            (
+                "corrected_named_transcript",
+                "named_transcript",
+                "anonymous_transcript",
+                "plain_transcript",
+            ),
         ),
         _manifest_output(
             root,
@@ -237,14 +268,24 @@ def _output_rows(view: ProjectShowView) -> list[_OutputRow]:
             "srt",
             ("corrected_named_subtitle", "named_subtitle", "subtitle"),
         ),
-        _manifest_output(root, view.manifest, "Speaker transcript", "speakers", ("anonymous_transcript",)),
-        _manifest_output(root, view.manifest, "Plain transcript", "plain", ("plain_transcript",)),
+        _manifest_output(
+            root,
+            view.manifest,
+            "Speaker transcript",
+            "speakers",
+            ("anonymous_transcript",),
+        ),
+        _manifest_output(
+            root, view.manifest, "Plain transcript", "plain", ("plain_transcript",)
+        ),
     ]
 
 
 def _commands_table(view: ProjectShowView) -> Table:
     """Build copyable next commands."""
-    table = Table(title="Commands", box=box.SIMPLE_HEAVY, show_edge=False, pad_edge=False)
+    table = Table(
+        title="Commands", box=box.SIMPLE_HEAVY, show_edge=False, pad_edge=False
+    )
     table.add_column("#", justify="right", style="bold cyan", no_wrap=True)
     table.add_column("Action", style="bold", no_wrap=True)
     table.add_column("Command")
@@ -256,7 +297,11 @@ def _commands_table(view: ProjectShowView) -> Table:
 def _command_rows(view: ProjectShowView) -> list[tuple[str, str]]:
     """Return common project follow-up commands."""
     quoted_ref = shlex.quote(view.project_ref)
-    next_command = f"meeting-asr project review {quoted_ref}" if _has_unresolved_matches(view) else view.workflow.next_command
+    next_command = (
+        f"meeting-asr project review {quoted_ref}"
+        if _has_unresolved_matches(view)
+        else view.workflow.next_command
+    )
     rows = [
         ("Next", next_command),
         *_polish_command_rows(view, quoted_ref),
@@ -311,7 +356,9 @@ def _local_correction_label(view: ProjectShowView) -> str | None:
     return status.replace("_", " ")
 
 
-def _polish_command_rows(view: ProjectShowView, quoted_ref: str) -> list[tuple[str, str]]:
+def _polish_command_rows(
+    view: ProjectShowView, quoted_ref: str
+) -> list[tuple[str, str]]:
     """Return transcript-polish follow-up commands for project show."""
     state = _polish_state(view)
     if state is None:
@@ -320,13 +367,24 @@ def _polish_command_rows(view: ProjectShowView, quoted_ref: str) -> list[tuple[s
     if status == "proposal_ready":
         proposal = _proposal_option(view, state)
         return [
-            ("Accept transcript polish", f"meeting-asr project correct accept {quoted_ref}{proposal}"),
-            ("Inspect transcript polish diff", f"meeting-asr project correct diff {quoted_ref}{proposal}"),
+            (
+                "Accept transcript polish",
+                f"meeting-asr project correct accept {quoted_ref}{proposal}",
+            ),
+            (
+                "Inspect transcript polish diff",
+                f"meeting-asr project correct diff {quoted_ref}{proposal}",
+            ),
         ]
     if status == "failed":
         model = str(state.get("model") or "").strip()
         suffix = f" --model {shlex.quote(model)}" if model else ""
-        return [("Retry transcript polish", f"meeting-asr project correct polish {quoted_ref}{suffix}")]
+        return [
+            (
+                "Retry transcript polish",
+                f"meeting-asr project correct polish {quoted_ref}{suffix}",
+            )
+        ]
     return []
 
 
@@ -356,7 +414,7 @@ def _latest_polish_proposal_state(project_dir: Path) -> dict | None:
     for path in reversed(proposals):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except OSError, json.JSONDecodeError:
             continue
         if not isinstance(payload, dict) or payload.get("category") != "polish":
             continue
@@ -371,7 +429,9 @@ def _latest_polish_proposal_state(project_dir: Path) -> dict | None:
     return None
 
 
-def _manifest_output(root: Path, manifest: ProjectManifest, label: str, kind: str, keys: tuple[str, ...]) -> _OutputRow:
+def _manifest_output(
+    root: Path, manifest: ProjectManifest, label: str, kind: str, keys: tuple[str, ...]
+) -> _OutputRow:
     """Resolve the first existing manifest output for a row."""
     for key in keys:
         value = manifest.outputs.get(key)
@@ -452,7 +512,7 @@ def _cost_label(value: object) -> str:
         return "-"
     try:
         return format_asr_cost(asr_cost_from_dict(value))
-    except (TypeError, ValueError, KeyError):
+    except TypeError, ValueError, KeyError:
         return "-"
 
 
@@ -464,8 +524,10 @@ def _active_speaker_ids(project_dir: Path) -> set[int] | None:
     try:
         from app.speaker_labeling import load_transcript_result
 
-        return set(load_transcript_result(path, include_low_information=True).detected_speakers)
-    except (OSError, ValueError, TypeError, KeyError):
+        return set(
+            load_transcript_result(path, include_low_information=True).detected_speakers
+        )
+    except OSError, ValueError, TypeError, KeyError:
         return None
 
 
@@ -477,7 +539,7 @@ def _mapped_speaker_names(mapped: object, active_ids: set[int] | None) -> list[s
     for speaker_id, name in sorted(mapped.items(), key=lambda item: str(item[0])):
         try:
             numeric_id = int(speaker_id)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         if active_ids is not None and numeric_id not in active_ids:
             continue
@@ -492,7 +554,7 @@ def _safe_float(value: object) -> float | None:
     """Return a float value when possible."""
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -500,7 +562,7 @@ def _safe_int(value: object) -> int:
     """Return a non-negative integer display value."""
     try:
         return max(0, int(str(value)))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0
 
 
@@ -512,7 +574,7 @@ def _ignored_speaker_count(detected: object, active_ids: set[int] | None) -> int
     for speaker_id in detected:
         try:
             detected_ids.add(int(speaker_id))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return len(detected_ids - active_ids)
 

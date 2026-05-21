@@ -104,7 +104,9 @@ def get_asr_metrics_db_path() -> Path:
     return get_data_dir() / METRICS_DIR / METRICS_DB_FILENAME
 
 
-def record_asr_wait_observation(observation: AsrWaitObservation, db_path: Path | None = None) -> Path:
+def record_asr_wait_observation(
+    observation: AsrWaitObservation, db_path: Path | None = None
+) -> Path:
     """
     Store one ASR wait observation and refresh the backend baseline.
 
@@ -183,7 +185,10 @@ def estimate_asr_wait_seconds(
     baseline = _load_baseline(provider, service, model, endpoint, db_path)
     if baseline is None:
         return None
-    estimate = baseline.intercept_seconds + baseline.slope_seconds_per_audio_second * audio_duration_seconds
+    estimate = (
+        baseline.intercept_seconds
+        + baseline.slope_seconds_per_audio_second * audio_duration_seconds
+    )
     return AsrWaitEstimate(
         estimated_seconds=max(MIN_WAIT_SECONDS, estimate),
         sample_count=baseline.sample_count,
@@ -217,7 +222,10 @@ def _refresh_baseline(
         _delete_baseline(connection, provider, service, model, endpoint)
         return
     now = datetime.now(UTC)
-    weighted_rows = [(_row_weight(created_at, now), duration, wait) for duration, wait, created_at in rows]
+    weighted_rows = [
+        (_row_weight(created_at, now), duration, wait)
+        for duration, wait, created_at in rows
+    ]
     baseline = _baseline_from_weighted_rows(weighted_rows)
     connection.execute(
         """
@@ -381,7 +389,9 @@ def _load_success_rows(
     return [(float(row[0]), float(row[1]), str(row[2])) for row in rows]
 
 
-def _baseline_from_weighted_rows(rows: list[tuple[float, float, float]]) -> AsrWaitBaseline:
+def _baseline_from_weighted_rows(
+    rows: list[tuple[float, float, float]],
+) -> AsrWaitBaseline:
     """
     Build a persisted baseline from weighted rows.
 
@@ -406,7 +416,9 @@ def _baseline_from_weighted_rows(rows: list[tuple[float, float, float]]) -> AsrW
     )
 
 
-def _robust_ratio_rows(rows: list[tuple[float, float, float]]) -> list[tuple[float, float, float]]:
+def _robust_ratio_rows(
+    rows: list[tuple[float, float, float]],
+) -> list[tuple[float, float, float]]:
     """
     Drop extreme wait/audio ratio outliers before building a baseline.
 
@@ -418,7 +430,10 @@ def _robust_ratio_rows(rows: list[tuple[float, float, float]]) -> list[tuple[flo
     """
     if len(rows) < 4:
         return rows
-    log_ratios = [(math.log(wait / max(MIN_AUDIO_DURATION_SECONDS, duration)), weight) for weight, duration, wait in rows]
+    log_ratios = [
+        (math.log(wait / max(MIN_AUDIO_DURATION_SECONDS, duration)), weight)
+        for weight, duration, wait in rows
+    ]
     median = _weighted_quantile(log_ratios, 0.5)
     deviations = [(abs(value - median), weight) for value, weight in log_ratios]
     mad = _weighted_quantile(deviations, 0.5)
@@ -426,12 +441,15 @@ def _robust_ratio_rows(rows: list[tuple[float, float, float]]) -> list[tuple[flo
     filtered = [
         row
         for row in rows
-        if abs(math.log(row[2] / max(MIN_AUDIO_DURATION_SECONDS, row[1])) - median) <= threshold
+        if abs(math.log(row[2] / max(MIN_AUDIO_DURATION_SECONDS, row[1])) - median)
+        <= threshold
     ]
     return filtered if len(filtered) >= 2 else rows
 
 
-def _weighted_linear_baseline(rows: list[tuple[float, float, float]]) -> AsrWaitBaseline | None:
+def _weighted_linear_baseline(
+    rows: list[tuple[float, float, float]],
+) -> AsrWaitBaseline | None:
     """
     Estimate ``wait = intercept + slope * duration`` with recency weights.
 
@@ -473,7 +491,10 @@ def _weighted_ratio_slope(rows: list[tuple[float, float, float]]) -> float:
     Returns:
         Seconds of wait per audio second.
     """
-    ratios = [(wait / max(MIN_AUDIO_DURATION_SECONDS, duration), weight) for weight, duration, wait in rows]
+    ratios = [
+        (wait / max(MIN_AUDIO_DURATION_SECONDS, duration), weight)
+        for weight, duration, wait in rows
+    ]
     return _weighted_quantile(ratios, 0.5)
 
 

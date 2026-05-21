@@ -11,13 +11,18 @@ from rich.table import Table
 import typer
 
 from app.core.project_models import ProjectListItem
-from app.core.project_workflow import ProjectWorkflowSummary, load_project_workflow_summary
+from app.core.project_workflow import (
+    ProjectWorkflowSummary,
+    load_project_workflow_summary,
+)
 from app.presentation.cli.output import cli_console
 from app.presentation.cli.plain import echo_plain_table
 from app.presentation.time_format import format_local_minute
 
 
-def render_project_list(projects_dir: Path, projects: list[ProjectListItem], *, plain: bool = False) -> None:
+def render_project_list(
+    projects_dir: Path, projects: list[ProjectListItem], *, plain: bool = False
+) -> None:
     """
     Render project list rows.
 
@@ -50,7 +55,9 @@ def _echo_project_list_plain(projects: list[ProjectListItem]) -> None:
     """Print project rows as stable tab-separated values."""
     rows = []
     for project in projects:
-        workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
+        workflow = load_project_workflow_summary(
+            project.project_dir, project_ref=project.project_id
+        )
         rows.append(
             (
                 project.project_id,
@@ -71,7 +78,9 @@ def _project_list_table(projects: list[ProjectListItem]) -> Table:
     table.add_column("Title")
     table.add_column("Keywords", style="dim")
     for project in projects:
-        workflow = load_project_workflow_summary(project.project_dir, project_ref=project.project_id)
+        workflow = load_project_workflow_summary(
+            project.project_dir, project_ref=project.project_id
+        )
         table.add_row(
             project.project_id,
             _project_workflow_state_text(workflow),

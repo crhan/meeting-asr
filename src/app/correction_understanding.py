@@ -6,8 +6,16 @@ import re
 from dataclasses import asdict, replace
 
 from app.config import load_settings
-from app.correction_llm import LlmCorrectionSample, LlmReplacementRule, infer_vocabulary_replacements
-from app.correction_types import CorrectionChange, CorrectionEditOptions, CorrectionReplacement
+from app.correction_llm import (
+    LlmCorrectionSample,
+    LlmReplacementRule,
+    infer_vocabulary_replacements,
+)
+from app.correction_types import (
+    CorrectionChange,
+    CorrectionEditOptions,
+    CorrectionReplacement,
+)
 
 CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
@@ -17,7 +25,11 @@ def refine_sample_replacements(
     options: CorrectionEditOptions,
 ) -> tuple[list[CorrectionChange], str | None]:
     """Use AI to refine Chinese sample replacements when local diff is ambiguous."""
-    if not sample_changes or not options.use_ai or not _needs_contextual_replacement_inference(sample_changes):
+    if (
+        not sample_changes
+        or not options.use_ai
+        or not _needs_contextual_replacement_inference(sample_changes)
+    ):
         return sample_changes, None
     try:
         settings = load_settings(require_oss=False, require_dashscope=True)
@@ -46,13 +58,18 @@ def matching_correction_replacements(
     replacements = []
     seen: set[tuple[str, str]] = set()
     for rule in rules:
-        if rule.wrong_text not in change.original_text or rule.corrected_text not in change.corrected_text:
+        if (
+            rule.wrong_text not in change.original_text
+            or rule.corrected_text not in change.corrected_text
+        ):
             continue
         key = (rule.wrong_text, rule.corrected_text)
         if key in seen:
             continue
         seen.add(key)
-        left_context, right_context = replacement_context(change.original_text, rule.wrong_text)
+        left_context, right_context = replacement_context(
+            change.original_text, rule.wrong_text
+        )
         replacements.append(
             CorrectionReplacement(
                 wrong_text=rule.wrong_text,
@@ -73,10 +90,13 @@ def replacement_context(text: str, wrong_text: str) -> tuple[str, str]:
     return text[max(0, index - 24) : index].strip(), text[end : end + 24].strip()
 
 
-def _needs_contextual_replacement_inference(sample_changes: list[CorrectionChange]) -> bool:
+def _needs_contextual_replacement_inference(
+    sample_changes: list[CorrectionChange],
+) -> bool:
     """Return whether sample replacements contain Chinese terms needing model context."""
     return any(
-        _ambiguous_chinese_span(replacement.wrong_text) or _ambiguous_chinese_span(replacement.corrected_text)
+        _ambiguous_chinese_span(replacement.wrong_text)
+        or _ambiguous_chinese_span(replacement.corrected_text)
         for change in sample_changes
         for replacement in change.replacements
     )
@@ -92,7 +112,9 @@ def _apply_llm_replacement_rules(
     refined = []
     for change in sample_changes:
         replacements = _matching_llm_replacements(change, rules)
-        refined.append(replace(change, replacements=replacements or change.replacements))
+        refined.append(
+            replace(change, replacements=replacements or change.replacements)
+        )
     return refined
 
 
@@ -104,7 +126,10 @@ def _matching_llm_replacements(
     replacements = []
     seen: set[tuple[str, str]] = set()
     for rule in rules:
-        if rule.wrong_text not in change.original_text or rule.corrected_text not in change.corrected_text:
+        if (
+            rule.wrong_text not in change.original_text
+            or rule.corrected_text not in change.corrected_text
+        ):
             continue
         key = (rule.wrong_text, rule.corrected_text)
         if key in seen:
@@ -114,9 +139,13 @@ def _matching_llm_replacements(
     return replacements
 
 
-def _replacement_from_llm_rule(change: CorrectionChange, rule: LlmReplacementRule) -> CorrectionReplacement:
+def _replacement_from_llm_rule(
+    change: CorrectionChange, rule: LlmReplacementRule
+) -> CorrectionReplacement:
     """Build one grounded replacement from a model-inferred rule."""
-    left_context, right_context = replacement_context(change.original_text, rule.wrong_text)
+    left_context, right_context = replacement_context(
+        change.original_text, rule.wrong_text
+    )
     return CorrectionReplacement(
         wrong_text=rule.wrong_text,
         corrected_text=rule.corrected_text,

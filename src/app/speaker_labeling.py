@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.models import SentenceSegment, TranscriptResult
-from app.postprocess import detect_speaker_ids, filter_filler_speakers, speaker_id_to_label
+from app.postprocess import (
+    detect_speaker_ids,
+    filter_filler_speakers,
+    speaker_id_to_label,
+)
 from app.srt_utils import ms_to_srt_timestamp
 from app.utils import safe_write_json
 
@@ -25,7 +29,9 @@ class SpeakerSummary:
     sample_segments: list[SentenceSegment]
 
 
-def load_transcript_result(path: Path, *, include_low_information: bool = False) -> TranscriptResult:
+def load_transcript_result(
+    path: Path, *, include_low_information: bool = False
+) -> TranscriptResult:
     """
     Load normalized sentences.json.
 
@@ -57,10 +63,15 @@ def build_default_mapping(result: TranscriptResult) -> dict[int, str]:
     Returns:
         Mapping from speaker id to label.
     """
-    return {speaker_id: speaker_id_to_label(speaker_id) for speaker_id in result.detected_speakers}
+    return {
+        speaker_id: speaker_id_to_label(speaker_id)
+        for speaker_id in result.detected_speakers
+    }
 
 
-def build_speaker_summaries(result: TranscriptResult, *, sample_count: int = 5) -> list[SpeakerSummary]:
+def build_speaker_summaries(
+    result: TranscriptResult, *, sample_count: int = 5
+) -> list[SpeakerSummary]:
     """
     Build compact samples for each speaker.
 
@@ -105,7 +116,9 @@ def write_speaker_mapping(path: Path, speaker_mapping: dict[int, str]) -> Path:
     return safe_write_json(path, payload)
 
 
-def write_speaker_person_mapping(path: Path, speaker_person_mapping: dict[int, int | str]) -> Path:
+def write_speaker_person_mapping(
+    path: Path, speaker_person_mapping: dict[int, int | str]
+) -> Path:
     """
     Write project speaker to voiceprint person id mapping.
 
@@ -291,14 +304,14 @@ def _match_reassignment(
     if sentence_id is not None:
         try:
             spec = by_sentence_id.get(int(sentence_id))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             spec = None
         if spec is not None:
             return spec
     try:
         begin = int(sentence.get("begin_time_ms", 0))
         end = int(sentence.get("end_time_ms", 0))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return by_timing.get((begin, end))
 
@@ -314,7 +327,7 @@ def _recompute_detected_speakers(sentences: list) -> list[int]:
             continue
         try:
             ids.add(int(speaker_id))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return sorted(ids)
 
@@ -340,12 +353,16 @@ def write_named_outputs(
     map_path = write_speaker_mapping(output_dir / "speaker_map.json", speaker_mapping)
     transcript_path = output_dir / "transcript_named.txt"
     srt_path = output_dir / "subtitle_named.srt"
-    transcript_path.write_text(render_named_speaker_text(result, speaker_mapping), encoding="utf-8")
+    transcript_path.write_text(
+        render_named_speaker_text(result, speaker_mapping), encoding="utf-8"
+    )
     srt_path.write_text(render_named_srt(result, speaker_mapping), encoding="utf-8")
     return map_path, transcript_path, srt_path
 
 
-def render_named_speaker_text(result: TranscriptResult, speaker_mapping: dict[int, str]) -> str:
+def render_named_speaker_text(
+    result: TranscriptResult, speaker_mapping: dict[int, str]
+) -> str:
     """
     Render timestamped transcript with speaker names.
 

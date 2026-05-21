@@ -24,35 +24,48 @@ from app.config import (
 runner = CliRunner()
 
 
-def test_config_path_uses_xdg_config_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_config_path_uses_xdg_config_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Config path should follow XDG_CONFIG_HOME."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     assert get_config_path() == tmp_path / "meeting-asr" / "config.json"
 
 
-def test_default_projects_dir_uses_xdg_data_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_default_projects_dir_uses_xdg_data_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Default projects should follow XDG_DATA_HOME."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
 
     assert get_default_projects_dir() == tmp_path / "meeting-asr" / "projects"
 
 
-def test_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cache_dir_uses_xdg_cache_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Global model caches should follow XDG_CACHE_HOME."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
 
     assert get_cache_dir() == tmp_path / "meeting-asr"
 
 
-def test_relative_xdg_data_home_falls_back_to_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_relative_xdg_data_home_falls_back_to_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """XDG base dirs must be absolute."""
     monkeypatch.setenv("XDG_DATA_HOME", "relative-data")
 
-    assert get_default_projects_dir() == Path.home() / ".local" / "share" / "meeting-asr" / "projects"
+    assert (
+        get_default_projects_dir()
+        == Path.home() / ".local" / "share" / "meeting-asr" / "projects"
+    )
 
 
-def test_load_settings_reads_global_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_load_settings_reads_global_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Settings should be loaded from the XDG global config file."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     _clear_runtime_env(monkeypatch)
@@ -65,12 +78,17 @@ def test_load_settings_reads_global_config(monkeypatch: pytest.MonkeyPatch, tmp_
     assert settings.dashscope_summary_model == DEFAULT_DASHSCOPE_SUMMARY_MODEL
     assert settings.dashscope_correction_model == DEFAULT_DASHSCOPE_CORRECTION_MODEL
     assert settings.dashscope_model_endpoints == {}
-    assert settings.dashscope_correction_concurrency == DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY
+    assert (
+        settings.dashscope_correction_concurrency
+        == DEFAULT_DASHSCOPE_CORRECTION_CONCURRENCY
+    )
     assert settings.dashscope_asr_vocabulary_id is None
     assert settings.correction_polish_auto_accept is False
 
 
-def test_ui_editor_config_is_supported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_ui_editor_config_is_supported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """The editor used by correction review should be configurable."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     _clear_runtime_env(monkeypatch)
@@ -85,12 +103,17 @@ def test_ui_editor_config_is_supported(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert "ui.editor=code --wait" in show_result.output
 
 
-def test_model_endpoint_routes_can_be_configured(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_model_endpoint_routes_can_be_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Model endpoint routing should be configurable through XDG config."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     _clear_runtime_env(monkeypatch)
     set_config_value("dashscope.api_key", "config-key")
-    set_config_value("dashscope.model_endpoints", '{"qwen3.6-*":"compatible","qwen-plus":"generation"}')
+    set_config_value(
+        "dashscope.model_endpoints",
+        '{"qwen3.6-*":"compatible","qwen-plus":"generation"}',
+    )
 
     settings = load_settings()
 
@@ -100,7 +123,9 @@ def test_model_endpoint_routes_can_be_configured(monkeypatch: pytest.MonkeyPatch
     }
 
 
-def test_polish_auto_accept_can_be_configured(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_polish_auto_accept_can_be_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Transcript polish auto-accept should be opt-in through config."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     _clear_runtime_env(monkeypatch)
@@ -115,7 +140,9 @@ def test_polish_auto_accept_can_be_configured(monkeypatch: pytest.MonkeyPatch, t
     assert "correction.polish_auto_accept=true" in show_result.output
 
 
-def test_config_show_prints_masked_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_config_show_prints_masked_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Config show should have a script-friendly JSON mode without leaking secrets."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     _clear_runtime_env(monkeypatch)
@@ -145,7 +172,9 @@ def test_load_settings_without_dashscope_keeps_voiceprint_local_implicit(
     assert not hasattr(settings, "voiceprint_embedding_provider")
 
 
-def test_process_env_overrides_global_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_process_env_overrides_global_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Explicit process env remains useful for CI."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     _clear_runtime_env(monkeypatch)
@@ -155,7 +184,9 @@ def test_process_env_overrides_global_config(monkeypatch: pytest.MonkeyPatch, tm
     assert load_settings().dashscope_api_key == "env-key"
 
 
-def test_load_settings_does_not_read_cwd_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_load_settings_does_not_read_cwd_dotenv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A working-directory .env must not silently configure the CLI."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     _clear_runtime_env(monkeypatch)
@@ -173,7 +204,9 @@ def test_config_import_env_command_writes_masked_global_config(
     """Users can migrate legacy .env values without printing secrets."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     env_file = tmp_path / ".env"
-    env_file.write_text("DASHSCOPE_API_KEY=secret\nOSS_BUCKET_NAME=bucket\n", encoding="utf-8")
+    env_file.write_text(
+        "DASHSCOPE_API_KEY=secret\nOSS_BUCKET_NAME=bucket\n", encoding="utf-8"
+    )
 
     result = runner.invoke(app, ["config", "import-env", str(env_file)])
     show_result = runner.invoke(app, ["config", "show"])

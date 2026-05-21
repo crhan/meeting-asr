@@ -26,7 +26,9 @@ from app.voiceprint_tui import (
 )
 
 
-def test_load_voiceprint_library_session_groups_samples_without_losing_counts(tmp_path: Path) -> None:
+def test_load_voiceprint_library_session_groups_samples_without_losing_counts(
+    tmp_path: Path,
+) -> None:
     """The browser session should expose speaker, sample, and embedding coverage."""
     store_dir = _voiceprint_store(tmp_path)
 
@@ -43,7 +45,9 @@ def test_load_voiceprint_library_session_groups_samples_without_losing_counts(tm
 
 def test_voiceprint_library_tui_browses_speakers_and_samples(tmp_path: Path) -> None:
     """The TUI should start in browse mode and use one focus model."""
-    session = load_voiceprint_library_session(store_dir=_voiceprint_store(tmp_path), page_size=1)
+    session = load_voiceprint_library_session(
+        store_dir=_voiceprint_store(tmp_path), page_size=1
+    )
 
     async def scenario() -> None:
         async with VoiceprintLibraryApp(session).run_test(size=(100, 20)) as pilot:
@@ -92,13 +96,19 @@ def test_voiceprint_library_tui_question_mark_shows_help(tmp_path: Path) -> None
     asyncio.run(scenario())
 
 
-def test_voiceprint_library_tui_space_toggles_playback(monkeypatch, tmp_path: Path) -> None:
+def test_voiceprint_library_tui_space_toggles_playback(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Space should play and stop the selected voiceprint WAV sample."""
     session = load_voiceprint_library_session(store_dir=_voiceprint_store(tmp_path))
     process = _RunningFakeProcess()
     starts = 0
 
-    monkeypatch.setattr(voiceprint_tui, "build_voiceprint_play_command", lambda path: ["fake-player", str(path)])
+    monkeypatch.setattr(
+        voiceprint_tui,
+        "build_voiceprint_play_command",
+        lambda path: ["fake-player", str(path)],
+    )
 
     def fake_popen(*args, **kwargs) -> _RunningFakeProcess:
         nonlocal starts
@@ -154,13 +164,31 @@ def _voiceprint_store(tmp_path: Path) -> Path:
     source_path = tmp_path / "meeting.mp4"
     source_path.write_bytes(b"source")
     samples = [
-        _sample(store_dir, source_path, "Alice", speaker_id=0, index=1, text="hello from alice"),
-        _sample(store_dir, source_path, "Alice", speaker_id=0, index=2, text="second alice sample"),
-        _sample(store_dir, source_path, "Bob", speaker_id=1, index=1, text="hello from bob"),
+        _sample(
+            store_dir,
+            source_path,
+            "Alice",
+            speaker_id=0,
+            index=1,
+            text="hello from alice",
+        ),
+        _sample(
+            store_dir,
+            source_path,
+            "Alice",
+            speaker_id=0,
+            index=2,
+            text="second alice sample",
+        ),
+        _sample(
+            store_dir, source_path, "Bob", speaker_id=1, index=1, text="hello from bob"
+        ),
     ]
     db_path = store_voiceprint_samples(samples, get_voiceprint_db_path(store_dir))
     first_sample_id = list_all_voiceprint_samples(db_path)[0].sample_id
-    upsert_voiceprint_embedding(first_sample_id, LOCAL_SPEECHBRAIN_MODEL, [0.1, 0.2], db_path)
+    upsert_voiceprint_embedding(
+        first_sample_id, LOCAL_SPEECHBRAIN_MODEL, [0.1, 0.2], db_path
+    )
     return store_dir
 
 
@@ -174,7 +202,13 @@ def _sample(
     text: str,
 ) -> StoredVoiceprintSample:
     """Build one stored voiceprint sample fixture."""
-    clip_path = store_dir / "clips" / "project-1" / f"speaker_{speaker_id}" / f"clip_{index:03d}.wav"
+    clip_path = (
+        store_dir
+        / "clips"
+        / "project-1"
+        / f"speaker_{speaker_id}"
+        / f"clip_{index:03d}.wav"
+    )
     clip_path.parent.mkdir(parents=True, exist_ok=True)
     clip_path.write_bytes(f"{speaker_name}-{index}".encode())
     return StoredVoiceprintSample(

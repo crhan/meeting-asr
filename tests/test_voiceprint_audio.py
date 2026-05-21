@@ -30,10 +30,18 @@ def test_normalized_voiceprint_sample_path_is_versioned(tmp_path: Path) -> None:
 
     path = normalized_voiceprint_sample_path(sample, store_dir=store_dir)
 
-    assert path == store_dir / "normalized" / VOICEPRINT_AUDIO_PREPROCESS_VERSION / sample.clip_rel_path
+    assert (
+        path
+        == store_dir
+        / "normalized"
+        / VOICEPRINT_AUDIO_PREPROCESS_VERSION
+        / sample.clip_rel_path
+    )
 
 
-def test_normalize_voiceprint_samples_keeps_original_and_skips_existing(monkeypatch, tmp_path: Path) -> None:
+def test_normalize_voiceprint_samples_keeps_original_and_skips_existing(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Normalization should write derived files without modifying original sample clips."""
     store_dir = _store(tmp_path)
     calls: list[tuple[Path, Path]] = []
@@ -52,7 +60,9 @@ def test_normalize_voiceprint_samples_keeps_original_and_skips_existing(monkeypa
 
     sample = list_all_voiceprint_samples(get_voiceprint_db_path(store_dir))[0]
     expected_output = normalized_voiceprint_sample_path(sample, store_dir=store_dir)
-    expected_temp = expected_output.with_name(f"{expected_output.stem}.norm-tmp{expected_output.suffix}")
+    expected_temp = expected_output.with_name(
+        f"{expected_output.stem}.norm-tmp{expected_output.suffix}"
+    )
     assert first.processed_count == 1
     assert second.skipped_count == 1
     assert sample.clip_path.read_bytes() == b"original"
@@ -60,7 +70,9 @@ def test_normalize_voiceprint_samples_keeps_original_and_skips_existing(monkeypa
     assert expected_output.read_bytes() == b"normalized"
 
 
-def test_normalize_voiceprint_samples_rebuilds_stale_derived_clip(monkeypatch, tmp_path: Path) -> None:
+def test_normalize_voiceprint_samples_rebuilds_stale_derived_clip(
+    monkeypatch, tmp_path: Path
+) -> None:
     """A derived clip older than its source should be rebuilt."""
     store_dir = _store(tmp_path)
     sample = list_all_voiceprint_samples(get_voiceprint_db_path(store_dir))[0]
@@ -79,7 +91,9 @@ def test_normalize_voiceprint_samples_rebuilds_stale_derived_clip(monkeypatch, t
 
     summary = normalize_voiceprint_samples(store_dir=store_dir, rebuild=False)
 
-    expected_temp = normalized_path.with_name(f"{normalized_path.stem}.norm-tmp{normalized_path.suffix}")
+    expected_temp = normalized_path.with_name(
+        f"{normalized_path.stem}.norm-tmp{normalized_path.suffix}"
+    )
     assert summary.processed_count == 1
     assert calls == [expected_temp]
     assert normalized_path.read_bytes() == b"fresh"
@@ -101,7 +115,9 @@ def test_trim_embedding_audio_silence_removes_boundaries(tmp_path: Path) -> None
     assert output_stats.voiced_duration_seconds == source_stats.voiced_duration_seconds
 
 
-def test_voiceprint_playback_prefers_normalized_clip_when_present(tmp_path: Path) -> None:
+def test_voiceprint_playback_prefers_normalized_clip_when_present(
+    tmp_path: Path,
+) -> None:
     """Review playback should use normalized audio when it exists."""
     store_dir = _store(tmp_path)
     sample = list_all_voiceprint_samples(get_voiceprint_db_path(store_dir))[0]
@@ -109,7 +125,10 @@ def test_voiceprint_playback_prefers_normalized_clip_when_present(tmp_path: Path
     normalized_path.parent.mkdir(parents=True, exist_ok=True)
     normalized_path.write_bytes(b"normalized")
 
-    assert voiceprint_playback_clip_path(sample.clip_path, store_dir=store_dir) == normalized_path
+    assert (
+        voiceprint_playback_clip_path(sample.clip_path, store_dir=store_dir)
+        == normalized_path
+    )
 
 
 def _store(tmp_path: Path) -> Path:
@@ -149,4 +168,6 @@ def _write_wav(path: Path, samples: list[int]) -> None:
         writer.setnchannels(1)
         writer.setsampwidth(2)
         writer.setframerate(16000)
-        writer.writeframes(b"".join(sample.to_bytes(2, "little", signed=True) for sample in samples))
+        writer.writeframes(
+            b"".join(sample.to_bytes(2, "little", signed=True) for sample in samples)
+        )

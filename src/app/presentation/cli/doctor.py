@@ -69,13 +69,19 @@ DETAIL_REPLACEMENTS_ZH = (
     ("missing standard packages:", "缺少标准依赖："),
     ("dependencies installed", "依赖已安装"),
     ("not found in PATH; install ffmpeg", "PATH 中找不到；请安装 ffmpeg"),
-    ("not found; install mpv or IINA for speaker review", "未找到；请安装 mpv 或 IINA 用于 speaker review"),
+    (
+        "not found; install mpv or IINA for speaker review",
+        "未找到；请安装 mpv 或 IINA 用于 speaker review",
+    ),
     ("bucket metadata request succeeded", "bucket 元数据请求成功"),
     ("no object uploaded", "未上传对象"),
     ("put_object + signed GET succeeded", "put_object + signed GET 成功"),
 )
 PROMPT_REPLACEMENTS_ZH = (
-    ("You are fixing `meeting-asr doctor` output.", "你正在修复 `meeting-asr doctor` 的诊断问题。"),
+    (
+        "You are fixing `meeting-asr doctor` output.",
+        "你正在修复 `meeting-asr doctor` 的诊断问题。",
+    ),
     ("Problem:", "问题："),
     ("Repair:", "修复："),
     ("Verify:", "验证："),
@@ -110,10 +116,18 @@ def _summary_panel(checks: list[DoctorCheck], lang: str, *, full: bool) -> Panel
         grid.add_column(justify="center")
     grid.add_column(justify="center")
     grid.add_row(
-        *(_summary_cell(status, counts[status], lang) for status in ("ok", "warn", "fail")),
+        *(
+            _summary_cell(status, counts[status], lang)
+            for status in ("ok", "warn", "fail")
+        ),
         _mode_cell(full, lang),
     )
-    return Panel(grid, title=LABELS[lang]["title"], subtitle=LABELS[lang]["summary"], border_style="dim")
+    return Panel(
+        grid,
+        title=LABELS[lang]["title"],
+        subtitle=LABELS[lang]["summary"],
+        border_style="dim",
+    )
 
 
 def _checks_table(checks: list[DoctorCheck], lang: str) -> Table:
@@ -123,11 +137,17 @@ def _checks_table(checks: list[DoctorCheck], lang: str) -> Table:
     table.add_column(LABELS[lang]["check"], no_wrap=True, style="cyan")
     table.add_column(LABELS[lang]["detail"], ratio=1, overflow="fold")
     for check in checks:
-        table.add_row(_status_text(check.status, lang), check.name, _detail_text(check.detail, lang))
+        table.add_row(
+            _status_text(check.status, lang),
+            check.name,
+            _detail_text(check.detail, lang),
+        )
     return table
 
 
-def _print_repair_prompts(checks: list[DoctorCheck], lang: str, console: Console) -> None:
+def _print_repair_prompts(
+    checks: list[DoctorCheck], lang: str, console: Console
+) -> None:
     """Print repair prompts when doctor found warnings or failures."""
     problem_checks = [check for check in checks if check.needs_attention]
     if not problem_checks:
@@ -172,7 +192,10 @@ def _mode_cell(full: bool, lang: str) -> Text:
 
 def _status_text(status: str, lang: str) -> Text:
     """Build one colored status label."""
-    return Text(STATUS_LABELS[lang].get(status, status.upper()), style=STATUS_STYLES.get(status, "white"))
+    return Text(
+        STATUS_LABELS[lang].get(status, status.upper()),
+        style=STATUS_STYLES.get(status, "white"),
+    )
 
 
 def _detail_text(detail: str, lang: str) -> Text:
@@ -222,7 +245,9 @@ def _wrap_text(value: str, *, width: int) -> list[str]:
         if _looks_like_command(raw_line):
             lines.append(raw_line)
             continue
-        wrapped = textwrap.wrap(raw_line, width=width, break_long_words=False, break_on_hyphens=False)
+        wrapped = textwrap.wrap(
+            raw_line, width=width, break_long_words=False, break_on_hyphens=False
+        )
         lines.extend(wrapped or [""])
     return lines
 

@@ -40,7 +40,9 @@ app = MeetingAsrTyper(
 @app.command("list")
 def list_command(
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
-    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
+    plain: bool = typer.Option(
+        False, "--plain", help="Print stable tab-separated output."
+    ),
 ) -> None:
     """List projects currently stored in Meeting-ASR trash."""
     result = run_with_cli_errors(list_trashed_projects)
@@ -56,12 +58,18 @@ def list_command(
 @app.command("restore")
 def restore_command(
     trash_ref: str = typer.Argument(..., metavar="TRASH"),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
-    project_dir: Optional[Path] = typer.Option(None, "--project-dir", file_okay=False, dir_okay=True),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    project_dir: Optional[Path] = typer.Option(
+        None, "--project-dir", file_okay=False, dir_okay=True
+    ),
 ) -> None:
     """Restore a trashed project by trash path, id, directory, or title."""
     summary = run_with_cli_errors(
-        lambda: restore_trashed_project(trash_ref, projects_dir=projects_dir, project_dir=project_dir)
+        lambda: restore_trashed_project(
+            trash_ref, projects_dir=projects_dir, project_dir=project_dir
+        )
     )
     _echo_project_restored(summary)
 
@@ -69,10 +77,14 @@ def restore_command(
 @app.command("purge")
 def purge_command(
     trash_ref: str = typer.Argument(..., metavar="TRASH"),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Do not prompt for confirmation."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Do not prompt for confirmation."
+    ),
 ) -> None:
     """Permanently delete one project from Meeting-ASR trash."""
-    if not yes and not typer.confirm(f"permanently delete trashed project {trash_ref}?"):
+    if not yes and not typer.confirm(
+        f"permanently delete trashed project {trash_ref}?"
+    ):
         typer.echo("Project purge cancelled.")
         return
     summary = run_with_cli_errors(lambda: purge_trashed_project(trash_ref))
@@ -82,17 +94,25 @@ def purge_command(
 @app.command("cleanup")
 def cleanup_command(
     older_than_days: int = typer.Option(30, "--older-than-days", min=0),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Do not prompt for confirmation."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Do not prompt for confirmation."
+    ),
 ) -> None:
     """Permanently delete trashed projects older than N days."""
-    if not yes and not typer.confirm(f"permanently delete trashed projects older than {older_than_days} day(s)?"):
+    if not yes and not typer.confirm(
+        f"permanently delete trashed projects older than {older_than_days} day(s)?"
+    ):
         typer.echo("Project trash cleanup cancelled.")
         return
-    summary = run_with_cli_errors(lambda: cleanup_project_trash(older_than_days=older_than_days))
+    summary = run_with_cli_errors(
+        lambda: cleanup_project_trash(older_than_days=older_than_days)
+    )
     _echo_project_trash_cleanup(summary)
 
 
-def _echo_project_trash_list(trash_dir: Path, projects: list[TrashedProjectListItem]) -> None:
+def _echo_project_trash_list(
+    trash_dir: Path, projects: list[TrashedProjectListItem]
+) -> None:
     """
     Print trashed project rows.
 
@@ -142,7 +162,9 @@ def _project_trash_table(projects: list[TrashedProjectListItem]) -> Table:
         Rich table ready to print.
     """
     table = Table(box=box.ROUNDED, show_edge=True, pad_edge=True, header_style="bold")
-    table.add_column("Project ID", no_wrap=True, overflow="ellipsis", max_width=28, style="bold cyan")
+    table.add_column(
+        "Project ID", no_wrap=True, overflow="ellipsis", max_width=28, style="bold cyan"
+    )
     table.add_column("Status", no_wrap=True)
     table.add_column("Trashed", no_wrap=True)
     table.add_column("Title")
@@ -158,7 +180,9 @@ def _project_trash_table(projects: list[TrashedProjectListItem]) -> Table:
     return table
 
 
-def _project_trash_payload(trash_dir: Path, projects: list[TrashedProjectListItem]) -> dict[str, object]:
+def _project_trash_payload(
+    trash_dir: Path, projects: list[TrashedProjectListItem]
+) -> dict[str, object]:
     """
     Build a machine-readable project trash payload.
 
@@ -251,6 +275,7 @@ def _echo_project_trash_cleanup(summary: ProjectTrashCleanupSummary) -> None:
     typer.echo(f"Removed: {len(summary.removed)}")
     for item in summary.removed:
         typer.echo(f"  - {item.manifest.title} ({item.manifest.project_id})")
+
 
 def _project_status_text(status: str) -> str:
     """Return a styled project status for table display."""

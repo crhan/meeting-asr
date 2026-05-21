@@ -14,7 +14,12 @@ from app.core.progress import CliProgressReporter, emit_progress
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
-from app.project_manager import ensure_project_dirs, load_manifest, resolve_project_audio_path, save_manifest
+from app.project_manager import (
+    ensure_project_dirs,
+    load_manifest,
+    resolve_project_audio_path,
+    save_manifest,
+)
 from app.speaker_labeling import load_speaker_person_mapping, load_transcript_result
 from app.speaker_matching import (
     VoiceprintCandidate,
@@ -25,8 +30,14 @@ from app.speaker_matching import (
     _ranked_matches,
 )
 from app.utils import safe_write_json
-from app.voiceprint_audio import VOICEPRINT_AUDIO_PREPROCESS_VERSION, trim_embedding_audio_silence
-from app.voiceprint_embedding import embed_audio_file, resolve_voiceprint_embedding_options
+from app.voiceprint_audio import (
+    VOICEPRINT_AUDIO_PREPROCESS_VERSION,
+    trim_embedding_audio_silence,
+)
+from app.voiceprint_embedding import (
+    embed_audio_file,
+    resolve_voiceprint_embedding_options,
+)
 
 LOW_INFO_TEXT_CHARS = 4
 MIN_SAMPLE_TEXT_CHARS = 8
@@ -164,7 +175,9 @@ def match_project_speaker_samples(
     return summary
 
 
-def speaker_sample_match_payload(summary: SpeakerSampleMatchSummary) -> dict[str, object]:
+def speaker_sample_match_payload(
+    summary: SpeakerSampleMatchSummary,
+) -> dict[str, object]:
     """Return a JSON-safe sample match payload."""
     return {
         "report_path": str(summary.report_path),
@@ -185,7 +198,9 @@ def _sample_match_context(
     model: str | None,
 ) -> _SampleMatchContext:
     """Resolve project, transcript, voiceprint, and assignment inputs."""
-    resolved_provider, resolved_model = resolve_voiceprint_embedding_options(provider=provider, model=model)
+    resolved_provider, resolved_model = resolve_voiceprint_embedding_options(
+        provider=provider, model=model
+    )
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(paths.root)
     result = load_transcript_result(paths.asr_dir / "sentences.json")
@@ -201,7 +216,9 @@ def _sample_match_context(
     )
 
 
-def _segments_by_speaker(segments: list[SentenceSegment]) -> dict[int, list[SentenceSegment]]:
+def _segments_by_speaker(
+    segments: list[SentenceSegment],
+) -> dict[int, list[SentenceSegment]]:
     """Group usable transcript segments by speaker id."""
     grouped: dict[int, list[SentenceSegment]] = defaultdict(list)
     for segment in segments:
@@ -212,18 +229,30 @@ def _segments_by_speaker(segments: list[SentenceSegment]) -> dict[int, list[Sent
     return dict(grouped)
 
 
-def _assigned_person_map(project_root: Path, known: dict[int, _KnownSpeakerVector]) -> dict[int, int]:
+def _assigned_person_map(
+    project_root: Path, known: dict[int, _KnownSpeakerVector]
+) -> dict[int, int]:
     """Resolve project speaker ids to known voiceprint person ids."""
     assigned: dict[int, int] = {}
-    assigned.update(_speaker_person_map(project_root / "speakers" / "speaker_person_map.json", known))
-    for speaker_id, person_id in _accepted_match_map(project_root / "speakers" / "speaker_matches.json", known).items():
+    assigned.update(
+        _speaker_person_map(
+            project_root / "speakers" / "speaker_person_map.json", known
+        )
+    )
+    for speaker_id, person_id in _accepted_match_map(
+        project_root / "speakers" / "speaker_matches.json", known
+    ).items():
         assigned.setdefault(speaker_id, person_id)
-    for speaker_id, person_id in _speaker_name_map(project_root / "speakers" / "speaker_map.json", known).items():
+    for speaker_id, person_id in _speaker_name_map(
+        project_root / "speakers" / "speaker_map.json", known
+    ).items():
         assigned.setdefault(speaker_id, person_id)
     return assigned
 
 
-def _speaker_person_map(path: Path, known: dict[int, _KnownSpeakerVector]) -> dict[int, int]:
+def _speaker_person_map(
+    path: Path, known: dict[int, _KnownSpeakerVector]
+) -> dict[int, int]:
     """Load explicit speaker-to-person mappings."""
     raw = load_speaker_person_mapping(path)
     return {
@@ -233,13 +262,15 @@ def _speaker_person_map(path: Path, known: dict[int, _KnownSpeakerVector]) -> di
     }
 
 
-def _accepted_match_map(path: Path, known: dict[int, _KnownSpeakerVector]) -> dict[int, int]:
+def _accepted_match_map(
+    path: Path, known: dict[int, _KnownSpeakerVector]
+) -> dict[int, int]:
     """Load accepted speaker matches as identity assignments."""
     if not path.exists():
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return {}
     rows = payload.get("matches") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
@@ -250,21 +281,25 @@ def _accepted_match_map(path: Path, known: dict[int, _KnownSpeakerVector]) -> di
             continue
         try:
             speaker_id = int(row["speaker_id"])
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             continue
-        person_id = _resolve_person_ref(row.get("accepted_person_public_id") or row.get("accepted_person_id"), known)
+        person_id = _resolve_person_ref(
+            row.get("accepted_person_public_id") or row.get("accepted_person_id"), known
+        )
         if person_id is not None:
             assigned[speaker_id] = person_id
     return assigned
 
 
-def _speaker_name_map(path: Path, known: dict[int, _KnownSpeakerVector]) -> dict[int, int]:
+def _speaker_name_map(
+    path: Path, known: dict[int, _KnownSpeakerVector]
+) -> dict[int, int]:
     """Resolve named project speakers by exact voiceprint person name."""
     if not path.exists():
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return {}
     if not isinstance(payload, dict):
         return {}
@@ -273,7 +308,7 @@ def _speaker_name_map(path: Path, known: dict[int, _KnownSpeakerVector]) -> dict
     for key, value in payload.items():
         try:
             speaker_id = int(key)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         person_id = by_name.get(_normalize_name(str(value)))
         if person_id is not None:
@@ -281,7 +316,9 @@ def _speaker_name_map(path: Path, known: dict[int, _KnownSpeakerVector]) -> dict
     return assigned
 
 
-def _resolve_person_ref(value: object, known: dict[int, _KnownSpeakerVector]) -> int | None:
+def _resolve_person_ref(
+    value: object, known: dict[int, _KnownSpeakerVector]
+) -> int | None:
     """Resolve an internal or public person id against known vectors."""
     if isinstance(value, str):
         stripped = value.strip()
@@ -290,7 +327,7 @@ def _resolve_person_ref(value: object, known: dict[int, _KnownSpeakerVector]) ->
                 return person_id
     try:
         person_id = int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return person_id if person_id in known else None
 
@@ -371,7 +408,11 @@ def _match_sample_groups_parallel(
     with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
         for speaker_id, segments in speaker_items:
             assigned_person_id = context.assigned_person_by_speaker.get(speaker_id)
-            assigned = context.known.get(assigned_person_id) if assigned_person_id is not None else None
+            assigned = (
+                context.known.get(assigned_person_id)
+                if assigned_person_id is not None
+                else None
+            )
             for index, segment in enumerate(segments):
                 future = executor.submit(
                     _match_one_sample,
@@ -391,12 +432,23 @@ def _match_sample_groups_parallel(
         for future in as_completed(futures):
             speaker_id, index = futures[future]
             rows_by_speaker[speaker_id].append((index, future.result()))
-            emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)} sample", advance=1)
+            emit_progress(
+                progress, f"Matched {speaker_id_to_label(speaker_id)} sample", advance=1
+            )
     reports: list[SpeakerSampleMatchReport] = []
     for speaker_id, segments in speaker_items:
         assigned_person_id = context.assigned_person_by_speaker.get(speaker_id)
-        assigned = context.known.get(assigned_person_id) if assigned_person_id is not None else None
-        rows = [row for _index, row in sorted(rows_by_speaker[speaker_id], key=lambda item: item[0])]
+        assigned = (
+            context.known.get(assigned_person_id)
+            if assigned_person_id is not None
+            else None
+        )
+        rows = [
+            row
+            for _index, row in sorted(
+                rows_by_speaker[speaker_id], key=lambda item: item[0]
+            )
+        ]
         reports.append(
             SpeakerSampleMatchReport(
                 speaker_id,
@@ -427,7 +479,11 @@ def _match_one_speaker_samples(
 ) -> SpeakerSampleMatchReport:
     """Match all samples for one project speaker."""
     assigned_person_id = context.assigned_person_by_speaker.get(speaker_id)
-    assigned = context.known.get(assigned_person_id) if assigned_person_id is not None else None
+    assigned = (
+        context.known.get(assigned_person_id)
+        if assigned_person_id is not None
+        else None
+    )
     rows: list[SpeakerSampleMatch] = []
     for segment in segments:
         row = _match_one_sample(
@@ -444,7 +500,9 @@ def _match_one_speaker_samples(
             cache_lock=cache_lock,
         )
         rows.append(row)
-        emit_progress(progress, f"Matched {speaker_id_to_label(speaker_id)} sample", advance=1)
+        emit_progress(
+            progress, f"Matched {speaker_id_to_label(speaker_id)} sample", advance=1
+        )
     return SpeakerSampleMatchReport(
         speaker_id,
         speaker_id_to_label(speaker_id),
@@ -472,14 +530,27 @@ def _match_one_sample(
 ) -> SpeakerSampleMatch:
     """Match one transcript sample against assigned and best-known identities."""
     if _is_low_information_segment(segment):
-        return _sample_row(speaker_id, segment, assigned, None, None, None, "low-info", ())
+        return _sample_row(
+            speaker_id, segment, assigned, None, None, None, "low-info", ()
+        )
     if assigned is None:
-        return _sample_row(speaker_id, segment, None, None, None, None, "no-assignment", ())
-    vector = _sample_vector(context, speaker_id, segment, max_seconds, padding_seconds, cache, cache_lock)
+        return _sample_row(
+            speaker_id, segment, None, None, None, None, "no-assignment", ()
+        )
+    vector = _sample_vector(
+        context, speaker_id, segment, max_seconds, padding_seconds, cache, cache_lock
+    )
     candidates = tuple(_ranked_matches(vector, context.known, limit=3))
     assigned_score = _cosine(vector, assigned.vector)
     best = candidates[0] if candidates else None
-    best_other = next((candidate for candidate in candidates if candidate.person_id != assigned.person_id), None)
+    best_other = next(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.person_id != assigned.person_id
+        ),
+        None,
+    )
     margin_score = None if best_other is None else assigned_score - best_other.score
     status = _identity_status(
         assigned_score,
@@ -489,7 +560,16 @@ def _match_one_sample(
         conflict_margin,
         ambiguous_margin,
     )
-    return _sample_row(speaker_id, segment, assigned, assigned_score, best, best_other, status, candidates)
+    return _sample_row(
+        speaker_id,
+        segment,
+        assigned,
+        assigned_score,
+        best,
+        best_other,
+        status,
+        candidates,
+    )
 
 
 def _sample_vector(
@@ -528,10 +608,19 @@ def _identity_status(
     """Return the identity diagnostic status for one matched sample."""
     if best_other_score is not None and margin_score is not None:
         if margin_score <= -conflict_margin:
-            return "identity-conflict" if best_other_score >= threshold else "identity-weak"
-        if max(assigned_score, best_other_score) >= threshold and abs(margin_score) < ambiguous_margin:
+            return (
+                "identity-conflict"
+                if best_other_score >= threshold
+                else "identity-weak"
+            )
+        if (
+            max(assigned_score, best_other_score) >= threshold
+            and abs(margin_score) < ambiguous_margin
+        ):
             return "identity-ambiguous"
-    if assigned_score < threshold and (best_other_score is None or best_other_score < threshold):
+    if assigned_score < threshold and (
+        best_other_score is None or best_other_score < threshold
+    ):
         return "identity-weak"
     return "identity-ok"
 
@@ -547,7 +636,11 @@ def _sample_row(
     candidates: tuple[VoiceprintCandidate, ...],
 ) -> SpeakerSampleMatch:
     """Build one sample match row."""
-    margin_score = None if assigned_score is None or best_other is None else assigned_score - best_other.score
+    margin_score = (
+        None
+        if assigned_score is None or best_other is None
+        else assigned_score - best_other.score
+    )
     return SpeakerSampleMatch(
         speaker_id,
         segment.sentence_id,
@@ -599,15 +692,25 @@ def _sample_cache_key(
         "max_seconds": max_seconds,
         "padding_seconds": padding_seconds,
     }
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _sample_clip_path(project_root: Path, speaker_id: int, segment: SentenceSegment) -> Path:
+def _sample_clip_path(
+    project_root: Path, speaker_id: int, segment: SentenceSegment
+) -> Path:
     """Return a deterministic clip path for one transcript sample."""
     sentence = "unknown" if segment.sentence_id is None else str(segment.sentence_id)
     filename = f"sentence_{sentence}_{segment.begin_time_ms}_{segment.end_time_ms}.wav"
-    return project_root / "tmp" / "voiceprint_sample_match" / f"speaker_{speaker_id}" / filename
+    return (
+        project_root
+        / "tmp"
+        / "voiceprint_sample_match"
+        / f"speaker_{speaker_id}"
+        / filename
+    )
 
 
 def _sample_embedding_clip_path(clip_path: Path) -> Path:
@@ -627,7 +730,12 @@ def _write_sample_clip(
     max_ms = int(round(max_seconds * 1000))
     start_ms = max(0, segment.begin_time_ms - padding_ms)
     end_ms = min(segment.end_time_ms + padding_ms, start_ms + max_ms)
-    extract_audio_clip(source, output, start_seconds=start_ms / 1000, duration_seconds=(end_ms - start_ms) / 1000)
+    extract_audio_clip(
+        source,
+        output,
+        start_seconds=start_ms / 1000,
+        duration_seconds=(end_ms - start_ms) / 1000,
+    )
 
 
 def _sample_cache_path(project_root: Path) -> Path:
@@ -654,7 +762,7 @@ def _read_embedding_cache_file(path: Path) -> dict[str, list[float]]:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return {}
     if not isinstance(payload, dict):
         return {}
@@ -664,7 +772,7 @@ def _read_embedding_cache_file(path: Path) -> dict[str, list[float]]:
             continue
         try:
             valid[str(key)] = [float(item) for item in value]
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return valid
 
@@ -676,9 +784,16 @@ def _write_sample_cache(project_root: Path, cache: dict[str, list[float]]) -> No
 
 def _summary_verdict(reports: list[SpeakerSampleMatchReport]) -> str:
     """Return a project-level identity match verdict."""
-    counts = Counter(status for report in reports for status, count in report.status_counts.items() for _ in range(count))
+    counts = Counter(
+        status
+        for report in reports
+        for status, count in report.status_counts.items()
+        for _ in range(count)
+    )
     if counts["identity-conflict"]:
-        return "identity-conflict: at least one sample matches another known person better"
+        return (
+            "identity-conflict: at least one sample matches another known person better"
+        )
     if counts["identity-ambiguous"]:
         return "identity-ambiguous: some samples are close to another known person"
     if counts["identity-weak"]:

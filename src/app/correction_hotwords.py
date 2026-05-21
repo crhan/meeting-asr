@@ -47,7 +47,11 @@ def hotwords_from_understanding(
     for item in understanding:
         word = normalize_hotword_text(item.corrected_text)
         if word:
-            values.append(AsrHotword(text=word, category=category, source="correction_understanding"))
+            values.append(
+                AsrHotword(
+                    text=word, category=category, source="correction_understanding"
+                )
+            )
     return dedupe_hotwords(values)
 
 
@@ -65,7 +69,9 @@ def hotwords_from_terms(terms: list[tuple[str, str]]) -> list[AsrHotword]:
     for canonical, category in terms:
         word = normalize_hotword_text(canonical)
         if word:
-            values.append(AsrHotword(text=word, category=category or "unknown", source="lexicon"))
+            values.append(
+                AsrHotword(text=word, category=category or "unknown", source="lexicon")
+            )
     return dedupe_hotwords(values)
 
 
@@ -113,7 +119,9 @@ def hotword_hash(hotwords: list[AsrHotword]) -> str:
     Returns:
         SHA-256 hash prefix.
     """
-    payload = json.dumps(dashscope_vocabulary(hotwords), ensure_ascii=False, sort_keys=True)
+    payload = json.dumps(
+        dashscope_vocabulary(hotwords), ensure_ascii=False, sort_keys=True
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 

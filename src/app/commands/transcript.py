@@ -55,13 +55,21 @@ class TranscriptArtifactRow:
 
 @app.command("list")
 def list_command(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
-    plain: bool = typer.Option(False, "--plain", help="Print stable tab-separated output."),
+    plain: bool = typer.Option(
+        False, "--plain", help="Print stable tab-separated output."
+    ),
 ) -> None:
     """List transcript artifacts for a project."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
     paths = project_paths(resolved_project_dir)
     rows = _transcript_artifact_rows(paths.root)
     if as_json:
@@ -75,42 +83,68 @@ def list_command(
 
 @app.command("path")
 def path_command(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     kind: TranscriptKind = typer.Option(TranscriptKind.auto, "--kind", "-k"),
 ) -> None:
     """Print one transcript artifact path."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
-    path = run_with_cli_errors(lambda: _resolve_transcript_path(resolved_project_dir, kind, required=True))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
+    path = run_with_cli_errors(
+        lambda: _resolve_transcript_path(resolved_project_dir, kind, required=True)
+    )
     typer.echo(path)
 
 
 @app.command("show")
 def show_command(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     kind: TranscriptKind = typer.Option(TranscriptKind.auto, "--kind", "-k"),
 ) -> None:
     """Print one transcript artifact."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
-    path = run_with_cli_errors(lambda: _resolve_transcript_path(resolved_project_dir, kind, required=True))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
+    path = run_with_cli_errors(
+        lambda: _resolve_transcript_path(resolved_project_dir, kind, required=True)
+    )
     typer.echo(path.read_text(encoding="utf-8"), nl=False)
 
 
 @app.command("open")
 def open_command(
-    project_dir: Path = typer.Argument(Path("."), metavar="PROJECT", file_okay=False, dir_okay=True),
-    projects_dir: Optional[Path] = typer.Option(None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True),
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
     kind: TranscriptKind = typer.Option(TranscriptKind.auto, "--kind", "-k"),
 ) -> None:
     """Open one transcript artifact with the OS default application."""
-    resolved_project_dir = run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
-    path = run_with_cli_errors(lambda: _resolve_transcript_path(resolved_project_dir, kind, required=True))
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
+    path = run_with_cli_errors(
+        lambda: _resolve_transcript_path(resolved_project_dir, kind, required=True)
+    )
     run_with_cli_errors(lambda: subprocess.run(["open", str(path)], check=True))
     typer.echo(f"Opened: {path}")
 
 
-def _resolve_transcript_path(project_dir: Path, kind: TranscriptKind, *, required: bool) -> Path | None:
+def _resolve_transcript_path(
+    project_dir: Path, kind: TranscriptKind, *, required: bool
+) -> Path | None:
     """
     Resolve a transcript artifact path.
 
@@ -129,7 +163,9 @@ def _resolve_transcript_path(project_dir: Path, kind: TranscriptKind, *, require
     if not required:
         return None
     expected = ", ".join(str(path) for path in candidates)
-    raise FileNotFoundError(f"Transcript artifact does not exist. Expected one of: {expected}")
+    raise FileNotFoundError(
+        f"Transcript artifact does not exist. Expected one of: {expected}"
+    )
 
 
 def _transcript_candidates(project_dir: Path, kind: TranscriptKind) -> list[Path]:
@@ -159,13 +195,22 @@ def _transcript_candidates(project_dir: Path, kind: TranscriptKind) -> list[Path
     if kind == TranscriptKind.named:
         return [paths.exports_dir / "transcript_named.txt"]
     if kind == TranscriptKind.corrected:
-        return [paths.exports_dir / "transcript_named_corrected.txt", paths.exports_dir / "transcript_corrected.txt"]
+        return [
+            paths.exports_dir / "transcript_named_corrected.txt",
+            paths.exports_dir / "transcript_corrected.txt",
+        ]
     if kind == TranscriptKind.named_corrected:
         return [paths.exports_dir / "transcript_named_corrected.txt"]
     if kind == TranscriptKind.srt:
-        return [paths.exports_dir / "subtitle_named.srt", paths.exports_dir / "subtitle.srt"]
+        return [
+            paths.exports_dir / "subtitle_named.srt",
+            paths.exports_dir / "subtitle.srt",
+        ]
     if kind == TranscriptKind.srt_corrected:
-        return [paths.exports_dir / "subtitle_named_corrected.srt", paths.exports_dir / "subtitle_corrected.srt"]
+        return [
+            paths.exports_dir / "subtitle_named_corrected.srt",
+            paths.exports_dir / "subtitle_corrected.srt",
+        ]
     if kind == TranscriptKind.raw:
         return [paths.asr_dir / "raw_result.json"]
     return [paths.asr_dir / "sentences.json"]
@@ -201,7 +246,11 @@ def _transcript_artifact_rows(project_dir: Path) -> list[TranscriptArtifactRow]:
 
 def _is_optional_corrected_kind(kind: TranscriptKind) -> bool:
     """Return whether a transcript kind should only show after correction exists."""
-    return kind in {TranscriptKind.corrected, TranscriptKind.named_corrected, TranscriptKind.srt_corrected}
+    return kind in {
+        TranscriptKind.corrected,
+        TranscriptKind.named_corrected,
+        TranscriptKind.srt_corrected,
+    }
 
 
 def _first_existing_path(candidates: list[Path]) -> Path | None:
@@ -220,7 +269,9 @@ def _first_existing_path(candidates: list[Path]) -> Path | None:
     return None
 
 
-def _echo_transcript_artifact_rows(project_dir: Path, rows: list[TranscriptArtifactRow]) -> None:
+def _echo_transcript_artifact_rows(
+    project_dir: Path, rows: list[TranscriptArtifactRow]
+) -> None:
     """
     Print transcript artifacts as a compact summary table.
 
@@ -234,7 +285,9 @@ def _echo_transcript_artifact_rows(project_dir: Path, rows: list[TranscriptArtif
     _transcript_table_console().print(_transcript_artifact_table(project_dir, rows))
 
 
-def _echo_transcript_artifact_rows_plain(project_dir: Path, rows: list[TranscriptArtifactRow]) -> None:
+def _echo_transcript_artifact_rows_plain(
+    project_dir: Path, rows: list[TranscriptArtifactRow]
+) -> None:
     """
     Print transcript artifacts as stable tab-separated values.
 
@@ -243,13 +296,19 @@ def _echo_transcript_artifact_rows_plain(project_dir: Path, rows: list[Transcrip
         rows: Artifact rows to display.
     """
     plain_rows = [
-        (row.kind.value, "available" if row.path else "missing", _plain_artifact_path(project_dir, row))
+        (
+            row.kind.value,
+            "available" if row.path else "missing",
+            _plain_artifact_path(project_dir, row),
+        )
         for row in rows
     ]
     echo_plain_table(("kind", "status", "path"), plain_rows)
 
 
-def _transcript_artifacts_payload(project_dir: Path, rows: list[TranscriptArtifactRow]) -> dict[str, object]:
+def _transcript_artifacts_payload(
+    project_dir: Path, rows: list[TranscriptArtifactRow]
+) -> dict[str, object]:
     """
     Build a machine-readable transcript artifact payload.
 
@@ -287,7 +346,9 @@ def _transcript_artifact_payload(row: TranscriptArtifactRow) -> dict[str, object
     }
 
 
-def _transcript_artifact_table(project_dir: Path, rows: list[TranscriptArtifactRow]) -> Table:
+def _transcript_artifact_table(
+    project_dir: Path, rows: list[TranscriptArtifactRow]
+) -> Table:
     """
     Build the transcript artifact table.
 
@@ -303,7 +364,9 @@ def _transcript_artifact_table(project_dir: Path, rows: list[TranscriptArtifactR
     table.add_column("Status", no_wrap=True)
     table.add_column("Location")
     for row in rows:
-        table.add_row(row.kind.value, _artifact_status(row), _artifact_location(project_dir, row))
+        table.add_row(
+            row.kind.value, _artifact_status(row), _artifact_location(project_dir, row)
+        )
     return table
 
 
@@ -325,7 +388,9 @@ def _artifact_location(project_dir: Path, row: TranscriptArtifactRow) -> str:
     """
     if row.path:
         return _relative_display_path(project_dir, row.path)
-    expected = " or ".join(_relative_display_path(project_dir, path) for path in row.candidates)
+    expected = " or ".join(
+        _relative_display_path(project_dir, path) for path in row.candidates
+    )
     return f"expected: {expected}"
 
 
@@ -333,7 +398,9 @@ def _plain_artifact_path(project_dir: Path, row: TranscriptArtifactRow) -> str:
     """Return a plain path or expected candidate list for one artifact."""
     if row.path:
         return _relative_display_path(project_dir, row.path)
-    return " or ".join(_relative_display_path(project_dir, path) for path in row.candidates)
+    return " or ".join(
+        _relative_display_path(project_dir, path) for path in row.candidates
+    )
 
 
 def _relative_display_path(project_dir: Path, path: Path) -> str:

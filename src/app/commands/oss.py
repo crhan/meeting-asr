@@ -28,14 +28,21 @@ lifecycle_app = MeetingAsrTyper(
     no_args_is_help=True,
     pretty_exceptions_enable=False,
 )
-app.add_typer(lifecycle_app, name="lifecycle", help="Configure OSS lifecycle rules.", context_settings=HELP_CONTEXT)
+app.add_typer(
+    lifecycle_app,
+    name="lifecycle",
+    help="Configure OSS lifecycle rules.",
+    context_settings=HELP_CONTEXT,
+)
 
 
 @app.command("upload")
 def upload(
     local_path: Path = typer.Argument(..., exists=True, file_okay=True, dir_okay=False),
     object_name: str | None = typer.Option(None, "--object-name"),
-    expires_seconds: int = typer.Option(SIGNED_URL_EXPIRES_SECONDS, "--expires-seconds", min=60),
+    expires_seconds: int = typer.Option(
+        SIGNED_URL_EXPIRES_SECONDS, "--expires-seconds", min=60
+    ),
 ) -> None:
     """Upload a local file to OSS and print a signed URL."""
     settings = run_with_cli_errors(lambda: load_settings(require_oss=True))
@@ -53,13 +60,17 @@ def upload(
 @app.command("presign")
 def presign(
     oss_uri: str = typer.Argument(..., help="OSS URI like oss://bucket/path/to/object"),
-    expires_seconds: int = typer.Option(SIGNED_URL_EXPIRES_SECONDS, "--expires-seconds", min=60),
+    expires_seconds: int = typer.Option(
+        SIGNED_URL_EXPIRES_SECONDS, "--expires-seconds", min=60
+    ),
 ) -> None:
     """Create a signed GET URL for an existing OSS object."""
     bucket_name, object_key = _parse_oss_uri(oss_uri)
     settings = run_with_cli_errors(lambda: load_settings(require_oss=True))
     if settings.oss_bucket_name and bucket_name != settings.oss_bucket_name:
-        raise typer.BadParameter("OSS URI bucket must match configured oss.bucket_name.")
+        raise typer.BadParameter(
+            "OSS URI bucket must match configured oss.bucket_name."
+        )
     bucket = run_with_cli_errors(lambda: build_oss_bucket(settings))
     typer.echo(bucket.sign_url("GET", object_key, expires_seconds, slash_safe=True))
 
@@ -72,7 +83,9 @@ def lifecycle_set(
 ) -> None:
     """Set an OSS lifecycle rule that deletes matching objects after N days."""
     settings = run_with_cli_errors(lambda: load_settings(require_oss=True))
-    run_with_cli_errors(lambda: set_lifecycle_rule(settings, prefix=prefix, days=days, rule_id=rule_id))
+    run_with_cli_errors(
+        lambda: set_lifecycle_rule(settings, prefix=prefix, days=days, rule_id=rule_id)
+    )
     typer.echo(f"Lifecycle rule set: prefix={prefix}, days={days}, rule_id={rule_id}")
     typer.echo("Deletion is based on object age, not last access time.")
 
