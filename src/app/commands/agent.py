@@ -12,6 +12,7 @@ from typing import Any
 import click
 import typer
 
+from app.agent_guide import build_agent_guide
 from app.presentation.cli.json_output import emit_json
 
 SCHEMA_VERSION = 1
@@ -507,149 +508,6 @@ COMMANDS_DATA_SCHEMA: dict[str, Any] = {
     "additionalProperties": True,
 }
 
-AGENT_GUIDE_TEMPLATE = """# meeting-asr Agent Guide
-
-This document is generated at runtime by `meeting-asr agent-guide`.
-Repository development rules live in `AGENTS.md`; this file is the CLI contract.
-
-## Onboarding
-
-1. `meeting-asr agent-guide` - read this runtime contract.
-2. `meeting-asr version --json` - check `data.supported_features`.
-3. `meeting-asr commands --json` - inspect command metadata and side effects.
-4. `meeting-asr commands --schema` - validate the metadata shape if needed.
-5. `meeting-asr doctor --full --json` - verify local dependencies and config.
-6. `meeting-asr project list --json` or `meeting-asr paths --json` - locate state.
-
-Use `uv run meeting-asr ...` when validating source-code changes in this checkout.
-Use the installed `meeting-asr` command when validating the user-facing editable tool.
-
-## Workflow
-
-Default non-interactive run:
-
-```bash
-meeting-asr project run <video> --no-progress --agent-log
-```
-
-`--agent-log` prints structured stage and heartbeat lines. It is the clean path for
-long ASR jobs because agents can tell whether extraction, upload, ASR, matching, or
-summarization is still progressing.
-
-After a run, inspect:
-
-```bash
-meeting-asr project show <project-id> --json
-meeting-asr project status <project-id> --json
-meeting-asr project transcript list <project-id> --json
-```
-
-For human correction, prefer `meeting-asr project review <project-id>`.
-
-## Identity And Paths
-
-Project IDs are content based: `p-<sha16>`. The same source media should reuse the
-same project; deliberate experiments must use `--variant <name>`.
-
-Important paths are discoverable through:
-
-```bash
-meeting-asr paths --json
-meeting-asr project show <project-id> --json
-```
-
-Project artifacts normally live under the XDG data directory. The project-managed
-video copy can be pruned after reusable audio exists; the original outside the
-project is not the identity source after creation. Re-runs should use the stored
-project audio when available.
-
-## JSON And Discovery
-
-Discovery commands use a small envelope:
-
-```json
-{
-  "schema_version": __SCHEMA_VERSION__,
-  "cmd": "commands",
-  "ok": true,
-  "data": {},
-  "error": null,
-  "code": 0,
-  "hints": []
-}
-```
-
-Stable discovery entrypoints:
-
-- `meeting-asr version --json`
-- `meeting-asr commands --json`
-- `meeting-asr commands --schema`
-- `meeting-asr agent-guide --section <name> --json`
-
-Existing business commands keep their historical payloads. Do not assume every
-command uses the discovery envelope; check `commands --json`.
-
-## Side Effects
-
-`commands --json` exposes `side_effects`, `conditional_side_effects`,
-`interactive`, and `needs_sudo` for each important command.
-
-Side effect enum:
-
-```
-__SIDE_EFFECT_ENUM__
-```
-
-High-risk commands:
-
-- `project run` writes project artifacts and may call DashScope, OSS, ffmpeg, and LLM summarization.
-- `project delete --permanent` physically removes project data.
-- `voiceprint capture/embed` writes the global voiceprint store.
-- `lexicon hotwords sync` writes remote DashScope hotword state.
-- `oss upload` uploads bytes to OSS.
-
-## Non-Interactive
-
-For long jobs, combine `--no-progress --agent-log` where the command supports it.
-Avoid TUI commands unless the user explicitly wants interactive review. Commands
-marked `interactive=true` can open Textual UI, an editor, or audio playback.
-
-Never log secrets from config or environment. `config show` hides secrets unless
-the user explicitly asks to reveal them.
-
-## Troubleshooting
-
-Fast baseline:
-
-```bash
-meeting-asr doctor --full --json
-meeting-asr paths --json
-meeting-asr project show <project-id> --json
-```
-
-If two CLI instances behave differently, check both versions and import roots:
-
-```bash
-which meeting-asr
-meeting-asr version --json
-uv run meeting-asr version --json
-```
-
-For project run hangs, rerun with `--no-progress --agent-log` before claiming root
-cause. The stage log is the observable contract.
-
-## Completion
-
-Root completion is intentionally custom. Do not reintroduce static command lists.
-Generate shell scripts from the Typer command tree through:
-
-```bash
-meeting-asr completion zsh
-meeting-asr completion bash
-meeting-asr completion fish
-```
-"""
-
 
 def agent_guide_command(
     section: str | None = typer.Option(
@@ -663,7 +521,9 @@ def agent_guide_command(
     as_json: bool = typer.Option(False, "--json", help="Print JSON envelope."),
 ) -> None:
     """Print the runtime agent guide."""
-    guide = _build_agent_guide()
+    guide = build_agent_guide(
+        schema_version=SCHEMA_VERSION, side_effect_enum=SIDE_EFFECT_ENUM
+    )
     sections = _split_agent_guide_sections(guide)
     section_names = list(sections)
     if list_sections:
@@ -757,6 +617,9 @@ def version_envelope() -> dict[str, Any]:
             "project_id_content_hash": True,
             "reusable_project_audio": True,
             "oss_audio_reuse": True,
+            "agent_guide_rerun_cache": True,
+            "agent_guide_voiceprint_policy": True,
+            "voiceprint_inactive_samples_excluded": True,
         },
         "entrypoints": {
             "guide": "meeting-asr agent-guide",
@@ -823,13 +686,6 @@ def _installed_version() -> str:
         return package_version("meeting-asr")
     except PackageNotFoundError:
         return "0.0.0+local"
-
-
-def _build_agent_guide() -> str:
-    """Build markdown guidance for runtime agent consumption."""
-    return AGENT_GUIDE_TEMPLATE.replace(
-        "__SCHEMA_VERSION__", str(SCHEMA_VERSION)
-    ).replace("__SIDE_EFFECT_ENUM__", ", ".join(SIDE_EFFECT_ENUM))
 
 
 def _split_agent_guide_sections(markdown: str) -> dict[str, str]:

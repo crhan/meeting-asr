@@ -19,9 +19,15 @@ def test_agent_guide_supports_sections_and_json() -> None:
     section_result = runner.invoke(
         app, ["agent-guide", "--section", "workflow", "--json"]
     )
+    voiceprint_result = runner.invoke(
+        app, ["agent-guide", "--section", "voiceprint", "--json"]
+    )
 
     assert section_list.exit_code == 0
     assert "workflow" in section_list.output
+    assert "rerun-and-caching" in section_list.output
+    assert "review-and-voiceprints" in section_list.output
+    assert "reporting-back" in section_list.output
     assert section_result.exit_code == 0
     payload = json.loads(section_result.output)
     assert payload["schema_version"] == 1
@@ -29,6 +35,11 @@ def test_agent_guide_supports_sections_and_json() -> None:
     assert payload["ok"] is True
     assert payload["data"]["section"] == "workflow"
     assert "project run <video>" in payload["data"]["markdown"]
+    assert voiceprint_result.exit_code == 0
+    voiceprint_payload = json.loads(voiceprint_result.output)
+    assert voiceprint_payload["data"]["section"] == "review-and-voiceprints"
+    assert "quarantined" in voiceprint_payload["data"]["markdown"]
+    assert "must not participate in matching" in voiceprint_payload["data"]["markdown"]
 
 
 def test_commands_json_exposes_side_effects() -> None:
@@ -75,6 +86,8 @@ def test_version_json_exposes_supported_features() -> None:
     assert features["commands_json"] is True
     assert features["version_json"] is True
     assert features["reusable_project_audio"] is True
+    assert features["agent_guide_voiceprint_policy"] is True
+    assert features["voiceprint_inactive_samples_excluded"] is True
 
 
 def test_root_version_json_wrapper(monkeypatch, capsys) -> None:
