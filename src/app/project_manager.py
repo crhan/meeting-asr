@@ -76,7 +76,7 @@ from app.speaker_labeling import (
     write_speaker_mapping,
 )
 from app.srt_utils import build_srt
-from app.uploader import SIGNED_URL_EXPIRES_SECONDS, upload_file_to_oss
+from app.uploader import SIGNED_URL_EXPIRES_SECONDS, presign_oss_object, upload_file_to_oss
 from app.utils import ensure_directory, safe_write_json, safe_write_text
 
 PROJECT_DIRS = ("source", "audio", "asr", "speakers", "exports", "logs", "tmp")
@@ -1500,6 +1500,52 @@ def _resolve_project_file_url(
         emit_progress(progress, "Using provided file URL", advance=1)
         return options.file_url, "provided_url"
     object_key = _project_oss_object_key(manifest, audio_path)
+    if _can_reuse_project_oss_object(manifest, object_key):
+        try:
+            return _presign_project_oss_object(paths, manifest, settings, object_key, progress)
+        except Exception as error:
+            emit_progress(
+                progress,
+                f"Existing OSS object presign failed; uploading audio instead ({type(error).__name__}: {error})",
+                advance=1,
+            )
+    return _upload_project_audio_to_oss(paths, manifest, audio_path, settings, object_key, progress)
+
+
+def _can_reuse_project_oss_object(manifest: ProjectManifest, object_key: str) -> bool:
+    """Return true when manifest points at this project's current audio object."""
+    return manifest.oss.get("mode") == "oss_signed_url" and manifest.oss.get("object_key") == object_key
+
+
+def _presign_project_oss_object(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    settings,
+    object_key: str,
+    progress: CliProgressReporter | None,
+) -> tuple[str, str]:
+    """Presign an already uploaded project audio object and refresh manifest metadata."""
+    file_url = presign_oss_object(
+        object_key,
+        settings=settings,
+        expires_seconds=SIGNED_URL_EXPIRES_SECONDS,
+    )
+    expires_at = datetime.now(UTC) + timedelta(seconds=SIGNED_URL_EXPIRES_SECONDS)
+    manifest.oss = _oss_metadata(settings.oss_bucket_name, object_key, expires_at)
+    save_manifest(paths.root, manifest)
+    emit_progress(progress, "Reused existing OSS object", advance=1)
+    return file_url, "oss_signed_url"
+
+
+def _upload_project_audio_to_oss(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    audio_path: Path,
+    settings,
+    object_key: str,
+    progress: CliProgressReporter | None,
+) -> tuple[str, str]:
+    """Upload project audio to OSS and persist non-secret signing metadata."""
     size_bytes = audio_path.stat().st_size
     upload_estimate = estimate_oss_upload(settings, size_bytes=size_bytes)
     emit_oss_upload_start(progress, estimate=upload_estimate, size_bytes=size_bytes)

@@ -87,3 +87,27 @@ def upload_file_to_oss(
     key = object_name or f"{DEFAULT_OSS_PREFIX}/{uuid4().hex}{source.suffix}"
     bucket.put_object_from_file(key, str(source), progress_callback=progress_callback)
     return bucket.sign_url("GET", key, expires_seconds, slash_safe=True)
+
+
+def presign_oss_object(
+    object_key: str,
+    *,
+    settings: Settings | None = None,
+    expires_seconds: int = SIGNED_URL_EXPIRES_SECONDS,
+) -> str:
+    """
+    Return a signed GET URL for an existing private OSS object.
+
+    Args:
+        object_key: Existing OSS object key to sign.
+        settings: Optional loaded settings.
+        expires_seconds: Signed URL lifetime.
+
+    Returns:
+        Signed HTTPS URL.
+    """
+    if not object_key.strip():
+        raise ValueError("OSS object key must not be empty.")
+    resolved_settings = settings or load_settings(require_oss=True)
+    bucket = build_oss_bucket(resolved_settings)
+    return bucket.sign_url("GET", object_key, expires_seconds, slash_safe=True)
