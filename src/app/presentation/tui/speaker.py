@@ -266,6 +266,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.playback_timer: Any | None = None
         self.known_people = list(session.people)
         self.correction_edits: list[SentenceCorrectionEdit] = []
+        self.correction_original_text_by_segment = _capture_correction_text_baseline(session.speakers)
         self.identity_baseline = _identity_snapshot(session.speakers)
         self.view_mode = VIEW_MODE_SPEAKERS
         self.sample_filter_mode = SAMPLE_FILTER_ALL
@@ -550,11 +551,14 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             return
         segment = self._active_segment()
         speaker = self._speaker_for_segment(segment)
+        original_text = self.correction_original_text_by_segment.get(segment_key(segment), segment.text.strip())
         self.push_screen(
             SentenceCorrectionScreen(
                 speaker_label=speaker.label,
                 speaker_name=speaker.current_name,
                 segment=segment,
+                original_text=original_text,
+                initial_text=segment.text,
             ),
             self._handle_sentence_correction,
         )
@@ -597,9 +601,18 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         if edit is None:
             self._set_status(tr("Transcript correction canceled.", "已取消文字修正。"))
             return
-        self._upsert_correction_edit(edit)
+        staged = self._upsert_correction_edit(edit)
         self._replace_segment_text(edit)
         count = len(self.correction_edits)
+        if not staged:
+            self._set_status(
+                tr(
+                    "Text correction reverted to the original sentence.",
+                    "文字修正已恢复为原句。",
+                )
+            )
+            self._refresh()
+            return
         self._set_status(
             tr(
                 f"{count} text correction(s) staged. Press s to save and run correction.",
@@ -645,6 +658,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.focused_column = "speakers"
         self.known_people = list(session.people)
         self.correction_edits.clear()
+        self.correction_original_text_by_segment = _capture_correction_text_baseline(session.speakers)
         self.identity_baseline = _identity_snapshot(session.speakers)
         self.original_speaker_by_segment = capture_speaker_baseline(session.speakers)
         self.view_mode = VIEW_MODE_SPEAKERS
@@ -1138,13 +1152,17 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
                 seen.add(key)
         return tuple(out)
 
-    def _upsert_correction_edit(self, edit: SentenceCorrectionEdit) -> None:
-        """Insert or replace one staged edit by sentence identity."""
+    def _upsert_correction_edit(self, edit: SentenceCorrectionEdit) -> bool:
+        """Insert, replace, or remove one staged edit by sentence identity."""
+        if edit.corrected_text == edit.original_text:
+            self.correction_edits = [staged for staged in self.correction_edits if not _same_edit(staged, edit)]
+            return False
         for index, staged in enumerate(self.correction_edits):
             if _same_edit(staged, edit):
                 self.correction_edits[index] = edit
-                return
+                return True
         self.correction_edits.append(edit)
+        return True
 
     def _has_correction_edit(self, segment: SentenceSegment) -> bool:
         """Return whether a visible sample has a staged correction."""
@@ -1157,6 +1175,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         summary = outcome.correction_summary
         if summary is not None and summary.accepted:
             self.correction_edits.clear()
+            self.correction_original_text_by_segment = _capture_correction_text_baseline(self.session.speakers)
             base = tr(
                 "Saved names and accepted transcript correction.",
                 "已保存姓名并接受文字修正。",
@@ -1259,6 +1278,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         self.known_people = list(result.session.people)
         self.selected_speaker_index = _speaker_index_by_id(result.session.speakers, selected_speaker_id)
         self.focused_column = "speakers"
+        self.correction_original_text_by_segment = _capture_correction_text_baseline(result.session.speakers)
         self.identity_baseline = _identity_snapshot(result.session.speakers)
         self.original_speaker_by_segment = capture_speaker_baseline(result.session.speakers)
         self.view_mode = VIEW_MODE_SPEAKERS
@@ -1738,6 +1758,17 @@ def _same_edit(left: SentenceCorrectionEdit, right: SentenceCorrectionEdit) -> b
         and left.begin_time_ms == right.begin_time_ms
         and left.end_time_ms == right.end_time_ms
     )
+
+
+def _capture_correction_text_baseline(
+    speakers: list[ReviewSpeaker],
+) -> dict[tuple[int | None, int, int], str]:
+    """Snapshot loaded sentence text for stable inline correction diffs."""
+    baseline: dict[tuple[int | None, int, int], str] = {}
+    for speaker in speakers:
+        for segment in speaker.segments:
+            baseline.setdefault(segment_key(segment), segment.text.strip())
+    return baseline
 
 
 def _known_person_public_id(people: list[KnownPerson], person_id: int | None) -> str | None:

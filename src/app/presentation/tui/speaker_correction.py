@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import shlex
+import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -34,6 +39,7 @@ class CorrectionTextArea(TextArea):
     BINDINGS = [
         Binding("enter", "submit_correction", "Apply", show=False, priority=True),
         Binding("escape", "cancel_correction", "Cancel", show=False, priority=True),
+        Binding("ctrl+o", "open_external_editor", "External editor", show=False, priority=True),
         Binding("ctrl+f", "cursor_right", "Forward", show=False, priority=True),
         Binding("ctrl+b", "cursor_left", "Backward", show=False, priority=True),
     ]
@@ -47,6 +53,12 @@ class CorrectionTextArea(TextArea):
     def action_cancel_correction(self) -> None:
         """Cancel the correction popup."""
         self.app.screen.dismiss(None)
+
+    def action_open_external_editor(self) -> None:
+        """Open the parent modal's external editor flow."""
+        screen = self.app.screen
+        if hasattr(screen, "open_external_editor"):
+            screen.open_external_editor()
 
 
 class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
@@ -92,6 +104,8 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
         speaker_label: str,
         speaker_name: str,
         segment: SentenceSegment,
+        original_text: str | None = None,
+        initial_text: str | None = None,
     ) -> None:
         """
         Create a sentence correction modal.
@@ -100,15 +114,18 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
             speaker_label: Anonymous speaker label.
             speaker_name: Current speaker display name.
             segment: Selected transcript sentence.
+            original_text: Baseline text used for diffing this edit.
+            initial_text: Text shown in the editor when the modal opens.
         """
         super().__init__()
         self.speaker_label = speaker_label
         self.speaker_name = speaker_name
         self.segment = segment
+        self.original_text = (original_text if original_text is not None else segment.text).strip()
+        self.initial_text = (initial_text if initial_text is not None else segment.text).strip()
 
     def compose(self) -> ComposeResult:
         """Build the correction popup."""
-        original = self.segment.text.strip()
         title = tr(
             f"Edit Transcript Text | {self.speaker_label} / {self.speaker_name}",
             f"编辑转写文本 | {self.speaker_label} / {self.speaker_name}",
@@ -116,12 +133,12 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
         with Vertical(id="correction-box"):
             yield Static(title, id="correction-title")
             with ScrollableContainer(id="correction-original"):
-                yield Static(tr(f"[b]Original:[/]\n{original}", f"[b]原文：[/]\n{original}"))
-            yield CorrectionTextArea(original, id="correction-input", soft_wrap=True, show_line_numbers=False)
+                yield Static(tr(f"[b]Original:[/]\n{self.original_text}", f"[b]原文：[/]\n{self.original_text}"))
+            yield CorrectionTextArea(self.initial_text, id="correction-input", soft_wrap=True, show_line_numbers=False)
             yield Static(
                 tr(
-                    "Enter applies this edit. Esc cancels. Ctrl-F/Ctrl-B move cursor.",
-                    "Enter 应用修改。Esc 取消。Ctrl-F/Ctrl-B 移动光标。",
+                    "Enter applies this edit. Esc cancels. Ctrl-O opens $EDITOR. Ctrl-F/Ctrl-B move cursor.",
+                    "Enter 应用修改。Esc 取消。Ctrl-O 打开 $EDITOR。Ctrl-F/Ctrl-B 移动光标。",
                 ),
                 id="correction-status",
             )
@@ -130,16 +147,16 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
         """Focus the correction editor."""
         field = self.query_one("#correction-input", TextArea)
         field.focus()
-        field.cursor_location = (0, len(self.segment.text.strip()))
+        field.cursor_location = _text_end_location(self.initial_text)
 
     def submit_correction(self, value: str) -> None:
         """Return the edited sentence text to the parent TUI."""
         corrected = value.strip()
-        original = self.segment.text.strip()
+        original = self.original_text
         if not corrected:
             self.query_one("#correction-status", Static).update(tr("Corrected text cannot be empty.", "修正后的文本不能为空。"))
             return
-        if corrected == original:
+        if corrected == original and self.initial_text == original:
             self.dismiss(None)
             return
         self.dismiss(
@@ -152,6 +169,42 @@ class SentenceCorrectionScreen(ModalScreen[SentenceCorrectionEdit | None]):
                 corrected_text=corrected,
             )
         )
+
+    def open_external_editor(self) -> None:
+        """Edit the current text in the user's terminal editor."""
+        field = self.query_one("#correction-input", TextArea)
+        try:
+            edited = self._run_external_editor(field.text)
+        except Exception as exc:  # noqa: BLE001
+            self.query_one("#correction-status", Static).update(
+                tr(f"External editor failed: {exc}", f"外部编辑器失败：{exc}")
+            )
+            return
+        updated = edited.strip()
+        if not updated:
+            self.query_one("#correction-status", Static).update(
+                tr("External editor returned empty text; keeping current text.", "外部编辑器返回空文本，已保留当前文本。")
+            )
+            return
+        field.text = updated
+        field.cursor_location = _text_end_location(updated)
+        field.focus()
+
+    def _run_external_editor(self, text: str) -> str:
+        """Run ``$VISUAL`` or ``$EDITOR`` on a temporary UTF-8 text file."""
+        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt", delete=False) as handle:
+            temp_path = Path(handle.name)
+            handle.write(text)
+            handle.write("\n")
+        try:
+            with self.app.suspend():
+                completed = subprocess.run([*shlex.split(editor), str(temp_path)], check=False)
+            if completed.returncode != 0:
+                raise RuntimeError(f"{editor} exited with {completed.returncode}")
+            return temp_path.read_text(encoding="utf-8")
+        finally:
+            temp_path.unlink(missing_ok=True)
 
     def action_cancel_correction(self) -> None:
         """Cancel the correction popup."""
@@ -241,3 +294,9 @@ class CorrectionQueuedScreen(ModalScreen[None]):
         """Save review state and run correction processing."""
         self.dismiss(None)
         self.app.action_save()
+
+
+def _text_end_location(text: str) -> tuple[int, int]:
+    """Return the TextArea cursor location at the end of ``text``."""
+    lines = text.splitlines() or [""]
+    return len(lines) - 1, len(lines[-1])

@@ -416,6 +416,46 @@ def test_project_review_tui_keeps_multiple_inline_text_edits() -> None:
     assert [edit.corrected_text for edit in app.return_value.correction_edits] == ["第一句修正", "第二句修正"]
 
 
+def test_project_review_tui_reediting_sentence_diffs_against_loaded_text() -> None:
+    """Re-editing one staged sentence should keep the first loaded text as diff baseline."""
+    app = SpeakerReviewApp(_session(allow_correction=True))
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("e")
+            await pilot.pause()
+            app.screen.query_one("#correction-input", TextArea).text = "第一句第二版"
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+            assert isinstance(app.screen, SentenceCorrectionScreen)
+            assert app.screen.query_one("#correction-input", TextArea).text == "第一句第二版"
+
+            app.screen.query_one("#correction-input", TextArea).text = "第一句第三版"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, CorrectionQueuedScreen)
+            feedback = app.screen.query_one("#queued-diff", Static).render()
+            assert "Before: 第一句" in feedback.plain
+            assert "After:  第一句第三版" in feedback.plain
+            assert "Before: 第一句第二版" not in feedback.plain
+
+            await pilot.press("s")
+
+    asyncio.run(scenario())
+
+    assert app.return_value is not None
+    assert app.return_value.correction_edit is not None
+    assert app.return_value.correction_edit.original_text == "第一句"
+    assert app.return_value.correction_edit.corrected_text == "第一句第三版"
+    assert app.return_value.correction_edits == (app.return_value.correction_edit,)
+
+
 def test_project_review_tui_save_handler_keeps_tui_open(monkeypatch, tmp_path: Path) -> None:
     """Project review save should run inside a modal instead of exiting the TUI."""
     seen: list[SpeakerReviewDecision] = []
