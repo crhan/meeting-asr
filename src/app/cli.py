@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import click
+import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 
@@ -11,6 +12,7 @@ from typer.completion import completion_init
 from typer.main import get_command
 
 from app.commands import (
+    agent,
     completion,
     config,
     doctor,
@@ -40,6 +42,11 @@ Inspect state:
   meeting-asr project list
   meeting-asr paths
   meeting-asr doctor
+
+Agent discovery:
+  meeting-asr agent-guide
+  meeting-asr commands --json
+  meeting-asr version --json
 """
 
 app = MeetingAsrTyper(
@@ -156,6 +163,9 @@ def _resolve_help_command(
 
 
 app.command("doctor", context_settings=HELP_CONTEXT)(doctor.command)
+app.command("agent-guide", context_settings=HELP_CONTEXT)(agent.agent_guide_command)
+app.command("commands", context_settings=HELP_CONTEXT)(agent.commands_command)
+app.command("version", context_settings=HELP_CONTEXT)(agent.version_command)
 app.command(
     "help",
     context_settings={
@@ -205,6 +215,11 @@ app.command("paths", context_settings=HELP_CONTEXT)(paths.command)
 
 def main() -> None:
     """Run the root Typer app."""
+    if agent.root_version_json_requested(sys.argv[1:]):
+        from app.presentation.cli.json_output import emit_json
+
+        emit_json(agent.version_envelope())
+        return
     app()
 
 

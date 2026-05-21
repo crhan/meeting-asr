@@ -30,6 +30,14 @@ ROOT_SECTIONS = {
             "Inspect state",
             ("meeting-asr project list", "meeting-asr paths", "meeting-asr doctor"),
         ),
+        (
+            "Agent discovery",
+            (
+                "meeting-asr agent-guide",
+                "meeting-asr commands --json",
+                "meeting-asr version --json",
+            ),
+        ),
     ),
     "zh": (
         (
@@ -42,6 +50,14 @@ ROOT_SECTIONS = {
         (
             "常用查看",
             ("meeting-asr project list", "meeting-asr paths", "meeting-asr doctor"),
+        ),
+        (
+            "Agent 自发现",
+            (
+                "meeting-asr agent-guide",
+                "meeting-asr commands --json",
+                "meeting-asr version --json",
+            ),
         ),
     ),
 }
@@ -64,6 +80,9 @@ LABELS = {
 COMMAND_ZH = {
     (): "用于 DashScope 会议转写的项目化 CLI。",
     ("doctor",): "检查运行依赖和全局配置。",
+    ("agent-guide",): "输出面向 Agent 的运行时接入指南。",
+    ("commands",): "输出命令元数据、side effects 和 JSON schema。",
+    ("version",): "显示版本；--json 输出 Agent 能力探针。",
     ("help",): "显示 root 或嵌套命令帮助。",
     ("paths",): "显示 Meeting-ASR 配置、数据、缓存和存储路径。",
     ("config",): "管理全局 XDG 配置。",
@@ -195,6 +214,26 @@ EXAMPLES = {
             "meeting-asr project run ~/Downloads/meeting.mp4",
             "meeting-asr project run ~/Downloads/meeting.mp4 --no-summarize",
         ),
+    },
+    ("agent-guide",): {
+        "en": (
+            "meeting-asr agent-guide",
+            "meeting-asr agent-guide --list-sections",
+            "meeting-asr agent-guide --section workflow --json",
+        ),
+        "zh": (
+            "meeting-asr agent-guide",
+            "meeting-asr agent-guide --list-sections",
+            "meeting-asr agent-guide --section workflow --json",
+        ),
+    },
+    ("commands",): {
+        "en": ("meeting-asr commands --json", "meeting-asr commands --schema"),
+        "zh": ("meeting-asr commands --json", "meeting-asr commands --schema"),
+    },
+    ("version",): {
+        "en": ("meeting-asr version", "meeting-asr version --json"),
+        "zh": ("meeting-asr version", "meeting-asr version --json"),
     },
     ("project", "list"): {
         "en": (
@@ -373,6 +412,9 @@ EXAMPLES = {
 }
 OPTION_ZH = {
     "--version": "显示版本并退出。",
+    "--section": "只输出指定 Agent guide section。",
+    "--list-sections": "列出 Agent guide 可用 section。",
+    "--schema": "输出 commands --json 的 JSON Schema。",
     "--no-color": "关闭 Rich 彩色输出。",
     "--verbose": "显示详细诊断日志。",
     "--lang": "设置 help 语言：auto、en 或 zh。",
