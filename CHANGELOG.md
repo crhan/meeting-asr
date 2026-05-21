@@ -7,6 +7,20 @@
 
 ## [未发布]
 
+## [0.7.0] - 2026-05-21
+
+### 新增
+
+- `project run` / `project transcribe` 会优先复用项目内已提取的音频，完整流程完成后可清理项目内视频副本，减少重复提取和磁盘占用。
+- 项目 ASR 上传支持复用稳定的项目 OSS object，仍可用时只刷新签名 URL，避免重跑时重复上传同一份音频。
+- 新增 `meeting-asr project rerun <project>` 作为显式 ASR 重跑入口，复用已有项目音频和 OSS 状态；`project transcribe` 保持兼容。
+- 新增 Agent 自发现入口：`agent-guide`、`commands --json`、`commands --schema`、`version --json`，暴露 side effects、interactive、feature flags 和运行时指南。
+
+### 变更
+
+- `agent-guide` 增补重跑缓存、声纹样本状态、非交互运行、交付回报等 LLM Agent 指南。
+- `project rerun` 和 ASR 失败恢复提示统一指向显式重跑命令。
+
 ## [0.6.2] - 2026-05-21
 
 ### 修复
@@ -130,7 +144,10 @@
 - 首个公开版本，提供基于 project 的 Meeting-ASR CLI。
 - 新增项目创建、会议转写、转写导出、speaker review、声纹匹配、词汇纠错 review，以及 GitHub Actions 发布基础能力。
 
-[未发布]: https://github.com/crhan/meeting-asr/compare/v0.6.0...HEAD
+[未发布]: https://github.com/crhan/meeting-asr/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/crhan/meeting-asr/compare/v0.6.2...v0.7.0
+[0.6.2]: https://github.com/crhan/meeting-asr/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/crhan/meeting-asr/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/crhan/meeting-asr/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/crhan/meeting-asr/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/crhan/meeting-asr/compare/v0.3.0...v0.4.0

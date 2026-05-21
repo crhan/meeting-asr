@@ -1,6 +1,6 @@
 [project]
 name = "meeting-asr"
-version = "0.6.2"
+version = "0.7.0"
 description = "Project-based CLI for Alibaba Cloud DashScope Fun-ASR video transcription."
 readme = "README.md"
 requires-python = ">=3.14"
