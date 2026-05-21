@@ -153,6 +153,25 @@ COMMANDS_META: list[dict[str, Any]] = [
         "examples": ["meeting-asr project transcribe <project-id> --no-progress"],
     },
     {
+        "name": "project rerun",
+        "group": "project",
+        "summary": "Explicit ASR rerun entrypoint for an existing project; reuses project audio and OSS state.",
+        "args": [{"name": "project", "required": True}],
+        "supports_json": False,
+        "side_effects": ["fs-read", "fs-write", "network-io", "oss-upload"],
+        "side_effect_notes": [
+            "Uses existing project audio when present; prepares audio only if missing.",
+            "Reuses the stored project OSS object when it is still valid.",
+        ],
+        "needs_sudo": False,
+        "interactive": False,
+        "exit_codes": [0, 1, 2, 130],
+        "examples": [
+            "meeting-asr project rerun <project-id> --no-progress",
+            "meeting-asr project rerun <project-id> --speaker-count 6",
+        ],
+    },
+    {
         "name": "project list",
         "group": "project",
         "summary": "List projects in the XDG project store.",
@@ -617,6 +636,7 @@ def version_envelope() -> dict[str, Any]:
             "project_id_content_hash": True,
             "reusable_project_audio": True,
             "oss_audio_reuse": True,
+            "project_rerun_command": True,
             "agent_guide_rerun_cache": True,
             "agent_guide_voiceprint_policy": True,
             "voiceprint_inactive_samples_excluded": True,

@@ -1605,6 +1605,48 @@ def test_retranscribe_invalidates_downstream_artifacts(tmp_path: Path) -> None:
     }
 
 
+def test_project_rerun_command_uses_existing_project_transcription_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The explicit rerun entrypoint should call the reusable project ASR path."""
+    projects_dir = tmp_path / "projects"
+    project_dir = _sample_project(tmp_path, projects_dir=projects_dir)
+    manifest = load_manifest(project_dir)
+    captured: dict[str, object] = {}
+
+    def fake_transcribe_project(project_dir, options, progress=None, **kwargs):
+        captured["project_dir"] = project_dir
+        captured["options"] = options
+        captured["progress"] = progress
+        return ProjectTranscribeSummary(project_dir, "task-rerun", "test", 6, 12)
+
+    monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "rerun",
+            manifest.project_id,
+            "--projects-dir",
+            str(projects_dir),
+            "--speaker-count",
+            "6",
+            "--no-progress",
+        ],
+    )
+
+    options = captured["options"]
+    assert result.exit_code == 0
+    assert captured["project_dir"] == project_dir.resolve()
+    assert isinstance(options, ProjectTranscribeOptions)
+    assert options.speaker_count == 6
+    assert options.audio_format == "flac"
+    assert captured["progress"] is None
+    assert "Project transcription completed." in result.output
+    assert "task-rerun" in result.output
+
+
 def test_resolve_project_ref_accepts_path_id_title_and_unique_partial(
     tmp_path: Path,
 ) -> None:

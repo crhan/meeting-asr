@@ -70,6 +70,7 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
     voiceprint_commands = _bash_complete("meeting-asr voiceprint ", 2)
     lexicon_commands = _bash_complete("meeting-asr lexicon ", 2)
     transcribe_options = _bash_complete("meeting-asr project transcribe --", 3)
+    rerun_options = _bash_complete("meeting-asr project rerun --", 3)
 
     assert "audio" not in root_commands
     assert "help" in root_commands
@@ -77,6 +78,7 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
     assert "lexicon" in root_commands
     assert "list" in project_commands
     assert "review" in project_commands
+    assert "rerun" in project_commands
     assert "transcribe" in project_commands
     assert "transcript" in project_commands
     assert "speakers" in project_commands
@@ -89,6 +91,8 @@ def test_bash_completion_runtime_uses_command_tree() -> None:
     assert "--oss-upload" in transcribe_options
     assert "--asr-hotwords" in transcribe_options
     assert "--audio-format" in transcribe_options
+    assert "--oss-upload" in rerun_options
+    assert "--audio-format" in rerun_options
     assert all(not item.startswith("plain,") for item in project_commands)
 
 

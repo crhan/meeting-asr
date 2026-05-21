@@ -90,6 +90,7 @@ COMMAND_ZH = {
     ("project", "create"): "创建项目目录和 project.json 元数据。",
     ("project", "prepare"): "提取项目音频，不启动云端转写。",
     ("project", "transcribe"): "转写项目并写入结构化产物。",
+    ("project", "rerun"): "重新对已有项目跑 ASR，复用项目音频和 OSS 状态。",
     ("project", "summarize"): "基于已转写项目生成会议标题和回忆索引。",
     ("project", "run"): "创建项目、转写、生成回忆索引并自动匹配 speaker。",
     ("project", "list"): "列出 XDG 项目库里的项目。",
@@ -213,6 +214,16 @@ EXAMPLES = {
         "zh": (
             "meeting-asr project run ~/Downloads/meeting.mp4",
             "meeting-asr project run ~/Downloads/meeting.mp4 --no-summarize",
+        ),
+    },
+    ("project", "rerun"): {
+        "en": (
+            "meeting-asr project rerun p-292d10c1232b79a0 --no-progress",
+            "meeting-asr project rerun p-292d10c1232b79a0 --speaker-count 6",
+        ),
+        "zh": (
+            "meeting-asr project rerun p-292d10c1232b79a0 --no-progress",
+            "meeting-asr project rerun p-292d10c1232b79a0 --speaker-count 6",
         ),
     },
     ("agent-guide",): {

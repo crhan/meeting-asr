@@ -1662,7 +1662,7 @@ def _asr_recovery_message(project_id: str, task_id: str, error: Exception) -> st
         f"dashscope_task_id={task_id} error={error}. "
         f"Inspect: meeting-asr project show {project_id}. "
         f"Review: meeting-asr project review {project_id}. "
-        f"Retry ASR: meeting-asr project transcribe {project_id}."
+        f"Retry ASR: meeting-asr project rerun {project_id}."
     )
 
 

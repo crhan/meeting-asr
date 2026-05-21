@@ -49,15 +49,17 @@ set. Use variants only for deliberate experiments.
 Retry paths:
 
 ```bash
-meeting-asr project transcribe <project-id> --no-progress
+meeting-asr project rerun <project-id> --no-progress
 meeting-asr project run <same-video> --no-progress --agent-log
 ```
 
 Reusable audio is the durable ASR input. If `project show --json` reports an
 audio path, later ASR retries should use it instead of extracting from video
-again. The project-managed copy under `source/` may be removed after audio is
-prepared; do not assume the staged video still exists. Never delete the user's
-original file outside the project directory.
+again. `project rerun` is the explicit command for that path; `project transcribe`
+is the lower-level compatible command kept for existing scripts. The
+project-managed copy under `source/` may be removed after audio is prepared; do
+not assume the staged video still exists. Never delete the user's original file
+outside the project directory.
 
 OSS object keys are stable per project audio object. Let Meeting-ASR decide
 whether it can reuse an existing OSS object or needs to upload. Do not handcraft

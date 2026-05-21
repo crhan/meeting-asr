@@ -352,6 +352,95 @@ def transcribe(
     ),
 ) -> None:
     """Transcribe a project and write structured artifacts."""
+    _run_project_transcription_command(
+        project_dir=project_dir,
+        projects_dir=projects_dir,
+        speaker_count=speaker_count,
+        language=language,
+        model=model,
+        oss_upload=oss_upload,
+        file_url=file_url,
+        generate_srt=generate_srt,
+        timestamp_alignment=timestamp_alignment,
+        disfluency_removal=disfluency_removal,
+        audio_format=audio_format,
+        asr_hotwords=asr_hotwords,
+        progress=progress,
+        description="Transcribing project",
+    )
+
+
+@app.command("rerun")
+def rerun(
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    speaker_count: Optional[int] = typer.Option(None, "--speaker-count", min=1),
+    language: Optional[str] = typer.Option("zh,en", "--language"),
+    model: str = typer.Option("fun-asr", "--model", autocompletion=complete_model),
+    oss_upload: str = typer.Option(
+        "auto", "--oss-upload", autocompletion=complete_oss_upload_mode
+    ),
+    file_url: Optional[str] = typer.Option(None, "--file-url"),
+    generate_srt: bool = typer.Option(True, "--generate-srt/--no-generate-srt"),
+    timestamp_alignment: bool = typer.Option(
+        True, "--timestamp-alignment/--no-timestamp-alignment"
+    ),
+    disfluency_removal: bool = typer.Option(
+        False, "--disfluency-removal/--no-disfluency-removal"
+    ),
+    audio_format: str = typer.Option(
+        "flac", "--audio-format", autocompletion=complete_audio_format
+    ),
+    asr_hotwords: str = typer.Option(
+        "auto", "--asr-hotwords", autocompletion=complete_asr_hotwords
+    ),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
+) -> None:
+    """Rerun ASR for an existing project, reusing project audio and OSS state."""
+    _run_project_transcription_command(
+        project_dir=project_dir,
+        projects_dir=projects_dir,
+        speaker_count=speaker_count,
+        language=language,
+        model=model,
+        oss_upload=oss_upload,
+        file_url=file_url,
+        generate_srt=generate_srt,
+        timestamp_alignment=timestamp_alignment,
+        disfluency_removal=disfluency_removal,
+        audio_format=audio_format,
+        asr_hotwords=asr_hotwords,
+        progress=progress,
+        description="Rerunning project ASR",
+    )
+
+
+def _run_project_transcription_command(
+    *,
+    project_dir: Path,
+    projects_dir: Path | None,
+    speaker_count: int | None,
+    language: str | None,
+    model: str,
+    oss_upload: str,
+    file_url: str | None,
+    generate_srt: bool,
+    timestamp_alignment: bool,
+    disfluency_removal: bool,
+    audio_format: str,
+    asr_hotwords: str,
+    progress: bool,
+    description: str,
+) -> None:
+    """Resolve a project and run the ASR transcription command."""
     configure_logging(verbose=should_enable_verbose_logs())
     resolved_project_dir = run_with_cli_errors(
         lambda: resolve_project_ref(project_dir, projects_dir)
@@ -372,7 +461,7 @@ def transcribe(
         lambda reporter: transcribe_project(
             resolved_project_dir, options, progress=reporter
         ),
-        description="Transcribing project",
+        description=description,
         total=7,
         enabled=progress,
     )

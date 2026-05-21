@@ -40,6 +40,11 @@ def test_agent_guide_supports_sections_and_json() -> None:
     assert voiceprint_payload["data"]["section"] == "review-and-voiceprints"
     assert "quarantined" in voiceprint_payload["data"]["markdown"]
     assert "must not participate in matching" in voiceprint_payload["data"]["markdown"]
+    rerun_result = runner.invoke(app, ["agent-guide", "--section", "rerun", "--json"])
+    assert rerun_result.exit_code == 0
+    rerun_payload = json.loads(rerun_result.output)
+    assert rerun_payload["data"]["section"] == "rerun-and-caching"
+    assert "project rerun <project-id>" in rerun_payload["data"]["markdown"]
 
 
 def test_commands_json_exposes_side_effects() -> None:
@@ -51,8 +56,11 @@ def test_commands_json_exposes_side_effects() -> None:
     commands = {row["name"]: row for row in payload["data"]["commands"]}
     assert payload["cmd"] == "commands"
     assert "project run" in commands
+    assert "project rerun" in commands
     assert "network-io" in commands["project run"]["side_effects"]
     assert "fs-write" in commands["project run"]["side_effects"]
+    assert "oss-upload" in commands["project rerun"]["side_effects"]
+    assert "existing project audio" in commands["project rerun"]["side_effect_notes"][0]
     assert "--no-summarize" in commands["project run"]["side_effect_notes"][0]
     assert commands["project review"]["interactive"] is True
     assert commands["project delete"]["conditional_side_effects"]["--permanent"] == [
@@ -86,6 +94,7 @@ def test_version_json_exposes_supported_features() -> None:
     assert features["commands_json"] is True
     assert features["version_json"] is True
     assert features["reusable_project_audio"] is True
+    assert features["project_rerun_command"] is True
     assert features["agent_guide_voiceprint_policy"] is True
     assert features["voiceprint_inactive_samples_excluded"] is True
 
