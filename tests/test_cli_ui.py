@@ -124,10 +124,9 @@ def test_workflow_renderer_keeps_step_rows_and_total_row(monkeypatch) -> None:
     assert step_two.fields["step_state"] == "active"
     assert step_three.fields["step_state"] == "pending"
     assert step_three.description == "Plan three"
-    assert cli_ui._StepElapsedColumn().render(step_one).plain == "0:00:08"
-    assert cli_ui._StepElapsedColumn().render(step_two).plain == "0:00:03"
+    assert cli_ui._ElapsedColumn().render(step_one).plain == "0:00:08"
+    assert cli_ui._ElapsedColumn().render(step_two).plain == "0:00:03"
     assert cli_ui._ElapsedColumn().render(total).plain == "0:00:11"
-    assert cli_ui._TotalElapsedColumn().render(total).plain == "0:00:11"
 
 
 def test_total_elapsed_column_uses_workflow_clock(monkeypatch) -> None:
@@ -142,26 +141,44 @@ def test_total_elapsed_column_uses_workflow_clock(monkeypatch) -> None:
     progress.update(task_id, completed=1)
 
     assert task.finished
-    assert cli_ui._TotalElapsedColumn().render(task).plain == "0:01:00"
+    assert cli_ui._ElapsedColumn().render(task).plain == "0:01:00"
 
 
-def test_progress_layout_caps_wide_terminal() -> None:
-    """Wide terminals should not stretch the workflow progress indefinitely."""
+def test_progress_uses_full_terminal_width() -> None:
+    """Progress should flex to the full terminal width instead of a fixed cap."""
     console = Console(file=io.StringIO(), width=160)
 
-    layout = cli_ui._progress_layout(console)
+    with Progress(
+        cli_ui._DescriptionColumn(),
+        cli_ui._WorkflowBarColumn(),
+        cli_ui._ElapsedColumn(),
+        console=console,
+        expand=True,
+    ) as progress:
+        progress.add_task(
+            "Transcribing meeting audio with DashScope",
+            total=100,
+            completed=40,
+            step_label="[1/2]",
+            detail_label="",
+            row_kind="step",
+            step_state="active",
+            step_started_at=0.0,
+            workflow_started_at=0.0,
+        )
 
-    assert layout.console_width == cli_ui.PROGRESS_MAX_WIDTH
-    assert layout.description_width == cli_ui.PROGRESS_DESCRIPTION_MAX_WIDTH
-    assert layout.bar_width <= cli_ui.PROGRESS_BAR_MAX_WIDTH
+    widest = max(len(line) for line in console.file.getvalue().splitlines())
+    assert widest > 120
 
 
-def test_progress_layout_uses_available_regular_terminal_width() -> None:
-    """Normal terminals should allocate width to both description and bar."""
-    console = Console(file=io.StringIO(), width=80)
+def test_progress_columns_flex_without_fixed_widths() -> None:
+    """Description and bar columns flex by ratio; elapsed keeps a fixed width."""
+    description = cli_ui._DescriptionColumn().get_table_column()
+    bar = cli_ui._WorkflowBarColumn().get_table_column()
+    elapsed = cli_ui._ElapsedColumn().get_table_column()
 
-    layout = cli_ui._progress_layout(console)
-
-    assert layout.console_width == 80
-    assert layout.description_width > cli_ui.PROGRESS_DESCRIPTION_BASE_WIDTH
-    assert layout.bar_width > cli_ui.PROGRESS_BAR_BASE_WIDTH
+    assert description.ratio == cli_ui.PROGRESS_DESCRIPTION_RATIO
+    assert description.width is None
+    assert bar.ratio == cli_ui.PROGRESS_BAR_RATIO
+    assert bar.width is None
+    assert elapsed.width == cli_ui.PROGRESS_ELAPSED_WIDTH
