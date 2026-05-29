@@ -6,3 +6,10 @@ output/
 projects/
 *.pyc
 .DS_Store
+
+# 本机 LLM/Polish 评测数据：从真实会议项目提取，含敏感内容，严禁提交。
+# 脱敏种子集（如 evals/polish_cases.jsonl）正常入库；真实数据只放下列位置。
+evals/local/
+evals/private/
+*.local.jsonl
+*.private.jsonl
