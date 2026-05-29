@@ -45,6 +45,14 @@ MIN_SAMPLE_DURATION_MS = 1200
 DEFAULT_IDENTITY_CONFLICT_MARGIN = 0.08
 DEFAULT_IDENTITY_AMBIGUOUS_MARGIN = 0.05
 DEFAULT_SAMPLE_IDENTITY_THRESHOLD = 0.45
+# A speaker cluster below the cluster naming threshold has no confirmed
+# identity, so its sentences cannot be compared against an assigned baseline.
+# We still match each sentence against the voiceprint library: when the top
+# match clearly and strongly points at one known person, the sentence is a
+# foreign-speaker candidate that stabilization may reassign. This bar is
+# deliberately higher than the assigned-speaker threshold because the cluster
+# itself is unconfirmed, so we only act on confident, unambiguous matches.
+DEFAULT_FOREIGN_REASSIGN_THRESHOLD = 0.55
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +127,7 @@ def match_project_speaker_samples(
     threshold: float,
     conflict_margin: float = DEFAULT_IDENTITY_CONFLICT_MARGIN,
     ambiguous_margin: float = DEFAULT_IDENTITY_AMBIGUOUS_MARGIN,
+    foreign_threshold: float = DEFAULT_FOREIGN_REASSIGN_THRESHOLD,
     max_seconds: float,
     padding_seconds: float,
     write_report: bool,
@@ -136,6 +145,8 @@ def match_project_speaker_samples(
         threshold: Minimum per-sample score treated as identity evidence.
         conflict_margin: Required other-person lead for a conflict.
         ambiguous_margin: Boundary below which identity is ambiguous.
+        foreign_threshold: Minimum top-match score for a sentence in an
+            unassigned cluster to be flagged as belonging to a known person.
         max_seconds: Maximum clip duration per transcript sample.
         padding_seconds: Audio context padding around each sample.
         write_report: Whether to write ``speaker_sample_matches.json``.
@@ -151,6 +162,7 @@ def match_project_speaker_samples(
         threshold=threshold,
         conflict_margin=conflict_margin,
         ambiguous_margin=ambiguous_margin,
+        foreign_threshold=foreign_threshold,
         max_seconds=max_seconds,
         padding_seconds=padding_seconds,
         workers=workers,
@@ -343,6 +355,7 @@ def _match_sample_groups(
     threshold: float,
     conflict_margin: float,
     ambiguous_margin: float,
+    foreign_threshold: float,
     max_seconds: float,
     padding_seconds: float,
     workers: int,
@@ -360,6 +373,7 @@ def _match_sample_groups(
             threshold=threshold,
             conflict_margin=conflict_margin,
             ambiguous_margin=ambiguous_margin,
+            foreign_threshold=foreign_threshold,
             max_seconds=max_seconds,
             padding_seconds=padding_seconds,
             workers=workers,
@@ -376,6 +390,7 @@ def _match_sample_groups(
             threshold=threshold,
             conflict_margin=conflict_margin,
             ambiguous_margin=ambiguous_margin,
+            foreign_threshold=foreign_threshold,
             max_seconds=max_seconds,
             padding_seconds=padding_seconds,
             cache=cache,
@@ -395,6 +410,7 @@ def _match_sample_groups_parallel(
     threshold: float,
     conflict_margin: float,
     ambiguous_margin: float,
+    foreign_threshold: float,
     max_seconds: float,
     padding_seconds: float,
     workers: int,
@@ -423,6 +439,7 @@ def _match_sample_groups_parallel(
                     threshold=threshold,
                     conflict_margin=conflict_margin,
                     ambiguous_margin=ambiguous_margin,
+                    foreign_threshold=foreign_threshold,
                     max_seconds=max_seconds,
                     padding_seconds=padding_seconds,
                     cache=cache,
@@ -471,6 +488,7 @@ def _match_one_speaker_samples(
     threshold: float,
     conflict_margin: float,
     ambiguous_margin: float,
+    foreign_threshold: float,
     max_seconds: float,
     padding_seconds: float,
     cache: dict[str, list[float]],
@@ -494,6 +512,7 @@ def _match_one_speaker_samples(
             threshold=threshold,
             conflict_margin=conflict_margin,
             ambiguous_margin=ambiguous_margin,
+            foreign_threshold=foreign_threshold,
             max_seconds=max_seconds,
             padding_seconds=padding_seconds,
             cache=cache,
@@ -523,6 +542,7 @@ def _match_one_sample(
     threshold: float,
     conflict_margin: float,
     ambiguous_margin: float,
+    foreign_threshold: float,
     max_seconds: float,
     padding_seconds: float,
     cache: dict[str, list[float]],
@@ -533,14 +553,19 @@ def _match_one_sample(
         return _sample_row(
             speaker_id, segment, assigned, None, None, None, "low-info", ()
         )
-    if assigned is None:
-        return _sample_row(
-            speaker_id, segment, None, None, None, None, "no-assignment", ()
-        )
     vector = _sample_vector(
         context, speaker_id, segment, max_seconds, padding_seconds, cache, cache_lock
     )
     candidates = tuple(_ranked_matches(vector, context.known, limit=3))
+    if assigned is None:
+        return _unassigned_sample_row(
+            speaker_id,
+            segment,
+            candidates,
+            accepted_person_ids=frozenset(context.assigned_person_by_speaker.values()),
+            conflict_margin=conflict_margin,
+            foreign_threshold=foreign_threshold,
+        )
     assigned_score = _cosine(vector, assigned.vector)
     best = candidates[0] if candidates else None
     best_other = next(
@@ -569,6 +594,65 @@ def _match_one_sample(
         best_other,
         status,
         candidates,
+    )
+
+
+def _unassigned_sample_row(
+    speaker_id: int,
+    segment: SentenceSegment,
+    candidates: tuple[VoiceprintCandidate, ...],
+    *,
+    accepted_person_ids: frozenset[int],
+    conflict_margin: float,
+    foreign_threshold: float,
+) -> SpeakerSampleMatch:
+    """Classify a sample whose speaker cluster has no confirmed identity.
+
+    A below-threshold (unnamed) cluster has no assigned baseline, so the
+    assigned-vs-other conflict test does not apply. We instead inspect the
+    sentence's own best library match and only act when ALL of the following
+    hold, so we never disturb sentences that genuinely belong to the cluster:
+
+    - The top match is one of the meeting's **already-confirmed** speakers
+      (``accepted_person_ids``). The unnamed cluster's own owner is, by
+      definition, not confirmed, so its sentences (which match itself) are
+      never flagged — this is what stops a whole cluster from lighting up.
+    - The top match is strong (``>= foreign_threshold``).
+    - The top match is a clear winner over the runner-up
+      (``>= conflict_margin``), so spurious near-ties are left alone.
+
+    Such a sentence is surfaced as ``identity-foreign`` for stabilization to
+    reassign to that confirmed speaker; everything else stays ``no-assignment``
+    and remains in the original cluster.
+
+    Args:
+        speaker_id: Project speaker id of the unnamed cluster.
+        segment: Transcript sample under inspection.
+        candidates: Ranked library matches for this sample (best first).
+        accepted_person_ids: Voiceprint person ids confirmed on some speaker in
+            this project; only these are eligible foreign reassignment targets.
+        conflict_margin: Required lead of the top match over the runner-up.
+        foreign_threshold: Minimum top-match score to treat as foreign.
+
+    Returns:
+        Sample row tagged ``identity-foreign`` (with the foreign person carried
+        in ``best_other``) or ``no-assignment``.
+    """
+    best = candidates[0] if candidates else None
+    if best is None or best.person_id not in accepted_person_ids:
+        return _sample_row(
+            speaker_id, segment, None, None, best, None, "no-assignment", candidates
+        )
+    runner_up_score = candidates[1].score if len(candidates) > 1 else 0.0
+    clear_margin = best.score - runner_up_score
+    if best.score >= foreign_threshold and clear_margin >= conflict_margin:
+        # Carry the foreign person through ``best_other`` so the reassignment
+        # pipeline reads it via the same field as identity-conflict rows.
+        return _sample_row(
+            speaker_id, segment, None, None, best, best, "identity-foreign", candidates
+        )
+    return _sample_row(
+        speaker_id, segment, None, None, best, None, "no-assignment", candidates
     )
 
 
@@ -793,6 +877,10 @@ def _summary_verdict(reports: list[SpeakerSampleMatchReport]) -> str:
     if counts["identity-conflict"]:
         return (
             "identity-conflict: at least one sample matches another known person better"
+        )
+    if counts["identity-foreign"]:
+        return (
+            "identity-foreign: some sentences in an unassigned cluster match a known person"
         )
     if counts["identity-ambiguous"]:
         return "identity-ambiguous: some samples are close to another known person"

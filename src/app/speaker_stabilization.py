@@ -192,7 +192,19 @@ def _sentence_reassignments(
     sample_summary: SpeakerSampleMatchSummary,
     cluster_summary: SpeakerClusterQualitySummary,
 ) -> list[SentenceReassignmentSpec]:
-    """Convert strong per-sentence conflicts into project speaker reassignments."""
+    """Convert strong per-sentence conflicts into project speaker reassignments.
+
+    Two sample statuses drive a reassignment:
+
+    - ``identity-conflict``: a sentence inside a *named* speaker matches another
+      known person better than its assigned identity.
+    - ``identity-foreign``: a sentence inside an *unnamed* (below-threshold)
+      cluster strongly and unambiguously matches one known person.
+
+    Both carry the target person in ``best_other_person_id`` and are only acted
+    on when that person is an accepted in-project speaker and cluster
+    diagnostics do not contradict the move.
+    """
     target_by_person = _target_speaker_by_person(sample_summary)
     cluster_samples = _cluster_sample_index(cluster_summary)
     seen: set[tuple[int | None, int, int]] = set()
@@ -200,7 +212,7 @@ def _sentence_reassignments(
     for report in sample_summary.reports:
         for sample in report.samples:
             if (
-                sample.status != "identity-conflict"
+                sample.status not in ("identity-conflict", "identity-foreign")
                 or sample.best_other_person_id is None
             ):
                 continue

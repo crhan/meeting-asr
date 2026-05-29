@@ -11,6 +11,7 @@
 
 - `project speakers apply --map <id>=@vpp-<public_id>` 支持按声纹库稳定人员 public id 绑定发言人：apply 时把 person 引用写入项目 `speaker_person_map.json`，capture 直接归到已有 person，并从声纹库取该 person 的显示名渲染转写。这避免了手工命名时因花名与库内“真名(花名)”不一致而给同一个人新建重复声纹条目。`--map <id>=<name>` 旧用法保持不变；`apply` 新增 `--store-dir` 用于解析 `@vpp` 的显示名。
 - 新增 `meeting-asr voiceprint people merge <from_id> <into_id>`：把源声纹人员的样本并入目标人员（音频相同的样本按 clip 去重丢弃），随后删除清空的源人员，用于合并历史上同一个人被建成的多条声纹条目。带确认提示，`--yes` 跳过。
+- 句级声纹改判扩展到未命名（低于命名阈值）的 speaker 簇。此前逐句声纹核对只覆盖已命名 speaker，未命名簇的句子被整批跳过——而这恰恰是最容易混入他人的场景。现在未命名簇里若某句明显且稳定地匹配到本会议中另一位**已确认** speaker（分数达到 foreign 阈值 0.55、且明显领先次选），会被标记为 `identity-foreign` 并交由稳定化流程改判到该 speaker；匹配到未确认身份（包括该簇自身真实说话人）的句子保持原状，避免整簇误判。
 
 ### 变更
 

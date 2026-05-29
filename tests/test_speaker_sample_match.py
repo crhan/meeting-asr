@@ -254,3 +254,87 @@ def _tracking_fake_embed_audio_file(calls: list[Path]):
         return _fake_embed_audio_file(path, provider=provider)
 
     return fake
+
+
+def test_project_speakers_sample_match_flags_foreign_in_unnamed_cluster(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """In an unnamed cluster, only a confirmed speaker's sentence is foreign.
+
+    Speaker 0 has no assigned identity. Its first sentence matches 欧丁, who is
+    NOT confirmed anywhere, so it must stay put. Its second sentence matches
+    敬悦, who IS confirmed on speaker 1, so it is a foreign sentence eligible
+    for reassignment.
+    """
+    project_dir = _sample_project(tmp_path)
+    _write_unnamed_cluster_inputs(project_dir)
+    _patch_sample_matching(monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["project", "speakers", "sample-match", str(project_dir), "--no-progress"],
+    )
+
+    payload = json.loads(
+        (project_dir / "speakers" / "speaker_sample_matches.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    unnamed = next(s for s in payload["speakers"] if s["speaker_id"] == 0)
+    matches_unconfirmed = unnamed["samples"][0]
+    matches_confirmed = unnamed["samples"][1]
+    assert result.exit_code == 0
+    assert unnamed["assigned_person_id"] is None
+    # Matches 欧丁, but 欧丁 is not confirmed on any speaker -> left in place.
+    assert matches_unconfirmed["best_name"] == "欧丁"
+    assert matches_unconfirmed["status"] == "no-assignment"
+    # Matches 敬悦, confirmed on speaker 1 -> foreign, carried in best_other.
+    assert matches_confirmed["status"] == "identity-foreign"
+    assert matches_confirmed["best_other_name"] == "敬悦"
+    assert payload["verdict"].startswith("identity-foreign")
+
+
+def _write_unnamed_cluster_inputs(project_dir: Path) -> None:
+    """Write a transcript with one unnamed cluster and one confirmed speaker.
+
+    Speaker 1 is mapped to 敬悦, so 敬悦 is a confirmed in-project identity.
+    Speaker 0 has no mapping (an unnamed, below-threshold cluster): its first
+    sentence embeds to 欧丁 (unconfirmed → kept) and its second embeds to 敬悦
+    (confirmed → foreign). The fake embedder returns 敬悦's vector for the
+    ``sentence_2_4000_7000`` clip and for any ``speaker_1`` clip.
+    """
+    sentences = {
+        "full_text": "这句声纹像欧丁但欧丁不在场。这句其实是敬悦的串话。敬悦本人正常发言。",
+        "detected_speakers": [0, 1],
+        "sentences": [
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 3000,
+                "text": "这句声纹像欧丁但欧丁并不在场。",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 4000,
+                "end_time_ms": 7000,
+                "text": "这句其实是敬悦的串话被并进了本簇。",
+                "speaker_id": 0,
+                "sentence_id": 2,
+            },
+            {
+                "begin_time_ms": 9000,
+                "end_time_ms": 12000,
+                "text": "敬悦本人在自己簇里正常发言。",
+                "speaker_id": 1,
+                "sentence_id": 3,
+            },
+        ],
+    }
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(sentences, ensure_ascii=False), encoding="utf-8"
+    )
+    (project_dir / "speakers" / "speaker_person_map.json").write_text(
+        json.dumps({"1": 2}, ensure_ascii=False),
+        encoding="utf-8",
+    )
