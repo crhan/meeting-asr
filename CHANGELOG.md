@@ -7,6 +7,11 @@
 
 ## [未发布]
 
+### 新增
+
+- `project speakers apply --map <id>=@vpp-<public_id>` 支持按声纹库稳定人员 public id 绑定发言人：apply 时把 person 引用写入项目 `speaker_person_map.json`，capture 直接归到已有 person，并从声纹库取该 person 的显示名渲染转写。这避免了手工命名时因花名与库内“真名(花名)”不一致而给同一个人新建重复声纹条目。`--map <id>=<name>` 旧用法保持不变；`apply` 新增 `--store-dir` 用于解析 `@vpp` 的显示名。
+- 新增 `meeting-asr voiceprint people merge <from_id> <into_id>`：把源声纹人员的样本并入目标人员（音频相同的样本按 clip 去重丢弃），随后删除清空的源人员，用于合并历史上同一个人被建成的多条声纹条目。带确认提示，`--yes` 跳过。
+
 ### 变更
 
 - 工作流进度条改用整个终端宽度自适应渲染，不再固定 120 列上限；窄终端下进度条自动收窄给描述让位，宽终端下描述与进度条都充分展开，显示更舒适。

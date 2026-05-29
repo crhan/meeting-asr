@@ -66,6 +66,8 @@ from app.core.project_refs import list_projects, resolve_project_ref
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
+from app.voiceprint_people import get_voiceprint_person
+from app.voiceprint_store import get_voiceprint_db_path
 from app.project_manager import (
     apply_project_speakers,
     create_or_reuse_project,
@@ -1567,7 +1569,7 @@ def speakers_apply(
     mappings: list[str] = typer.Option(
         [],
         "--map",
-        help="Apply speaker_id=name mapping non-interactively; merges with saved names by default.",
+        help="Apply speaker_id=name (or speaker_id=@vpp-id to bind an existing voiceprint person) non-interactively; merges with saved names by default.",
     ),
     sample_count: int = typer.Option(
         3, "--sample-count", min=1, max=20, help="Samples shown per speaker."
@@ -1577,6 +1579,13 @@ def speakers_apply(
         "--replace",
         help="Replace saved speaker mappings instead of merging into them.",
     ),
+    store_dir: Optional[Path] = typer.Option(
+        None,
+        "--store-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Voiceprint store dir for resolving @vpp-id person display names.",
+    ),
 ) -> None:
     """Apply already confirmed mappings non-interactively for scripts or automation."""
     resolved_project_dir = run_with_cli_errors(
@@ -1584,16 +1593,20 @@ def speakers_apply(
     )
     sentences_path = project_paths(resolved_project_dir).asr_dir / "sentences.json"
     result = run_with_cli_errors(lambda: load_transcript_result(sentences_path))
-    resolved = _resolve_speaker_mappings(
+    resolved, person_public_mapping = _resolve_speaker_mappings(
         project_dir=resolved_project_dir,
         mappings=mappings,
         sample_count=sample_count,
         known_speakers=set(result.detected_speakers),
         result=result,
+        store_dir=store_dir,
     )
     mapping_path, transcript_path, srt_path = run_with_cli_errors(
         lambda: apply_project_speakers(
-            resolved_project_dir, resolved, replace_existing=replace_existing
+            resolved_project_dir,
+            resolved,
+            person_public_mapping=person_public_mapping or None,
+            replace_existing=replace_existing,
         )
     )
     typer.echo(f"Mapping written to: {mapping_path}")
@@ -2706,7 +2719,8 @@ def _resolve_speaker_mappings(
     sample_count: int,
     known_speakers: set[int],
     result: TranscriptResult,
-) -> dict[int, str]:
+    store_dir: Optional[Path] = None,
+) -> tuple[dict[int, str], dict[int, str]]:
     """
     Resolve speaker mappings from CLI flags or prompts.
 
@@ -2716,13 +2730,30 @@ def _resolve_speaker_mappings(
         sample_count: Number of samples to show per speaker.
         known_speakers: Speaker ids present in the transcript.
         result: Loaded transcript result.
+        store_dir: Optional voiceprint store dir for resolving ``@vpp-id`` names.
 
     Returns:
-        User-provided speaker mapping.
+        ``(names, person_public_ids)``. Display names for ``@vpp-`` bindings are
+        filled from the voiceprint store so transcripts still render a name.
     """
-    if mappings:
-        return parse_mapping_items(mappings, known_speakers)
-    return _prompt_speaker_mappings(project_dir, result, sample_count=sample_count)
+    if not mappings:
+        return (
+            _prompt_speaker_mappings(project_dir, result, sample_count=sample_count),
+            {},
+        )
+    names, person_public_ids = parse_mapping_items(mappings, known_speakers)
+    db_path = get_voiceprint_db_path(store_dir) if store_dir is not None else None
+    for speaker_id, public_id in person_public_ids.items():
+        if names.get(speaker_id):
+            continue
+        person = get_voiceprint_person(public_id, db_path)
+        if person is None:
+            raise typer.BadParameter(
+                f"No voiceprint person found for @{public_id} "
+                f"(speaker_id={speaker_id}). Check `voiceprint people list`."
+            )
+        names[speaker_id] = person.name
+    return names, person_public_ids
 
 
 def _prompt_speaker_mappings(

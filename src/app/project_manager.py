@@ -25,6 +25,7 @@ from app.core.asr_wait import (
     record_dashscope_wait,
 )
 from app.config import load_settings
+from app.voiceprint_ids import valid_person_public_id
 from app.asr_hotwords import AsrHotwordResolution, resolve_asr_hotwords
 from app.asr_pricing import AsrCostEstimate, estimate_asr_cost
 from app.core.progress import CliProgressReporter, emit_progress
@@ -1251,26 +1252,32 @@ def resolve_project_audio_path(project_root: Path, manifest: ProjectManifest) ->
 
 def parse_mapping_items(
     mappings: list[str], known_speakers: set[int]
-) -> dict[int, str]:
+) -> tuple[dict[int, str], dict[int, str]]:
     """
-    Parse ``speaker_id=name`` mapping CLI values.
+    Parse ``speaker_id=name`` / ``speaker_id=@vpp-id`` mapping CLI values.
 
     Args:
         mappings: Mapping strings.
         known_speakers: Speaker IDs present in the transcript.
 
     Returns:
-        Parsed mapping.
+        ``(names, person_public_ids)``. ``names`` holds explicit display names;
+        ``person_public_ids`` holds ``@vpp-`` person bindings. A speaker bound
+        only by public id has no ``names`` entry until the caller resolves it.
     """
-    resolved: dict[int, str] = {}
+    names: dict[int, str] = {}
+    person_public_ids: dict[int, str] = {}
     for item in mappings:
-        speaker_id, name = _parse_mapping_item(item)
+        speaker_id, name, public_id = _parse_mapping_item(item)
         if speaker_id not in known_speakers:
             raise typer.BadParameter(
                 f"speaker_id={speaker_id} is not present in the transcript."
             )
-        resolved[speaker_id] = name
-    return resolved
+        if name:
+            names[speaker_id] = name
+        if public_id:
+            person_public_ids[speaker_id] = public_id
+    return names, person_public_ids
 
 
 def _initial_manifest(
@@ -2234,23 +2241,39 @@ def _resolve_speaker_person_mapping(
     return resolved
 
 
-def _parse_mapping_item(item: str) -> tuple[int, str]:
-    """Parse one speaker mapping value."""
+def _parse_mapping_item(item: str) -> tuple[int, str, str]:
+    """Parse one speaker mapping value into ``(speaker_id, name, person_public_id)``.
+
+    Right-hand side forms:
+    - ``name`` -> ``(id, name, "")``
+    - ``@vpp-<hex>`` -> ``(id, "", public_id)``; the display name is resolved
+      from the voiceprint store by the caller so the transcript still renders.
+    """
     if "=" not in item:
         raise typer.BadParameter(
-            f"Invalid --map value: {item}. Expected speaker_id=name."
+            f"Invalid --map value: {item}. Expected speaker_id=name or speaker_id=@vpp-id."
         )
     raw_key, raw_value = item.split("=", 1)
-    if not raw_key.strip() or not raw_value.strip():
+    key = raw_key.strip()
+    value = raw_value.strip()
+    if not key or not value:
         raise typer.BadParameter(
-            f"Invalid --map value: {item}. Expected speaker_id=name."
+            f"Invalid --map value: {item}. Expected speaker_id=name or speaker_id=@vpp-id."
         )
     try:
-        return int(raw_key.strip()), raw_value.strip()
+        speaker_id = int(key)
     except ValueError as exc:
         raise typer.BadParameter(
             f"Speaker id must be an integer in --map: {item}"
         ) from exc
+    if value.startswith("@"):
+        public_id = value[1:].strip()
+        if not valid_person_public_id(public_id):
+            raise typer.BadParameter(
+                f"Invalid voiceprint person id in --map: {item}. Expected @vpp-<16 hex>."
+            )
+        return speaker_id, "", public_id
+    return speaker_id, value, ""
 
 
 def _parse_languages(language: str | None) -> list[str]:

@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 from app.cli import app
 from app.project_manager import create_project, load_manifest
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
+from app.voiceprint_people import get_voiceprint_person, merge_voiceprint_people
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
@@ -851,3 +852,153 @@ def _speaker_id_from_list(output: str, name: str) -> str:
 def _is_voiceprint_public_id(value: str) -> bool:
     """Return whether a table cell is a voiceprint person public id."""
     return re.fullmatch(r"vpp-[0-9a-f]{16}", value) is not None
+
+
+def test_speakers_apply_binds_person_by_public_id(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """`apply --map N=@vpp-id` writes a person ref so capture binds, not duplicates."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "data" / "meeting-asr" / "voiceprints"
+    _write_partially_named_speaker_inputs(project_dir)
+    add_output = runner.invoke(
+        app,
+        ["voiceprint", "people", "add", "徐铤(彬川)", "--store-dir", str(store_dir)],
+    ).output
+    public_id = add_output.split("Person ID:", 1)[1].strip().splitlines()[0]
+
+    apply_result = runner.invoke(
+        app,
+        [
+            "project",
+            "speakers",
+            "apply",
+            str(project_dir),
+            "--map",
+            f"2=@{public_id}",
+            "--store-dir",
+            str(store_dir),
+        ],
+    )
+    assert apply_result.exit_code == 0, apply_result.output
+
+    person_map = json.loads(
+        (project_dir / "speakers" / "speaker_person_map.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert person_map["2"] == public_id
+    speaker_map = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
+    assert speaker_map["2"] == "徐铤(彬川)"
+
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+    runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
+    )
+    # speaker 2 bound to the seeded person: its sample landed on that public id,
+    # so no duplicate "徐铤(彬川)" person was created.
+    captured = get_voiceprint_person(public_id, get_voiceprint_db_path(store_dir))
+    assert captured is not None
+    assert captured.sample_count >= 1
+
+
+def test_merge_voiceprint_people_moves_samples_and_removes_source(
+    tmp_path: Path,
+) -> None:
+    """Merge moves source samples onto the target and deletes the emptied source."""
+    store_dir = tmp_path / "voiceprints"
+    media = tmp_path / "meeting.mp4"
+    media.write_bytes(b"media")
+    db_path = get_voiceprint_db_path(store_dir)
+    store_voiceprint_samples(
+        [
+            _stored_sample(store_dir, media, "源-彬川", index=1),
+            _stored_sample(store_dir, media, "源-彬川", index=2),
+            _stored_sample(store_dir, media, "徐铤(彬川)", index=3),
+        ],
+        db_path,
+    )
+    source = get_voiceprint_person("源-彬川", db_path)
+    target = get_voiceprint_person("徐铤(彬川)", db_path)
+    assert source is not None and target is not None
+
+    result = merge_voiceprint_people(source.public_id, target.public_id, db_path)
+
+    assert result.moved == 2
+    assert result.duplicates == 0
+    assert result.source_public_id == source.public_id
+    assert get_voiceprint_person("源-彬川", db_path) is None
+    kept = get_voiceprint_person(target.public_id, db_path)
+    assert kept is not None
+    assert kept.sample_count == 3
+
+
+def test_merge_voiceprint_people_drops_duplicate_clips(tmp_path: Path) -> None:
+    """A source sample whose audio already exists under the target is dropped, not moved."""
+    store_dir = tmp_path / "voiceprints"
+    media = tmp_path / "meeting.mp4"
+    media.write_bytes(b"media")
+    db_path = get_voiceprint_db_path(store_dir)
+    target_sample = _stored_sample(store_dir, media, "into", index=1)
+    source_sample = _stored_sample(store_dir, media, "from", index=2)
+    source_sample.clip_path.write_bytes(target_sample.clip_path.read_bytes())
+    store_voiceprint_samples([target_sample, source_sample], db_path)
+    source = get_voiceprint_person("from", db_path)
+    target = get_voiceprint_person("into", db_path)
+    assert source is not None and target is not None
+
+    result = merge_voiceprint_people(source.public_id, target.public_id, db_path)
+
+    assert result.moved == 0
+    assert result.duplicates == 1
+    assert get_voiceprint_person("from", db_path) is None
+    kept = get_voiceprint_person(target.public_id, db_path)
+    assert kept is not None
+    assert kept.sample_count == 1
+
+
+def test_voiceprint_people_merge_cli_reports_summary(tmp_path: Path) -> None:
+    """`voiceprint people merge --yes` merges samples and prints a summary."""
+    store_dir = tmp_path / "voiceprints"
+    media = tmp_path / "meeting.mp4"
+    media.write_bytes(b"media")
+    db_path = get_voiceprint_db_path(store_dir)
+    store_voiceprint_samples(
+        [
+            _stored_sample(store_dir, media, "源-沛行", index=1),
+            _stored_sample(store_dir, media, "黄睿(沛行)", index=2),
+        ],
+        db_path,
+    )
+    source = get_voiceprint_person("源-沛行", db_path)
+    target = get_voiceprint_person("黄睿(沛行)", db_path)
+    assert source is not None and target is not None
+
+    result = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "people",
+            "merge",
+            source.public_id,
+            target.public_id,
+            "--store-dir",
+            str(store_dir),
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Merged" in result.output
+    assert get_voiceprint_person("源-沛行", db_path) is None

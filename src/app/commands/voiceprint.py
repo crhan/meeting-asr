@@ -35,6 +35,7 @@ from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_people import (
     create_voiceprint_person,
     get_voiceprint_person,
+    merge_voiceprint_people,
     rename_voiceprint_person,
 )
 from app.voiceprint_store import (
@@ -517,6 +518,59 @@ def people_show_command(
     typer.echo(f"Samples: {row.sample_count}")
     typer.echo(f"Projects: {row.project_count}")
     typer.echo(f"Embedded: {row.embedded_sample_count}/{row.sample_count}")
+
+
+@people_app.command("merge")
+def people_merge_command(
+    from_id: str = typer.Argument(..., metavar="FROM_ID"),
+    into_id: str = typer.Argument(..., metavar="INTO_ID"),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    assume_yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Merge FROM_ID's samples into INTO_ID, then delete the emptied source person."""
+    db_path = get_voiceprint_db_path(store_dir)
+    source = run_with_cli_errors(lambda: get_voiceprint_person(from_id, db_path))
+    if source is None:
+        raise typer.BadParameter(f"No voiceprint person found for source: {from_id}")
+    target = run_with_cli_errors(lambda: get_voiceprint_person(into_id, db_path))
+    if target is None:
+        raise typer.BadParameter(f"No voiceprint person found for target: {into_id}")
+    if source.public_id == target.public_id:
+        raise typer.BadParameter("Source and target voiceprint person are the same.")
+    if not assume_yes:
+        typer.echo(
+            f"Merge {source.name} ({source.public_id}, {source.sample_count} sample(s)) "
+            f"into {target.name} ({target.public_id}, {target.sample_count} sample(s))."
+        )
+        typer.echo(f"Source {source.public_id} will be deleted (clip files kept on disk).")
+        typer.confirm("Proceed?", abort=True)
+    result = run_with_cli_errors(
+        lambda: merge_voiceprint_people(from_id, into_id, db_path)
+    )
+    if as_json:
+        emit_json(
+            {
+                "moved": result.moved,
+                "duplicates": result.duplicates,
+                "deleted_source": result.source_public_id,
+                "person": _voiceprint_speaker_payload(result.person),
+            }
+        )
+        return
+    typer.echo(
+        f"Merged {result.source_name} ({result.source_public_id}) into "
+        f"{result.person.name} ({result.person.public_id})."
+    )
+    typer.echo(f"Moved: {result.moved} | Duplicates dropped: {result.duplicates}")
+    typer.echo(
+        f"Target now has {result.person.sample_count} sample(s), "
+        f"{result.person.embedded_sample_count}/{result.person.sample_count} embedded."
+    )
 
 
 @app.command("embed")

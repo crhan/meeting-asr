@@ -3648,3 +3648,18 @@ class _FakePreviewProcess:
 
     def wait(self, timeout: float | None = None) -> int:
         return self.poll() or 0
+
+
+def test_parse_mapping_items_separates_names_and_public_ids() -> None:
+    """@vpp-id becomes a person public-id binding; plain values stay display names."""
+    names, publics = project_manager.parse_mapping_items(
+        ["0=徐铤(彬川)", "2=@vpp-f61409c960abfe86"], {0, 1, 2}
+    )
+    assert names == {0: "徐铤(彬川)"}
+    assert publics == {2: "vpp-f61409c960abfe86"}
+
+
+def test_parse_mapping_items_rejects_invalid_public_id() -> None:
+    """A malformed @vpp value is rejected instead of silently becoming a name."""
+    with pytest.raises(typer.BadParameter):
+        project_manager.parse_mapping_items(["0=@vpp-not-hex"], {0})

@@ -13,3 +13,6 @@ evals/local/
 evals/private/
 *.local.jsonl
 *.private.jsonl
+
+# Agent runtime worktrees
+.claude/
