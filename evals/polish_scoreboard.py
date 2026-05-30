@@ -55,11 +55,17 @@ def main() -> None:
     """Replay the current guard over the reviewed set and report per-subset metrics."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--gold-field", default="codex_verdict")
+    parser.add_argument(
+        "--reviewed",
+        type=Path,
+        default=REVIEWED,
+        help="Reviewed JSONL with a gold field. Defaults to polish_reviewed.jsonl.",
+    )
     args = parser.parse_args()
 
     rows = [
         json.loads(line)
-        for line in REVIEWED.read_text(encoding="utf-8").splitlines()
+        for line in args.reviewed.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     # subset -> (gold, guard) -> count
