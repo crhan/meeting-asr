@@ -116,33 +116,60 @@ def guard_verdict(idx: int, sentences: list[SentenceSegment], original: str,
     return f"reject:{v}" if v is not None else "accept"
 
 
-def run_challenger(items: list[dict], model: str) -> dict[str, object]:
-    """Re-run the challenger model on the original sentences; return id -> item."""
+def load_projects(projects: list[str]) -> list[dict]:
+    """Load each project's latest sidecar + sentence context; skip ones with none."""
+    loaded = []
+    for proj in projects:
+        payload = latest_sidecar(proj)
+        if not payload:
+            log.info("skip_no_sidecar", proj=proj)
+            continue
+        items = payload.get("items", [])
+        loaded.append({"proj": proj, "items": items, "sentences": build_sentences(items)})
+    return loaded
+
+
+def _make_batches(loaded: list[dict]) -> list[list[LlmCorrectionCandidate]]:
+    """Flatten ALL projects into globally-tagged candidate batches.
+
+    candidate_id is ``"<proj_idx>:<sentence_idx>"`` so one global pool can run
+    every project's batches together, yet each proposal still keys back to its
+    project. This is the fix for the per-project pool that capped concurrency at
+    a single (usually small) project's batch count.
+    """
+    batches: list[list[LlmCorrectionCandidate]] = []
+    for pi, p in enumerate(loaded):
+        cands = [
+            LlmCorrectionCandidate(candidate_id=f"{pi}:{i}", sentence_id=i,
+                                   speaker_name="S", text=str(it.get("original_text", "")))
+            for i, it in enumerate(p["items"])
+        ]
+        for j in range(0, len(cands), _POLISH_STRICT_BATCH_SIZE):
+            batches.append(cands[j:j + _POLISH_STRICT_BATCH_SIZE])
+    return batches
+
+
+def run_all(batches: list[list[LlmCorrectionCandidate]], model: str) -> dict[str, object]:
+    """Run the challenger over EVERY batch through ONE global pool; id -> item.
+
+    A single ThreadPoolExecutor over all projects' batches keeps MAX_WORKERS busy
+    end-to-end (one drain at the very end) instead of refilling/draining per
+    project, so the realized concurrency actually approaches MAX_WORKERS.
+    """
     settings = load_settings(require_oss=False, require_dashscope=True)
     timeout = _strict_polish_request_timeout(model)
-    candidates = [
-        LlmCorrectionCandidate(
-            candidate_id=f"c{i}", sentence_id=i, speaker_name="S",
-            text=str(it.get("original_text", "")),
-        )
-        for i, it in enumerate(items)
-    ]
-    batches = [
-        candidates[i : i + _POLISH_STRICT_BATCH_SIZE]
-        for i in range(0, len(candidates), _POLISH_STRICT_BATCH_SIZE)
-    ]
     proposals: dict[str, object] = {}
     failures = 0
+    done = 0
+    total = len(batches)
+    t0 = time.perf_counter()
 
     def one(batch: list[LlmCorrectionCandidate]) -> list:
-        # Retry with backoff so high concurrency (above the account's nominal cap)
-        # rides out transient rate-limits instead of silently dropping sentences.
         last: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
                 return propose_transcript_polish_strict(
-                    candidates=batch, settings=settings, model=model,
-                    request_timeout=timeout,
+                    candidates=batch, settings=settings, model=model, request_timeout=timeout,
                 ).items
             except Exception as exc:  # noqa: BLE001
                 last = exc
@@ -153,30 +180,28 @@ def run_challenger(items: list[dict], model: str) -> dict[str, object]:
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futs = [ex.submit(one, b) for b in batches]
         for fut in as_completed(futs):
+            done += 1
             try:
                 for item in fut.result():
                     proposals[item.candidate_id] = item
             except Exception as exc:  # noqa: BLE001 — one bad batch must not abort
                 failures += 1
                 log.warning("batch_failed", err=type(exc).__name__, msg=str(exc)[:80])
+            if done % 25 == 0 or done == total:
+                el = time.perf_counter() - t0
+                cost = _usage[0] / 1000 * RATE_RMB_PER_1K["in"] + _usage[1] / 1000 * RATE_RMB_PER_1K["out"]
+                sps = _usage[2] * _POLISH_STRICT_BATCH_SIZE / el if el else 0
+                eta = (total - done) / (done / el) if el and done else 0
+                log.info("polish_progress", batches=f"{done}/{total}", sps=round(sps, 1),
+                         calls=_usage[2], cost=round(cost, 2), eta_min=round(eta / 60))
     if failures:
         log.warning("batches_failed", count=failures, model=model, tries=MAX_RETRIES)
     return proposals
 
 
-def compare_project(proj: str, model: str) -> dict:
-    """Compare baseline (sidecar) vs challenger model on one project."""
-    payload = latest_sidecar(proj)
-    if not payload:
-        log.info("skip_no_sidecar", proj=proj)
-        return {}
-    items = payload.get("items", [])
-    base_model = payload.get("model", "?")
-    sentences = build_sentences(items)
-    log.info("proj_start", proj=proj, n=len(items))
-
-    challenger = run_challenger(items, model)
-
+def compare_one(p: dict, pi: int, proposals: dict[str, object]) -> dict:
+    """CPU-only guard comparison for one project, using the global proposals."""
+    proj, items, sentences = p["proj"], p["items"], p["sentences"]
     tally = {"base": Counter(), "chal": Counter()}
     reasons = {"base": Counter(), "chal": Counter()}
     diverge: list[dict] = []
@@ -184,7 +209,7 @@ def compare_project(proj: str, model: str) -> dict:
         original = str(it.get("original_text", ""))
         p_base = str(it.get("proposed_text", "") or "")
         ct_base = str(it.get("change_type", ""))
-        ch = challenger.get(f"c{i}")
+        ch = proposals.get(f"{pi}:{i}")
         p_chal = str(getattr(ch, "corrected_text", "") or "")
         ct_chal = str(getattr(ch, "change_type", "") or "")
 
@@ -232,30 +257,27 @@ def main() -> None:
     model = sys.argv[1]
     projects = sys.argv[2:]
     OUT.mkdir(parents=True, exist_ok=True)
+    t0 = time.perf_counter()
 
+    loaded = load_projects(projects)
+    batches = _make_batches(loaded)
+    total_n = sum(len(p["items"]) for p in loaded)
+    log.info("start", projects=len(loaded), sentences=total_n,
+             batches=len(batches), workers=MAX_WORKERS, retries=MAX_RETRIES)
+
+    # The slow part: one global pool runs every project's batches together.
+    proposals = run_all(batches, model)
+
+    # The fast part: replay the guard per project on the collected proposals.
     all_diverge: list[dict] = []
     agg = {"base": Counter(), "chal": Counter()}
     agg_reasons = {"base": Counter(), "chal": Counter()}
-    total_n = 0
-    n_proj = len(projects)
-    t0 = time.perf_counter()
-    log.info("开始：%d 项目 | 并发 %d | 重试 %d", n_proj, MAX_WORKERS, MAX_RETRIES)
-    for k, proj in enumerate(projects, start=1):
-        res = compare_project(proj, model)
-        if not res:
-            log.info("[%d/%d] %s 无 sidecar，跳过", k, n_proj, proj)
-            continue
-        total_n += res["n"]
+    for pi, p in enumerate(loaded):
+        res = compare_one(p, pi, proposals)
         all_diverge.extend(res["diverge"])
         for side in ("base", "chal"):
             agg[side] += res["tally"][side]
             agg_reasons[side] += res["reasons"][side]
-        el = time.perf_counter() - t0
-        sps = total_n / el if el else 0
-        cost = _usage[0] / 1000 * RATE_RMB_PER_1K["in"] + _usage[1] / 1000 * RATE_RMB_PER_1K["out"]
-        eta = (33969 - total_n) / sps if sps else 0
-        log.info("[%d/%d] %s +%d句 | 累计 %d句/%.0fs=%.1f句/s | API %d次 | ¥%.2f | 余约 %.0f分",
-                 k, n_proj, proj, res["n"], total_n, el, sps, _usage[2], cost, eta / 60)
     elapsed = time.perf_counter() - t0
 
     out_path = OUT / f"model_compare_{model.replace('.', '_').replace('/', '_')}.jsonl"
