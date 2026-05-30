@@ -37,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_review_file import _collect  # noqa: E402  (local tool import)
 from app.lexicon_store import default_lexicon_db_path  # noqa: E402
+from app.transcript_corrections import _is_destutter_only  # noqa: E402
 
 LOCAL = Path(__file__).resolve().parent / "local"
 REVIEWED = LOCAL / "polish_reviewed.jsonl"
@@ -97,7 +98,10 @@ def main() -> None:
     for row in rows:
         original, proposed = row["original_text"], row["proposed_text"]
         key = (original, proposed)
-        if _is_despace(original, proposed):
+        if _is_destutter_only(original, proposed):
+            gold = "keep"  # 只是去口吃/去填充（truetrue->true, 就是就是->就是），无害
+            source["去口吃(destutter)"] += 1
+        elif _is_despace(original, proposed):
             gold = "keep"
             source["去空格(方向3)"] += 1
         elif row.get("_kind") == "reject" and row.get("category") == "ascii_hallucination":

@@ -1380,7 +1380,14 @@ def _polish_guard(
          decision word that downstream summary agents rely on
       G5 cross-sentence borrow: any inserted >=6-char Chinese chunk must not
          appear in either neighbor sentence (defends timestamp-content contract)
+
+    A proposal that only strips ASR noise — same content skeleton after removing
+    fillers and collapsing adjacent stutter (嗯嗯是是是 -> 是, 可以可以 -> 可以) — is
+    safe under every rule: it adds nothing and preserves all distinct content, so
+    it is accepted up front, before the length / ascii / protected checks.
     """
+    if _is_destutter_only(original_text, proposed_text):
+        return None
     orig_len = max(1, len(original_text))
     new_len = len(proposed_text)
     if new_len < orig_len * _POLISH_GUARD_MIN_LEN_RATIO:
@@ -1404,25 +1411,18 @@ def _polish_guard(
 def _protected_word_deletion_check(original: str, proposed: str) -> str | None:
     """
     Reject when polish strips a protected attitude/confirmation/decision word
-    that the original sentence contained — UNLESS the only removed copies were
-    adjacent stutter repeats (可以可以 -> 可以), which carry no extra meaning.
+    that the original sentence contained.
 
-    We still reject *distributed* deletion (我觉得X我觉得Y -> 我觉得X，Y): dropping
-    the same marker from different clauses weakens the speaker's stance and erodes
-    the『决议 vs 提议』『共识 vs 单方陈述』distinction the summary agents rely on.
+    Adjacent stutter de-dup (可以可以 -> 可以) is already accepted up front by the
+    de-stutter early-exit in ``_polish_guard``; anything that reaches here removed
+    a protected word from a *distinct* position (distributed deletion
+    我觉得X我觉得Y -> 我觉得X，Y), which weakens the speaker's stance — so reject.
     """
     for word in _POLISH_PROTECTED_WORDS:
         before = original.count(word)
         if before == 0:
             continue
         if proposed.count(word) < before:
-            # A protected word was dropped. Exempt ONLY when the whole proposal is
-            # a clean de-stutter / de-filler reduction (可以可以 -> 可以) with no
-            # other content change. If the proposal also rewrote a word (踩 -> 采)
-            # or removed real content (删"会有"), it stays rejected — the protected
-            # rule must not become a loophole for those.
-            if _is_destutter_only(original, proposed):
-                return None
             return f"protected_word_deleted:{word}"
     return None
 
