@@ -41,6 +41,7 @@ from evals.build_review_file import _collect
 LOCAL = Path(__file__).resolve().parent / "local"
 REVIEWED = LOCAL / "polish_reviewed.jsonl"
 GOLD_OUT = LOCAL / "polish_reviewed_gold.jsonl"
+HUMAN_OVERRIDES = LOCAL / "protected_gold_overrides.jsonl"
 _ASCII_RE = re.compile(r"[A-Za-z0-9]+")
 
 
@@ -86,6 +87,16 @@ def main() -> None:
     panel: dict[tuple[str, str], str] = {
         (c["orig"], c["prop"]): c["auto"] for c in _collect()
     }
+    # Highest-priority human rulings: rows the user adjudicated from the source
+    # AUDIO (evals/audio_verify.py). These override codex/panel — the recording is
+    # ground truth. Currently: 14 protected-deletion rejects the user confirmed are
+    # stutter/substring artifacts (codex over-rejected), all -> keep.
+    overrides: dict[tuple[str, str], str] = {}
+    if HUMAN_OVERRIDES.exists():
+        for line in HUMAN_OVERRIDES.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                o = json.loads(line)
+                overrides[(o["original_text"], o["proposed_text"])] = o["gold_verdict"]
 
     rows = [
         json.loads(line)
@@ -97,7 +108,10 @@ def main() -> None:
     for row in rows:
         original, proposed = row["original_text"], row["proposed_text"]
         key = (original, proposed)
-        if _is_destutter_only(original, proposed):
+        if key in overrides:
+            gold = overrides[key]  # 人工音频裁定，最高优先级
+            source["人工音频裁定"] += 1
+        elif _is_destutter_only(original, proposed):
             gold = "keep"  # 只是去口吃/去填充（truetrue->true, 就是就是->就是），无害
             source["去口吃(destutter)"] += 1
         elif _is_despace(original, proposed):

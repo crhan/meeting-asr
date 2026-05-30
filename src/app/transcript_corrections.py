@@ -1413,16 +1413,20 @@ def _protected_word_deletion_check(original: str, proposed: str) -> str | None:
     Reject when polish strips a protected attitude/confirmation/decision word
     that the original sentence contained.
 
-    Adjacent stutter de-dup (可以可以 -> 可以) is already accepted up front by the
-    de-stutter early-exit in ``_polish_guard``; anything that reaches here removed
-    a protected word from a *distinct* position (distributed deletion
-    我觉得X我觉得Y -> 我觉得X，Y), which weakens the speaker's stance — so reject.
+    Compare protected-word counts on the DE-STUTTERED text, not the raw text.
+    A whole sentence that is only stutter is already accepted up front; the cases
+    reaching here also changed something else, so the raw ``count<before`` rule
+    over-rejects when the protected word itself was merely a stutter/false-start
+    repeat (可以可以... -> 可以...) — the dominant source of false rejects. De-
+    stuttering collapses adjacent repeats first, so dropping one stuttered repeat
+    leaves the de-stuttered count unchanged (accept), while deleting a protected
+    word from a *distinct* position (我觉得A我觉得B -> 我觉得A，B) still lowers the
+    de-stuttered count (reject) — that erases a separate stance.
     """
+    stripped_original = _destutter(original)
+    stripped_proposed = _destutter(proposed)
     for word in _POLISH_PROTECTED_WORDS:
-        before = original.count(word)
-        if before == 0:
-            continue
-        if proposed.count(word) < before:
+        if stripped_original.count(word) > stripped_proposed.count(word):
             return f"protected_word_deleted:{word}"
     return None
 
