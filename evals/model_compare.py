@@ -23,10 +23,13 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import app.dashscope_chat as dc
 from app.config import load_settings
 from app.correction_llm import (
     LlmCorrectionCandidate,
@@ -44,6 +47,38 @@ from app.transcript_corrections import (
 PROJ = Path.home() / ".local" / "share" / "meeting-asr" / "projects"
 OUT = Path(__file__).resolve().parent / "local"
 VOCAB = list_lexicon_known_texts()
+
+# STATED ASSUMPTION — DashScope public list, ¥/1k tokens, for the challenger only.
+RATE_RMB_PER_1K = {"in": 0.0024, "out": 0.0096}  # qwen3.7-max (max tier)
+
+# Meter the challenger's real token usage so the full run also reports its cost.
+_usage = [0, 0, 0]  # input_tokens, output_tokens, calls
+_meter_lock = threading.Lock()
+
+
+def _meter(orig):
+    """Wrap a DashScope .call to accumulate challenger token usage."""
+    def wrapper(*args, **kwargs):
+        resp = orig(*args, **kwargs)
+        u = getattr(resp, "usage", None)
+
+        def field(key: str) -> int:
+            if u is None:
+                return 0
+            if isinstance(u, dict):
+                return int(u.get(key, 0) or 0)
+            return int(getattr(u, key, 0) or 0)
+
+        with _meter_lock:
+            _usage[0] += field("input_tokens")
+            _usage[1] += field("output_tokens")
+            _usage[2] += 1
+        return resp
+    return wrapper
+
+
+dc.Generation.call = _meter(dc.Generation.call)
+dc.MultiModalConversation.call = _meter(dc.MultiModalConversation.call)
 
 
 def latest_sidecar(proj: str) -> dict | None:
@@ -182,14 +217,18 @@ def main() -> None:
     all_diverge: list[dict] = []
     agg = {"base": Counter(), "chal": Counter()}
     agg_reasons = {"base": Counter(), "chal": Counter()}
+    total_n = 0
+    t0 = time.perf_counter()
     for proj in projects:
         res = compare_project(proj, model)
         if not res:
             continue
+        total_n += res["n"]
         all_diverge.extend(res["diverge"])
         for side in ("base", "chal"):
             agg[side] += res["tally"][side]
             agg_reasons[side] += res["reasons"][side]
+    elapsed = time.perf_counter() - t0
 
     out_path = OUT / f"model_compare_{model.replace('.', '_').replace('/', '_')}.jsonl"
     with out_path.open("w", encoding="utf-8") as h:
@@ -197,6 +236,19 @@ def main() -> None:
             h.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     _report(model, agg, agg_reasons, all_diverge, out_path)
+    _report_cost(model, total_n, elapsed)
+
+
+def _report_cost(model: str, n: int, elapsed: float) -> None:
+    """Report the metered cost + wall-clock of THIS evaluation run (challenger only)."""
+    cost = _usage[0] / 1000 * RATE_RMB_PER_1K["in"] + _usage[1] / 1000 * RATE_RMB_PER_1K["out"]
+    print("\n" + "=" * 66)
+    print(f"本次全量评测开销  (challenger={model} 实跑 {n} 句)")
+    print("=" * 66)
+    print(f"  墙钟 {elapsed:.0f}s ({elapsed/60:.1f} 分) | API 调用 {_usage[2]} 次")
+    print(f"  token: 输入 {_usage[0]} / 输出 {_usage[1]}")
+    print(f"  DashScope 费用(假设价 in {RATE_RMB_PER_1K['in']} out {RATE_RMB_PER_1K['out']} ¥/1k): ¥{cost:.2f}")
+    print("  注：baseline qwen3.6-plus 复用历史 sidecar，不计入本次开销；codex 判定费另计。")
 
 
 def _report(model, agg, agg_reasons, diverge, out_path) -> None:
