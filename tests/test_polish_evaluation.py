@@ -55,11 +55,13 @@ def test_polish_eval_catches_model_overreach(tmp_path: Path) -> None:
 
 
 def test_project_correct_eval_polish_command_reports_summary() -> None:
-    """The CLI should expose the default polish eval set."""
+    """The CLI should expose the default polish eval set, all cases passing."""
+    total = len(load_polish_eval_cases(Path("evals/polish_cases.jsonl")))
+
     result = runner.invoke(app, ["project", "correct", "eval-polish"])
 
     assert result.exit_code == 0, result.output
-    assert "Polish eval: 10/10 passed" in result.output
+    assert f"Polish eval: {total}/{total} passed" in result.output
 
 
 def test_project_correct_eval_polish_command_fails_on_bad_case(tmp_path: Path) -> None:
