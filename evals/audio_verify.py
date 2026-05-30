@@ -18,9 +18,13 @@ import json
 import subprocess
 from pathlib import Path
 
-from app.lexicon_store import list_lexicon_known_texts
+from app.lexicon_store import list_lexicon_correction_rules, list_lexicon_known_texts
 from app.models import SentenceSegment
-from app.transcript_corrections import _is_change_type_allowed, _polish_guard
+from app.transcript_corrections import (
+    _apply_rules_to_text,
+    _is_change_type_allowed,
+    _polish_guard,
+)
 
 from evals._log import log
 
@@ -105,7 +109,7 @@ def build(cases: list[dict]) -> str:
       <label><input type="radio" name="v{i}" value="both_wrong"> 都错</label>
       <label><input type="radio" name="v{i}" value="unsure"> 拿不准</label>
     </div>
-    <div class="row"><span class="lbl">正确文本</span><input class="fix" data-i="{i}" type="text" placeholder="原文和 polish 都错时，填你听到的正确文本（如 P叉一→PXE）"></div>
+    <div class="row"><span class="lbl">正确文本</span><input class="fix" data-i="{i}" type="text" placeholder="原文和 polish 都错时，填你听到的正确文本"></div>
   </div>""")
     meta = [{"i": i, "source": c["source"], "original": c["original_text"],
              "proposed": c["proposed_text"]} for i, c in enumerate(cases)]
@@ -137,6 +141,14 @@ def main() -> None:
             ok += 1
         else:
             log.warning("cut_failed", i=i, proj=proj)
+
+    # The gold snapshot froze the pre-lexicon text (P叉一); show it as the live
+    # corrected transcript does (PXE) by replaying current rules on the display
+    # text. Timestamp matching above already used the raw text, so do this last.
+    rules = list_lexicon_correction_rules()
+    for c in cases:
+        c["original_text"] = _apply_rules_to_text(c["original_text"], rules)
+        c["proposed_text"] = _apply_rules_to_text(c["proposed_text"], rules)
 
     (OUTDIR / "verify.html").write_text(build(cases), encoding="utf-8")
     log.info("written", cases=len(cases), clips=ok,
