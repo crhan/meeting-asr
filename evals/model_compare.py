@@ -22,6 +22,7 @@ Real meeting text: the dump is git-ignored. Run:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import threading
@@ -29,6 +30,14 @@ import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stdout,
+)
+log = logging.getLogger("model_compare")
 
 import app.dashscope_chat as dc
 from app.config import load_settings
@@ -156,9 +165,10 @@ def run_challenger(items: list[dict], model: str) -> dict[str, object]:
                     proposals[item.candidate_id] = item
             except Exception as exc:  # noqa: BLE001 — one bad batch must not abort
                 failures += 1
-                print(f"  ! batch failed: {type(exc).__name__}: {str(exc)[:80]}")
+                log.warning("  ! batch failed: %s: %s", type(exc).__name__, str(exc)[:80])
     if failures:
-        print(f"  ! {failures} batch(es) failed for {model} (after {MAX_RETRIES} tries each)")
+        log.warning("  ! %d batch(es) failed for %s (after %d tries each)",
+                    failures, model, MAX_RETRIES)
     return proposals
 
 
@@ -166,12 +176,12 @@ def compare_project(proj: str, model: str) -> dict:
     """Compare baseline (sidecar) vs challenger model on one project."""
     payload = latest_sidecar(proj)
     if not payload:
-        print(f"[{proj}] no sidecar, skip")
+        log.info("[%s] no sidecar, skip", proj)
         return {}
     items = payload.get("items", [])
     base_model = payload.get("model", "?")
     sentences = build_sentences(items)
-    print(f"  → {proj} {len(items)}句 跑中…", flush=True)
+    log.info("  → %s %d句 跑中…", proj, len(items))
 
     challenger = run_challenger(items, model)
 
@@ -237,11 +247,11 @@ def main() -> None:
     total_n = 0
     n_proj = len(projects)
     t0 = time.perf_counter()
-    print(f"开始：{n_proj} 项目 | 并发 {MAX_WORKERS} | 重试 {MAX_RETRIES}", flush=True)
+    log.info("开始：%d 项目 | 并发 %d | 重试 %d", n_proj, MAX_WORKERS, MAX_RETRIES)
     for k, proj in enumerate(projects, start=1):
         res = compare_project(proj, model)
         if not res:
-            print(f"[{k}/{n_proj}] {proj} 无 sidecar，跳过", flush=True)
+            log.info("[%d/%d] %s 无 sidecar，跳过", k, n_proj, proj)
             continue
         total_n += res["n"]
         all_diverge.extend(res["diverge"])
@@ -252,9 +262,8 @@ def main() -> None:
         sps = total_n / el if el else 0
         cost = _usage[0] / 1000 * RATE_RMB_PER_1K["in"] + _usage[1] / 1000 * RATE_RMB_PER_1K["out"]
         eta = (33969 - total_n) / sps if sps else 0
-        print(f"[{k}/{n_proj}] {proj} +{res['n']}句 | 累计 {total_n}句/{el:.0f}s="
-              f"{sps:.1f}句/s | API {_usage[2]}次 | ¥{cost:.2f} | 余约 {eta/60:.0f}分",
-              flush=True)
+        log.info("[%d/%d] %s +%d句 | 累计 %d句/%.0fs=%.1f句/s | API %d次 | ¥%.2f | 余约 %.0f分",
+                 k, n_proj, proj, res["n"], total_n, el, sps, _usage[2], cost, eta / 60)
     elapsed = time.perf_counter() - t0
 
     out_path = OUT / f"model_compare_{model.replace('.', '_').replace('/', '_')}.jsonl"
