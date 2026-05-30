@@ -22,6 +22,7 @@ Real meeting text: the dump is git-ignored. Run:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -51,8 +52,8 @@ VOCAB = list_lexicon_known_texts()
 # STATED ASSUMPTION — DashScope public list, ¥/1k tokens, for the challenger only.
 RATE_RMB_PER_1K = {"in": 0.0024, "out": 0.0096}  # qwen3.7-max (max tier)
 
-# Concurrency above the account's nominal cap (24), per request; backoff absorbs 429s.
-MAX_WORKERS = 50
+# Concurrency is tunable via MC_WORKERS env; backoff absorbs any rate-limits.
+MAX_WORKERS = int(os.environ.get("MC_WORKERS", "24"))
 MAX_RETRIES = 4
 _BACKOFF_S = (2, 5, 12)  # waits before retries 2/3/4
 
@@ -170,7 +171,7 @@ def compare_project(proj: str, model: str) -> dict:
     items = payload.get("items", [])
     base_model = payload.get("model", "?")
     sentences = build_sentences(items)
-    print(f"[{proj}] {len(items)} sentences | baseline={base_model} challenger={model}")
+    print(f"  → {proj} {len(items)}句 跑中…", flush=True)
 
     challenger = run_challenger(items, model)
 
@@ -234,16 +235,26 @@ def main() -> None:
     agg = {"base": Counter(), "chal": Counter()}
     agg_reasons = {"base": Counter(), "chal": Counter()}
     total_n = 0
+    n_proj = len(projects)
     t0 = time.perf_counter()
-    for proj in projects:
+    print(f"开始：{n_proj} 项目 | 并发 {MAX_WORKERS} | 重试 {MAX_RETRIES}", flush=True)
+    for k, proj in enumerate(projects, start=1):
         res = compare_project(proj, model)
         if not res:
+            print(f"[{k}/{n_proj}] {proj} 无 sidecar，跳过", flush=True)
             continue
         total_n += res["n"]
         all_diverge.extend(res["diverge"])
         for side in ("base", "chal"):
             agg[side] += res["tally"][side]
             agg_reasons[side] += res["reasons"][side]
+        el = time.perf_counter() - t0
+        sps = total_n / el if el else 0
+        cost = _usage[0] / 1000 * RATE_RMB_PER_1K["in"] + _usage[1] / 1000 * RATE_RMB_PER_1K["out"]
+        eta = (33969 - total_n) / sps if sps else 0
+        print(f"[{k}/{n_proj}] {proj} +{res['n']}句 | 累计 {total_n}句/{el:.0f}s="
+              f"{sps:.1f}句/s | API {_usage[2]}次 | ¥{cost:.2f} | 余约 {eta/60:.0f}分",
+              flush=True)
     elapsed = time.perf_counter() - t0
 
     out_path = OUT / f"model_compare_{model.replace('.', '_').replace('/', '_')}.jsonl"
