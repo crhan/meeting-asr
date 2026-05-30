@@ -1393,18 +1393,51 @@ def _polish_guard(
 def _protected_word_deletion_check(original: str, proposed: str) -> str | None:
     """
     Reject when polish strips a protected attitude/confirmation/decision word
-    that the original sentence contained.
+    that the original sentence contained — UNLESS the only removed copies were
+    adjacent stutter repeats (可以可以 -> 可以), which carry no extra meaning.
 
-    Counts per-word occurrences: 删 1 个就拒。我们不容忍弱化『决议 vs 提议』
-    『共识 vs 单方陈述』的分辨能力。
+    We still reject *distributed* deletion (我觉得X我觉得Y -> 我觉得X，Y): dropping
+    the same marker from different clauses weakens the speaker's stance and erodes
+    the『决议 vs 提议』『共识 vs 单方陈述』distinction the summary agents rely on.
     """
     for word in _POLISH_PROTECTED_WORDS:
         before = original.count(word)
         if before == 0:
             continue
         if proposed.count(word) < before:
+            # A protected word was dropped. Exempt ONLY when the whole proposal is
+            # a clean de-stutter / de-filler reduction (可以可以 -> 可以) with no
+            # other content change. If the proposal also rewrote a word (踩 -> 采)
+            # or removed real content (删"会有"), it stays rejected — the protected
+            # rule must not become a loophole for those.
+            if _is_destutter_only(original, proposed):
+                return None
             return f"protected_word_deleted:{word}"
     return None
+
+
+# Pure ASR noise: interjections + whitespace + light punctuation. Stripped before
+# the de-stutter equality test so comma-separated stutters (可以，可以) collapse too.
+_POLISH_NOISE_RE = re.compile(r"[嗯呃啊哦额唉噢呐\s，,。、；;？?！!～~]")
+
+
+def _destutter(text: str) -> str:
+    """
+    Reduce text to its content skeleton: strip ASR noise, then collapse adjacent
+    repeated character runs (可以可以 -> 可以, 我我我 -> 我, 故障故障 -> 故障).
+    Two sentences with the same skeleton differ only by stutter/filler noise.
+    """
+    text = _POLISH_NOISE_RE.sub("", text)
+    previous = ""
+    while previous != text:
+        previous = text
+        text = re.sub(r"(.{1,4}?)\1+", r"\1", text)
+    return text
+
+
+def _is_destutter_only(original: str, proposed: str) -> bool:
+    """True if proposed is original with only stutter/filler noise removed."""
+    return _destutter(original) == _destutter(proposed)
 
 
 def _extract_ascii_tokens(text: str) -> list[str]:
