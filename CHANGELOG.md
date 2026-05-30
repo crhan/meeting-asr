@@ -7,6 +7,8 @@
 
 ## [未发布]
 
+## [0.8.0] - 2026-05-30
+
 ### 新增
 
 - `project speakers apply --map <id>=@vpp-<public_id>` 支持按声纹库稳定人员 public id 绑定发言人：apply 时把 person 引用写入项目 `speaker_person_map.json`，capture 直接归到已有 person，并从声纹库取该 person 的显示名渲染转写。这避免了手工命名时因花名与库内“真名(花名)”不一致而给同一个人新建重复声纹条目。`--map <id>=<name>` 旧用法保持不变；`apply` 新增 `--store-dir` 用于解析 `@vpp` 的显示名。
@@ -15,6 +17,7 @@
 
 ### 变更
 
+- 升级到 typer 0.26：typer 把 Click 源码内置（vendored）并移除了对外部 click 包的依赖。CLI 表现层（本地化 help、解析错误面板、shell 补全、退出码）相应改用 typer 公共 API 实现，不再直接依赖 click，也不使用 typer 的私有内部模块；命令行的可见行为保持不变。
 - 工作流进度条改用整个终端宽度自适应渲染，不再固定 120 列上限；窄终端下进度条自动收窄给描述让位，宽终端下描述与进度条都充分展开，显示更舒适。
 
 ## [0.7.0] - 2026-05-21
