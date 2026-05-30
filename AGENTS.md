@@ -7,6 +7,12 @@
 - Without Typer's completion classes registered at startup, runtime completion can emit `plain,xxx` values or reject the shell instruction.
 - Do not reintroduce hand-written static command lists for bash/zsh/fish; generate scripts from the Typer/Click command tree.
 
+## Typer / Click Notes
+
+- Typer 0.26 vendored Click into the private `typer._click` package and dropped the external `click` dependency (`click` is no longer installed). The CLI presentation layer (help, parse-error panels, completion, exit codes) uses Typer's PUBLIC API only: `typer.core.Typer{Group,Command,Argument,Option}`, `typer.main.get_command`, `typer.Context`, `typer.BadParameter`/`Exit`/`Abort`. Never `import click`, and never import `typer._click` (private, no `__all__`, no stability promise).
+- `src/app/presentation/cli/errors.py` discriminates parse exceptions (NoSuchOption / MissingParameter / BadParameter) by class name + attribute shape, and `typer_context.py` recognizes usage errors by `ctx`/`format_message`/`exit_code` shape — not by `isinstance`, because Typer no longer exposes those exception classes. This duck-typing is deliberate; do not "fix" it to `isinstance` + private imports, it would silently break localized errors.
+- en/zh bilingual help is rendered by our own renderer (driven by locale / `--lang` / `MEETING_ASR_LANG`), independent of Typer; the 0.26 upgrade preserved it at zero cost. Keep it bilingual unless explicitly asked to go Chinese-only.
+
 ## Speaker Preview Notes
 
 - IINA may ignore CLI-provided `--mpv-sub-file` for external subtitles.
