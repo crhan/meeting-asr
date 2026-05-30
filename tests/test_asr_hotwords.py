@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.asr_hotwords import resolve_asr_hotwords, sync_asr_hotwords
+from app.asr_hotwords import (
+    resolve_asr_hotwords,
+    sync_asr_hotwords,
+    write_asr_hotword_artifact,
+)
 from app.config import Settings
 from app.lexicon_store import LexiconContext, record_lexicon_contexts
 
@@ -86,6 +90,52 @@ def test_resolve_asr_hotwords_prefers_configured_vocabulary_id() -> None:
 
     assert result.vocabulary_id == "vocab-config"
     assert result.source == "config"
+
+
+def test_resolve_asr_hotwords_carries_lexicon_hotwords(tmp_path: Path) -> None:
+    """A resolution should carry the lexicon hotwords and snapshot them on demand."""
+    db_path = tmp_path / "lexicon.sqlite"
+    output = tmp_path / "corrections" / "asr_hotwords.json"
+    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+
+    # An explicit vocabulary id skips remote sync, so this exercises the carried
+    # hotwords without any DashScope call.
+    result = resolve_asr_hotwords(
+        mode="vocab-explicit-1",
+        settings=_settings(),
+        target_model="fun-asr",
+        db_path=db_path,
+    )
+    write_asr_hotword_artifact(output, result)
+    payload = json.loads(output.read_text(encoding="utf-8"))
+
+    assert result.vocabulary_id == "vocab-explicit-1"
+    assert result.source == "explicit"
+    assert [item.text for item in result.hotwords] == ["iSee"]
+    assert payload["count"] == 1
+    assert payload["dashscope_vocabulary"] == [{"text": "iSee", "weight": 4}]
+
+
+def test_resolve_asr_hotwords_off_carries_no_hotwords(tmp_path: Path) -> None:
+    """Disabled hotwords should carry an empty table, not the lexicon."""
+    db_path = tmp_path / "lexicon.sqlite"
+    output = tmp_path / "corrections" / "asr_hotwords.json"
+    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+
+    result = resolve_asr_hotwords(
+        mode="off",
+        settings=_settings(),
+        target_model="fun-asr",
+        db_path=db_path,
+    )
+    write_asr_hotword_artifact(output, result)
+    payload = json.loads(output.read_text(encoding="utf-8"))
+
+    assert result.vocabulary_id is None
+    assert result.source == "off"
+    assert result.hotwords == ()
+    assert payload["count"] == 0
+    assert payload["dashscope_vocabulary"] == []
 
 
 def test_resolve_asr_hotwords_auto_degrades_on_sync_error(monkeypatch) -> None:

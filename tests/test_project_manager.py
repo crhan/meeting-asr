@@ -856,6 +856,93 @@ def test_asr_polling_heartbeat_redacts_signed_url_query_token(
     assert "dashscope_task_id=task-1234567890" in rendered
 
 
+def test_transcribe_project_snapshots_lexicon_asr_hotwords(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """ASR submit must record the lexicon hotwords into corrections/asr_hotwords.json."""
+    project_dir = _sample_project(tmp_path)
+    audio_path = project_dir / "audio" / "audio.wav"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_path.write_bytes(b"audio")
+    manifest = load_manifest(project_dir)
+    manifest.audio = {
+        "path": "audio/audio.wav",
+        "format": "wav",
+        "duration_seconds": 10,
+    }
+    save_manifest(project_dir, manifest)
+
+    lexicon_db = tmp_path / "lexicon.sqlite"
+    record_lexicon_contexts(
+        [
+            LexiconContext(
+                canonical="iSee",
+                wrong_text="艾赛",
+                corrected_text="iSee",
+                left_context="",
+                right_context="系统",
+                category="system",
+                speaker_name="敬悦",
+                project_id="p-demo",
+                sentence_id=1,
+                source="test",
+            )
+        ],
+        db_path=lexicon_db,
+    )
+
+    class FakeTask:
+        """Minimal DashScope task response."""
+
+        output = {"task_id": "task-1"}
+
+    submitted: dict = {}
+
+    def fake_submit_transcription(**kwargs):
+        submitted.update(kwargs)
+        return FakeTask()
+
+    monkeypatch.setattr(project_manager, "load_settings", lambda **_: _settings())
+    monkeypatch.setattr(
+        project_manager,
+        "upload_file_to_oss",
+        lambda *_, **__: "https://oss.example.com/audio.wav",
+    )
+    monkeypatch.setattr(project_manager, "record_oss_upload", lambda *_, **__: None)
+    monkeypatch.setattr(
+        project_manager, "submit_transcription", fake_submit_transcription
+    )
+    monkeypatch.setattr(project_manager, "wait_transcription", lambda **_: object())
+    monkeypatch.setattr(
+        project_manager, "download_transcription_json", lambda _: {"raw": True}
+    )
+    monkeypatch.setattr(
+        project_manager,
+        "parse_transcription_result",
+        lambda _: TranscriptResult(
+            "大家好。", [SentenceSegment(0, 1000, "大家好。", 0, 1)], [0]
+        ),
+    )
+    monkeypatch.setattr(project_manager, "record_dashscope_wait", lambda **_: None)
+    # Point auto resolution at the test lexicon and stub the remote sync so a
+    # vocabulary id is returned without any DashScope call.
+    monkeypatch.setattr("app.asr_hotwords.default_lexicon_db_path", lambda: lexicon_db)
+    monkeypatch.setattr(
+        "app.asr_hotwords.sync_asr_hotwords",
+        lambda **_: SimpleNamespace(
+            vocabulary_id="vocab-test", hotword_count=1, vocabulary_hash="hash"
+        ),
+    )
+
+    project_manager.transcribe_project(project_dir, _transcribe_options())
+
+    artifact = project_dir / "corrections" / "asr_hotwords.json"
+    payload = json.loads(artifact.read_text(encoding="utf-8"))
+    assert payload["dashscope_vocabulary"] == [{"text": "iSee", "weight": 4}]
+    assert submitted["vocabulary_id"] == "vocab-test"
+
+
 def test_project_run_generates_default_transcript_polish_proposal(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
