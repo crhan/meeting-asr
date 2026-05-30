@@ -16,11 +16,15 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import subprocess
 import tempfile
+import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+from evals._log import log
 
 LOCAL = Path(__file__).resolve().parent / "local"
 DIVERGE = LOCAL / "model_compare_qwen3_7-max.jsonl"
@@ -31,10 +35,15 @@ CODEX_TIMEOUT_S = 600
 
 # How many to sample per divergence bucket (quality-relevant ones only).
 SAMPLE = {
-    "both_accept_differ": 70,
-    "base_no_change__chal_accept": 30,
-    "base_accept__chal_no_change": 20,
+    "both_accept_differ": 220,
+    "base_no_change__chal_accept": 90,
+    "base_accept__chal_no_change": 60,
 }
+
+# Meter codex token usage (printed as "tokens used\n<N>") to tally judging cost.
+_codex_tokens = [0]
+_ctok_lock = threading.Lock()
+_TOKENS_RE = re.compile(r"tokens used\D*([\d,]+)", re.IGNORECASE)
 
 SCHEMA = {
     "type": "object",
@@ -119,6 +128,10 @@ def call_codex(prompt: str) -> dict[str, dict]:
              "-o", str(out_path), "--output-schema", str(schema_path), "-"],
             input=prompt, text=True, capture_output=True, timeout=CODEX_TIMEOUT_S,
         )
+        match = _TOKENS_RE.search((proc.stdout or "") + "\n" + (proc.stderr or ""))
+        if match:
+            with _ctok_lock:
+                _codex_tokens[0] += int(match.group(1).replace(",", ""))
         if not out_path.exists():
             raise RuntimeError(f"codex no output: {proc.stderr[-300:]}")
         results = json.loads(out_path.read_text(encoding="utf-8"))["results"]
@@ -158,34 +171,40 @@ def main() -> None:
     sample = load_sample()
     cases = [to_ab(r, i) for i, r in enumerate(sample)]
     batches = [cases[i:i + BATCH] for i in range(0, len(cases), BATCH)]
-    print(f"盲判 {len(cases)} 句，{len(batches)} 批，codex 跨源仲裁\n")
+    log.info("judge_start", cases=len(cases), batches=len(batches), workers=WORKERS)
 
     verdicts: list[dict] = []
+    done = 0
     with ThreadPoolExecutor(max_workers=WORKERS) as ex:
         futs = [ex.submit(judge_batch, b) for b in batches]
         for fut in as_completed(futs):
             verdicts.extend(fut.result())
+            done += 1
+            log.info("batch_done", batch=done, of=len(batches),
+                     judged=len(verdicts), codex_tokens=_codex_tokens[0])
 
     with OUT.open("w", encoding="utf-8") as h:
         for v in verdicts:
             h.write(json.dumps(v, ensure_ascii=False) + "\n")
 
     overall = Counter(v["winner_model"] for v in verdicts)
-    print("=" * 60)
-    print(f"质量盲判结果 (codex)  共判定 {len(verdicts)} 句")
-    print("=" * 60)
-    for k in ("qwen3.7-max", "qwen3.6-plus", "tie"):
-        c = overall.get(k, 0)
-        pct = c / len(verdicts) * 100 if verdicts else 0
-        print(f"  {k:14s}{c:5d}  ({pct:.1f}%)")
-    print("\n[按分歧类型]")
-    for kind in SAMPLE:
-        sub = [v for v in verdicts if v["_kind"] == kind]
-        if not sub:
-            continue
-        cc = Counter(v["winner_model"] for v in sub)
-        print(f"  {kind:30s} 3.7 {cc.get('qwen3.7-max',0)} / 3.6 {cc.get('qwen3.6-plus',0)} / tie {cc.get('tie',0)}  (n={len(sub)})")
-    print(f"\n明细: {OUT}")
+    judged = len(verdicts) or 1
+    by_kind = {
+        kind: dict(Counter(v["winner_model"] for v in verdicts if v["_kind"] == kind))
+        for kind in SAMPLE
+    }
+    log.info(
+        "quality_result",
+        judged=len(verdicts),
+        chal_win=overall.get("qwen3.7-max", 0),
+        base_win=overall.get("qwen3.6-plus", 0),
+        tie=overall.get("tie", 0),
+        chal_pct=round(overall.get("qwen3.7-max", 0) / judged * 100, 1),
+        base_pct=round(overall.get("qwen3.6-plus", 0) / judged * 100, 1),
+        by_kind=by_kind,
+        codex_tokens=_codex_tokens[0],
+        out=str(OUT),
+    )
 
 
 if __name__ == "__main__":

@@ -22,7 +22,6 @@ Real meeting text: the dump is git-ignored. Run:
 from __future__ import annotations
 
 import json
-import logging
 import os
 import sys
 import threading
@@ -31,15 +30,9 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(message)s",
-    datefmt="%H:%M:%S",
-    stream=sys.stdout,
-)
-log = logging.getLogger("model_compare")
-
 import app.dashscope_chat as dc
+
+from evals._log import log
 from app.config import load_settings
 from app.correction_llm import (
     LlmCorrectionCandidate,
@@ -165,10 +158,9 @@ def run_challenger(items: list[dict], model: str) -> dict[str, object]:
                     proposals[item.candidate_id] = item
             except Exception as exc:  # noqa: BLE001 — one bad batch must not abort
                 failures += 1
-                log.warning("  ! batch failed: %s: %s", type(exc).__name__, str(exc)[:80])
+                log.warning("batch_failed", err=type(exc).__name__, msg=str(exc)[:80])
     if failures:
-        log.warning("  ! %d batch(es) failed for %s (after %d tries each)",
-                    failures, model, MAX_RETRIES)
+        log.warning("batches_failed", count=failures, model=model, tries=MAX_RETRIES)
     return proposals
 
 
@@ -176,12 +168,12 @@ def compare_project(proj: str, model: str) -> dict:
     """Compare baseline (sidecar) vs challenger model on one project."""
     payload = latest_sidecar(proj)
     if not payload:
-        log.info("[%s] no sidecar, skip", proj)
+        log.info("skip_no_sidecar", proj=proj)
         return {}
     items = payload.get("items", [])
     base_model = payload.get("model", "?")
     sentences = build_sentences(items)
-    log.info("  → %s %d句 跑中…", proj, len(items))
+    log.info("proj_start", proj=proj, n=len(items))
 
     challenger = run_challenger(items, model)
 

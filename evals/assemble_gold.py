@@ -30,14 +30,13 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-import sys
 from collections import Counter
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_review_file import _collect  # noqa: E402  (local tool import)
-from app.lexicon_store import default_lexicon_db_path  # noqa: E402
-from app.transcript_corrections import _is_destutter_only  # noqa: E402
+from app.lexicon_store import default_lexicon_db_path
+from app.transcript_corrections import _is_destutter_only
+
+from evals.build_review_file import _collect
 
 LOCAL = Path(__file__).resolve().parent / "local"
 REVIEWED = LOCAL / "polish_reviewed.jsonl"
