@@ -1,4 +1,13 @@
-"""Shared Typer settings and help classes for CLI compatibility."""
+"""Shared Typer settings and help classes for CLI compatibility.
+
+Typer 0.26 vendored Click into its private ``typer._click`` package and dropped
+the external ``click`` dependency. This module therefore customizes the CLI
+through Typer's PUBLIC surface only: it subclasses the public
+``typer.core.TyperGroup``/``TyperCommand`` and overrides their public
+``main``/``parse_args``/``format_help`` methods. The objects Typer hands those
+methods (the context and parse exceptions) are consumed by duck-typing — never
+by importing private classes.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +15,6 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
-import click
 import typer
 from typer.core import TyperCommand
 from typer.core import TyperGroup
@@ -34,8 +42,8 @@ class LocalizedTyperGroup(TyperGroup):
             prog_name: Program name for usage output.
             complete_var: Completion environment variable.
             standalone_mode: Whether to exit the process on completion.
-            windows_expand_args: Whether Click should expand Windows args.
-            **extra: Extra Click context values.
+            windows_expand_args: Whether arguments should be expanded on Windows.
+            **extra: Extra context values forwarded to Typer.
 
         Returns:
             Command result when ``standalone_mode`` is false.
@@ -58,12 +66,12 @@ class LocalizedTyperGroup(TyperGroup):
             extra=extra,
         )
 
-    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+    def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
         """
         Show help with exit code 0 when a group is called without a command.
 
         Args:
-            ctx: Click context.
+            ctx: Command context (duck-typed).
             args: Remaining command-line arguments.
 
         Returns:
@@ -71,20 +79,22 @@ class LocalizedTyperGroup(TyperGroup):
         """
         if not args and self.no_args_is_help and not ctx.resilient_parsing:
             self.format_help(ctx, ctx.make_formatter())
-            raise click.exceptions.Exit(0)
+            raise typer.Exit(0)
         try:
             return super().parse_args(ctx, args)
-        except click.ClickException as exc:
+        except Exception as exc:  # noqa: BLE001
+            if not _looks_like_usage_error(exc):
+                raise
             _show_help_if_requested(self, ctx, args, exc)
             raise
 
-    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+    def format_help(self, ctx: Any, formatter: Any) -> None:
         """
         Render localized help through the Meeting-ASR renderer.
 
         Args:
-            ctx: Click context.
-            formatter: Click formatter kept for Click API compatibility.
+            ctx: Command context handed in by Typer (duck-typed).
+            formatter: Help formatter kept for API compatibility (unused).
 
         Returns:
             None.
@@ -114,8 +124,8 @@ class LocalizedTyperCommand(TyperCommand):
             prog_name: Program name for usage output.
             complete_var: Completion environment variable.
             standalone_mode: Whether to exit the process on completion.
-            windows_expand_args: Whether Click should expand Windows args.
-            **extra: Extra Click context values.
+            windows_expand_args: Whether arguments should be expanded on Windows.
+            **extra: Extra context values forwarded to Typer.
 
         Returns:
             Command result when ``standalone_mode`` is false.
@@ -138,12 +148,12 @@ class LocalizedTyperCommand(TyperCommand):
             extra=extra,
         )
 
-    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+    def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
         """
         Show help with exit code 0 when a command is configured that way.
 
         Args:
-            ctx: Click context.
+            ctx: Command context (duck-typed).
             args: Remaining command-line arguments.
 
         Returns:
@@ -151,20 +161,22 @@ class LocalizedTyperCommand(TyperCommand):
         """
         if not args and self.no_args_is_help and not ctx.resilient_parsing:
             self.format_help(ctx, ctx.make_formatter())
-            raise click.exceptions.Exit(0)
+            raise typer.Exit(0)
         try:
             return super().parse_args(ctx, args)
-        except click.ClickException as exc:
+        except Exception as exc:  # noqa: BLE001
+            if not _looks_like_usage_error(exc):
+                raise
             _show_help_if_requested(self, ctx, args, exc)
             raise
 
-    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+    def format_help(self, ctx: Any, formatter: Any) -> None:
         """
         Render localized help through the Meeting-ASR renderer.
 
         Args:
-            ctx: Click context.
-            formatter: Click formatter kept for Click API compatibility.
+            ctx: Command context handed in by Typer (duck-typed).
+            formatter: Help formatter kept for API compatibility (unused).
 
         Returns:
             None.
@@ -222,87 +234,18 @@ class MeetingAsrTyper(typer.Typer):
         super().add_typer(*args, **kwargs)
 
 
-def _command_path(ctx: click.Context) -> tuple[str, ...]:
+def _command_path(ctx: Any) -> tuple[str, ...]:
     """
     Return the command path after the executable name.
 
     Args:
-        ctx: Click context.
+        ctx: Command context (duck-typed).
 
     Returns:
         Command path tuple such as ``("project", "list")``.
     """
     parts = tuple(part for part in ctx.command_path.split() if part)
     return parts[1:] if parts else ()
-
-
-def _show_help_if_requested(
-    command: click.Command,
-    ctx: click.Context,
-    args: list[str],
-    exc: click.ClickException,
-) -> None:
-    """
-    Prefer help over parse errors when ``-h`` or ``--help`` is present.
-
-    Args:
-        command: Command whose parsing failed.
-        ctx: Click context.
-        args: Remaining command-line arguments.
-        exc: Original Click parse exception.
-
-    Returns:
-        None.
-    """
-    if not _has_help_flag(args) or ctx.resilient_parsing:
-        return
-    _configure_presentation_from_context(ctx)
-    command.format_help(ctx, ctx.make_formatter())
-    raise click.exceptions.Exit(0) from exc
-
-
-def _run_standalone_with_localized_errors(
-    command: click.Command,
-    *,
-    args: Sequence[str] | None,
-    prog_name: str | None,
-    complete_var: str | None,
-    windows_expand_args: bool,
-    extra: dict[str, Any],
-) -> None:
-    """
-    Run a Typer command in standalone mode with localized parse errors.
-
-    Args:
-        command: Click command generated by Typer.
-        args: Command-line arguments.
-        prog_name: Program name for usage output.
-        complete_var: Completion environment variable.
-        windows_expand_args: Whether Click should expand Windows args.
-        extra: Extra Click context values.
-
-    Returns:
-        None.
-    """
-    try:
-        result = command.main(
-            args=args,
-            prog_name=prog_name,
-            complete_var=complete_var,
-            standalone_mode=False,
-            windows_expand_args=windows_expand_args,
-            **extra,
-        )
-    except click.ClickException as exc:
-        _configure_presentation_from_error(exc)
-        from app.presentation.cli.errors import show_click_usage_error
-
-        show_click_usage_error(exc)
-        sys.exit(exc.exit_code)
-    except click.Abort:
-        click.echo("Aborted!", err=True)
-        sys.exit(1)
-    sys.exit(result if type(result) is int else 0)
 
 
 def _has_help_flag(args: list[str]) -> bool:
@@ -318,12 +261,109 @@ def _has_help_flag(args: list[str]) -> bool:
     return any(arg in HELP_CONTEXT["help_option_names"] for arg in args)
 
 
-def _configure_presentation_from_context(ctx: click.Context) -> None:
+def _looks_like_usage_error(exc: BaseException) -> bool:
+    """
+    Return whether an exception is a Click/Typer usage error.
+
+    Typer 0.26 no longer exposes the vendored ``ClickException``/``UsageError``
+    classes publicly, so we recognize them by shape: a usage error carries the
+    command context, renders its own message, and declares a process exit code.
+
+    Args:
+        exc: Exception raised while parsing or invoking a command.
+
+    Returns:
+        True when the exception looks like a parse/usage error to localize.
+    """
+    return (
+        hasattr(exc, "ctx")
+        and hasattr(exc, "format_message")
+        and hasattr(exc, "exit_code")
+    )
+
+
+def _show_help_if_requested(
+    command: Any,
+    ctx: Any,
+    args: list[str],
+    exc: Any,
+) -> None:
+    """
+    Prefer help over parse errors when ``-h`` or ``--help`` is present.
+
+    Args:
+        command: Command whose parsing failed.
+        ctx: Command context (duck-typed).
+        args: Remaining command-line arguments.
+        exc: Original parse exception (duck-typed).
+
+    Returns:
+        None.
+    """
+    if not _has_help_flag(args) or ctx.resilient_parsing:
+        return
+    _configure_presentation_from_context(ctx)
+    command.format_help(ctx, ctx.make_formatter())
+    raise typer.Exit(0) from exc
+
+
+def _run_standalone_with_localized_errors(
+    command: Any,
+    *,
+    args: Sequence[str] | None,
+    prog_name: str | None,
+    complete_var: str | None,
+    windows_expand_args: bool,
+    extra: dict[str, Any],
+) -> None:
+    """
+    Run a Typer command in standalone mode with localized parse errors.
+
+    Runs the command with ``standalone_mode=False`` so Typer re-raises usage
+    errors instead of printing its own English panel, then renders the
+    Meeting-ASR localized error. ``typer.Exit`` is converted by Typer into an
+    integer return value in this mode, so the success path exits on it.
+
+    Args:
+        command: Command generated by Typer.
+        args: Command-line arguments.
+        prog_name: Program name for usage output.
+        complete_var: Completion environment variable.
+        windows_expand_args: Whether arguments should be expanded on Windows.
+        extra: Extra context values forwarded to Typer.
+
+    Returns:
+        None.
+    """
+    try:
+        result = command.main(
+            args=args,
+            prog_name=prog_name,
+            complete_var=complete_var,
+            standalone_mode=False,
+            windows_expand_args=windows_expand_args,
+            **extra,
+        )
+    except typer.Abort:
+        typer.echo("Aborted!", err=True)
+        sys.exit(1)
+    except Exception as exc:  # noqa: BLE001
+        if not _looks_like_usage_error(exc):
+            raise
+        _configure_presentation_from_error(exc)
+        from app.presentation.cli.errors import show_cli_usage_error
+
+        show_cli_usage_error(exc)
+        sys.exit(getattr(exc, "exit_code", 2))
+    sys.exit(result if type(result) is int else 0)
+
+
+def _configure_presentation_from_context(ctx: Any) -> None:
     """
     Apply parsed root presentation options before rendering rescued help.
 
     Args:
-        ctx: Click context where parsing failed.
+        ctx: Command context where parsing failed (duck-typed).
 
     Returns:
         None.
@@ -341,12 +381,12 @@ def _configure_presentation_from_context(ctx: click.Context) -> None:
     )
 
 
-def _configure_presentation_from_error(exc: click.ClickException) -> None:
+def _configure_presentation_from_error(exc: Any) -> None:
     """
     Apply root presentation options before rendering a parse error.
 
     Args:
-        exc: Click parse exception.
+        exc: Usage exception (duck-typed).
 
     Returns:
         None.
@@ -357,18 +397,18 @@ def _configure_presentation_from_error(exc: click.ClickException) -> None:
     _configure_presentation_from_context(ctx)
 
 
-def _merged_context_params(ctx: click.Context) -> dict[str, Any]:
+def _merged_context_params(ctx: Any) -> dict[str, Any]:
     """
     Merge parameters from the current context and its parents.
 
     Args:
-        ctx: Click context where parsing failed.
+        ctx: Command context where parsing failed (duck-typed).
 
     Returns:
         Parameter mapping with child values overriding parent values.
     """
-    chain: list[click.Context] = []
-    current: click.Context | None = ctx
+    chain: list[Any] = []
+    current: Any = ctx
     while current is not None:
         chain.append(current)
         current = current.parent

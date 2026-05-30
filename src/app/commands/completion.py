@@ -5,12 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 import shlex
 import shutil
 
-import click
 import typer
 from typer.completion import get_completion_script
+from typer.core import TyperGroup
 from typer.main import get_command
 
 from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
@@ -191,7 +192,7 @@ def _csh_command(command_name: str) -> str:
     Returns:
         A csh ``complete`` directive.
     """
-    root = _root_click_command()
+    root = _root_command()
     rules = [f"'p/1/({_words(_subcommands(root))})/'"]
     for group_name, subcommands in _nested_subcommand_rules(root):
         rules.append(f"'n/{group_name}/({_words(subcommands)})/'")
@@ -453,12 +454,12 @@ def _activation_hint(result: CompletionInstallResult) -> str:
     return f"Restart {result.shell.value} or run: source {shlex.quote(str(result.target_path))}"
 
 
-def _root_click_command() -> click.Command:
+def _root_command() -> Any:
     """
-    Return the root Click command backing the Typer app.
+    Return the root Typer command backing the app.
 
     Returns:
-        Root Click command.
+        Root Typer command (``typer.core.TyperGroup``).
     """
     from app.cli import app as root_app
 
@@ -476,10 +477,10 @@ def _command_names() -> tuple[str, ...]:
 
 
 def _nested_subcommand_rules(
-    command: click.Command,
+    command: Any,
 ) -> list[tuple[str, tuple[str, ...]]]:
     """
-    Return subcommand lists for each nested Click group.
+    Return subcommand lists for each nested Typer group.
 
     Args:
         command: Root command.
@@ -487,27 +488,27 @@ def _nested_subcommand_rules(
     Returns:
         Pairs of group name and subcommand names.
     """
-    if not isinstance(command, click.Group):
+    if not isinstance(command, TyperGroup):
         return []
     rules: list[tuple[str, tuple[str, ...]]] = []
     for name, child in command.commands.items():
-        if isinstance(child, click.Group):
+        if isinstance(child, TyperGroup):
             rules.append((name, _subcommands(child)))
             rules.extend(_nested_subcommand_rules(child))
     return rules
 
 
-def _subcommands(command: click.Command) -> tuple[str, ...]:
+def _subcommands(command: Any) -> tuple[str, ...]:
     """
-    Return visible subcommand names for a Click command.
+    Return visible subcommand names for a Typer command.
 
     Args:
-        command: Click command or group.
+        command: Typer command or group.
 
     Returns:
         Subcommand names plus ``--help``.
     """
-    if not isinstance(command, click.Group):
+    if not isinstance(command, TyperGroup):
         return ("--help",)
     return tuple(
         name for name, child in command.commands.items() if not child.hidden

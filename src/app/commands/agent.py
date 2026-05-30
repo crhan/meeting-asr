@@ -9,7 +9,6 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from typing import Any
 
-import click
 import typer
 
 from app.agent_guide import build_agent_guide
@@ -775,7 +774,7 @@ def _print_requested_section(
                 )
             )
             raise typer.Exit(code=2)
-        raise click.UsageError(f"Unknown section: {requested}. {hints[0]}")
+        raise typer.BadParameter(f"Unknown section: {requested}. {hints[0]}")
     chunk = sections[match]
     if as_json:
         emit_json(

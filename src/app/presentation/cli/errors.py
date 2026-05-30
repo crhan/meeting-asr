@@ -5,9 +5,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Any, TypeVar
 
-import click
 import typer
 from rich.panel import Panel
 from rich.text import Text
@@ -53,19 +52,23 @@ def run_with_cli_errors(operation: Callable[[], T]) -> T:
     """
     try:
         return operation()
-    except click.ClickException, typer.Exit:
+    except typer.Exit, typer.Abort, typer.BadParameter:
+        # Framework control-flow and usage errors render themselves; never wrap.
         raise
     except Exception as exc:  # noqa: BLE001
         _echo_cli_error(exc)
         raise typer.Exit(code=1) from exc
 
 
-def show_click_usage_error(exc: click.ClickException) -> None:
+def show_cli_usage_error(exc: Any) -> None:
     """
     Print a localized, actionable parse error for human-facing CLI use.
 
     Args:
-        exc: Click or Typer parse exception.
+        exc: A Typer/Click-compatible usage exception. Typed as ``Any`` and
+            consumed by duck-typing (``ctx``/``option_name``/``param``/
+            ``format_message``) because Typer 0.26 vendors Click and no longer
+            exposes the concrete exception classes as public API.
 
     Returns:
         None.
@@ -78,19 +81,17 @@ def show_click_usage_error(exc: click.ClickException) -> None:
         console.print(Text(usage, style="bold"))
     plain_message = _plain_compat_message(exc)
     if plain_message:
-        click.echo(f"Error: {plain_message}", err=True)
+        typer.echo(f"Error: {plain_message}", err=True)
     console.print(_usage_error_panel(exc, ctx, lang))
 
 
-def _usage_error_panel(
-    exc: click.ClickException, ctx: click.Context | None, lang: str
-) -> Panel:
+def _usage_error_panel(exc: Any, ctx: Any, lang: str) -> Panel:
     """
     Build the localized usage error panel.
 
     Args:
-        exc: Click parse exception.
-        ctx: Click context, when available.
+        exc: Usage exception (duck-typed).
+        ctx: Command context, when available (duck-typed).
         lang: Resolved display language.
 
     Returns:
@@ -104,12 +105,12 @@ def _usage_error_panel(
     return Panel(Text("\n".join(lines)), title=labels["title"], border_style="red")
 
 
-def _localized_usage(ctx: click.Context | None, lang: str) -> str | None:
+def _localized_usage(ctx: Any, lang: str) -> str | None:
     """
-    Return a localized usage line for a Click context.
+    Return a localized usage line for a command context.
 
     Args:
-        ctx: Click context.
+        ctx: Command context (duck-typed).
         lang: Resolved display language.
 
     Returns:
@@ -122,12 +123,12 @@ def _localized_usage(ctx: click.Context | None, lang: str) -> str | None:
     return f"{ERROR_LABELS[lang]['usage']}: {_context_command_path(ctx)}{suffix}"
 
 
-def _localized_next_step(ctx: click.Context | None, lang: str) -> str:
+def _localized_next_step(ctx: Any, lang: str) -> str:
     """
     Return the next command a user should run after a parse error.
 
     Args:
-        ctx: Click context.
+        ctx: Command context (duck-typed).
         lang: Resolved display language.
 
     Returns:
@@ -141,12 +142,16 @@ def _localized_next_step(ctx: click.Context | None, lang: str) -> str:
     return f"Run `{command}` to see available options and commands."
 
 
-def _localized_click_message(exc: click.ClickException, lang: str) -> str:
+def _localized_click_message(exc: Any, lang: str) -> str:
     """
-    Return a localized message for common Click parse exceptions.
+    Return a localized message for common usage exceptions.
+
+    Discrimination is by class name (a stable Click convention) rather than
+    ``isinstance``, because Typer 0.26 no longer exposes the vendored exception
+    classes publicly. Unknown shapes fall back to the framework message.
 
     Args:
-        exc: Click parse exception.
+        exc: Usage exception (duck-typed).
         lang: Resolved display language.
 
     Returns:
@@ -154,11 +159,12 @@ def _localized_click_message(exc: click.ClickException, lang: str) -> str:
     """
     if lang != "zh":
         return _english_click_message(exc)
-    if isinstance(exc, click.NoSuchOption):
+    name = type(exc).__name__
+    if name == "NoSuchOption":
         return f"没有这个选项：{exc.option_name}"
-    if isinstance(exc, click.MissingParameter):
+    if name == "MissingParameter":
         return _zh_missing_parameter(exc)
-    if isinstance(exc, click.BadParameter):
+    if name == "BadParameter":
         return _zh_bad_parameter(exc)
     match = _NO_SUCH_COMMAND_RE.fullmatch(str(exc).strip())
     if match:
@@ -166,38 +172,39 @@ def _localized_click_message(exc: click.ClickException, lang: str) -> str:
     return str(exc)
 
 
-def _plain_compat_message(exc: click.ClickException) -> str | None:
+def _plain_compat_message(exc: Any) -> str | None:
     """
     Return a plain compatibility line for application-raised BadParameter errors.
 
     Args:
-        exc: Click parse exception.
+        exc: Usage exception (duck-typed).
 
     Returns:
         Plain message when existing callers may rely on contiguous text.
     """
-    if not isinstance(exc, click.BadParameter):
+    if type(exc).__name__ != "BadParameter":
         return None
-    if exc.param is not None or getattr(exc, "param_hint", None):
+    if getattr(exc, "param", None) is not None or getattr(exc, "param_hint", None):
         return None
     return _bad_parameter_detail(exc)
 
 
-def _english_click_message(exc: click.ClickException) -> str:
+def _english_click_message(exc: Any) -> str:
     """
     Return a stable English parse error message.
 
     Args:
-        exc: Click parse exception.
+        exc: Usage exception (duck-typed).
 
     Returns:
         Human-readable English problem text.
     """
-    if isinstance(exc, click.NoSuchOption):
+    name = type(exc).__name__
+    if name == "NoSuchOption":
         return f"No such option: {exc.option_name}"
-    if isinstance(exc, click.MissingParameter):
+    if name == "MissingParameter":
         return f"Missing required {_parameter_kind(exc)}: {_parameter_display_name(exc.param)}"
-    if isinstance(exc, click.BadParameter):
+    if name == "BadParameter":
         return f"Invalid value for {_bad_parameter_name(exc)}: {_bad_parameter_detail(exc)}"
     match = _NO_SUCH_COMMAND_RE.fullmatch(str(exc).strip())
     if match:
@@ -205,12 +212,12 @@ def _english_click_message(exc: click.ClickException) -> str:
     return str(exc)
 
 
-def _zh_missing_parameter(exc: click.MissingParameter) -> str:
+def _zh_missing_parameter(exc: Any) -> str:
     """
     Return a Chinese message for a missing parameter.
 
     Args:
-        exc: Missing parameter exception.
+        exc: Missing parameter exception (duck-typed).
 
     Returns:
         Localized problem text.
@@ -219,12 +226,12 @@ def _zh_missing_parameter(exc: click.MissingParameter) -> str:
     return f"缺少必填{kind}：{_parameter_display_name(exc.param)}"
 
 
-def _zh_bad_parameter(exc: click.BadParameter) -> str:
+def _zh_bad_parameter(exc: Any) -> str:
     """
     Return a Chinese message for an invalid parameter value.
 
     Args:
-        exc: Bad parameter exception.
+        exc: Bad parameter exception (duck-typed).
 
     Returns:
         Localized problem text.
@@ -235,43 +242,47 @@ def _zh_bad_parameter(exc: click.BadParameter) -> str:
     return f"参数值无效：{_bad_parameter_name(exc)}。{detail}"
 
 
-def _parameter_kind(exc: click.MissingParameter) -> str:
+def _parameter_kind(exc: Any) -> str:
     """
     Return whether a missing parameter is an option or argument.
 
     Args:
-        exc: Missing parameter exception.
+        exc: Missing parameter exception (duck-typed).
 
     Returns:
         ``option`` or ``argument``.
     """
     param = exc.param
-    return "option" if isinstance(param, click.Option) else "argument"
+    return (
+        getattr(param, "param_type_name", "argument")
+        if param is not None
+        else "argument"
+    )
 
 
-def _parameter_display_name(param: click.Parameter | None) -> str:
+def _parameter_display_name(param: Any) -> str:
     """
-    Return the user-facing name for a Click parameter.
+    Return the user-facing name for a command parameter.
 
     Args:
-        param: Click parameter.
+        param: Command parameter (duck-typed).
 
     Returns:
         Display name.
     """
     if param is None:
         return "value"
-    if isinstance(param, click.Option) and param.opts:
+    if getattr(param, "param_type_name", None) == "option" and param.opts:
         return param.opts[0]
     return param.human_readable_name
 
 
-def _bad_parameter_detail(exc: click.BadParameter) -> str:
+def _bad_parameter_detail(exc: Any) -> str:
     """
     Return the BadParameter detail without repeating Click's prefix.
 
     Args:
-        exc: Bad parameter exception.
+        exc: Bad parameter exception (duck-typed).
 
     Returns:
         Detail text.
@@ -281,12 +292,12 @@ def _bad_parameter_detail(exc: click.BadParameter) -> str:
     return message.removeprefix(prefix)
 
 
-def _bad_parameter_name(exc: click.BadParameter) -> str:
+def _bad_parameter_name(exc: Any) -> str:
     """
     Return the user-facing name for a bad parameter.
 
     Args:
-        exc: Bad parameter exception.
+        exc: Bad parameter exception (duck-typed).
 
     Returns:
         Display name.
@@ -294,15 +305,15 @@ def _bad_parameter_name(exc: click.BadParameter) -> str:
     hint = getattr(exc, "param_hint", None)
     if isinstance(hint, str) and hint:
         return hint
-    return _parameter_display_name(exc.param)
+    return _parameter_display_name(getattr(exc, "param", None))
 
 
-def _context_command_path(ctx: click.Context) -> str:
+def _context_command_path(ctx: Any) -> str:
     """
     Return a stable command path for real CLI and CliRunner tests.
 
     Args:
-        ctx: Click context.
+        ctx: Command context (duck-typed).
 
     Returns:
         Command path starting with ``meeting-asr``.
