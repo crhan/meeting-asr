@@ -101,9 +101,11 @@ def build(cases: list[dict]) -> str:
     <div class="row"><span class="lbl">我的判读</span><div class="note">{html.escape(c.get('_note', ''))}</div></div>
     <div class="verdict">
       <label><input type="radio" name="v{i}" value="keep"> 保留(polish 对)</label>
-      <label><input type="radio" name="v{i}" value="reject"> 拒绝(polish 改坏了)</label>
+      <label><input type="radio" name="v{i}" value="reject"> 拒绝(polish 改坏)</label>
+      <label><input type="radio" name="v{i}" value="both_wrong"> 都错</label>
       <label><input type="radio" name="v{i}" value="unsure"> 拿不准</label>
     </div>
+    <div class="row"><span class="lbl">正确文本</span><input class="fix" data-i="{i}" type="text" placeholder="原文和 polish 都错时，填你听到的正确文本（如 P叉一→PXE）"></div>
   </div>""")
     meta = [{"i": i, "source": c["source"], "original": c["original_text"],
              "proposed": c["proposed_text"]} for i, c in enumerate(cases)]
@@ -164,6 +166,8 @@ _PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
  .lbl{flex:0 0 64px;color:#888;font-size:12px;padding-top:2px} .txt{flex:1;line-height:1.5}
  .prop{color:#0a6} .note{flex:1;color:#b26a00;font-size:13px}
  .verdict{margin-top:8px;display:flex;gap:16px;font-size:14px}
+ .fix{flex:1;padding:6px 8px;border:1px solid #ccc;border-radius:6px;font-size:14px}
+ input.fix:not(:placeholder-shown){border-color:#0a6;background:#f0fff8}
  .bar{position:sticky;bottom:0;background:#fff;border-top:1px solid #ddd;padding:10px;margin-top:16px;display:flex;gap:12px;align-items:center}
  button{padding:8px 14px;border-radius:8px;border:1px solid #0a6;background:#0a6;color:#fff;cursor:pointer}
  #out{width:100%;height:120px;font-family:monospace;font-size:12px;margin-top:8px;display:none}
@@ -178,12 +182,17 @@ __CARDS__
 const META=__META__;
 function exportV(){
  const res=META.map(m=>{const el=document.querySelector('input[name="v'+m.i+'"]:checked');
-   return {...m, verdict: el?el.value:null};});
+   const fx=document.querySelector('.fix[data-i="'+m.i+'"]');
+   return {...m, verdict: el?el.value:null,
+           corrected: (fx&&fx.value.trim())?fx.value.trim():null};});
  const o=document.getElementById('out'); o.style.display='block';
  o.value=JSON.stringify(res,null,1); o.select();
  try{document.execCommand('copy');}catch(e){}
 }
-function upd(){const n=META.filter(m=>document.querySelector('input[name="v'+m.i+'"]:checked')).length;
+function upd(){const n=META.filter(m=>{
+   const v=document.querySelector('input[name="v'+m.i+'"]:checked');
+   const fx=document.querySelector('.fix[data-i="'+m.i+'"]');
+   return v||(fx&&fx.value.trim());}).length;
  document.getElementById('prog').textContent=n+'/'+META.length+' 已判';}
 document.addEventListener('change',upd);upd();
 </script></body></html>"""
