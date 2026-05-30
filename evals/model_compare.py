@@ -51,6 +51,11 @@ VOCAB = list_lexicon_known_texts()
 # STATED ASSUMPTION — DashScope public list, ¥/1k tokens, for the challenger only.
 RATE_RMB_PER_1K = {"in": 0.0024, "out": 0.0096}  # qwen3.7-max (max tier)
 
+# Concurrency above the account's nominal cap (24), per request; backoff absorbs 429s.
+MAX_WORKERS = 50
+MAX_RETRIES = 4
+_BACKOFF_S = (2, 5, 12)  # waits before retries 2/3/4
+
 # Meter the challenger's real token usage so the full run also reports its cost.
 _usage = [0, 0, 0]  # input_tokens, output_tokens, calls
 _meter_lock = threading.Lock()
@@ -127,11 +132,22 @@ def run_challenger(items: list[dict], model: str) -> dict[str, object]:
     failures = 0
 
     def one(batch: list[LlmCorrectionCandidate]) -> list:
-        return propose_transcript_polish_strict(
-            candidates=batch, settings=settings, model=model, request_timeout=timeout
-        ).items
+        # Retry with backoff so high concurrency (above the account's nominal cap)
+        # rides out transient rate-limits instead of silently dropping sentences.
+        last: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                return propose_transcript_polish_strict(
+                    candidates=batch, settings=settings, model=model,
+                    request_timeout=timeout,
+                ).items
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(_BACKOFF_S[attempt])
+        raise last if last else RuntimeError("batch failed")
 
-    with ThreadPoolExecutor(max_workers=12) as ex:
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futs = [ex.submit(one, b) for b in batches]
         for fut in as_completed(futs):
             try:
@@ -141,7 +157,7 @@ def run_challenger(items: list[dict], model: str) -> dict[str, object]:
                 failures += 1
                 print(f"  ! batch failed: {type(exc).__name__}: {str(exc)[:80]}")
     if failures:
-        print(f"  ! {failures} batch(es) failed for {model}")
+        print(f"  ! {failures} batch(es) failed for {model} (after {MAX_RETRIES} tries each)")
     return proposals
 
 
