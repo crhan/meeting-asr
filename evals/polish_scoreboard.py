@@ -24,11 +24,15 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from app.lexicon_store import list_lexicon_known_texts
 from app.models import SentenceSegment
 from app.transcript_corrections import _is_change_type_allowed, _polish_guard
 
 LOCAL = Path(__file__).resolve().parent / "local"
 REVIEWED = LOCAL / "polish_reviewed.jsonl"
+# Local known-term set, so the board's guard whitelists verified ASCII
+# restorations exactly as the vocabulary-aware gold does.
+GUARD_VOCAB = list_lexicon_known_texts()
 
 
 def guard_decision(row: dict) -> str:
@@ -42,7 +46,8 @@ def guard_decision(row: dict) -> str:
     ]
     if not _is_change_type_allowed(row.get("change_type", "")):
         return "reject"
-    return "reject" if _polish_guard(1, sentences, original, proposed) else "keep"
+    verdict = _polish_guard(1, sentences, original, proposed, GUARD_VOCAB)
+    return "reject" if verdict else "keep"
 
 
 def gold_of(row: dict, gold_field: str) -> str | None:

@@ -380,6 +380,42 @@ def list_asr_hotwords(
     return hotwords_from_terms([(str(row[0]), str(row[1])) for row in rows])
 
 
+def list_lexicon_known_texts(*, db_path: Path | None = None) -> frozenset[str]:
+    """
+    Return the lowercased set of every active term's canonical text and aliases.
+
+    Used by the polish guard to whitelist verified ASCII restorations: a polish
+    that turns a homophone into a name already in the lexicon (底码 -> Dima) is a
+    correction, not a hallucination.
+
+    Args:
+        db_path: Optional database path override.
+
+    Returns:
+        Lowercased canonical and alias strings for active terms.
+    """
+    database_path = db_path or default_lexicon_db_path()
+    if not database_path.exists():
+        return frozenset()
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        texts = {
+            str(row[0]).lower()
+            for row in connection.execute(
+                "SELECT canonical FROM terms WHERE status = 'active'"
+            )
+        }
+        texts.update(
+            str(row[0]).lower()
+            for row in connection.execute(
+                "SELECT a.alias FROM aliases AS a "
+                "JOIN terms AS t ON t.id = a.term_id "
+                "WHERE t.status = 'active'"
+            )
+        )
+    return frozenset(texts)
+
+
 def list_lexicon_correction_rules(
     *, db_path: Path | None = None, limit: int = 1000
 ) -> list[LexiconCorrectionRule]:

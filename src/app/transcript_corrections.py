@@ -54,6 +54,7 @@ from app.lexicon_store import (
     LexiconContext,
     default_lexicon_db_path,
     list_lexicon_correction_rules,
+    list_lexicon_known_texts,
     record_lexicon_contexts,
 )
 from app.models import SentenceSegment, TranscriptResult
@@ -1287,6 +1288,9 @@ def _strict_polish_changes_from_items(
     }
     changes: list[CorrectionChange] = []
     sidecar_rows: list[dict] = []
+    # Load the known-term set once so the guard can whitelist verified ASCII
+    # restorations (底码 -> Dima) instead of rejecting them as hallucinations.
+    guard_vocab = list_lexicon_known_texts()
     for candidate in candidates:
         idx_pair = sentence_by_index.get(candidate.candidate_id)
         if idx_pair is None:
@@ -1305,7 +1309,9 @@ def _strict_polish_changes_from_items(
         elif not _is_change_type_allowed(change_type):
             decision = f"reject_unknown_type:{change_type}"
         else:
-            verdict = _polish_guard(idx, sentences, original_text, proposed_text)
+            verdict = _polish_guard(
+                idx, sentences, original_text, proposed_text, guard_vocab
+            )
             if verdict is not None:
                 decision = f"reject:{verdict}"
         if decision == "kept" and proposed_text != original_text:
@@ -1352,9 +1358,14 @@ def _polish_guard(
     sentences: list[SentenceSegment],
     original_text: str,
     proposed_text: str,
+    vocab: frozenset[str] = frozenset(),
 ) -> str | None:
     """
     Deterministic post-LLM guard. Return None if accepted, else a short reason code.
+
+    ``vocab`` is the lowercased set of known lexicon terms used to whitelist
+    verified ASCII restorations (底码->Dima). It is empty for the deterministic
+    offline eval and supplied by the live transcription / scoreboard paths.
 
     Aggressive-polish era: we now allow deleting ASR noise of any kind
     (long same-char runs, restart fragments, emphasis repeats, fillers).
@@ -1376,7 +1387,7 @@ def _polish_guard(
         return "len_ratio"
     if abs(new_len - orig_len) > _POLISH_GUARD_MAX_LEN_DELTA:
         return "len_delta"
-    ascii_verdict = _ascii_hallucination_check(original_text, proposed_text)
+    ascii_verdict = _ascii_hallucination_check(original_text, proposed_text, vocab)
     if ascii_verdict is not None:
         return ascii_verdict
     protected_verdict = _protected_word_deletion_check(original_text, proposed_text)
@@ -1445,19 +1456,36 @@ def _extract_ascii_tokens(text: str) -> list[str]:
     return ASCII_TERM_RE.findall(text)
 
 
-def _ascii_hallucination_check(original: str, proposed: str) -> str | None:
+def _ascii_hallucination_check(
+    original: str, proposed: str, vocab: frozenset[str] = frozenset()
+) -> str | None:
     """
     Reject when the polish introduces an ASCII token that isn't plausibly a typo
-    fix of something already in the original.
+    fix of an existing token, a re-segmentation of existing ASCII, or a known
+    lexicon term.
 
     Rationale: LLM 'Mattika' from Chinese '猫提卡' is a hallucination — there is no
-    ASCII source word to typo-fix from. But CRI -> CLI is a 1-edit fix from an
-    existing ASCII token, so it should pass.
+    ASCII source word to typo-fix from. But these are all legitimate:
+      - CRI -> CLI: 1-edit fix from an existing ASCII token.
+      - casebycase -> case by case: same characters, only re-segmented.
+      - 底码 -> Dima: restores a homophone to a name that IS in the lexicon, so it
+        is a verified correction rather than a fabrication. ``vocab`` is the
+        lowercased set of known lexicon terms; empty for the deterministic offline
+        eval (which must not depend on the local lexicon).
     """
     orig_tokens = _extract_ascii_tokens(original)
     new_tokens = _extract_ascii_tokens(proposed)
+    # Pure re-segmentation: same ASCII characters, only spacing/boundaries change.
+    if "".join(orig_tokens).lower() == "".join(new_tokens).lower() != "":
+        return None
     introduced = [token for token in new_tokens if token not in set(orig_tokens)]
     if not introduced:
+        return None
+    # A verified restoration requires EVERY introduced token to be a known lexicon
+    # term (底码 -> Dima). One known word among fabricated ones (error/CLI sneaked
+    # in beside syslog/CloudMonitor) does NOT qualify — fall through to the
+    # typo-distance test on all introduced tokens.
+    if vocab and all(token.lower() in vocab for token in introduced):
         return None
     if not orig_tokens:
         # Polish invented ASCII out of nothing — almost always hallucination.

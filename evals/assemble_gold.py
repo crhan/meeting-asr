@@ -1,21 +1,26 @@
 """Assemble the final Polish gold standard from Linus's adjudication.
 
 Combines three independent signals into one ``gold_verdict`` per reviewed row,
-following Linus's direction rulings (all option (a), the conservative/faithful
-column):
+following Linus's direction rulings:
 
   方向1 split 边界            -> reject (majority-of-3 default)
   方向2 protected 删除         -> 相邻重复 keep / 分布式删 reject (already in panel)
   方向3 英文去空格/断词        -> keep   (override: despace-equal ascii)
   方向4 纯删除删掉实义         -> reject (already auto=reject)
-  方向5 ascii 术语/人名还原     -> reject (override: ban term restoration)
+  方向5 ascii 术语/人名还原     -> VOCABULARY-aware: restored to a term that is in
+        the lexicon (底码->Dima, Dima is a hotword) is a legit homophone fix -> keep;
+        restored to an unknown/unverifiable token (武一->WuYi) -> reject (fabrication).
 
-For the contested/high-risk 508 the verdict is the reconciled panel result with
-the two overrides; for the rest of the 2096 we trust codex (it agrees with the
-panel on the undisputed keeps, and the 200 structural rejects sampled 80-100%).
+方向5 used to be a blanket "ban restoration" stopgap from the no-vocabulary era.
+Now that the lexicon carries the authoritative person/system names, a restoration
+to a known term is correct, so the gold trusts the vocabulary as ground truth.
+The ascii rule is applied GLOBALLY to every ascii reject row (not only the 508),
+which also fixes the earlier bug where codex-kept ascii rows skipped the override.
 
-Writes ``polish_reviewed_gold.jsonl`` (adds ``gold_verdict``) and prints the
-gold distribution. Run:
+For non-ascii contested/high-risk the verdict is the reconciled panel (majority-
+of-3); for the rest of the 2096 we trust codex.
+
+Writes ``polish_reviewed_gold.jsonl`` (adds ``gold_verdict``). Run:
 
     PYTHONPATH=src .venv/bin/python evals/assemble_gold.py
 """
@@ -23,42 +28,64 @@ gold distribution. Run:
 from __future__ import annotations
 
 import json
+import re
+import sqlite3
 import sys
 from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_review_file import _collect  # noqa: E402  (local tool import)
+from app.lexicon_store import default_lexicon_db_path  # noqa: E402
 
 LOCAL = Path(__file__).resolve().parent / "local"
 REVIEWED = LOCAL / "polish_reviewed.jsonl"
 GOLD_OUT = LOCAL / "polish_reviewed_gold.jsonl"
+_ASCII_RE = re.compile(r"[A-Za-z0-9]+")
 
 
-def _reconcile(case: dict) -> str:
-    """Final verdict for one contested/high-risk case under Linus's rulings."""
-    # 方向3: english spacing/segmentation only (chars identical) -> keep.
-    if case["despace_eq"]:
+def _load_vocab() -> set[str]:
+    """Lowercased set of every known lexicon term (canonical + alias)."""
+    db = default_lexicon_db_path()
+    if not db.exists():
+        return set()
+    with sqlite3.connect(str(db)) as con:
+        vocab = {r[0].lower() for r in con.execute("SELECT canonical FROM terms")}
+        vocab |= {r[0].lower() for r in con.execute("SELECT alias FROM aliases")}
+    return vocab
+
+
+def _is_despace(original: str, proposed: str) -> bool:
+    """True if ascii content is identical and only spacing/segmentation changed."""
+    o, p = _ASCII_RE.findall(original), _ASCII_RE.findall(proposed)
+    return "".join(o).lower() == "".join(p).lower() != "" and o != p
+
+
+def _ascii_introduced(original: str, proposed: str) -> list[str]:
+    """Ascii tokens present in proposed but absent from original."""
+    orig = set(_ASCII_RE.findall(original))
+    return [t for t in _ASCII_RE.findall(proposed) if t not in orig]
+
+
+def _ascii_gold(original: str, proposed: str, vocab: set[str]) -> str:
+    """Vocabulary-aware verdict for one ascii_hallucination row."""
+    if _is_despace(original, proposed):
+        return "keep"  # 方向3: pure re-segmentation, chars unchanged
+    introduced = _ascii_introduced(original, proposed)
+    # 方向5 (vocab-aware): every newly introduced ascii token must be a known
+    # lexicon term, otherwise the restoration is unverifiable -> fabrication.
+    if introduced and all(token.lower() in vocab for token in introduced):
         return "keep"
-    # 方向5: ascii term/name restoration (garbled sound -> plausible term) -> reject,
-    # even where both blind lenses kept it. Faithful over readable.
-    if case["category"] == "ascii_hallucination" and case["tier"] != "T3_both_reject":
-        return "reject"
-    # 方向1/2/4: majority-of-3 (both lenses keep -> keep; else reject).
-    return case["auto"]
+    return "reject"
 
 
 def main() -> None:
     """Assemble gold_verdict for every reviewed row and write the gold file."""
-    cases = _collect()
-    # (original, proposed) -> reconciled verdict for the 508 contested/high-risk
-    contested: dict[tuple[str, str], str] = {}
-    flips = Counter()
-    for c in cases:
-        verdict = _reconcile(c)
-        contested[(c["orig"], c["prop"])] = verdict
-        if verdict != c["auto"]:
-            flips[f"{c['auto']}->{verdict}"] += 1
+    vocab = _load_vocab()
+    # (original, proposed) -> panel verdict (majority-of-3) for the 508 contested.
+    panel: dict[tuple[str, str], str] = {
+        (c["orig"], c["prop"]): c["auto"] for c in _collect()
+    }
 
     rows = [
         json.loads(line)
@@ -68,15 +95,22 @@ def main() -> None:
     source = Counter()
     dist = Counter()
     for row in rows:
-        key = (row["original_text"], row["proposed_text"])
-        if key in contested:
-            gold = contested[key]
-            source["contested(508 重裁)"] += 1
+        original, proposed = row["original_text"], row["proposed_text"]
+        key = (original, proposed)
+        if _is_despace(original, proposed):
+            gold = "keep"
+            source["去空格(方向3)"] += 1
+        elif row.get("_kind") == "reject" and row.get("category") == "ascii_hallucination":
+            gold = _ascii_gold(original, proposed, vocab)
+            source[f"ascii 词表重判->{gold}"] += 1
+        elif key in panel:
+            gold = panel[key]  # non-ascii contested -> majority-of-3
+            source["contested(508 面板)"] += 1
         elif row.get("codex_verdict") == "keep":
-            gold = "keep"  # 761 我+codex 一致 keep + 627 codex 单方 keep
+            gold = "keep"
             source["codex keep(直接采纳)"] += 1
         else:
-            gold = "reject"  # 200 结构类 codex 单方 reject（抽样 80-100% 可信）
+            gold = "reject"  # structural codex reject (sampled 80-100% 可信)
             source["codex reject 结构类(信 codex)"] += 1
         row["gold_verdict"] = gold
         dist[(row.get("_kind", "reject"), gold)] += 1
@@ -89,9 +123,7 @@ def main() -> None:
     print("\n[gold 来源]")
     for k, v in source.most_common():
         print(f"  {k:28s}{v:5d}")
-    print("\n[相对三方多数票的覆盖翻转]")
-    for k, v in flips.most_common():
-        print(f"  {k:16s}{v:5d}")
+    print(f"\n词表规模(canonical+alias): {len(vocab)}")
     print("\n[最终 gold 分布 (按子集)]")
     for kind in ("reject", "accept"):
         keep = dist[(kind, "keep")]
