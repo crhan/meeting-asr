@@ -153,6 +153,11 @@ def test_is_placeholder_name() -> None:
     assert tm.is_placeholder_name("说话人")
     assert tm.is_placeholder_name("")
     assert tm.is_placeholder_name(None)
+    # Anonymous fallback labels emitted by speaker_id_to_label are not real names.
+    assert tm.is_placeholder_name("Speaker A")
+    assert tm.is_placeholder_name("Speaker Z")
+    assert tm.is_placeholder_name("Speaker 27")
+    assert tm.is_placeholder_name("speaker")
     assert not tm.is_placeholder_name("墨泪")
     assert not tm.is_placeholder_name("张辉洲(尺木)")
 
@@ -286,6 +291,32 @@ def test_placeholder_name_is_anonymous_and_never_merged(tmp_path: Path) -> None:
     anon = [i for i in result.identities if i["identity_kind"] == "anon"]
     assert len(anon) == 2
     assert all(i["display_name"].startswith("Speaker ") for i in anon)
+
+
+def test_default_speaker_labels_stay_per_segment_anonymous(tmp_path: Path) -> None:
+    """Legacy speaker_map values equal to the anonymous label must not merge.
+
+    A default ``speaker_map.json`` can store ``{"0": "Speaker A"}``; that label is
+    not a real identity, so two segments' "Speaker A" stay distinct.
+    """
+    seg_a = _make_project(
+        tmp_path,
+        "p-aaaaaaaaaaaaaaaa",
+        meeting_time="2026-05-11T11:00:00+08:00",
+        sentences=_meaningful(0, 0, who="某甲", sid=1),
+        speaker_map={0: "Speaker A"},
+    )
+    seg_b = _make_project(
+        tmp_path,
+        "p-bbbbbbbbbbbbbbbb",
+        meeting_time="2026-05-11T13:00:00+08:00",
+        sentences=_meaningful(0, 0, who="某乙", sid=1),
+        speaker_map={0: "Speaker A"},
+    )
+    result = tm.merge_projects([seg_a, seg_b], vpp_name_resolver=_no_store())
+    assert not any(i["identity_kind"] == "name" for i in result.identities)
+    anon = [i for i in result.identities if i["identity_kind"] == "anon"]
+    assert len(anon) == 2
 
 
 def test_anonymous_speakers_get_distinct_labels(tmp_path: Path) -> None:

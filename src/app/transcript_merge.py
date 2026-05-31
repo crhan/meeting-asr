@@ -61,10 +61,13 @@ SCHEMA_VERSION = 1
 CHINA_TZ = timezone(timedelta(hours=8))
 SEGMENT_DIVIDER = "─" * 60
 
-# Names the UI saves for speakers a reviewer deliberately left unidentified.
-# These must not be treated as a real cross-segment identity.
+# Names that are not a real cross-segment identity: reviewer placeholders the
+# UI saves for unidentified speakers, plus the anonymous fallback labels that
+# ``speaker_id_to_label`` itself emits ("Speaker A".."Speaker Z", "Speaker 27").
+# A legacy/default ``speaker_map.json`` can store those labels as the "name", and
+# two unrelated "Speaker A" tracks from different segments must NOT be merged.
 _PLACEHOLDER_NAME_RE = re.compile(
-    r"^(待确认发言人|待确认|未知发言人|未知|待定|发言人|说话人|speaker)\s*\d*$",
+    r"^(待确认发言人|待确认|未知发言人|未知|待定|发言人|说话人|speaker)\s*([a-z]|\d+)?$",
     re.IGNORECASE,
 )
 # Narrow / non-breaking spaces a macOS Chinese IME can inject into names.
