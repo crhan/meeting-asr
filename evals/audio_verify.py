@@ -89,8 +89,19 @@ def collect_disputed(rows: list[dict]) -> list[dict]:
     ]
 
 
-def build(cases: list[dict]) -> str:
-    """Render the interactive verification HTML."""
+_LEAK_TITLE = "Polish 争议句音频复核"
+_LEAK_INTRO = "（gold 判 reject，但听原音可能是对的）"
+
+
+def build(
+    cases: list[dict], *, title: str = _LEAK_TITLE, intro: str = _LEAK_INTRO
+) -> str:
+    """Render the interactive verification HTML.
+
+    ``title``/``intro`` let other eval pages (e.g. the destutter spot-check)
+    reuse the exact same card UI + verdict export with their own framing,
+    instead of duplicating the 40-line page template.
+    """
     cards = []
     for i, c in enumerate(cases):
         clip = f"clips/{c['_clip']}" if c.get("_clip") else ""
@@ -113,8 +124,12 @@ def build(cases: list[dict]) -> str:
   </div>""")
     meta = [{"i": i, "source": c["source"], "original": c["original_text"],
              "proposed": c["proposed_text"]} for i, c in enumerate(cases)]
-    return _PAGE.replace("__CARDS__", "\n".join(cards)).replace(
-        "__META__", json.dumps(meta, ensure_ascii=False))
+    return (
+        _PAGE.replace("__CARDS__", "\n".join(cards))
+        .replace("__META__", json.dumps(meta, ensure_ascii=False))
+        .replace("__TITLE__", html.escape(title))
+        .replace("__INTRO__", html.escape(intro))
+    )
 
 
 def main() -> None:
@@ -185,7 +200,7 @@ _PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
  #out{width:100%;height:120px;font-family:monospace;font-size:12px;margin-top:8px;display:none}
  #prog{color:#888;font-size:13px}
 </style></head><body>
-<h1>Polish 争议句音频复核 <span style="font-size:13px;color:#888">（gold 判 reject，但听原音可能是对的）</span></h1>
+<h1>__TITLE__ <span style="font-size:13px;color:#888">__INTRO__</span></h1>
 <p style="color:#666;font-size:13px">点播放听原话 → 看 polish 改得对不对 → 勾选。全部勾完点「导出」把结果贴回给我。</p>
 __CARDS__
 <div class="bar"><button onclick="exportV()">导出裁定</button><span id="prog"></span></div>
