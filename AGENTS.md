@@ -63,3 +63,11 @@
 - Do not validate destructive project workflows on `rsync --link-dest` or other hardlink-based copies. Project outputs are rewritten in place during ASR, and hardlinked test copies can mutate the user's real project artifacts.
 - If a non-destructive validation copy is needed, use a plain copy for writable metadata/output files (`project.json`, `asr/`, `exports/`, `speakers/`) and only link immutable large media (`source/`, `audio/`) when the command will not rewrite them.
 - Project run may prune only the managed copy under `project/source/` after `audio/audio.*` exists; never delete `manifest.source.original_path`. Reruns must prefer existing `audio/audio.*`, and OSS reuse must verify the object still exists before skipping upload.
+
+## Worktree / Merge Notes
+
+- Worktree 工作的交付单位是「分支 + PR」,不是「直接改 main」。触发条件是「人在 worktree / 非 main 分支,且要把活送进 main」,**不是「调用过 `EnterWorktree`」**——会话可能一启动 CWD 就被钉在 worktree 里(born-in-worktree),那时 `EnterWorktree` 从没被调用、`ExitWorktree` 对它是 no-op(只管本会话 `EnterWorktree` 建的)、`EnterWorktree({path})` 也够不到主 checkout(只收 `.claude/worktrees/` 下的 worktree),工具链结构上没法把你送回 main 本地合,所以更要走 PR。
+- 干完 → 推分支 → `gh pr create`(本仓库 remote 是 GitHub `crhan/meeting-asr`)→ 让用户合 PR。**绝不 `git push origin HEAD:main` 或任何形式直接推 main。**
+- 为什么不直接推 main:① 绕过评审;② 悄悄推进 origin/main,主 checkout `/Users/ruohan.chen/project/meeting-asr` 的 main 立刻 stale,得手动 `git pull` 才同步;③ 一旦不是干净 fast-forward,要么被拒、要么诱导 `--force`(灾难)。"碰巧能跑"≠正确。
+- 唯一可本地合的情形:会话**从主 checkout 起**、用 `EnterWorktree` 进 worktree、再 `ExitWorktree({action:"keep"})` 回到主 checkout,此时在主 checkout 里 `git merge --ff-only` 合本地 main 是干净的。除此之外一律 PR。
+- `ExitWorktree({action:"remove"})` 只删本会话 `EnterWorktree` 建的 worktree;born-in-worktree 的目录不会自动清,也不会在会话结束时弹 keep/remove 提示,需在主 checkout 手动 `git worktree remove` + `git branch -d`。
