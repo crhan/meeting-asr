@@ -459,13 +459,29 @@ def list_lexicon_correction_rules(
               AND a.alias_type = 'asr_error'
               AND a.alias != ''
               AND a.alias != t.canonical
-              AND (a.disambiguation IS NULL OR a.disambiguation = '')
             ORDER BY length(a.alias) DESC, a.updated_at DESC, a.id DESC
             LIMIT ?
             """,
             (limit,),
         ).fetchall()
-    return _lexicon_correction_rules_from_rows(context_rows, alias_rows, limit)
+        disambiguated = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT a.alias
+                FROM aliases AS a
+                JOIN terms AS t ON t.id = a.term_id
+                WHERE t.status = 'active'
+                  AND a.disambiguation IS NOT NULL
+                  AND a.disambiguation != ''
+                """
+            ).fetchall()
+        }
+    rules = _lexicon_correction_rules_from_rows(context_rows, alias_rows, limit)
+    # Context-ambiguous surfaces (e.g. IC -> iSee only when it means the
+    # platform) are resolved by the polish LLM, never blanket-replaced. Drop
+    # them whether the rule came from an alias or an accepted-context row.
+    return [rule for rule in rules if rule.wrong_text not in disambiguated]
 
 
 def list_lexicon_disambiguations(

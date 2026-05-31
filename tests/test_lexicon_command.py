@@ -65,6 +65,47 @@ def test_set_alias_disambiguation_excludes_alias_from_blanket_rules(
     assert [(d.alias, d.guidance) for d in listed] == [(entry.alias, entry.guidance)]
 
 
+def test_disambiguation_excludes_context_derived_rule(tmp_path: Path) -> None:
+    """A disambiguated surface must drop out even when accepted contexts back it.
+
+    Regression: blanket rules come from both aliases AND accepted context rows;
+    excluding only the alias path left the context-derived IC->iSee rule alive.
+    """
+    db_path = tmp_path / "lexicon.sqlite"
+    upsert_lexicon_term(
+        canonical="iSee",
+        category="system",
+        description="",
+        aliases=("IC",),
+        status="active",
+        db_path=db_path,
+    )
+    record_lexicon_contexts(
+        [
+            LexiconContext(
+                canonical="iSee",
+                wrong_text="IC",
+                corrected_text="iSee",
+                left_context="把",
+                right_context="维修平台",
+                category="system",
+                speaker_name="敬悦",
+                project_id="p-demo",
+                sentence_id=1,
+                source="test",
+            )
+        ],
+        db_path=db_path,
+    )
+    assert "IC" in _wrong_texts(db_path)
+
+    set_alias_disambiguation(
+        term="iSee", alias="IC", guidance="按语境判断", db_path=db_path
+    )
+
+    assert "IC" not in _wrong_texts(db_path)
+
+
 def test_set_alias_disambiguation_clear_restores_blanket_rule(tmp_path: Path) -> None:
     """Clearing the guidance returns the alias to deterministic correction."""
     db_path = tmp_path / "lexicon.sqlite"
