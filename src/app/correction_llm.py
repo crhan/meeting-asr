@@ -156,6 +156,7 @@ def propose_transcript_polish_strict(
     model: str,
     request_timeout: int = DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
     attempts: int = 3,
+    disambiguations: list[tuple[str, str]] | None = None,
 ) -> LlmStrictPolishResult:
     """
     Strict polish: only typo / term / case fixes, with self-tagged change_type.
@@ -167,11 +168,13 @@ def propose_transcript_polish_strict(
         request_timeout: Per-call HTTP timeout in seconds. Larger models like
             qwen3-235b-a22b sometimes need 240s+ for batched polish.
         attempts: Retry attempts for transient timeouts.
+        disambiguations: Optional ``(surface, guidance)`` pairs from the lexicon
+            for context-dependent ASCII terms.
 
     Returns:
         Per-item strict polish result.
     """
-    prompt = _build_polish_strict_prompt(candidates)
+    prompt = _build_polish_strict_prompt(candidates, disambiguations)
 
     def _call() -> str:
         return generate_chat_text(
@@ -328,7 +331,35 @@ def _build_polish_prompt(candidates: list[LlmCorrectionCandidate]) -> str:
     )
 
 
-def _build_polish_strict_prompt(candidates: list[LlmCorrectionCandidate]) -> str:
+def _polish_disambiguation_block(
+    disambiguations: list[tuple[str, str]] | None,
+) -> str:
+    """
+    Render the lexicon-driven term-disambiguation section.
+
+    Args:
+        disambiguations: ``(surface, guidance)`` pairs; business knowledge stays
+            in the lexicon, this layer only formats whatever it is handed.
+
+    Returns:
+        A prompt block ending in a blank line, or ``""`` when there is nothing
+        to disambiguate (keeping the prompt byte-identical to before).
+    """
+    if not disambiguations:
+        return ""
+    lines = [
+        "【术语消歧 — 下列 ASCII 词同音歧义，必须按本句语境判断，"
+        "符合所述义项才改，否则保持原样，禁止无脑替换】",
+    ]
+    for surface, guidance in disambiguations:
+        lines.append(f"  - 「{surface}」：{guidance}")
+    return "\n".join(lines) + "\n\n"
+
+
+def _build_polish_strict_prompt(
+    candidates: list[LlmCorrectionCandidate],
+    disambiguations: list[tuple[str, str]] | None = None,
+) -> str:
     """
     Build the strict polish prompt: aggressive ASR-noise removal + typo fix,
     with hard guards against cross-sentence borrow and ASCII hallucination,
@@ -336,11 +367,15 @@ def _build_polish_strict_prompt(candidates: list[LlmCorrectionCandidate]) -> str
 
     Args:
         candidates: Transcript sentences to inspect.
+        disambiguations: Optional ``(surface, guidance)`` pairs from the lexicon
+            for context-dependent ASCII terms (e.g. IC -> iSee only when it means
+            the platform). Business terms come from config, never hardcoded here.
 
     Returns:
         Prompt text.
     """
     payload = {"candidates": [_candidate_payload(item) for item in candidates]}
+    disambiguation_block = _polish_disambiguation_block(disambiguations)
     return (
         "下面是一批连续的会议转写句子，每条独立判断，**绝对禁止**跨条引用、合并或借词。\n"
         "目标：清除 ASR 无意义噪音 + 修字面错，让下游纪要 agent 拿到干净文本。\n"
@@ -373,13 +408,12 @@ def _build_polish_strict_prompt(candidates: list[LlmCorrectionCandidate]) -> str
         "  5. 禁止删除上面【必须保留】列表里的任何词\n"
         "  6. 不确定就不要返回该条；宁可漏修不要错改\n"
         "\n"
+        f"{disambiguation_block}"
         "【标尺样例 — 按这个尺度改，不要自由发挥】\n"
         "  - 『我们就好像好像没什么要说的，我想想』→『我们好像没什么要说的，我想想』\n"
         "    只删重复和失败启动，不删仍然承载主语/事实的『我们』。\n"
         "  - 『我可以让我A键读到就行』→『我可以让 AI 读到就行』\n"
         "    A键 是 AI 的 ASR 错误，中文和英文术语之间保留空格。\n"
-        "  - 『把IC这边维修平台』→『把 iSee 这边维修平台』\n"
-        "    专有名词修正后，中文和英文术语之间保留空格。\n"
         "  - 『这个就是action，好的，对吧』→『这就是 action，对吧？』\n"
         "    删除无意义口头确认『好的』，但必须保留『对吧』这种共识探询词。\n"
         "\n"

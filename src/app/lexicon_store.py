@@ -14,6 +14,7 @@ from app.lexicon_models import (
     LexiconCorrectionRule,
     LexiconContext,
     LexiconContextRow,
+    LexiconDisambiguation,
     LexiconStats,
     LexiconTerm,
     LexiconTermDetail,
@@ -458,12 +459,109 @@ def list_lexicon_correction_rules(
               AND a.alias_type = 'asr_error'
               AND a.alias != ''
               AND a.alias != t.canonical
+              AND (a.disambiguation IS NULL OR a.disambiguation = '')
             ORDER BY length(a.alias) DESC, a.updated_at DESC, a.id DESC
             LIMIT ?
             """,
             (limit,),
         ).fetchall()
     return _lexicon_correction_rules_from_rows(context_rows, alias_rows, limit)
+
+
+def list_lexicon_disambiguations(
+    *, db_path: Path | None = None
+) -> list[LexiconDisambiguation]:
+    """
+    Return ambiguous aliases that must be resolved by sentence context.
+
+    These aliases (e.g. ``IC`` -> ``iSee`` only when it means the platform)
+    carry user-authored guidance and are deliberately excluded from
+    deterministic local correction; the polish LLM decides per occurrence.
+
+    Args:
+        db_path: Optional database path override.
+
+    Returns:
+        Active disambiguation entries ordered by alias length (longest first).
+    """
+    database_path = db_path or default_lexicon_db_path()
+    if not database_path.exists():
+        return []
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        rows = connection.execute(
+            """
+            SELECT a.alias, t.canonical, t.category, a.disambiguation
+            FROM aliases AS a
+            JOIN terms AS t ON t.id = a.term_id
+            WHERE t.status = 'active'
+              AND a.alias != ''
+              AND a.disambiguation IS NOT NULL
+              AND a.disambiguation != ''
+            ORDER BY length(a.alias) DESC, a.alias ASC
+            """
+        ).fetchall()
+    return [
+        LexiconDisambiguation(
+            alias=str(row[0]),
+            canonical=str(row[1]),
+            category=str(row[2]),
+            guidance=str(row[3]),
+        )
+        for row in rows
+    ]
+
+
+def set_alias_disambiguation(
+    *,
+    term: str | int,
+    alias: str,
+    guidance: str | None,
+    db_path: Path | None = None,
+) -> LexiconDisambiguation | None:
+    """
+    Attach (or clear) context-disambiguation guidance on one alias.
+
+    Creates the alias as an ``asr_error`` alias when it does not exist yet, then
+    sets its ``disambiguation`` text. Passing an empty ``guidance`` clears it,
+    returning the alias to deterministic correction.
+
+    Args:
+        term: Term reference (public id, numeric id, canonical, or alias).
+        alias: The ambiguous surface form to annotate.
+        guidance: Business rule for resolving the alias by context; empty clears.
+        db_path: Optional database path override.
+
+    Returns:
+        The stored disambiguation, or ``None`` when guidance was cleared.
+    """
+    surface = alias.strip()
+    if not surface:
+        raise ValueError("Alias to disambiguate must not be empty.")
+    note = (guidance or "").strip()
+    database_path = db_path or default_lexicon_db_path()
+    with sqlite3.connect(database_path) as connection:
+        _ensure_schema(connection)
+        term_id = _resolve_term_id(connection, term)
+        _upsert_alias(connection, term_id, surface)
+        connection.execute(
+            """
+            UPDATE aliases SET disambiguation = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE term_id = ? AND alias = ?
+            """,
+            (note or None, term_id, surface),
+        )
+        row = connection.execute(
+            "SELECT canonical, category FROM terms WHERE id = ?", (term_id,)
+        ).fetchone()
+    if not note:
+        return None
+    return LexiconDisambiguation(
+        alias=surface,
+        canonical=str(row[0]),
+        category=str(row[1]),
+        guidance=note,
+    )
 
 
 def get_asr_vocabulary_state(
@@ -618,6 +716,7 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
     """Create the lexicon schema if needed."""
     connection.executescript(LEXICON_SCHEMA_SQL)
     _migrate_terms_public_id(connection)
+    _migrate_aliases_disambiguation(connection)
     connection.execute(
         """
         INSERT INTO metadata(key, value)
@@ -646,6 +745,16 @@ def _migrate_terms_public_id(connection: sqlite3.Connection) -> None:
             "UPDATE terms SET public_id = ? WHERE id = ?",
             (_new_public_id(connection), int(row[0])),
         )
+
+
+def _migrate_aliases_disambiguation(connection: sqlite3.Connection) -> None:
+    """Ensure the aliases table can carry per-alias disambiguation guidance."""
+    columns = {
+        str(row[1])
+        for row in connection.execute("PRAGMA table_info(aliases)").fetchall()
+    }
+    if "disambiguation" not in columns:
+        connection.execute("ALTER TABLE aliases ADD COLUMN disambiguation TEXT")
 
 
 def _new_public_id(connection: sqlite3.Connection) -> str:

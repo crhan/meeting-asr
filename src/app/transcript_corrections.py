@@ -54,6 +54,7 @@ from app.lexicon_store import (
     LexiconContext,
     default_lexicon_db_path,
     list_lexicon_correction_rules,
+    list_lexicon_disambiguations,
     list_lexicon_known_texts,
     record_lexicon_contexts,
 )
@@ -771,6 +772,14 @@ def _lexicon_replacement_rules(lexicon_db: Path) -> list[CorrectionReplacement]:
     ]
 
 
+def _lexicon_disambiguation_pairs(lexicon_db: Path) -> list[tuple[str, str]]:
+    """Load lexicon context-disambiguation guidance as (surface, guidance) pairs."""
+    return [
+        (item.alias, item.guidance)
+        for item in list_lexicon_disambiguations(db_path=lexicon_db)
+    ]
+
+
 def _active_understanding(
     rules: list[CorrectionReplacement],
     changes: list[CorrectionChange],
@@ -866,6 +875,7 @@ def _propose_polish_changes(
                 concurrency=concurrency,
             )
             return changes, model, None
+        lexicon_db = options.lexicon_db or default_lexicon_db_path()
         changes, partial_error = _strict_ai_polish_changes(
             paths,
             manifest,
@@ -875,6 +885,7 @@ def _propose_polish_changes(
             model,
             progress,
             concurrency=concurrency,
+            disambiguations=_lexicon_disambiguation_pairs(lexicon_db),
         )
         return changes, model, partial_error
     except Exception as exc:
@@ -1029,6 +1040,7 @@ def _strict_ai_polish_changes(
     progress: CliProgressReporter | None,
     *,
     concurrency: int,
+    disambiguations: list[tuple[str, str]] | None = None,
 ) -> tuple[list[CorrectionChange], str | None]:
     """
     Run strict polish: hard-whitelist prompt + deterministic guard, write sidecar.
@@ -1056,6 +1068,7 @@ def _strict_ai_polish_changes(
             progress=progress,
             concurrency=concurrency,
             request_timeout=request_timeout,
+            disambiguations=disambiguations,
         )
         items_by_id.update(merged)
         failed_batches.extend(failures)
@@ -1067,6 +1080,7 @@ def _strict_ai_polish_changes(
                     settings=settings,
                     model=model,
                     request_timeout=request_timeout,
+                    disambiguations=disambiguations,
                 )
             except Exception as exc:
                 failed_batches.append((index, str(exc)))
@@ -1139,6 +1153,7 @@ def _run_strict_polish_batches_parallel(
     progress: CliProgressReporter | None,
     concurrency: int,
     request_timeout: int,
+    disambiguations: list[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, LlmPolishItem], list[tuple[int, str]]]:
     """Run strict polish batches concurrently. Failed batches are reported, not raised."""
     max_workers = min(concurrency, len(batches))
@@ -1167,6 +1182,7 @@ def _run_strict_polish_batches_parallel(
                 settings=settings,
                 model=model,
                 request_timeout=request_timeout,
+                disambiguations=disambiguations,
             ): index
             for index, batch in enumerate(batches, start=1)
         }

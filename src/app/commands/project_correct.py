@@ -16,6 +16,7 @@ from app.core.project_refs import resolve_project_ref
 from app.config import load_settings
 from app.correction_llm import propose_transcript_polish_strict
 from app.correction_proposals import load_correction_proposal
+from app.lexicon_store import list_lexicon_disambiguations
 from app.polish_evaluation import (
     cases_to_llm_candidates,
     default_polish_eval_path,
@@ -432,10 +433,14 @@ def eval_polish_command(
 def _run_live_polish_eval(loaded_cases, model: str):
     """Run the strict polish model for model-backed eval cases."""
     settings = load_settings(require_oss=False, require_dashscope=True)
+    disambiguations = [
+        (item.alias, item.guidance) for item in list_lexicon_disambiguations()
+    ]
     llm_result = propose_transcript_polish_strict(
         candidates=cases_to_llm_candidates(loaded_cases),
         settings=settings,
         model=model,
+        disambiguations=disambiguations,
     )
     return {item.candidate_id: item for item in llm_result.items}
 

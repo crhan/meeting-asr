@@ -10,11 +10,37 @@ from app.correction_llm import (
     DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS,
     LlmCorrectionCandidate,
     LlmCorrectionSample,
+    _build_polish_strict_prompt,
     infer_vocabulary_replacements,
     propose_transcript_polish,
     propose_transcript_polish_strict,
     propose_vocabulary_corrections,
 )
+
+
+def test_polish_strict_prompt_injects_lexicon_disambiguations() -> None:
+    """Ambiguous-term guidance from the lexicon must reach the strict polish prompt."""
+    candidates = [
+        LlmCorrectionCandidate("c0", 0, "speaker", "把IC这边维修平台跟一下。")
+    ]
+    guidance = "指 iSee 平台时改成 iSee；指个人贡献者(IC)角色时保持原样"
+
+    prompt = _build_polish_strict_prompt(candidates, [("IC", guidance)])
+
+    assert "术语消歧" in prompt
+    assert "「IC」" in prompt
+    assert guidance in prompt
+
+
+def test_polish_strict_prompt_has_no_hardcoded_business_terms() -> None:
+    """No business platform name may be baked into the prompt; it comes from config."""
+    prompt = _build_polish_strict_prompt(
+        [LlmCorrectionCandidate("c0", 0, "speaker", "测试句子。")]
+    )
+
+    assert "术语消歧" not in prompt
+    # iSee is our business data and must only enter via lexicon-driven guidance.
+    assert "iSee" not in prompt
 
 
 def test_propose_vocabulary_corrections_parses_dashscope_json(monkeypatch) -> None:
