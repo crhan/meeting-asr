@@ -71,3 +71,15 @@
 - 为什么不直接推 main:① 绕过评审;② 悄悄推进 origin/main,主 checkout `/Users/ruohan.chen/project/meeting-asr` 的 main 立刻 stale,得手动 `git pull` 才同步;③ 一旦不是干净 fast-forward,要么被拒、要么诱导 `--force`(灾难)。"碰巧能跑"≠正确。
 - 唯一可本地合的情形:会话**从主 checkout 起**、用 `EnterWorktree` 进 worktree、再 `ExitWorktree({action:"keep"})` 回到主 checkout,此时在主 checkout 里 `git merge --ff-only` 合本地 main 是干净的。除此之外一律 PR。
 - `ExitWorktree({action:"remove"})` 只删本会话 `EnterWorktree` 建的 worktree;born-in-worktree 的目录不会自动清,也不会在会话结束时弹 keep/remove 提示,需在主 checkout 手动 `git worktree remove` + `git branch -d`。
+
+## Project Merge Notes
+
+- `project merge` 是无状态纯函数（实现在 `src/app/transcript_merge.py`，命令是 `project.py` 里的薄适配器）：读 N 个 project 产物 → 重建单一 `TranscriptResult` → 复用现有渲染器输出。**绝不回写任何 project**；`merge.json` 是本次输出包的只读清单，住 `--out` 目录内，不是 session 状态、不进 `projects_dir`。否决过 `session` 概念，因为它会再造一个身份层与 content-based `project_id` 打架（见 Project Identity Notes）。
+- **必须从 `asr/sentences.json` 重渲染，不能拼接 `exports/transcript_named.txt`**。拼接预渲染文本无法重新归属说话人，跨段声纹归一就做不成。
+- 跨段说话人归一身份键优先级：`vpp`（`speaker_person_map.json`，跨段最强主键，手动 apply 与 `project run` 自动稳定化都会写）> 显示名（`speaker_map.json`，排除占位名）> per-segment 匿名（绝不跨段合并）。归一做**两级坍缩**：先项目内（实测同一段内会有多个 local id 同 vpp / 同名）、再跨项目。权威人名优先取声纹库 `get_voiceprint_person(vpp).name`，库缺则回退段内本地名。
+- name→vpp 提升默认开：某段仅命名、另一段同名带 vpp 时，把 name-only 折叠到该 vpp（实测同名→同 vpp 0 冲突）。同名落到多个 vpp 时**不提升**并 warn。`--no-name-to-vpp` 关闭。审计轨写在 `merge.json` 的 `identities[].promoted_from_name`。
+- 占位名（`待确认发言人2` 等，正则在 `_PLACEHOLDER_NAME_RE`）视为无名，落匿名分支，绝不跨段误并。`name_fold` 做 NFKC + 去 IME 窄空格(U+202F/U+00A0 等) + 折叠空白；括号别名（`张辉洲(尺木)`）整串作 key，全/半角括号经 NFKC 归一。
+- 时间轴是**连续打包**：第 k 段时间戳整体偏移 `Σ(前段 audio.duration_seconds)`，单调不重叠。真实墙钟（`meeting_time`）只进段界 header 和 `merge.json`，不进时间轴——否则中场休息会在字幕里punch 出几十分钟空洞。`render_named_srt` 的序号硬编码从 1 起，所以 SRT 必须用整段合并后的单一 `TranscriptResult` 一次性渲染，不能逐段拼。
+- 段排序按 `meeting_time` 升序，但**实测数据 naive/aware 时区混存**，直接 `sorted(fromisoformat)` 抛 `TypeError`；解析时把 naive 一律当 +08:00（`_parse_timestamp`）。无法解析则回退 `created_at`，再不行回退命令行顺序并 warn（`--keep-order` 显式保持命令行序）。
+- `ignored` speaker（`speaker_ignore.json`）按**匿名保留**处理（与单段命名导出语义一致：仍出现，但不具名），不丢弃、即使带 vpp 也不归并；`merge.json` 记 `ignored_speaker_count`。低信息过滤口径跨段统一（默认 `include_low_information=False`），`--include-low-information` 透传。
+- 单段（N=1）走同一管线退化为直接命名导出（无段界 header）；重复传同一 project ref 去重并 warn，时间轴不翻倍。

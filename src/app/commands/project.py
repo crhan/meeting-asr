@@ -68,6 +68,12 @@ from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
 from app.voiceprint_people import get_voiceprint_person
 from app.voiceprint_store import get_voiceprint_db_path
+from app.transcript_merge import (
+    default_output_dir,
+    merge_payload,
+    merge_projects,
+    write_merge_outputs,
+)
 from app.project_manager import (
     apply_project_speakers,
     create_or_reuse_project,
@@ -710,6 +716,124 @@ def show(
     render_project_show(
         ProjectShowView(paths.root, manifest.project_id, manifest, workflow)
     )
+
+
+@app.command("merge")
+def merge(
+    projects: list[str] = typer.Argument(
+        ...,
+        metavar="PROJECT...",
+        help="Projects to merge (id/path/title); ordered by meeting time.",
+    ),
+    out: Optional[Path] = typer.Option(
+        None,
+        "--out",
+        "-o",
+        file_okay=False,
+        dir_okay=True,
+        help="Output directory; defaults to ./merged-<date>-<first id>.",
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    corrected: bool = typer.Option(
+        True, "--corrected/--raw", help="Prefer polished corrected text."
+    ),
+    name_to_vpp: bool = typer.Option(
+        True,
+        "--name-to-vpp/--no-name-to-vpp",
+        help="Promote name-only speakers onto a matching voiceprint person.",
+    ),
+    include_low_information: bool = typer.Option(
+        False,
+        "--include-low-information",
+        help="Keep backchannel-only speaker tracks (filtered by default).",
+    ),
+    keep_order: bool = typer.Option(
+        False,
+        "--keep-order",
+        help="Keep command-line order instead of sorting by meeting time.",
+    ),
+    title: Optional[str] = typer.Option(
+        None, "--title", "-t", help="Override the merged meeting title."
+    ),
+    store_dir: Optional[Path] = typer.Option(
+        None,
+        "--store-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Voiceprint store dir for resolving authoritative speaker names.",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Allow writing into a non-empty output directory."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Merge multiple meeting segments into one cross-segment transcript package."""
+    resolved = run_with_cli_errors(
+        lambda: [resolve_project_ref(ref, projects_dir) for ref in projects]
+    )
+    result = run_with_cli_errors(
+        lambda: merge_projects(
+            resolved,
+            use_corrected=corrected,
+            name_to_vpp=name_to_vpp,
+            include_low_information=include_low_information,
+            keep_order=keep_order,
+            store_dir=store_dir,
+            title=title,
+        )
+    )
+    target = out or default_output_dir(result)
+    outputs = run_with_cli_errors(
+        lambda: write_merge_outputs(result, target, force=force)
+    )
+    if as_json:
+        payload = merge_payload(result)
+        payload["outputs"] = {
+            "out_dir": str(outputs.out_dir),
+            "transcript": str(outputs.transcript),
+            "transcript_corrected": (
+                str(outputs.transcript_corrected)
+                if outputs.transcript_corrected
+                else None
+            ),
+            "subtitle": str(outputs.subtitle),
+            "subtitle_corrected": (
+                str(outputs.subtitle_corrected) if outputs.subtitle_corrected else None
+            ),
+            "manifest": str(outputs.manifest),
+        }
+        emit_json(payload)
+        return
+    _echo_merge_summary(result, outputs)
+
+
+def _echo_merge_summary(result, outputs) -> None:
+    """Print a human-friendly summary of the merged package."""
+    typer.echo(f"Merged package written to: {outputs.out_dir}")
+    typer.echo(f"  transcript: {outputs.transcript.name}")
+    if outputs.transcript_corrected is not None:
+        typer.echo(f"  transcript (corrected): {outputs.transcript_corrected.name}")
+    typer.echo(f"  subtitle: {outputs.subtitle.name}")
+    typer.echo(f"  manifest: {outputs.manifest.name}")
+    typer.echo("")
+    named = sum(
+        1 for item in result.identities if item["identity_kind"] in ("vpp", "name")
+    )
+    typer.echo(
+        f"Segments {len(result.metas_raw)} · named speakers {named} "
+        f"· order {result.order_source}"
+    )
+    for meta in result.metas_raw:
+        typer.echo(
+            f"  {meta.part}: {meta.project_id} · {meta.sentence_count} sentences"
+        )
+    if result.warnings:
+        typer.echo("")
+        typer.echo("Notes:")
+        for warning in result.warnings:
+            typer.echo(f"  - {warning}")
 
 
 @app.command("update")

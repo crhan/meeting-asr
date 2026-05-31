@@ -100,6 +100,10 @@ COMMAND_ZH = {
     ("project", "run"): "创建项目、转写、生成回忆索引并自动匹配 speaker。",
     ("project", "list"): "列出 XDG 项目库里的项目。",
     ("project", "show"): "显示项目概览和产物查看方式。",
+    (
+        "project",
+        "merge",
+    ): "把同一场会的多段闪记合并成单一转写包，按声纹跨段归一发言人。",
     ("project", "update"): "更新可编辑的项目元数据。",
     ("project", "delete"): "删除项目，默认移动到 Meeting-ASR 回收站。",
     (
@@ -529,6 +533,26 @@ OPTION_ZH_BY_COMMAND = {
         "--target-model",
     ): "指定清缓存使用的 ASR 目标模型。",
     ("lexicon", "hotwords", "remote-delete", "--yes"): "确认删除远端词表。",
+    ("project", "merge", "--out"): "输出目录；默认 ./merged-<日期>-<首段 id>。",
+    (
+        "project",
+        "merge",
+        "--corrected",
+    ): "优先使用 polish 后的 corrected 文本；--raw 只用原始转写。",
+    (
+        "project",
+        "merge",
+        "--name-to-vpp",
+    ): "把仅命名的发言人提升对齐到同名声纹人；--no-name-to-vpp 关闭。",
+    (
+        "project",
+        "merge",
+        "--include-low-information",
+    ): "保留 backchannel-only 发言人轨（默认过滤）。",
+    ("project", "merge", "--keep-order"): "保持命令行顺序，不按 meeting_time 排序。",
+    ("project", "merge", "--title"): "覆盖合并会议标题。",
+    ("project", "merge", "--store-dir"): "声纹库目录，用于解析发言人权威名。",
+    ("project", "merge", "--force"): "允许写入非空的输出目录（覆盖已有内容）。",
 }
 OPTION_EN = {}
 
