@@ -7,6 +7,10 @@
 
 ## [未发布]
 
+### 新增
+
+- 新增 `meeting-asr project merge <p1> <p2> ...`：把同一场会被钉钉拆成多段闪记（各自一个 project）的转写合并成单一转写包，原生支持中场休息分段的场景。按 `meeting_time` 时间序拼接，跨段**按声纹人 public id（`vpp`）归一发言人**——同一个人在不同段即使本地 speaker_id 不同、甚至某段没命名，也会对齐成同一发言人并取声纹库权威名；仅命名未连声纹的发言人默认按同名提升对齐到声纹人（`--no-name-to-vpp` 关闭）。时间轴连续打包（各段按音频时长偏移、单调不重叠），段界 header 保留各段原始会议时间/时长/句数。产出 `transcript_merged.txt` / `_corrected.txt`、`subtitle_merged.srt` / `_corrected.srt` 和结构化只读清单 `merge.json`（含段元信息与发言人归一审计轨）。单段退化为直接导出；合并为无状态操作，绝不回写原 project。
+
 ## [0.8.0] - 2026-05-30
 
 ### 新增
