@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from app.lexicon_store import list_lexicon_correction_rules
@@ -51,12 +52,32 @@ def _seeded_sample(rows: list[dict], n: int, seed: int) -> list[dict]:
     return pool[:n]
 
 
+_CONTENT_RE = re.compile(r"[A-Za-z0-9一-鿿]")
+
+
+def _content_len(text: str) -> int:
+    """Count content chars only (letters/digits/CJK), ignoring spaces/punctuation."""
+    return len(_CONTENT_RE.findall(text))
+
+
 def _note(row: dict) -> str:
-    """Show WHAT collapsed, so the listener knows exactly what to check for."""
+    """Show WHAT collapsed, so the listener knows exactly what to check for.
+
+    Count change on CONTENT chars, not raw length. A polish that only normalized
+    中英文 spacing (agent -> ` agent `) deletes no content yet len(o)-len(p) goes
+    negative, so the old note printed "去掉 -2 字噪音" — the #9 confusion. Compare
+    content-char counts: equal -> pure spacing/punctuation; else the real number
+    of repeated/filler chars removed.
+    """
     o, p = row["original_text"], row["proposed_text"]
     skeleton = _destutter(o)
-    removed = len(o) - len(p)
-    return f"骨架「{skeleton}」不变，去掉 {removed} 字噪音；确认这些字是口吃/重复而非实义"
+    removed = _content_len(o) - _content_len(p)
+    if removed <= 0:
+        return f"仅规整了空格/标点，未删内容字（骨架「{skeleton}」）；听音频确认无误"
+    return (
+        f"去掉 {removed} 个重复/填充字，骨架「{skeleton}」不变；"
+        "听音频确认是口吃/重复而非实义"
+    )
 
 
 def main() -> None:
