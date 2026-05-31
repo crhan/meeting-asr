@@ -72,7 +72,7 @@ def cut_clip(project: str, begin_ms: int, end_ms: int, dest: Path) -> bool:
         return False
     start = max(0, begin_ms - PAD_MS) / 1000
     duration = (end_ms - begin_ms + 2 * PAD_MS) / 1000
-    proc = subprocess.run(
+    subprocess.run(
         ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}",
          "-i", str(audio), "-ac", "1", "-ar", "16000", "-b:a", "64k", str(dest)],
         capture_output=True, text=True,
@@ -89,8 +89,19 @@ def collect_disputed(rows: list[dict]) -> list[dict]:
     ]
 
 
-def build(cases: list[dict]) -> str:
-    """Render the interactive verification HTML."""
+_LEAK_TITLE = "Polish 争议句音频复核"
+_LEAK_INTRO = "（gold 判 reject，但听原音可能是对的）"
+
+
+def build(
+    cases: list[dict], *, title: str = _LEAK_TITLE, intro: str = _LEAK_INTRO
+) -> str:
+    """Render the interactive verification HTML.
+
+    ``title``/``intro`` let other eval pages (e.g. the destutter spot-check)
+    reuse the exact same card UI + verdict export with their own framing,
+    instead of duplicating the 40-line page template.
+    """
     cards = []
     for i, c in enumerate(cases):
         clip = f"clips/{c['_clip']}" if c.get("_clip") else ""
@@ -108,20 +119,29 @@ def build(cases: list[dict]) -> str:
       <label><input type="radio" name="v{i}" value="reject"> 拒绝(polish 改坏)</label>
       <label><input type="radio" name="v{i}" value="both_wrong"> 都错</label>
       <label><input type="radio" name="v{i}" value="unsure"> 拿不准</label>
+      <label><input type="radio" name="v{i}" value="low_quality"> 音频差，不采纳</label>
     </div>
     <div class="row"><span class="lbl">正确文本</span><input class="fix" data-i="{i}" type="text" placeholder="原文和 polish 都错时，填你听到的正确文本"></div>
   </div>""")
     meta = [{"i": i, "source": c["source"], "original": c["original_text"],
              "proposed": c["proposed_text"]} for i, c in enumerate(cases)]
-    return _PAGE.replace("__CARDS__", "\n".join(cards)).replace(
-        "__META__", json.dumps(meta, ensure_ascii=False))
+    return (
+        _PAGE.replace("__CARDS__", "\n".join(cards))
+        .replace("__META__", json.dumps(meta, ensure_ascii=False))
+        .replace("__TITLE__", html.escape(title))
+        .replace("__INTRO__", html.escape(intro))
+    )
 
 
 def main() -> None:
     """Collect disputed rows, cut their audio, and write the verification page."""
     OUTDIR.mkdir(parents=True, exist_ok=True)
     (OUTDIR / "clips").mkdir(exist_ok=True)
-    rows = [json.loads(l) for l in GOLD.read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = [
+        json.loads(line)
+        for line in GOLD.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     cases = collect_disputed(rows)
     log.info("disputed_found", count=len(cases))
 
@@ -177,7 +197,7 @@ _PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
  .row{display:flex;gap:10px;margin:6px 0;align-items:flex-start}
  .lbl{flex:0 0 64px;color:#888;font-size:12px;padding-top:2px} .txt{flex:1;line-height:1.5}
  .prop{color:#0a6} .note{flex:1;color:#b26a00;font-size:13px}
- .verdict{margin-top:8px;display:flex;gap:16px;font-size:14px}
+ .verdict{margin-top:8px;display:flex;flex-wrap:wrap;gap:16px;row-gap:6px;font-size:14px}
  .fix{flex:1;padding:6px 8px;border:1px solid #ccc;border-radius:6px;font-size:14px}
  input.fix:not(:placeholder-shown){border-color:#0a6;background:#f0fff8}
  .bar{position:sticky;bottom:0;background:#fff;border-top:1px solid #ddd;padding:10px;margin-top:16px;display:flex;gap:12px;align-items:center}
@@ -185,7 +205,7 @@ _PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
  #out{width:100%;height:120px;font-family:monospace;font-size:12px;margin-top:8px;display:none}
  #prog{color:#888;font-size:13px}
 </style></head><body>
-<h1>Polish 争议句音频复核 <span style="font-size:13px;color:#888">（gold 判 reject，但听原音可能是对的）</span></h1>
+<h1>__TITLE__ <span style="font-size:13px;color:#888">__INTRO__</span></h1>
 <p style="color:#666;font-size:13px">点播放听原话 → 看 polish 改得对不对 → 勾选。全部勾完点「导出」把结果贴回给我。</p>
 __CARDS__
 <div class="bar"><button onclick="exportV()">导出裁定</button><span id="prog"></span></div>

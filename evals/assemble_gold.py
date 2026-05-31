@@ -80,6 +80,64 @@ def _ascii_gold(original: str, proposed: str, vocab: set[str]) -> str:
     return "reject"
 
 
+# Each gold source maps to whether its verdict is INDEPENDENT of the guard's own
+# logic. The circular sources reuse the very functions / lexicon the guard uses
+# (_is_destutter_only, the ascii re-segmentation exemption, the vocab whitelist),
+# so on those rows guard == gold is near-tautological — it measures self-consistency,
+# not correctness. The scoreboard must report independent and circular agreement
+# separately so the headline "救回" number is not inflated by definitional matches.
+GOLD_SOURCE_INDEPENDENT: dict[str, bool] = {
+    "audio_human": True,   # 人工听原音频裁定 — 终极真值
+    "panel": True,         # 508 争议盲面板多数票
+    "codex_keep": True,    # codex 直接采纳 keep
+    "codex_reject": True,  # codex 结构类 reject(抽样 80-100% 可信)
+    "destutter": False,    # 去口吃 — guard 的 _is_destutter_only 顶层早放行,循环
+    "despace": False,      # 去空格 — guard ascii 检查的去空格豁免,循环
+    "ascii_vocab": False,  # ascii 词表重判 — guard 的 vocab 白名单 + despace,循环
+}
+
+GOLD_SOURCE_LABEL: dict[str, str] = {
+    "audio_human": "人工音频裁定",
+    "panel": "contested(508 面板)",
+    "codex_keep": "codex keep(直接采纳)",
+    "codex_reject": "codex reject 结构类(信 codex)",
+    "destutter": "去口吃(destutter)",
+    "despace": "去空格(方向3)",
+    "ascii_vocab": "ascii 词表重判",
+}
+
+
+def _classify_gold(
+    row: dict,
+    key: tuple[str, str],
+    *,
+    overrides: dict[tuple[str, str], str],
+    panel: dict[tuple[str, str], str],
+    vocab: set[str],
+) -> tuple[str, str]:
+    """Resolve (gold_verdict, gold_source) for one row via the precedence chain.
+
+    The order is fixed: human audio > destutter > despace > ascii-vocab >
+    508-panel > codex. The returned source key feeds GOLD_SOURCE_INDEPENDENT so
+    downstream scoring can separate genuinely-independent gold from gold that
+    merely re-runs the guard's own deterministic rules.
+    """
+    original, proposed = key
+    if key in overrides:
+        return overrides[key], "audio_human"
+    if _is_destutter_only(original, proposed):
+        return "keep", "destutter"
+    if _is_despace(original, proposed):
+        return "keep", "despace"
+    if row.get("_kind") == "reject" and row.get("category") == "ascii_hallucination":
+        return _ascii_gold(original, proposed, vocab), "ascii_vocab"
+    if key in panel:
+        return panel[key], "panel"
+    if row.get("codex_verdict") == "keep":
+        return "keep", "codex_keep"
+    return "reject", "codex_reject"
+
+
 def main() -> None:
     """Assemble gold_verdict for every reviewed row and write the gold file."""
     vocab = _load_vocab()
@@ -106,30 +164,15 @@ def main() -> None:
     source = Counter()
     dist = Counter()
     for row in rows:
-        original, proposed = row["original_text"], row["proposed_text"]
-        key = (original, proposed)
-        if key in overrides:
-            gold = overrides[key]  # 人工音频裁定，最高优先级
-            source["人工音频裁定"] += 1
-        elif _is_destutter_only(original, proposed):
-            gold = "keep"  # 只是去口吃/去填充（truetrue->true, 就是就是->就是），无害
-            source["去口吃(destutter)"] += 1
-        elif _is_despace(original, proposed):
-            gold = "keep"
-            source["去空格(方向3)"] += 1
-        elif row.get("_kind") == "reject" and row.get("category") == "ascii_hallucination":
-            gold = _ascii_gold(original, proposed, vocab)
-            source[f"ascii 词表重判->{gold}"] += 1
-        elif key in panel:
-            gold = panel[key]  # non-ascii contested -> majority-of-3
-            source["contested(508 面板)"] += 1
-        elif row.get("codex_verdict") == "keep":
-            gold = "keep"
-            source["codex keep(直接采纳)"] += 1
-        else:
-            gold = "reject"  # structural codex reject (sampled 80-100% 可信)
-            source["codex reject 结构类(信 codex)"] += 1
+        key = (row["original_text"], row["proposed_text"])
+        gold, gold_source = _classify_gold(
+            row, key, overrides=overrides, panel=panel, vocab=vocab
+        )
+        independent = GOLD_SOURCE_INDEPENDENT[gold_source]
         row["gold_verdict"] = gold
+        row["gold_source"] = gold_source
+        row["gold_independent"] = independent
+        source[gold_source] += 1
         dist[(row.get("_kind", "reject"), gold)] += 1
 
     with GOLD_OUT.open("w", encoding="utf-8") as handle:
@@ -137,9 +180,17 @@ def main() -> None:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     print(f"写出 {GOLD_OUT}  ({len(rows)} 行)")
-    print("\n[gold 来源]")
-    for k, v in source.most_common():
-        print(f"  {k:28s}{v:5d}")
+    print("\n[gold 来源] (independent = 与 guard 逻辑无关的真实信号)")
+    indep_total = sum(v for k, v in source.items() if GOLD_SOURCE_INDEPENDENT[k])
+    circ_total = sum(v for k, v in source.items() if not GOLD_SOURCE_INDEPENDENT[k])
+    for group, want in (("独立金标", True), ("循环金标", False)):
+        members = [(k, v) for k, v in source.most_common() if GOLD_SOURCE_INDEPENDENT[k] == want]
+        subtotal = indep_total if want else circ_total
+        print(f"  -- {group} 小计 {subtotal} --")
+        for k, v in members:
+            print(f"     {GOLD_SOURCE_LABEL[k]:28s}{v:5d}  [{k}]")
+    pct = circ_total / max(1, len(rows)) * 100
+    print(f"  => 独立 {indep_total} / 循环 {circ_total} ({pct:.1f}% 的 gold 由 guard 自身规则判定)")
     print(f"\n词表规模(canonical+alias): {len(vocab)}")
     print("\n[最终 gold 分布 (按子集)]")
     for kind in ("reject", "accept"):
