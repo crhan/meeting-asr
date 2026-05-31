@@ -119,6 +119,7 @@ def build(
       <label><input type="radio" name="v{i}" value="reject"> 拒绝(polish 改坏)</label>
       <label><input type="radio" name="v{i}" value="both_wrong"> 都错</label>
       <label><input type="radio" name="v{i}" value="unsure"> 拿不准</label>
+      <label><input type="radio" name="v{i}" value="low_quality"> 音频差，不采纳</label>
     </div>
     <div class="row"><span class="lbl">正确文本</span><input class="fix" data-i="{i}" type="text" placeholder="原文和 polish 都错时，填你听到的正确文本"></div>
   </div>""")
@@ -196,7 +197,7 @@ _PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
  .row{display:flex;gap:10px;margin:6px 0;align-items:flex-start}
  .lbl{flex:0 0 64px;color:#888;font-size:12px;padding-top:2px} .txt{flex:1;line-height:1.5}
  .prop{color:#0a6} .note{flex:1;color:#b26a00;font-size:13px}
- .verdict{margin-top:8px;display:flex;gap:16px;font-size:14px}
+ .verdict{margin-top:8px;display:flex;flex-wrap:wrap;gap:16px;row-gap:6px;font-size:14px}
  .fix{flex:1;padding:6px 8px;border:1px solid #ccc;border-radius:6px;font-size:14px}
  input.fix:not(:placeholder-shown){border-color:#0a6;background:#f0fff8}
  .bar{position:sticky;bottom:0;background:#fff;border-top:1px solid #ddd;padding:10px;margin-top:16px;display:flex;gap:12px;align-items:center}
