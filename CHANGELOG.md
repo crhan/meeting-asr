@@ -5,7 +5,7 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
-## [未发布]
+## [0.9.0] - 2026-05-31
 
 ### 新增
 
@@ -21,6 +21,7 @@
 ### 修复
 
 - 确定性 lexicon 纠错此前对 `asr_error` 别名做无条件全替换，会把歧义词（如指「个人贡献者」的 `IC`）也错改成平台名 `iSee`。现在带 disambiguation 标记的别名跳过盲替，避免误伤。
+- transcript polish 的确定性 guard 此前会误拒大量合法的去口癖（de-stutter）润色：相邻重复折叠（如 `可以，可以`→`可以`）或仅调整空格的纯去口癖改写，会被判成删除保护词而退回，拉低 polish 采纳率。现在 guard 先放行纯去口癖改写、保护词计数改在去口癖后的文本上比对、并豁免相邻重复保护词的去重；ASCII guard 也改为词表感知（已验证的专名不再被当成乱码拦下）。受控统计上被采纳的润色从 391 条恢复到 518 条，并补了确定性测试锁定该行为。
 
 ## [0.8.0] - 2026-05-30
 
