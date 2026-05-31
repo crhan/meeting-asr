@@ -26,7 +26,11 @@ from app.core.asr_wait import (
 )
 from app.config import load_settings
 from app.voiceprint_ids import valid_person_public_id
-from app.asr_hotwords import AsrHotwordResolution, resolve_asr_hotwords
+from app.asr_hotwords import (
+    AsrHotwordResolution,
+    resolve_asr_hotwords,
+    write_asr_hotword_artifact,
+)
 from app.asr_pricing import AsrCostEstimate, estimate_asr_cost
 from app.core.progress import CliProgressReporter, emit_progress
 from app.core.project_models import (
@@ -958,6 +962,12 @@ def transcribe_project(
         reset_total=True,
     )
     _invalidate_downstream_artifacts(paths, manifest)
+    # Record the hotword table submitted with this task. Written after
+    # invalidation (which prunes the previous run's copy) so a freshly
+    # transcribed project shows the biasing terms instead of an empty file.
+    write_asr_hotword_artifact(
+        paths.root / "corrections" / "asr_hotwords.json", hotwords
+    )
     _write_project_asr_outputs(paths, raw_result, parsed_result, options.generate_srt)
     emit_progress(progress, "Transcription complete", completed=1, total=1)
     _record_asr_metadata(

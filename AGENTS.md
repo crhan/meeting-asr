@@ -1,5 +1,12 @@
 # AGENTS.md
 
+## Business Data vs Code (配置 vs 代码) — 必须时刻遵守
+
+- **业务相关内容绝不进代码库。** 具体专名、人名、产品名、术语映射（例如 `iSee` 是我们负责的平台、`IC` 是独立开发者，二者语境完全不同）属于**用户数据**，不是代码。它们只能存在于配置 / 跨项目纠错词库（`meeting-asr lexicon`，落盘在 `$XDG_DATA_HOME/meeting-asr/lexicon/lexicon.sqlite`），**永远不要**把它们硬编码成源码里的字面量或映射表。
+- **判断方法（每次新增逻辑都先问）：** 这是「通用机制」还是「具体业务知识」？机制（怎么纠错、怎么判别语境、怎么调用 LLM）→ 进代码；具体的词、含义、映射、谁是谁 → 进配置/lexicon。任何要写 `"IC" -> "iSee"` 之类字面量的冲动，都是信号：它该进 lexicon，不该进 `src/`。
+- **已证伪的死路（别重走）：** DashScope fun-asr 的自定义热词 vocabulary 对 `iSee` **完全不生效**。受控实验（同一段音频，无 vocab / `{"text":"iSee","weight":4}` / 追加 `"lang":"en"` 三条件）输出逐字一致，仍出 `IC`。`lang=en` 也无效。因此 ASR 提交阶段的热词偏置治不了「IC/iSee」同音错误。`corrections/asr_hotwords.json` 现在只用于**记录本次提交了哪些热词**（可观测性），不要再指望它纠正识别结果。
+- **正确的修复层是后处理（polish / local_correction），且必须配置化：** 用 LLM 结合上下文语境判别（IC=人 vs iSee=平台，语境差异大、易分辨），判别依据来自 lexicon 的词条 + 别名 + context，不得把具体词写进代码。
+
 ## Completion Notes
 
 - Root CLI uses `add_completion=False`; keep `completion_init()` in `src/app/cli.py`.

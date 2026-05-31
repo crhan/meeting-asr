@@ -19,11 +19,149 @@ from app.lexicon_store import (
     LexiconContext,
     get_asr_vocabulary_state,
     list_asr_hotwords,
+    list_lexicon_correction_rules,
+    list_lexicon_disambiguations,
     record_lexicon_contexts,
     save_asr_vocabulary_state,
+    set_alias_disambiguation,
+    upsert_lexicon_term,
 )
 
 runner = CliRunner()
+
+
+def _wrong_texts(db_path: Path) -> set[str]:
+    """Return the surface forms covered by deterministic lexicon correction."""
+    return {rule.wrong_text for rule in list_lexicon_correction_rules(db_path=db_path)}
+
+
+def test_set_alias_disambiguation_excludes_alias_from_blanket_rules(
+    tmp_path: Path,
+) -> None:
+    """A disambiguated alias must drop out of deterministic replacement."""
+    db_path = tmp_path / "lexicon.sqlite"
+    upsert_lexicon_term(
+        canonical="iSee",
+        category="system",
+        description="",
+        aliases=("IC", "艾赛"),
+        status="active",
+        db_path=db_path,
+    )
+    assert {"IC", "艾赛"} <= _wrong_texts(db_path)
+
+    entry = set_alias_disambiguation(
+        term="iSee",
+        alias="IC",
+        guidance="指 iSee 平台时改成 iSee；指个人贡献者角色时保持原样",
+        db_path=db_path,
+    )
+
+    assert entry is not None and entry.canonical == "iSee"
+    # IC is now LLM-resolved by context; 艾赛 stays a deterministic rule.
+    assert "IC" not in _wrong_texts(db_path)
+    assert "艾赛" in _wrong_texts(db_path)
+    listed = list_lexicon_disambiguations(db_path=db_path)
+    assert [(d.alias, d.guidance) for d in listed] == [(entry.alias, entry.guidance)]
+
+
+def test_disambiguation_excludes_context_derived_rule(tmp_path: Path) -> None:
+    """A disambiguated surface must drop out even when accepted contexts back it.
+
+    Regression: blanket rules come from both aliases AND accepted context rows;
+    excluding only the alias path left the context-derived IC->iSee rule alive.
+    """
+    db_path = tmp_path / "lexicon.sqlite"
+    upsert_lexicon_term(
+        canonical="iSee",
+        category="system",
+        description="",
+        aliases=("IC",),
+        status="active",
+        db_path=db_path,
+    )
+    record_lexicon_contexts(
+        [
+            LexiconContext(
+                canonical="iSee",
+                wrong_text="IC",
+                corrected_text="iSee",
+                left_context="把",
+                right_context="维修平台",
+                category="system",
+                speaker_name="敬悦",
+                project_id="p-demo",
+                sentence_id=1,
+                source="test",
+            )
+        ],
+        db_path=db_path,
+    )
+    assert "IC" in _wrong_texts(db_path)
+
+    set_alias_disambiguation(
+        term="iSee", alias="IC", guidance="按语境判断", db_path=db_path
+    )
+
+    assert "IC" not in _wrong_texts(db_path)
+
+
+def test_set_alias_disambiguation_clear_restores_blanket_rule(tmp_path: Path) -> None:
+    """Clearing the guidance returns the alias to deterministic correction."""
+    db_path = tmp_path / "lexicon.sqlite"
+    upsert_lexicon_term(
+        canonical="iSee",
+        category="system",
+        description="",
+        aliases=("IC",),
+        status="active",
+        db_path=db_path,
+    )
+    set_alias_disambiguation(
+        term="iSee", alias="IC", guidance="按语境判断", db_path=db_path
+    )
+    assert "IC" not in _wrong_texts(db_path)
+
+    cleared = set_alias_disambiguation(
+        term="iSee", alias="IC", guidance="", db_path=db_path
+    )
+
+    assert cleared is None
+    assert "IC" in _wrong_texts(db_path)
+    assert list_lexicon_disambiguations(db_path=db_path) == []
+
+
+def test_lexicon_disambiguate_command(tmp_path: Path) -> None:
+    """The disambiguate CLI marks an alias ambiguous and persists the guidance."""
+    db_path = tmp_path / "lexicon.sqlite"
+    upsert_lexicon_term(
+        canonical="iSee",
+        category="system",
+        description="",
+        aliases=("IC",),
+        status="active",
+        db_path=db_path,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "lexicon",
+            "disambiguate",
+            "iSee",
+            "IC",
+            "指 iSee 平台时改成 iSee；指角色时保持原样",
+            "--lexicon-db",
+            str(db_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["cleared"] is False
+    assert payload["disambiguation"]["alias"] == "IC"
+    assert "IC" not in _wrong_texts(db_path)
 
 
 def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:

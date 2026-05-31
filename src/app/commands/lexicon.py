@@ -38,6 +38,7 @@ from app.lexicon_store import (
     lexicon_stats,
     list_asr_hotwords,
     list_lexicon_terms,
+    set_alias_disambiguation,
     upsert_lexicon_term,
 )
 from app.presentation.cli.errors import run_with_cli_errors
@@ -202,6 +203,50 @@ def term_delete_command(
     typer.echo(header)
     typer.echo(f"ID: {detail.term.public_id}")
     typer.echo(f"Term: {detail.term.canonical}")
+    typer.echo(f"Lexicon DB: {db_path}")
+
+
+@app.command("disambiguate")
+def term_disambiguate_command(
+    term: str = typer.Argument(..., help="Term id, canonical term, or alias."),
+    alias: str = typer.Argument(..., help="Ambiguous surface form, e.g. IC."),
+    guidance: str = typer.Argument(
+        ...,
+        help="Context rule for the polish LLM, e.g. "
+        "'指 iSee 平台时改成 iSee；指个人贡献者角色时保持原样'. Pass '' to clear.",
+    ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None, "--lexicon-db", help="Override lexicon SQLite path."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Mark an alias as context-ambiguous so polish resolves it by sentence context.
+
+    An ambiguous alias is excluded from deterministic blanket replacement; the
+    polish LLM decides per occurrence using the guidance. The guidance text is
+    business knowledge and lives only in the lexicon, never in source code.
+    """
+    db_path = lexicon_db or default_lexicon_db_path()
+    entry = run_with_cli_errors(
+        lambda: set_alias_disambiguation(
+            term=term, alias=alias, guidance=guidance, db_path=db_path
+        )
+    )
+    if as_json:
+        emit_json(
+            {
+                "lexicon_db": db_path,
+                "alias": alias,
+                "cleared": entry is None,
+                "disambiguation": asdict(entry) if entry is not None else None,
+            }
+        )
+        return
+    if entry is None:
+        typer.echo(f"Cleared disambiguation on alias '{alias}'.")
+    else:
+        typer.echo(f"Alias '{entry.alias}' -> '{entry.canonical}' is now ambiguous.")
+        typer.echo(f"Guidance: {entry.guidance}")
     typer.echo(f"Lexicon DB: {db_path}")
 
 

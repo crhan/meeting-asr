@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -76,6 +76,9 @@ class AsrHotwordResolution:
     hotword_count: int = 0
     vocabulary_hash: str | None = None
     error: str | None = None
+    # The hotword table this resolution represents, carried so callers can
+    # snapshot exactly what backed the request without re-reading the lexicon.
+    hotwords: tuple[AsrHotword, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,16 +111,36 @@ def resolve_asr_hotwords(
         db_path: Optional lexicon database path.
 
     Returns:
-        Resolved vocabulary id and metadata.
+        Resolved vocabulary id plus the hotword table it represents. ``off``
+        carries an empty table; every other mode carries the active lexicon
+        hotwords so callers can snapshot exactly what backed the request.
     """
     value = (mode or "auto").strip()
     if value.lower() in {"off", "false", "none", "0"}:
         return AsrHotwordResolution(None, "off")
+    database_path = db_path or default_lexicon_db_path()
+    hotwords = tuple(list_asr_hotwords(db_path=database_path))
     if value.lower() == "auto":
-        return _auto_hotword_resolution(
-            settings=settings, target_model=target_model, db_path=db_path
+        resolution = _auto_hotword_resolution(
+            settings=settings, target_model=target_model, db_path=database_path
         )
-    return AsrHotwordResolution(value, "explicit")
+    else:
+        resolution = AsrHotwordResolution(value, "explicit")
+    return replace(resolution, hotwords=hotwords)
+
+
+def write_asr_hotword_artifact(path: Path, resolution: AsrHotwordResolution) -> Path:
+    """
+    Persist the hotword table backing one resolution to a project artifact.
+
+    Args:
+        path: Destination ``corrections/asr_hotwords.json`` path.
+        resolution: Resolved hotwords for the ASR request.
+
+    Returns:
+        Written artifact path.
+    """
+    return write_hotword_artifact(path, list(resolution.hotwords))
 
 
 def get_asr_hotword_status(
