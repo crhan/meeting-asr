@@ -9,6 +9,7 @@ from typing import Literal
 
 from app.correction_llm import LlmCorrectionCandidate, LlmPolishItem
 from app.models import SentenceSegment
+from app.residual_noise import residual_noise
 from app.transcript_corrections import _is_change_type_allowed, _polish_guard
 
 PolishExpectedDecision = Literal["change", "no_change", "reject"]
@@ -62,6 +63,15 @@ class PolishEvalCaseResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ResidualHit:
+    """One accepted polish output that still carried residual noise."""
+
+    case_id: str
+    text: str
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PolishEvalSummary:
     """Aggregate polish evaluation result."""
 
@@ -69,11 +79,18 @@ class PolishEvalSummary:
     passed: int
     failed: int
     results: tuple[PolishEvalCaseResult, ...]
+    residual_dirty: tuple[ResidualHit, ...] = ()
 
     @property
     def success(self) -> bool:
-        """Return whether all cases passed."""
-        return self.failed == 0
+        """Return whether all cases passed and no accepted output is dirty.
+
+        Residual noise in an accepted output is a dimension ORTHOGONAL to the
+        keep/reject guard axis: a polish can correctly survive the guard (and even
+        match its expected text) yet still leave a filler / uncollapsed repeat in.
+        The eval gate fails on either a case failure or any residual-dirty output.
+        """
+        return self.failed == 0 and not self.residual_dirty
 
 
 def default_polish_eval_path() -> Path:
@@ -117,8 +134,18 @@ def evaluate_polish_cases(
     """
     results = tuple(_evaluate_case(case, proposed_items or {}) for case in cases)
     passed = sum(1 for result in results if result.passed)
+    residual_dirty = tuple(
+        ResidualHit(result.case_id, result.actual_text, tuple(reasons))
+        for result in results
+        if result.actual_decision == "kept"
+        and (reasons := residual_noise(result.actual_text))
+    )
     return PolishEvalSummary(
-        total=len(results), passed=passed, failed=len(results) - passed, results=results
+        total=len(results),
+        passed=passed,
+        failed=len(results) - passed,
+        results=results,
+        residual_dirty=residual_dirty,
     )
 
 

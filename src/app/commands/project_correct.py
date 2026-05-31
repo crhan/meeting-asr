@@ -426,6 +426,15 @@ def eval_polish_command(
         if not result.passed:
             typer.echo(f"  expected: {result.expected_text}")
             typer.echo(f"  actual:   {result.actual_text}")
+    accepted = sum(1 for result in summary.results if result.actual_decision == "kept")
+    typer.echo(
+        f"Residual noise in accepted outputs: {len(summary.residual_dirty)}/{accepted} dirty"
+    )
+    for hit in summary.residual_dirty:
+        typer.echo(
+            f"DIRTY [{';'.join(hit.reasons)}] {hit.case_id}: "
+            f"accepted output still has residual noise: {hit.text!r}"
+        )
     if not summary.success:
         raise typer.Exit(1)
 
