@@ -109,6 +109,7 @@ meeting-asr project transcript show PROJECT_ID --kind auto
 meeting-asr project correct diff PROJECT_ID
 meeting-asr project correct accept PROJECT_ID
 meeting-asr project correct eval-polish
+meeting-asr project merge P1 P2 ... --out ./merged   # 把同一场会的多段闪记合并成单一转写包
 meeting-asr voiceprint review PROJECT_ID
 meeting-asr voiceprint review
 meeting-asr voiceprint quality --review
