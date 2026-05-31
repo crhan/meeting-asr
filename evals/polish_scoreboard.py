@@ -32,6 +32,7 @@ from pathlib import Path
 
 from app.lexicon_store import list_lexicon_known_texts
 from app.models import SentenceSegment
+from app.residual_noise import residual_noise
 from app.transcript_corrections import _is_change_type_allowed, _polish_guard
 
 LOCAL = Path(__file__).resolve().parent / "local"
@@ -109,6 +110,7 @@ def run(rows: list[dict], gold_field: str) -> None:
 
     _report_reject(cells["reject"], split=split)
     _report_accept(cells["accept"], split=split)
+    _report_residual(rows, gold_field)
     if skipped:
         print(f"\n(跳过无 gold {skipped} 条)")
     if untagged:
@@ -116,6 +118,40 @@ def run(rows: list[dict], gold_field: str) -> None:
             f"(gold_verdict 评分但 {untagged} 行无 gold_source 标记,按独立计入;"
             "重跑 `python -m evals.assemble_gold` 补全)"
         )
+
+
+def _report_residual(rows: list[dict], gold_field: str) -> None:
+    """Report residual noise left IN the polish outputs — the inverse dimension.
+
+    Orthogonal to the keep/reject guard axis: a polish can be correctly accepted
+    yet still leave a filler / uncollapsed repeat in. Detector lives in
+    ``app.residual_noise`` (verified ~100% precision). For the per-row report run
+    ``python -m evals.scan_residual_noise``.
+    """
+    changed = [
+        row
+        for row in rows
+        if row.get("proposed_text") and row["proposed_text"] != row.get("original_text")
+    ]
+    if not changed:
+        return
+    dirty = [(row, residual_noise(row["proposed_text"])) for row in changed]
+    dirty = [(row, reasons) for row, reasons in dirty if reasons]
+    kept_dirty = sum(
+        1 for row, _ in dirty if (row.get(gold_field) or row.get("gold_verdict")) == "keep"
+    )
+    print("\n" + "=" * 64)
+    print(f"残留脏字维度 (polish 漏删,扫 proposed 输出, {len(changed)} 改写行)")
+    print("=" * 64)
+    print(f"  仍含脏字   {len(dirty):5d}  ({len(dirty) / len(changed) * 100:.1f}%)  ↓越低越好")
+    print(f"  其中 gold=keep {kept_dirty:5d}  ← 评测放行了仍脏的 polish")
+    by_reason: Counter = Counter()
+    for _, reasons in dirty:
+        for code in reasons:
+            by_reason[code.split(":")[0]] += 1
+    if by_reason:
+        breakdown = "  ".join(f"{k} {v}" for k, v in by_reason.most_common())
+        print(f"  类型: {breakdown}")
 
 
 def main() -> None:
