@@ -72,7 +72,7 @@ def cut_clip(project: str, begin_ms: int, end_ms: int, dest: Path) -> bool:
         return False
     start = max(0, begin_ms - PAD_MS) / 1000
     duration = (end_ms - begin_ms + 2 * PAD_MS) / 1000
-    proc = subprocess.run(
+    subprocess.run(
         ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}",
          "-i", str(audio), "-ac", "1", "-ar", "16000", "-b:a", "64k", str(dest)],
         capture_output=True, text=True,
@@ -136,7 +136,11 @@ def main() -> None:
     """Collect disputed rows, cut their audio, and write the verification page."""
     OUTDIR.mkdir(parents=True, exist_ok=True)
     (OUTDIR / "clips").mkdir(exist_ok=True)
-    rows = [json.loads(l) for l in GOLD.read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = [
+        json.loads(line)
+        for line in GOLD.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     cases = collect_disputed(rows)
     log.info("disputed_found", count=len(cases))
 
