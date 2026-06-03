@@ -196,6 +196,20 @@ def analyze_project_resplit(
     params = params or ResplitParams()
     context = _load_cluster_context(project_dir, provider, model)
     known = _known_speaker_vectors(store_dir, context.model)
+    if not known:
+        # No library anchors: promotion has no evidence and "matches no library
+        # person" is vacuously true for every clip, so residue detection would
+        # wrongly bucket normal tracks. Re-split is a no-op without a library.
+        return TrackResplitPlan(
+            context.project_root,
+            context.provider,
+            context.model,
+            params,
+            0,
+            (),
+            (),
+            (),
+        )
     known_by_public = {
         item.person_public_id: item for item in known.values() if item.person_public_id
     }
@@ -224,7 +238,9 @@ def analyze_project_resplit(
     speaker_ref = _speaker_reference_vectors(
         clips_by_speaker, person_map, known, known_by_public
     )
-    existing_speaker_for_person = _existing_speaker_for_person(person_map)
+    existing_speaker_for_person = _existing_speaker_for_person(
+        person_map, known, known_by_public
+    )
 
     suspects = select_suspect_speakers(clips_by_speaker, params)
     candidates: list[CandidatePerson] = []
@@ -388,6 +404,10 @@ def _residue_clusters(
     centroid that snaps back onto the dominant library identity (e.g. the track's own
     person in poor audio) is rejected here rather than wrongly pulled into a bucket.
     """
+    if not known:
+        # Without a library, "matches no library person" is vacuously true for every
+        # clip; bucketing on that would wrongly pull a normal track. No-op instead.
+        return []
     unmatched = [
         clip
         for clip in clips
@@ -452,12 +472,23 @@ def _speaker_reference_vectors(
     return refs
 
 
-def _existing_speaker_for_person(person_map: dict[int, int | str]) -> dict[str, int]:
-    """Map a voiceprint person public id to the project speaker already holding it."""
+def _existing_speaker_for_person(
+    person_map: dict[int, int | str],
+    known: dict[int, _KnownSpeakerVector],
+    known_by_public: dict[str, _KnownSpeakerVector],
+) -> dict[str, int]:
+    """Map a voiceprint person public id to the project speaker already holding it.
+
+    Resolves each ``person_map`` value through the library so that legacy integer
+    person ids and public-id strings both key on the canonical public id; otherwise a
+    promotion for a person whose track is mapped by a legacy int would be reported as
+    having no existing track and mint a duplicate.
+    """
     mapping: dict[str, int] = {}
     for speaker_id, value in person_map.items():
-        if isinstance(value, str) and value:
-            mapping.setdefault(value, speaker_id)
+        resolved = _resolve_known(value, known, known_by_public)
+        if resolved is not None and resolved.person_public_id:
+            mapping.setdefault(resolved.person_public_id, speaker_id)
     return mapping
 
 

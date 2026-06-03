@@ -13,6 +13,7 @@ from app.speaker_resplit import (
     ResplitSentence,
     TrackResplitPlan,
     _candidate_persons,
+    _existing_speaker_for_person,
     _promotion_decision,
     _residue_clusters,
     select_suspect_speakers,
@@ -162,6 +163,50 @@ def test_residue_clusters_reject_when_centroid_snaps_to_library() -> None:
     clusters = _residue_clusters(1, clips, known[1], known, {1: known[1].vector}, params)
 
     assert clusters == []  # centroid resembles person A => not residue
+
+
+def test_residue_clusters_empty_library_is_noop() -> None:
+    """With no library, every clip looks 'unmatched' — must not bucket a normal track."""
+    clips = [_clip(C, sid=i, begin=i * 7000, end=i * 7000 + 7000) for i in range(3)]
+    params = ResplitParams(min_group_sentences=2, min_group_seconds=0.0)
+
+    clusters = _residue_clusters(
+        speaker_id=1, clips=clips, assigned=None, known={}, speaker_ref={}, params=params
+    )
+
+    assert clusters == []
+
+
+def test_existing_speaker_for_person_resolves_legacy_int_and_public() -> None:
+    """Both legacy integer person ids and public-id strings key on the public id."""
+    known = {7: _person(7, A, "vpp-a"), 9: _person(9, B, "vpp-b")}
+    known_by_public = {"vpp-a": known[7], "vpp-b": known[9]}
+    # speaker 0 mapped by legacy int (7), speaker 1 mapped by public id string.
+    person_map: dict[int, int | str] = {0: 7, 1: "vpp-b"}
+
+    mapping = _existing_speaker_for_person(person_map, known, known_by_public)
+
+    assert mapping == {"vpp-a": 0, "vpp-b": 1}
+
+
+def test_candidate_persons_routes_to_existing_track_for_mapped_person() -> None:
+    """A promotion whose person already has a track reports that track id, not None."""
+    known = {1: _person(1, A, "vpp-a"), 2: _person(2, B, "vpp-b")}
+    assigned = known[1]
+    clips = [_clip(B, sid=i, begin=i * 9000, end=i * 9000 + 9000) for i in range(3)]
+    params = ResplitParams(min_group_sentences=2, min_group_seconds=6.0)
+
+    candidates, _ = _candidate_persons(
+        speaker_id=1,
+        clips=clips,
+        assigned=assigned,
+        known=known,
+        existing_speaker_for_person={"vpp-b": 5},  # person 2 already owns track 5
+        params=params,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].existing_speaker_id == 5
 
 
 def _sentences(count: int, *, base: int) -> tuple[ResplitSentence, ...]:
