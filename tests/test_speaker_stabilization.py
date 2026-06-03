@@ -98,7 +98,12 @@ def test_stabilize_project_speakers_applies_and_refreshes(
     )
 
     summary = stabilize_project_speakers(
-        project_dir, store_dir=None, model=None, iterations=2, sample_workers=3
+        project_dir,
+        store_dir=None,
+        model=None,
+        iterations=2,
+        sample_workers=3,
+        resplit=False,  # this test isolates the iterative pass; resplit is covered separately
     )
 
     assert calls == ["refresh", "apply:1", "names", "refresh", "refresh"]

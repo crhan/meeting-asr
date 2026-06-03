@@ -539,6 +539,7 @@ def test_project_run_stabilizes_sentence_speakers_after_voiceprint_matches(
         "model": None,
         "iterations": 2,
         "sample_workers": 7,
+        "resplit": True,
         "progress": None,
     }
     assert "reassigned 2 sentence(s)" in result.output

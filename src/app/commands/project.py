@@ -615,6 +615,13 @@ def run(
         "--speaker-stabilization/--no-speaker-stabilization",
         help="After speaker matching, run two sentence-level reassignment stabilization passes.",
     ),
+    speaker_resplit: bool = typer.Option(
+        True,
+        "--speaker-resplit/--no-speaker-resplit",
+        help="Rescue under-split tracks: mint new speakers for confident library "
+        "people without a track and gather out-of-library outliers into a review "
+        "bucket. Runs once before stabilization.",
+    ),
     speaker_stabilization_iterations: int = typer.Option(
         DEFAULT_STABILIZATION_ITERATIONS,
         "--speaker-stabilization-iterations",
@@ -674,6 +681,7 @@ def run(
             polish_concurrency=polish_concurrency,
             polish_legacy=polish_legacy,
             speaker_stabilization=speaker_stabilization,
+            speaker_resplit=speaker_resplit,
             speaker_stabilization_iterations=speaker_stabilization_iterations,
             speaker_sample_workers=speaker_sample_workers,
             progress=reporter,
@@ -1004,6 +1012,7 @@ def _run_project_workflow(
     polish_concurrency: int | None,
     polish_legacy: bool = False,
     speaker_stabilization: bool = True,
+    speaker_resplit: bool = True,
     speaker_stabilization_iterations: int = DEFAULT_STABILIZATION_ITERATIONS,
     speaker_sample_workers: int = DEFAULT_STABILIZATION_SAMPLE_WORKERS,
     progress: CliProgressReporter | None = None,
@@ -1215,6 +1224,7 @@ def _run_project_workflow(
             model=voiceprint_model,
             iterations=speaker_stabilization_iterations,
             sample_workers=speaker_sample_workers,
+            resplit=speaker_resplit,
             progress=progress,
         )
         if stabilization_summary.final_match_summary is not None:
