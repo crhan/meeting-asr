@@ -125,6 +125,18 @@ from app.speaker_match_status import (
     voiceprint_match_status,
 )
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
+from app.speaker_resplit import (
+    DEFAULT_CANDIDATE_FLOOR,
+    DEFAULT_MIN_GROUP_SECONDS,
+    DEFAULT_MIN_GROUP_SENTENCES,
+    DEFAULT_PROMOTE_CENTROID_THRESHOLD,
+    DEFAULT_PROMOTE_LEAD_MARGIN,
+    DEFAULT_RESIDUE_MATCH_FLOOR,
+    ResplitParams,
+    TrackResplitPlan,
+    analyze_project_resplit,
+    resplit_plan_payload,
+)
 from app.speaker_sample_matching import (
     DEFAULT_IDENTITY_AMBIGUOUS_MARGIN,
     DEFAULT_IDENTITY_CONFLICT_MARGIN,
@@ -2332,6 +2344,71 @@ def speakers_cluster(
     _echo_cluster_quality_summary(summary)
 
 
+@speakers_app.command("resplit")
+def speakers_resplit(
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
+    candidate_floor: float = typer.Option(
+        DEFAULT_CANDIDATE_FLOOR, "--candidate-floor", min=0.0, max=1.0
+    ),
+    promote_threshold: float = typer.Option(
+        DEFAULT_PROMOTE_CENTROID_THRESHOLD,
+        "--promote-threshold",
+        min=0.0,
+        max=1.0,
+    ),
+    promote_lead: float = typer.Option(
+        DEFAULT_PROMOTE_LEAD_MARGIN, "--promote-lead", min=0.0, max=1.0
+    ),
+    residue_floor: float = typer.Option(
+        DEFAULT_RESIDUE_MATCH_FLOOR, "--residue-floor", min=0.0, max=1.0
+    ),
+    min_sentences: int = typer.Option(
+        DEFAULT_MIN_GROUP_SENTENCES, "--min-sentences", min=1
+    ),
+    min_seconds: float = typer.Option(
+        DEFAULT_MIN_GROUP_SECONDS, "--min-seconds", min=0.0
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON."
+    ),
+) -> None:
+    """Preview under-split rescue moves (analysis only; never writes project state).
+
+    Groups a crowded speaker track's sentences by voiceprint identity and proposes
+    promoting confident other-person groups to their own track, plus review-visible
+    "unknown" buckets for out-of-library clusters. ``project run`` applies the same
+    analysis automatically; this command is the dry-run preview.
+    """
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
+    params = ResplitParams(
+        candidate_floor=candidate_floor,
+        promote_centroid_threshold=promote_threshold,
+        promote_lead_margin=promote_lead,
+        residue_match_floor=residue_floor,
+        min_group_sentences=min_sentences,
+        min_group_seconds=min_seconds,
+    )
+    plan = run_with_cli_errors(
+        lambda: analyze_project_resplit(
+            resolved_project_dir, model=model, params=params
+        )
+    )
+    if json_output:
+        emit_json(resplit_plan_payload(plan))
+        return
+    _echo_resplit_plan(plan)
+
+
 @speakers_app.command("compare-srt")
 def speakers_compare_srt(
     project_dir: Path = typer.Argument(
@@ -2593,6 +2670,80 @@ def _echo_cluster_quality_summary(summary: SpeakerClusterQualitySummary) -> None
             left = speaker_id_to_label(pair.left_speaker_id)
             right = speaker_id_to_label(pair.right_speaker_id)
             typer.echo(f"  {left} <-> {right} score={pair.score:.3f}")
+
+
+def _echo_resplit_plan(plan: TrackResplitPlan) -> None:
+    """Print an under-split rescue preview (promotions, residue, near-misses)."""
+    typer.echo(f"Provider: {plan.provider}")
+    typer.echo(f"Model: {plan.model}")
+    typer.echo(f"Voiceprint library: {plan.library_size} people")
+    typer.echo(
+        "Thresholds: "
+        f"promote>={plan.params.promote_centroid_threshold:.2f} "
+        f"lead>={plan.params.promote_lead_margin:.2f} "
+        f"residue<{plan.params.residue_match_floor:.2f} "
+        f"min-sentences={plan.params.min_group_sentences} "
+        f"min-seconds={plan.params.min_group_seconds:.0f}"
+    )
+    suspects = ", ".join(speaker_id_to_label(s) for s in plan.suspect_speaker_ids)
+    typer.echo(f"Suspect tracks: {suspects or '(none)'}")
+
+    promotions = plan.promotions
+    typer.echo("")
+    typer.echo(f"Promotions ({len(promotions)}):")
+    if not promotions:
+        typer.echo("  (none)")
+    for candidate in promotions:
+        target = (
+            f"existing {speaker_id_to_label(candidate.existing_speaker_id)}"
+            if candidate.existing_speaker_id is not None
+            else "NEW track"
+        )
+        typer.echo(
+            f"  {speaker_id_to_label(candidate.source_speaker_id)} -> {candidate.name} "
+            f"[{target}]: {len(candidate.sentences)} sentences, "
+            f"{candidate.total_seconds:.1f}s, centroid={candidate.centroid_score:.3f}, "
+            f"lead={candidate.lead:+.3f}"
+        )
+        for sentence in candidate.sentences[:3]:
+            typer.echo(f"      - {sentence.text[:56]}")
+
+    residue = plan.residue_clusters
+    typer.echo("")
+    typer.echo(f"Residue clusters -> review ({len(residue)}):")
+    if not residue:
+        typer.echo("  (none)")
+    for cluster in residue:
+        merge = (
+            f" merge->{speaker_id_to_label(cluster.merge_target_speaker_id)}"
+            f"({cluster.merge_score:.3f})"
+            if cluster.merge_target_speaker_id is not None
+            else ""
+        )
+        best = (
+            f"{cluster.best_library_name}={cluster.best_library_score:.3f}"
+            if cluster.best_library_name
+            else "no library match"
+        )
+        typer.echo(
+            f"  {speaker_id_to_label(cluster.source_speaker_id)} [{cluster.decision}]: "
+            f"{len(cluster.sentences)} sentences, {cluster.total_seconds:.1f}s, "
+            f"best={best}{merge}"
+        )
+        for sentence in cluster.sentences[:3]:
+            typer.echo(f"      - {sentence.text[:56]}")
+
+    near = [item for item in plan.candidates if item.decision != "promote"]
+    if near:
+        typer.echo("")
+        typer.echo(f"Near-misses (not applied, {len(near)}):")
+        for candidate in near:
+            typer.echo(
+                f"  {speaker_id_to_label(candidate.source_speaker_id)} ~ "
+                f"{candidate.name}: {len(candidate.sentences)} sentences, "
+                f"{candidate.total_seconds:.1f}s, centroid={candidate.centroid_score:.3f}, "
+                f"lead={candidate.lead:+.3f} ({candidate.decision})"
+            )
 
 
 def _echo_sample_match_summary(summary: SpeakerSampleMatchSummary) -> None:

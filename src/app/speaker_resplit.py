@@ -506,6 +506,72 @@ def _best_library_score(vector: list[float], known: dict[int, _KnownSpeakerVecto
     return ranked[0].score if ranked else 0.0
 
 
+def resplit_plan_payload(plan: TrackResplitPlan) -> dict[str, object]:
+    """Return a JSON-safe payload for a re-split plan (analysis output / audit)."""
+    return {
+        "project_root": str(plan.project_root),
+        "provider": plan.provider,
+        "model": plan.model,
+        "library_size": plan.library_size,
+        "params": {
+            "candidate_floor": plan.params.candidate_floor,
+            "promote_centroid_threshold": plan.params.promote_centroid_threshold,
+            "promote_lead_margin": plan.params.promote_lead_margin,
+            "residue_match_floor": plan.params.residue_match_floor,
+            "residue_cluster_threshold": plan.params.residue_cluster_threshold,
+            "merge_threshold": plan.params.merge_threshold,
+            "min_group_sentences": plan.params.min_group_sentences,
+            "min_group_seconds": plan.params.min_group_seconds,
+            "min_suspect_sentences": plan.params.min_suspect_sentences,
+        },
+        "suspect_speaker_ids": list(plan.suspect_speaker_ids),
+        "candidates": [_candidate_payload(item) for item in plan.candidates],
+        "residue_clusters": [_residue_payload(item) for item in plan.residue_clusters],
+    }
+
+
+def _candidate_payload(candidate: CandidatePerson) -> dict[str, object]:
+    """Return a JSON-safe payload for one candidate person group."""
+    return {
+        "source_speaker_id": candidate.source_speaker_id,
+        "person_id": candidate.person_id,
+        "person_public_id": candidate.person_public_id,
+        "name": candidate.name,
+        "centroid_score": candidate.centroid_score,
+        "assigned_score": candidate.assigned_score,
+        "lead": candidate.lead,
+        "total_seconds": candidate.total_seconds,
+        "existing_speaker_id": candidate.existing_speaker_id,
+        "decision": candidate.decision,
+        "sentences": [_sentence_payload(s) for s in candidate.sentences],
+    }
+
+
+def _residue_payload(cluster: ResidueCluster) -> dict[str, object]:
+    """Return a JSON-safe payload for one residue cluster."""
+    return {
+        "source_speaker_id": cluster.source_speaker_id,
+        "assigned_score": cluster.assigned_score,
+        "best_library_name": cluster.best_library_name,
+        "best_library_score": cluster.best_library_score,
+        "merge_target_speaker_id": cluster.merge_target_speaker_id,
+        "merge_score": cluster.merge_score,
+        "total_seconds": cluster.total_seconds,
+        "decision": cluster.decision,
+        "sentences": [_sentence_payload(s) for s in cluster.sentences],
+    }
+
+
+def _sentence_payload(sentence: ResplitSentence) -> dict[str, object]:
+    """Return a JSON-safe payload for one move-target sentence."""
+    return {
+        "sentence_id": sentence.sentence_id,
+        "begin_time_ms": sentence.begin_time_ms,
+        "end_time_ms": sentence.end_time_ms,
+        "text": sentence.text,
+    }
+
+
 def _clip_duration_ms(clip: SpeakerClusterClip) -> int:
     """Return a clip's sentence duration in milliseconds."""
     return max(0, clip.end_time_ms - clip.begin_time_ms)
@@ -525,5 +591,6 @@ __all__ = [
     "ResplitSentence",
     "TrackResplitPlan",
     "analyze_project_resplit",
+    "resplit_plan_payload",
     "select_suspect_speakers",
 ]
