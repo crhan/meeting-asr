@@ -149,6 +149,7 @@ from app.speaker_stabilization import (
     DEFAULT_STABILIZATION_ITERATIONS,
     DEFAULT_STABILIZATION_SAMPLE_WORKERS,
     SpeakerStabilizationSummary,
+    apply_project_resplit,
     stabilize_project_speakers,
 )
 from app.speaker_review import (
@@ -2386,16 +2387,22 @@ def speakers_resplit(
     min_seconds: float = typer.Option(
         DEFAULT_MIN_GROUP_SECONDS, "--min-seconds", min=0.0
     ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Persist the moves (mint/seed tracks, unknown bucket, audit) instead of "
+        "only previewing. Default is a dry run.",
+    ),
     json_output: bool = typer.Option(
         False, "--json", help="Print machine-readable JSON."
     ),
 ) -> None:
-    """Preview under-split rescue moves (analysis only; never writes project state).
+    """Preview (or, with --apply, perform) under-split speaker rescue moves.
 
-    Groups a crowded speaker track's sentences by voiceprint identity and proposes
-    promoting confident other-person groups to their own track, plus review-visible
-    "unknown" buckets for out-of-library clusters. ``project run`` applies the same
-    analysis automatically; this command is the dry-run preview.
+    Groups a crowded speaker track's sentences by voiceprint identity and promotes
+    confident other-person groups to their own track, plus review-visible "unknown"
+    buckets for out-of-library clusters. ``project run`` performs the same analysis
+    automatically; this command previews it by default and applies it with --apply.
     """
     resolved_project_dir = run_with_cli_errors(
         lambda: resolve_project_ref(project_dir, projects_dir)
@@ -2408,6 +2415,22 @@ def speakers_resplit(
         min_group_sentences=min_sentences,
         min_group_seconds=min_seconds,
     )
+    if apply:
+        plan, minted = run_with_cli_errors(
+            lambda: apply_project_resplit(
+                resolved_project_dir, model=model, params=params
+            )
+        )
+        if plan is not None and not json_output:
+            _echo_resplit_plan(plan)
+            typer.echo("")
+            typer.echo(f"Applied: minted {minted} new speaker track(s).")
+        if json_output:
+            payload = resplit_plan_payload(plan) if plan is not None else {}
+            payload["applied"] = True
+            payload["minted_speaker_count"] = minted
+            emit_json(payload)
+        return
     plan = run_with_cli_errors(
         lambda: analyze_project_resplit(
             resolved_project_dir, model=model, params=params

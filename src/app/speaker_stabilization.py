@@ -405,6 +405,28 @@ def _reassignment_spec(
     )
 
 
+def apply_project_resplit(
+    project_dir: Path,
+    *,
+    store_dir: Path | None = None,
+    model: str | None = None,
+    params: ResplitParams | None = None,
+    progress: CliProgressReporter | None = None,
+) -> tuple[TrackResplitPlan | None, int]:
+    """Apply the under-split rescue phase to a project on its own.
+
+    Persists the same moves the ``project run`` stabilization phase would (mint and
+    seed new tracks, gather residue into an unknown bucket, write the audit) without
+    running the iterative reassignment passes. Useful for rescuing an already
+    processed project after reviewing ``project speakers resplit``.
+
+    Returns the analysis plan and the number of new speaker tracks minted.
+    """
+    return _apply_resplit_phase(
+        project_dir, store_dir=store_dir, model=model, params=params, progress=progress
+    )
+
+
 def _apply_resplit_phase(
     project_dir: Path,
     *,
@@ -466,5 +488,6 @@ __all__ = [
     "DEFAULT_STABILIZATION_SAMPLE_WORKERS",
     "SpeakerStabilizationIteration",
     "SpeakerStabilizationSummary",
+    "apply_project_resplit",
     "stabilize_project_speakers",
 ]
