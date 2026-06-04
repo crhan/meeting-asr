@@ -2363,6 +2363,15 @@ def speakers_resplit(
     projects_dir: Optional[Path] = typer.Option(
         None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
     ),
+    store_dir: Optional[Path] = typer.Option(
+        None,
+        "--store-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Voiceprint store directory. With --apply, point this at an isolated "
+        "copy when running on a duplicated project: project ids are content-based, so "
+        "reassignment invalidates overlapping samples in the resolved store.",
+    ),
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
     ),
@@ -2418,7 +2427,7 @@ def speakers_resplit(
     if apply:
         plan, minted = run_with_cli_errors(
             lambda: apply_project_resplit(
-                resolved_project_dir, model=model, params=params
+                resolved_project_dir, store_dir=store_dir, model=model, params=params
             )
         )
         if plan is not None and not json_output:
@@ -2433,7 +2442,7 @@ def speakers_resplit(
         return
     plan = run_with_cli_errors(
         lambda: analyze_project_resplit(
-            resolved_project_dir, model=model, params=params
+            resolved_project_dir, store_dir=store_dir, model=model, params=params
         )
     )
     if json_output:
