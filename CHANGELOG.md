@@ -5,6 +5,13 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [0.10.0] - 2026-06-04
+
+### 新增
+
+- 新增 ASR under-split（欠分割）救援。DashScope diarizer 有时把多个真人塌进同一条 speaker track（典型如整场会只切出两条 track，第三人混在其中只露几句）；此前的说话人稳定化只能在**已存在的项目 speaker 之间**挪句子，所以“声纹库里有、但本项目还没建 track 的人”永远救不出来。新增 `meeting-asr project speakers resplit <project>`：把拥挤 track 的句子按**逐句声纹身份**重新聚类——把“确属声纹库内另一个人”的句子组**提升为独立 speaker track**（自动分配新 id 并按库内权威名命名），把“不匹配任何库内人”的离群簇收进 **review 可见的 unknown 桶**交人工确认。为避免误判：聚类锚定干净的库向量而非被污染的 track 质心；promotion 要强正证据（质心贴某库人且明显领先当前指派人）、residue 要整簇去噪后仍谁都不像；且**覆盖 track 半数以上的主簇绝不被抽离**（防止把干净单人 track 整条搬走）。默认 dry-run 预览，零写盘（探针音频与嵌入缓存重定向到临时目录，不碰项目文件）；`--apply` 落地；在项目拷贝上用 `--store-dir` 隔离声纹库，避免误删真实库样本。
+- `project run` / `project rerun` 的说话人稳定化阶段现在**自动跑 under-split 救援**（迭代前一次性前置，well-split 项目下为 no-op），`--no-speaker-resplit` 关闭；即便本次声纹聚合匹配整体未达阈值，高置信 promotion 仍会跑（只跳过需要项目内锚点的迭代轮）。
+
 ## [0.9.0] - 2026-05-31
 
 ### 新增

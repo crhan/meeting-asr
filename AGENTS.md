@@ -78,6 +78,7 @@
 - 为什么不直接推 main:① 绕过评审;② 悄悄推进 origin/main,主 checkout `/Users/ruohan.chen/project/meeting-asr` 的 main 立刻 stale,得手动 `git pull` 才同步;③ 一旦不是干净 fast-forward,要么被拒、要么诱导 `--force`(灾难)。"碰巧能跑"≠正确。
 - 唯一可本地合的情形:会话**从主 checkout 起**、用 `EnterWorktree` 进 worktree、再 `ExitWorktree({action:"keep"})` 回到主 checkout,此时在主 checkout 里 `git merge --ff-only` 合本地 main 是干净的。除此之外一律 PR。
 - `ExitWorktree({action:"remove"})` 只删本会话 `EnterWorktree` 建的 worktree;born-in-worktree 的目录不会自动清,也不会在会话结束时弹 keep/remove 提示,需在主 checkout 手动 `git worktree remove` + `git branch -d`。
+- **发版是唯一豁免(用户 2026-06-04 明确指示)**:version bump(`pyproject.toml` + `CHANGELOG.md` + `uv.lock`)**直接 commit 推 main**,再打 `vX.Y.Z` tag 触发发布,**不走 PR**。理由:发版只是把已评审合入 main 的内容固化版本号,再走一遍 PR 是多余仪式;用户要「我让你发就发」的简单直接流程。功能开发仍按上面的「分支 + PR」纪律,豁免只覆盖发版的版本固化 commit。流程见 `docs/release.md`。
 
 ## Project Merge Notes
 
