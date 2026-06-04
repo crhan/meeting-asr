@@ -3195,6 +3195,40 @@ def test_project_speakers_apply_map_writes_named_transcript(tmp_path: Path) -> N
     assert "敬悦" in transcript_path.read_text(encoding="utf-8")
 
 
+def test_project_speakers_apply_map_comma_splits(tmp_path: Path) -> None:
+    """A single --map with comma-separated mappings names each speaker."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+
+    result = runner.invoke(
+        app,
+        ["project", "speakers", "apply", str(project_dir), "--map", "0=欧丁,1=敬悦"],
+    )
+
+    mapping = json.loads(
+        (project_dir / "speakers" / "speaker_map.json").read_text(encoding="utf-8")
+    )
+    assert result.exit_code == 0
+    assert mapping == {"0": "欧丁", "1": "敬悦"}
+
+
+def test_project_speakers_apply_map_rejects_garbage_name(tmp_path: Path) -> None:
+    """A malformed name ('0=a=b') exits non-zero and never writes a garbage map."""
+    project_dir = _sample_project(tmp_path)
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    map_path = project_dir / "speakers" / "speaker_map.json"
+
+    result = runner.invoke(
+        app,
+        ["project", "speakers", "apply", str(project_dir), "--map", "0=a=b"],
+    )
+
+    assert result.exit_code != 0
+    if map_path.exists():
+        mapping = json.loads(map_path.read_text(encoding="utf-8"))
+        assert all("," not in name and "=" not in name for name in mapping.values())
+
+
 def test_project_speakers_apply_map_merges_saved_names(tmp_path: Path) -> None:
     """Scripted speaker apply should patch names instead of clearing the project map."""
     project_dir = _sample_project(tmp_path)
@@ -3751,3 +3785,37 @@ def test_parse_mapping_items_rejects_invalid_public_id() -> None:
     """A malformed @vpp value is rejected instead of silently becoming a name."""
     with pytest.raises(typer.BadParameter):
         project_manager.parse_mapping_items(["0=@vpp-not-hex"], {0})
+
+
+def test_parse_mapping_items_splits_comma_separated() -> None:
+    """A single --map value with commas expands into one mapping per speaker."""
+    names, publics = project_manager.parse_mapping_items(
+        ["0=武一,2=欧丁,3=墨泪"], {0, 1, 2, 3}
+    )
+    assert names == {0: "武一", 2: "欧丁", 3: "墨泪"}
+    assert publics == {}
+
+
+def test_parse_mapping_items_comma_equals_repeated() -> None:
+    """Comma-separated form is equivalent to repeating --map."""
+    combined, _ = project_manager.parse_mapping_items(["0=武一,2=欧丁"], {0, 2})
+    repeated, _ = project_manager.parse_mapping_items(["0=武一", "2=欧丁"], {0, 2})
+    assert combined == repeated == {0: "武一", 2: "欧丁"}
+
+
+def test_parse_mapping_items_skips_empty_pieces() -> None:
+    """Trailing/duplicate commas yield empty pieces that are skipped, not errors."""
+    names, _ = project_manager.parse_mapping_items(["0=武一,,2=欧丁,"], {0, 2})
+    assert names == {0: "武一", 2: "欧丁"}
+
+
+def test_parse_mapping_items_rejects_equals_in_name() -> None:
+    """A name with an extra '=' (e.g. '0=a=b') is rejected, never persisted."""
+    with pytest.raises(typer.BadParameter):
+        project_manager.parse_mapping_items(["0=a=b"], {0})
+
+
+def test_parse_mapping_item_rejects_comma_in_value() -> None:
+    """Defense in depth: a comma inside a single name is rejected at the item layer."""
+    with pytest.raises(typer.BadParameter):
+        project_manager._parse_mapping_item("0=武,一")

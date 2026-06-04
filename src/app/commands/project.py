@@ -1720,7 +1720,7 @@ def speakers_apply(
     mappings: list[str] = typer.Option(
         [],
         "--map",
-        help="Apply speaker_id=name (or speaker_id=@vpp-id to bind an existing voiceprint person) non-interactively; merges with saved names by default.",
+        help="Apply speaker_id=name (or speaker_id=@vpp-id to bind an existing voiceprint person) non-interactively; merges with saved names by default. Pass several at once as '0=A,1=B' or repeat --map. Names cannot contain ',' or '='.",
     ),
     sample_count: int = typer.Option(
         3, "--sample-count", min=1, max=20, help="Samples shown per speaker."
