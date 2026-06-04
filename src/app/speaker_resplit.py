@@ -90,10 +90,13 @@ DEFAULT_MERGE_THRESHOLD = 0.62  # residue cluster centroid vs another speaker =>
 DEFAULT_MIN_GROUP_SENTENCES = 2  # min sentences per move (duration gate is the real bar)
 DEFAULT_MIN_GROUP_SECONDS = 6.0
 DEFAULT_MIN_SUSPECT_SENTENCES = 6  # only examine tracks large enough to hide a speaker
-# A residue cluster covering this much of a track is the track's primary speaker, not
-# an outlier — residue is by definition a minority, so never bucket the majority (this
-# is what keeps an out-of-library single-speaker track from being moved wholesale).
-DEFAULT_RESIDUE_MAX_TRACK_FRACTION = 0.5
+# A group covering at least this much of a track is the track's primary speaker — its
+# source identity — never an extractable splinter. Re-split only pulls out *minorities*:
+# residue is by definition a minority, and a promotion extracts an intruder, not the
+# track's own dominant voice. This single fraction guards both, which is what keeps an
+# out-of-library single-speaker track (or, on the relaxed run gate where `assigned` is
+# None, a track's own main speaker) from being moved wholesale into a new id.
+DEFAULT_DOMINANT_TRACK_FRACTION = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +112,7 @@ class ResplitParams:
     min_group_sentences: int = DEFAULT_MIN_GROUP_SENTENCES
     min_group_seconds: float = DEFAULT_MIN_GROUP_SECONDS
     min_suspect_sentences: int = DEFAULT_MIN_SUSPECT_SENTENCES
-    residue_max_track_fraction: float = DEFAULT_RESIDUE_MAX_TRACK_FRACTION
+    dominant_track_fraction: float = DEFAULT_DOMINANT_TRACK_FRACTION
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +143,7 @@ class CandidatePerson:
     lead: float
     total_seconds: float
     existing_speaker_id: int | None
-    decision: str  # "promote" | "below-centroid" | "below-lead" | "too-few"
+    decision: str  # "promote" | "dominant" | "below-centroid" | "below-lead" | "too-few"
     sentences: tuple[ResplitSentence, ...]
 
 
@@ -333,8 +336,9 @@ def _candidate_persons(
         assigned_score = _cosine(centroid, assigned.vector) if assigned else 0.0
         lead = centroid_score - assigned_score
         total_seconds = sum(_clip_duration_ms(clip) for clip in group) / 1000
+        is_dominant = _is_dominant_group(len(group), len(clips), params)
         decision = _promotion_decision(
-            group, centroid_score, lead, total_seconds, params
+            group, centroid_score, lead, total_seconds, is_dominant, params
         )
         candidates.append(
             CandidatePerson(
@@ -363,14 +367,31 @@ def _candidate_persons(
     return candidates, residual
 
 
+def _is_dominant_group(group_size: int, track_clip_count: int, params: ResplitParams) -> bool:
+    """Whether a group is its track's primary speaker rather than an extractable splinter.
+
+    A group covering at least ``dominant_track_fraction`` of the track is the source
+    identity by definition, so it is never pulled out — neither promoted to a new id
+    nor bucketed as residue. Re-split only extracts minorities.
+    """
+    return group_size >= params.dominant_track_fraction * max(1, track_clip_count)
+
+
 def _promotion_decision(
     group: list[SpeakerClusterClip],
     centroid_score: float,
     lead: float,
     total_seconds: float,
+    is_dominant: bool,
     params: ResplitParams,
 ) -> str:
     """Classify one candidate person group against the promotion gates."""
+    if is_dominant:
+        # The group is the track's own dominant voice (reachable when the run gate is
+        # relaxed and `assigned` is None, so the source identity is not excluded up
+        # front). Promoting it would mint a duplicate id, empty the original track, and
+        # invalidate its voiceprint samples — a destructive no-op. Leave it in place.
+        return "dominant"
     if len(group) < params.min_group_sentences or total_seconds < params.min_group_seconds:
         return "too-few"
     if centroid_score < params.promote_centroid_threshold:
@@ -423,7 +444,6 @@ def _residue_clusters(
     if len(unmatched) < params.min_group_sentences:
         return []
     results: list[ResidueCluster] = []
-    dominant_floor = params.residue_max_track_fraction * max(1, track_clip_count)
     for component in _connected_components(unmatched, params.residue_cluster_threshold):
         total_seconds = sum(_clip_duration_ms(clip) for clip in component) / 1000
         if (
@@ -431,7 +451,7 @@ def _residue_clusters(
             or total_seconds < params.min_group_seconds
         ):
             continue
-        if len(component) >= dominant_floor:
+        if _is_dominant_group(len(component), track_clip_count, params):
             # This cluster is the track's primary speaker, not an outlier; never
             # bucket the majority (e.g. an out-of-library single-speaker track).
             continue
@@ -566,7 +586,7 @@ def resplit_plan_payload(plan: TrackResplitPlan) -> dict[str, object]:
             "min_group_sentences": plan.params.min_group_sentences,
             "min_group_seconds": plan.params.min_group_seconds,
             "min_suspect_sentences": plan.params.min_suspect_sentences,
-            "residue_max_track_fraction": plan.params.residue_max_track_fraction,
+            "dominant_track_fraction": plan.params.dominant_track_fraction,
         },
         "suspect_speaker_ids": list(plan.suspect_speaker_ids),
         "candidates": [_candidate_payload(item) for item in plan.candidates],

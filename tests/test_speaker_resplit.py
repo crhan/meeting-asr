@@ -66,37 +66,74 @@ def test_promotion_decision_gates() -> None:
     params = ResplitParams(
         promote_centroid_threshold=0.62, promote_lead_margin=0.10, min_group_seconds=6.0
     )
-    assert _promotion_decision(group, 0.80, 0.30, 16.0, params) == "promote"
-    assert _promotion_decision(group, 0.50, 0.30, 16.0, params) == "below-centroid"
-    assert _promotion_decision(group, 0.80, 0.05, 16.0, params) == "below-lead"
-    assert _promotion_decision(group[:1], 0.80, 0.30, 16.0, params) == "too-few"
-    assert _promotion_decision(group, 0.80, 0.30, 2.0, params) == "too-few"
+    assert _promotion_decision(group, 0.80, 0.30, 16.0, False, params) == "promote"
+    assert _promotion_decision(group, 0.50, 0.30, 16.0, False, params) == "below-centroid"
+    assert _promotion_decision(group, 0.80, 0.05, 16.0, False, params) == "below-lead"
+    assert _promotion_decision(group[:1], 0.80, 0.30, 16.0, False, params) == "too-few"
+    assert _promotion_decision(group, 0.80, 0.30, 2.0, False, params) == "too-few"
+    # The dominant guard fires first: a group that IS the track's primary speaker is
+    # never promoted, even with otherwise-passing scores.
+    assert _promotion_decision(group, 0.80, 0.30, 16.0, True, params) == "dominant"
 
 
 def test_candidate_persons_promotes_other_library_person() -> None:
-    """Sentences matching a different library person form a promotable group."""
+    """A minority group matching a different library person forms a promotable group.
+
+    Realistic under-split shape: the track is mostly its assigned person (person 1) with
+    a minority intruder (person 2). The intruder is the splinter to extract; the assigned
+    majority is excluded up front and stays put."""
     known = {1: _person(1, A, "vpp-a"), 2: _person(2, B, "vpp-b")}
     assigned = known[1]  # the track currently belongs to person 1
-    clips = [_clip(B, sid=i, begin=i * 9000, end=i * 9000 + 9000) for i in range(3)]
+    main = [_clip(A, sid=i, begin=i * 9000, end=i * 9000 + 9000) for i in range(6)]
+    intruder = [_clip(B, sid=50 + i, begin=i * 9000, end=i * 9000 + 9000) for i in range(3)]
     params = ResplitParams(min_group_sentences=2, min_group_seconds=6.0)
 
     candidates, residual = _candidate_persons(
         speaker_id=1,
-        clips=clips,
+        clips=main + intruder,
         assigned=assigned,
         known=known,
         existing_speaker_for_person={},
         params=params,
     )
 
-    assert len(candidates) == 1
+    assert len(candidates) == 1  # the assigned person is excluded up front
     candidate = candidates[0]
     assert candidate.person_id == 2
-    assert candidate.decision == "promote"
+    assert candidate.decision == "promote"  # 3/9 minority => extract
     assert candidate.centroid_score > 0.62
     assert candidate.lead > 0.10
     assert candidate.existing_speaker_id is None
-    assert residual == []  # promoted clips leave the residual pool
+    assert len(residual) == 6  # promoted intruder clips leave; the assigned majority stays
+
+
+def test_candidate_persons_keeps_dominant_group_when_unassigned() -> None:
+    """On the relaxed run gate (assigned=None) the track's own dominant voice must not
+    be promoted into a duplicate id, while a minority intruder still is.
+
+    Without `assigned`, the up-front "skip the assigned person" exclusion is a no-op, so
+    the track's main speaker reaches the candidate grouping. The dominant guard is what
+    stops it from being minted+moved wholesale (which would empty the track and
+    invalidate its voiceprint samples)."""
+    known = {1: _person(1, A, "vpp-a"), 2: _person(2, B, "vpp-b")}
+    main = [_clip(A, sid=i, begin=i * 9000, end=i * 9000 + 9000) for i in range(8)]
+    intruder = [_clip(B, sid=100 + i, begin=i * 9000, end=i * 9000 + 9000) for i in range(2)]
+    params = ResplitParams(min_group_sentences=2, min_group_seconds=6.0)
+
+    candidates, residual = _candidate_persons(
+        speaker_id=1,
+        clips=main + intruder,
+        assigned=None,  # relaxed gate: no accepted aggregate match for this track
+        known=known,
+        existing_speaker_for_person={},
+        params=params,
+    )
+
+    by_person = {c.person_id: c for c in candidates}
+    assert by_person[1].decision == "dominant"  # 8/10 of the track => source identity
+    assert by_person[2].decision == "promote"  # 2/10 minority intruder => extract
+    # The dominant group is not promoted, so its clips stay in the residual pool.
+    assert len(residual) == 8
 
 
 def test_candidate_persons_noop_on_coherent_track() -> None:
@@ -151,7 +188,7 @@ def test_residue_clusters_skips_dominant_cluster() -> None:
         residue_cluster_threshold=0.62,
         min_group_sentences=2,
         min_group_seconds=6.0,
-        residue_max_track_fraction=0.5,
+        dominant_track_fraction=0.5,
     )
 
     clusters = _residue_clusters(
