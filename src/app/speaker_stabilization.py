@@ -61,6 +61,7 @@ class SpeakerStabilizationSummary:
     iterations: tuple[SpeakerStabilizationIteration, ...]
     resplit_plan: TrackResplitPlan | None = None
     minted_speaker_count: int = 0
+    resplit_match_summary: SpeakerMatchSummary | None = None
 
     @property
     def reassignment_count(self) -> int:
@@ -69,11 +70,18 @@ class SpeakerStabilizationSummary:
 
     @property
     def final_match_summary(self) -> SpeakerMatchSummary | None:
-        """Return the latest aggregate match summary produced by reassignment."""
+        """Return the latest aggregate match summary produced by reassignment.
+
+        Prefers the newest iteration that applied moves (it re-reads the post-resplit
+        artifacts, so it supersedes the re-split phase). Falls back to the re-split
+        phase's own rematch summary — otherwise a run that only re-split (iterations=0
+        on an unanchored track, or zero iterative reassignments) would report the
+        pre-resplit speakers even though the artifacts now have new/rematched tracks.
+        """
         for iteration in reversed(self.iterations):
             if iteration.apply_result and iteration.apply_result.match_summary:
                 return iteration.apply_result.match_summary
-        return None
+        return self.resplit_match_summary
 
 
 def stabilize_project_speakers(
@@ -112,8 +120,9 @@ def stabilize_project_speakers(
     """
     resplit_plan: TrackResplitPlan | None = None
     minted_count = 0
+    resplit_match_summary: SpeakerMatchSummary | None = None
     if resplit:
-        resplit_plan, minted_count = _apply_resplit_phase(
+        resplit_plan, minted_count, resplit_match_summary = _apply_resplit_phase(
             project_dir,
             store_dir=store_dir,
             model=model,
@@ -174,7 +183,9 @@ def stabilize_project_speakers(
             completed=index,
             total=total,
         )
-    return SpeakerStabilizationSummary(tuple(results), resplit_plan, minted_count)
+    return SpeakerStabilizationSummary(
+        tuple(results), resplit_plan, minted_count, resplit_match_summary
+    )
 
 
 def _refresh_diagnostics(
@@ -422,9 +433,10 @@ def apply_project_resplit(
 
     Returns the analysis plan and the number of new speaker tracks minted.
     """
-    return _apply_resplit_phase(
+    plan, minted, _ = _apply_resplit_phase(
         project_dir, store_dir=store_dir, model=model, params=params, progress=progress
     )
+    return plan, minted
 
 
 def _apply_resplit_phase(
@@ -434,17 +446,20 @@ def _apply_resplit_phase(
     model: str | None,
     params: ResplitParams | None,
     progress: CliProgressReporter | None,
-) -> tuple[TrackResplitPlan | None, int]:
+) -> tuple[TrackResplitPlan | None, int, SpeakerMatchSummary | None]:
     """Run the one-shot under-split rescue and persist its moves.
 
-    Returns the analysis plan (for reporting) and the number of new speaker tracks
-    minted. A well-split project yields an empty plan and writes nothing.
+    Returns the analysis plan (for reporting), the number of new speaker tracks minted,
+    and the refreshed aggregate match summary produced by the post-move rematch (``None``
+    when nothing was applied) — the caller surfaces it so a run that only re-split still
+    reports the new speaker set rather than the pre-resplit one. A well-split project
+    yields an empty plan and writes nothing.
     """
     plan = analyze_project_resplit(
         project_dir, store_dir=store_dir, model=model, params=params
     )
     if not plan.promotions and not plan.residue_clusters:
-        return plan, 0
+        return plan, 0, None
     existing_ids = set(
         load_transcript_result(
             project_paths(project_dir).asr_dir / "sentences.json",
@@ -453,7 +468,7 @@ def _apply_resplit_phase(
     )
     apply_plan = _resplit_reassignments(plan, existing_ids)
     if not apply_plan.specs:
-        return plan, 0
+        return plan, 0, None
     emit_progress(
         progress,
         f"Re-splitting under-split track: {len(apply_plan.minted_speaker_ids)} "
@@ -480,7 +495,7 @@ def _apply_resplit_phase(
         project_paths(project_dir).speakers_dir / "speaker_resplit.json",
         resplit_plan_payload(plan),
     )
-    return plan, len(apply_plan.minted_speaker_ids)
+    return plan, len(apply_plan.minted_speaker_ids), apply_result.match_summary
 
 
 __all__ = [

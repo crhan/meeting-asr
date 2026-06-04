@@ -18,6 +18,8 @@ from app.speaker_sample_matching import (
     SpeakerSampleMatchSummary,
 )
 from app.speaker_stabilization import (
+    SpeakerStabilizationIteration,
+    SpeakerStabilizationSummary,
     _sentence_reassignments,
     stabilize_project_speakers,
 )
@@ -109,6 +111,45 @@ def test_stabilize_project_speakers_applies_and_refreshes(
     assert calls == ["refresh", "apply:1", "names", "refresh", "refresh"]
     assert summary.reassignment_count == 1
     assert summary.final_match_summary is not None
+
+
+def test_final_match_summary_falls_back_to_resplit_phase(tmp_path: Path) -> None:
+    """A run that only re-split (no iterative reassignment) must still report the
+    post-resplit speakers via the re-split phase's own rematch summary."""
+    resplit_match = _match_summary(tmp_path)
+    summary = SpeakerStabilizationSummary(
+        iterations=(),  # iterations=0 path (unanchored track) or zero reassignments
+        minted_speaker_count=1,
+        resplit_match_summary=resplit_match,
+    )
+
+    assert summary.final_match_summary is resplit_match
+
+
+def test_iteration_match_summary_supersedes_resplit_phase(tmp_path: Path) -> None:
+    """An iteration that applied moves re-reads post-resplit artifacts, so its summary
+    wins over the earlier re-split phase summary."""
+    resplit_match = _match_summary(tmp_path / "resplit")
+    iteration_match = _match_summary(tmp_path / "iteration")
+    iteration = SpeakerStabilizationIteration(
+        index=1,
+        reassignments=(),
+        apply_result=SentenceReassignmentApplyResult(
+            sentence_files=(),
+            anonymous_transcript_path=None,
+            deleted_samples=(),
+            match_summary=iteration_match,
+            rematch_skipped_reason=None,
+        ),
+        cluster_summary=None,
+        sample_summary=None,
+    )
+    summary = SpeakerStabilizationSummary(
+        iterations=(iteration,),
+        resplit_match_summary=resplit_match,
+    )
+
+    assert summary.final_match_summary is iteration_match
 
 
 def _sample_summary(
