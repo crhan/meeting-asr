@@ -132,12 +132,39 @@ def test_residue_clusters_buckets_out_of_library_group() -> None:
         known=known,
         speaker_ref={1: known[1].vector},  # only the source track exists
         params=params,
+        track_clip_count=10,  # these 2 are a minority of the track
     )
 
     assert len(clusters) == 1
     assert clusters[0].decision == "unknown-bucket"
     assert clusters[0].merge_target_speaker_id is None
     assert len(clusters[0].sentences) == 2
+
+
+def test_residue_clusters_skips_dominant_cluster() -> None:
+    """A coherent out-of-library group that is the track majority is its primary
+    speaker, not an outlier — never bucket the majority."""
+    known = {1: _person(1, A, "vpp-a")}
+    clips = [_clip(C, sid=i, begin=i * 7000, end=i * 7000 + 7000) for i in range(3)]
+    params = ResplitParams(
+        residue_match_floor=0.40,
+        residue_cluster_threshold=0.62,
+        min_group_sentences=2,
+        min_group_seconds=6.0,
+        residue_max_track_fraction=0.5,
+    )
+
+    clusters = _residue_clusters(
+        speaker_id=1,
+        clips=clips,
+        assigned=None,
+        known=known,
+        speaker_ref={},
+        params=params,
+        track_clip_count=3,  # the 3-clip cluster IS the whole track => skip
+    )
+
+    assert clusters == []
 
 
 def test_residue_clusters_reject_when_centroid_snaps_to_library() -> None:
@@ -160,7 +187,9 @@ def test_residue_clusters_reject_when_centroid_snaps_to_library() -> None:
         min_group_seconds=0.0,
     )
 
-    clusters = _residue_clusters(1, clips, known[1], known, {1: known[1].vector}, params)
+    clusters = _residue_clusters(
+        1, clips, known[1], known, {1: known[1].vector}, params, track_clip_count=10
+    )
 
     assert clusters == []  # centroid resembles person A => not residue
 
@@ -171,7 +200,13 @@ def test_residue_clusters_empty_library_is_noop() -> None:
     params = ResplitParams(min_group_sentences=2, min_group_seconds=0.0)
 
     clusters = _residue_clusters(
-        speaker_id=1, clips=clips, assigned=None, known={}, speaker_ref={}, params=params
+        speaker_id=1,
+        clips=clips,
+        assigned=None,
+        known={},
+        speaker_ref={},
+        params=params,
+        track_clip_count=3,
     )
 
     assert clusters == []

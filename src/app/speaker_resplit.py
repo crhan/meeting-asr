@@ -90,6 +90,10 @@ DEFAULT_MERGE_THRESHOLD = 0.62  # residue cluster centroid vs another speaker =>
 DEFAULT_MIN_GROUP_SENTENCES = 2  # min sentences per move (duration gate is the real bar)
 DEFAULT_MIN_GROUP_SECONDS = 6.0
 DEFAULT_MIN_SUSPECT_SENTENCES = 6  # only examine tracks large enough to hide a speaker
+# A residue cluster covering this much of a track is the track's primary speaker, not
+# an outlier — residue is by definition a minority, so never bucket the majority (this
+# is what keeps an out-of-library single-speaker track from being moved wholesale).
+DEFAULT_RESIDUE_MAX_TRACK_FRACTION = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +109,7 @@ class ResplitParams:
     min_group_sentences: int = DEFAULT_MIN_GROUP_SENTENCES
     min_group_seconds: float = DEFAULT_MIN_GROUP_SECONDS
     min_suspect_sentences: int = DEFAULT_MIN_SUSPECT_SENTENCES
+    residue_max_track_fraction: float = DEFAULT_RESIDUE_MAX_TRACK_FRACTION
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +270,7 @@ def analyze_project_resplit(
                 known,
                 speaker_ref,
                 params,
+                track_clip_count=len(clips),
             )
         )
     return TrackResplitPlan(
@@ -395,6 +401,7 @@ def _residue_clusters(
     known: dict[int, _KnownSpeakerVector],
     speaker_ref: dict[int, list[float]],
     params: ResplitParams,
+    track_clip_count: int,
 ) -> list[ResidueCluster]:
     """Find coherent out-of-library clusters among residual clips.
 
@@ -416,12 +423,17 @@ def _residue_clusters(
     if len(unmatched) < params.min_group_sentences:
         return []
     results: list[ResidueCluster] = []
+    dominant_floor = params.residue_max_track_fraction * max(1, track_clip_count)
     for component in _connected_components(unmatched, params.residue_cluster_threshold):
         total_seconds = sum(_clip_duration_ms(clip) for clip in component) / 1000
         if (
             len(component) < params.min_group_sentences
             or total_seconds < params.min_group_seconds
         ):
+            continue
+        if len(component) >= dominant_floor:
+            # This cluster is the track's primary speaker, not an outlier; never
+            # bucket the majority (e.g. an out-of-library single-speaker track).
             continue
         centroid = _normalize(_mean_vector([clip.vector for clip in component]))
         assigned_score = _cosine(centroid, assigned.vector) if assigned else None
@@ -554,6 +566,7 @@ def resplit_plan_payload(plan: TrackResplitPlan) -> dict[str, object]:
             "min_group_sentences": plan.params.min_group_sentences,
             "min_group_seconds": plan.params.min_group_seconds,
             "min_suspect_sentences": plan.params.min_suspect_sentences,
+            "residue_max_track_fraction": plan.params.residue_max_track_fraction,
         },
         "suspect_speaker_ids": list(plan.suspect_speaker_ids),
         "candidates": [_candidate_payload(item) for item in plan.candidates],

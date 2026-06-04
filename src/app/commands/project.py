@@ -1202,7 +1202,11 @@ def _run_project_workflow(
             person_public_mapping=matches.accepted_person_public_mapping,
         )
     stabilization_summary = None
-    if speaker_stabilization and _should_stabilize_run_speakers(matches):
+    # The iterative passes need at least one accepted in-project identity to anchor
+    # reassignments; the re-split phase does not (it works off the global library), so
+    # it should still run on a polluted track that failed the aggregate threshold.
+    should_iterate = _should_stabilize_run_speakers(matches)
+    if speaker_stabilization and (should_iterate or speaker_resplit):
         stabilization_step = apply_step + 1
         _record_and_emit_run_stage(
             project.project_dir,
@@ -1223,7 +1227,7 @@ def _run_project_workflow(
             project.project_dir,
             store_dir=store_dir,
             model=voiceprint_model,
-            iterations=speaker_stabilization_iterations,
+            iterations=speaker_stabilization_iterations if should_iterate else 0,
             sample_workers=speaker_sample_workers,
             resplit=speaker_resplit,
             progress=progress,
