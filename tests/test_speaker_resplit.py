@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
-from app.speaker_cluster_quality import SpeakerClusterClip
+import app.speaker_resplit as sr
+from app.speaker_cluster_quality import SpeakerClusterClip, _ClusterContext
 from app.speaker_matching import _KnownSpeakerVector
 from app.speaker_resplit import (
     CandidatePerson,
@@ -16,6 +18,7 @@ from app.speaker_resplit import (
     _existing_speaker_for_person,
     _promotion_decision,
     _residue_clusters,
+    analyze_project_resplit,
     select_suspect_speakers,
 )
 from app.speaker_stabilization import _resplit_reassignments
@@ -58,6 +61,94 @@ def test_select_suspect_speakers_filters_by_size() -> None:
     }
     params = ResplitParams(min_suspect_sentences=6)
     assert select_suspect_speakers(clips, params) == [0]
+
+
+def _stub_analyze_deps(
+    monkeypatch,
+    ctx: _ClusterContext,
+    *,
+    embed_roots: list[Path],
+    read_roots: list[Path],
+    write_roots: list[Path],
+) -> None:
+    """Stub analyze_project_resplit's data + embedding deps so it runs without real audio
+    or a voiceprint store, recording which root each clip/cache operation touches."""
+    monkeypatch.setattr(sr, "_load_cluster_context", lambda *a, **k: ctx)
+    monkeypatch.setattr(
+        sr, "_known_speaker_vectors", lambda *a, **k: {1: _person(1, A, "vpp-a")}
+    )
+    monkeypatch.setattr(sr, "load_speaker_person_mapping", lambda *a, **k: {})
+    monkeypatch.setattr(sr, "_speaker_reference_vectors", lambda *a, **k: {})
+    monkeypatch.setattr(sr, "_existing_speaker_for_person", lambda *a, **k: {})
+    monkeypatch.setattr(sr, "_is_low_information_segment", lambda *a, **k: False)
+    monkeypatch.setattr(
+        sr, "_read_embedding_cache", lambda root: (read_roots.append(root) or {})
+    )
+    monkeypatch.setattr(
+        sr, "_write_embedding_cache", lambda root, cache: write_roots.append(root)
+    )
+    monkeypatch.setattr(
+        sr,
+        "_embed_selected_segments",
+        lambda context, *a, **k: (embed_roots.append(context.project_root) or []),
+    )
+
+
+def _analyze_ctx(project_dir: Path) -> _ClusterContext:
+    """Build a minimal cluster context for the read-only write-isolation tests."""
+    return _ClusterContext(
+        project_dir,
+        project_dir / "audio" / "audio.wav",
+        {0: [object(), object()]},  # segment identity is irrelevant once embed is stubbed
+        "fake",
+        "fake-model",
+    )
+
+
+def test_analyze_resplit_read_only_writes_nothing(monkeypatch, tmp_path: Path) -> None:
+    """A read-only preview must touch nothing in the project: the warm cache is still
+    read, but probe-clip extraction and the cache persist are redirected to a scratch dir
+    (honoring the documented dry-run guarantee)."""
+    project_dir = tmp_path / "project"
+    embed_roots: list[Path] = []
+    read_roots: list[Path] = []
+    write_roots: list[Path] = []
+    _stub_analyze_deps(
+        monkeypatch,
+        _analyze_ctx(project_dir),
+        embed_roots=embed_roots,
+        read_roots=read_roots,
+        write_roots=write_roots,
+    )
+
+    analyze_project_resplit(project_dir, read_only=True)
+
+    assert read_roots == [project_dir]  # warm cache still read from the real project
+    assert write_roots == []  # nothing persisted back
+    assert embed_roots and all(root != project_dir for root in embed_roots)  # scratch root
+
+
+def test_analyze_resplit_default_persists_cache_to_project(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The default (apply) path embeds against the project root and persists the cache so
+    a subsequent apply reuses the embeddings."""
+    project_dir = tmp_path / "project"
+    embed_roots: list[Path] = []
+    read_roots: list[Path] = []
+    write_roots: list[Path] = []
+    _stub_analyze_deps(
+        monkeypatch,
+        _analyze_ctx(project_dir),
+        embed_roots=embed_roots,
+        read_roots=read_roots,
+        write_roots=write_roots,
+    )
+
+    analyze_project_resplit(project_dir)  # read_only defaults to False
+
+    assert embed_roots == [project_dir]  # embed against the real project
+    assert write_roots == [project_dir]  # cache persisted for reuse
 
 
 def test_promotion_decision_gates() -> None:

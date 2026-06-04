@@ -43,13 +43,15 @@ ran with ``score_all_segments=True``).
 
 from __future__ import annotations
 
+import tempfile
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from app.project_manager import project_paths
 from app.speaker_cluster_quality import (
     SpeakerClusterClip,
+    _ClusterContext,
     _connected_components,
     _cosine,
     _embed_selected_segments,
@@ -181,6 +183,33 @@ class TrackResplitPlan:
         return tuple(item for item in self.candidates if item.decision == "promote")
 
 
+def _embed_tracks(
+    context: _ClusterContext, cache: dict[str, list[float]]
+) -> dict[int, list[SpeakerClusterClip]]:
+    """Embed each track's usable sentences, reusing the shared in-memory cache.
+
+    Probe clips and the cache live under ``context.project_root`` (which the caller may
+    point at a scratch dir for previews); ``context.source`` always resolves to the real
+    project audio, so redirecting the root only moves the writes, not the inputs.
+    """
+    clips_by_speaker: dict[int, list[SpeakerClusterClip]] = {}
+    for speaker_id, segments in sorted(context.segments_by_speaker.items()):
+        usable = [s for s in segments if not _is_low_information_segment(s)]
+        if not usable:
+            continue
+        clips_by_speaker[speaker_id] = _embed_selected_segments(
+            context,
+            speaker_id,
+            usable,
+            max_seconds=RESPLIT_MAX_SECONDS,
+            padding_seconds=RESPLIT_PADDING_SECONDS,
+            cache=cache,
+            max_clips=None,
+            require_audio_quality=False,
+        )
+    return clips_by_speaker
+
+
 def analyze_project_resplit(
     project_dir: Path,
     *,
@@ -188,8 +217,17 @@ def analyze_project_resplit(
     provider: str | None = None,
     model: str | None = None,
     params: ResplitParams | None = None,
+    read_only: bool = False,
 ) -> TrackResplitPlan:
     """Analyze a project for under-split tracks and propose re-split moves.
+
+    The analysis itself is pure — it never changes project identity, outputs,
+    sentences, speaker maps, or the voiceprint store. It does reuse the shared on-disk
+    embedding cache: by default a cache miss extracts probe clips and persists the
+    refreshed ``clip_embeddings.json`` under the project ``tmp/`` (so a subsequent apply
+    is fast). Pass ``read_only=True`` for a preview that must touch nothing in the
+    project: the warm cache is still read, but probe-clip extraction and the cache write
+    are redirected to a scratch dir that is discarded.
 
     Args:
         project_dir: Project root directory.
@@ -197,6 +235,7 @@ def analyze_project_resplit(
         provider: Optional embedding provider override.
         model: Optional embedding model key override.
         params: Optional decision thresholds (``None`` => conservative defaults).
+        read_only: When ``True``, write nothing to the project (preview/dry-run).
 
     Returns:
         A pure :class:`TrackResplitPlan`; no project state is modified.
@@ -225,23 +264,19 @@ def analyze_project_resplit(
         project_paths(project_dir).speakers_dir / "speaker_person_map.json"
     )
 
+    # Read the warm cache from the real project first, then (in read-only mode) redirect
+    # all subsequent writes — probe clips and the cache persist — into a scratch dir that
+    # is discarded. Embedding returns vectors held in the clips, so the scratch files are
+    # not needed once it returns, and the project tmp/ is never touched.
     cache = _read_embedding_cache(context.project_root)
-    clips_by_speaker: dict[int, list[SpeakerClusterClip]] = {}
-    for speaker_id, segments in sorted(context.segments_by_speaker.items()):
-        usable = [s for s in segments if not _is_low_information_segment(s)]
-        if not usable:
-            continue
-        clips_by_speaker[speaker_id] = _embed_selected_segments(
-            context,
-            speaker_id,
-            usable,
-            max_seconds=RESPLIT_MAX_SECONDS,
-            padding_seconds=RESPLIT_PADDING_SECONDS,
-            cache=cache,
-            max_clips=None,
-            require_audio_quality=False,
-        )
-    _write_embedding_cache(context.project_root, cache)
+    if read_only:
+        with tempfile.TemporaryDirectory(prefix="meeting-asr-resplit-") as scratch:
+            clips_by_speaker = _embed_tracks(
+                replace(context, project_root=Path(scratch)), cache
+            )
+    else:
+        clips_by_speaker = _embed_tracks(context, cache)
+        _write_embedding_cache(context.project_root, cache)
 
     speaker_ref = _speaker_reference_vectors(
         clips_by_speaker, person_map, known, known_by_public

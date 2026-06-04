@@ -2446,7 +2446,11 @@ def speakers_resplit(
         return
     plan = run_with_cli_errors(
         lambda: analyze_project_resplit(
-            resolved_project_dir, store_dir=store_dir, model=model, params=params
+            resolved_project_dir,
+            store_dir=store_dir,
+            model=model,
+            params=params,
+            read_only=True,  # preview must not write probe clips or the cache to the project
         )
     )
     if json_output:
