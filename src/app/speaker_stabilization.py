@@ -482,7 +482,12 @@ def _apply_resplit_phase(
         model=model,
         rematch=True,
     )
-    _apply_latest_match_names(project_dir, apply_result.match_summary)
+    match_summary = apply_result.match_summary
+    # _apply_latest_match_names re-renders the named exports iff the rematch accepted a
+    # mapping; the seed branch re-renders iff a promoted track was minted. Track whether
+    # either fired, mirroring their own guards exactly.
+    named_refreshed = bool(match_summary and match_summary.accepted_mapping)
+    _apply_latest_match_names(project_dir, match_summary)
     if apply_plan.seed_names:
         # Seed minted promoted tracks last so a confident centroid identity survives
         # even when the post-move rematch probe stays below its accept threshold.
@@ -491,11 +496,21 @@ def _apply_resplit_phase(
             apply_plan.seed_names,
             person_public_mapping=apply_plan.seed_public_ids,
         )
+        named_refreshed = True
+    if not named_refreshed:
+        # A residue-only move changes sentence attribution without changing any name
+        # (the unknown bucket is intentionally unseeded), so neither branch above
+        # re-rendered the named exports. apply_project_sentence_reassignments only
+        # rewrites the anonymous transcript_speakers.txt, so re-render the named outputs
+        # from the moved sentences + current map (empty patch = merge into existing) —
+        # otherwise transcript_named.txt / subtitle_named.srt keep the residue sentences
+        # under their old speaker.
+        apply_project_speakers(project_dir, {})
     safe_write_json(
         project_paths(project_dir).speakers_dir / "speaker_resplit.json",
         resplit_plan_payload(plan),
     )
-    return plan, len(apply_plan.minted_speaker_ids), apply_result.match_summary
+    return plan, len(apply_plan.minted_speaker_ids), match_summary
 
 
 __all__ = [
