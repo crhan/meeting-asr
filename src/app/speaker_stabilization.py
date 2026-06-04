@@ -15,8 +15,14 @@ from app.speaker_cluster_quality import (
     SpeakerClusterSampleScore,
     analyze_project_speaker_clusters,
 )
-from app.speaker_labeling import SentenceReassignmentSpec
+from app.speaker_labeling import SentenceReassignmentSpec, load_transcript_result
 from app.speaker_matching import SpeakerMatchSummary
+from app.speaker_resplit import (
+    ResplitParams,
+    TrackResplitPlan,
+    analyze_project_resplit,
+    resplit_plan_payload,
+)
 from app.speaker_sample_matching import (
     DEFAULT_IDENTITY_AMBIGUOUS_MARGIN,
     DEFAULT_IDENTITY_CONFLICT_MARGIN,
@@ -24,7 +30,8 @@ from app.speaker_sample_matching import (
     SpeakerSampleMatchSummary,
     match_project_speaker_samples,
 )
-from app.project_manager import apply_project_speakers
+from app.project_manager import apply_project_speakers, project_paths
+from app.utils import safe_write_json
 from app.voiceprint_quality import DEFAULT_CRITICAL_SCORE, DEFAULT_WARNING_SCORE
 
 DEFAULT_STABILIZATION_ITERATIONS = 2
@@ -52,6 +59,9 @@ class SpeakerStabilizationSummary:
     """Full stabilization result after repeated diagnostics and reassignment."""
 
     iterations: tuple[SpeakerStabilizationIteration, ...]
+    resplit_plan: TrackResplitPlan | None = None
+    minted_speaker_count: int = 0
+    resplit_match_summary: SpeakerMatchSummary | None = None
 
     @property
     def reassignment_count(self) -> int:
@@ -60,11 +70,18 @@ class SpeakerStabilizationSummary:
 
     @property
     def final_match_summary(self) -> SpeakerMatchSummary | None:
-        """Return the latest aggregate match summary produced by reassignment."""
+        """Return the latest aggregate match summary produced by reassignment.
+
+        Prefers the newest iteration that applied moves (it re-reads the post-resplit
+        artifacts, so it supersedes the re-split phase). Falls back to the re-split
+        phase's own rematch summary — otherwise a run that only re-split (iterations=0
+        on an unanchored track, or zero iterative reassignments) would report the
+        pre-resplit speakers even though the artifacts now have new/rematched tracks.
+        """
         for iteration in reversed(self.iterations):
             if iteration.apply_result and iteration.apply_result.match_summary:
                 return iteration.apply_result.match_summary
-        return None
+        return self.resplit_match_summary
 
 
 def stabilize_project_speakers(
@@ -74,10 +91,19 @@ def stabilize_project_speakers(
     model: str | None,
     iterations: int = DEFAULT_STABILIZATION_ITERATIONS,
     sample_workers: int = DEFAULT_STABILIZATION_SAMPLE_WORKERS,
+    resplit: bool = True,
+    resplit_params: ResplitParams | None = None,
     progress: CliProgressReporter | None = None,
 ) -> SpeakerStabilizationSummary:
     """
     Repeatedly reassign sentence-level identity conflicts and refresh scores.
+
+    A one-shot *re-split* phase runs first (when ``resplit`` is enabled): it rescues
+    under-split tracks by minting new speakers for confident library people that have
+    no track yet and gathering out-of-library outliers into a review-visible unknown
+    bucket. It runs once, before the iterative passes, so the iterative logic then
+    refines against the now-complete set of project speakers. On well-split projects
+    the re-split analysis finds nothing and is a no-op.
 
     Args:
         project_dir: Project root directory.
@@ -85,11 +111,24 @@ def stabilize_project_speakers(
         model: Optional voiceprint embedding model key.
         iterations: Number of check/apply/refresh passes.
         sample_workers: Parallel workers for per-sentence sample matching.
+        resplit: Whether to run the under-split re-split rescue phase first.
+        resplit_params: Optional re-split decision thresholds.
         progress: Optional progress reporter.
 
     Returns:
         Stabilization summary for every executed pass.
     """
+    resplit_plan: TrackResplitPlan | None = None
+    minted_count = 0
+    resplit_match_summary: SpeakerMatchSummary | None = None
+    if resplit:
+        resplit_plan, minted_count, resplit_match_summary = _apply_resplit_phase(
+            project_dir,
+            store_dir=store_dir,
+            model=model,
+            params=resplit_params,
+            progress=progress,
+        )
     results: list[SpeakerStabilizationIteration] = []
     total = max(0, iterations)
     for index in range(1, total + 1):
@@ -144,7 +183,9 @@ def stabilize_project_speakers(
             completed=index,
             total=total,
         )
-    return SpeakerStabilizationSummary(tuple(results))
+    return SpeakerStabilizationSummary(
+        tuple(results), resplit_plan, minted_count, resplit_match_summary
+    )
 
 
 def _refresh_diagnostics(
@@ -290,10 +331,193 @@ def _apply_latest_match_names(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _ResplitApplyPlan:
+    """Concrete moves derived from a re-split analysis: specs + seeds + minted ids."""
+
+    specs: tuple[SentenceReassignmentSpec, ...]
+    seed_names: dict[int, str]
+    seed_public_ids: dict[int, str]
+    minted_speaker_ids: tuple[int, ...]
+    unknown_bucket_id: int | None
+
+
+def _resplit_reassignments(
+    plan: TrackResplitPlan, existing_speaker_ids: set[int]
+) -> _ResplitApplyPlan:
+    """Turn a re-split analysis into reassignment specs and new-speaker seeds.
+
+    Promotions whose target person already has a project track route to that track;
+    promotions for a library person with no track mint one fresh speaker id per person
+    (seeded with that person's name + public id). All residue clusters collapse into a
+    single review-visible "unknown" bucket id (left anonymous on purpose). Ids are
+    allocated above the current maximum and never reused, so repeated passes cannot
+    ping-pong or drift.
+    """
+    next_id = (max(existing_speaker_ids) + 1) if existing_speaker_ids else 0
+    specs: list[SentenceReassignmentSpec] = []
+    seed_names: dict[int, str] = {}
+    seed_public_ids: dict[int, str] = {}
+    minted: list[int] = []
+    new_id_for_person: dict[str, int] = {}
+
+    for promotion in plan.promotions:
+        if promotion.existing_speaker_id is not None:
+            target = promotion.existing_speaker_id
+        elif promotion.person_public_id in new_id_for_person:
+            target = new_id_for_person[promotion.person_public_id]
+        else:
+            target = next_id
+            next_id += 1
+            minted.append(target)
+            new_id_for_person[promotion.person_public_id] = target
+            seed_names[target] = promotion.name
+            if promotion.person_public_id:
+                seed_public_ids[target] = promotion.person_public_id
+        specs.extend(
+            _reassignment_spec(sentence, target, promotion.source_speaker_id)
+            for sentence in promotion.sentences
+        )
+
+    unknown_bucket_id: int | None = None
+    residue = [
+        (sentence, cluster.source_speaker_id)
+        for cluster in plan.residue_clusters
+        for sentence in cluster.sentences
+    ]
+    if residue:
+        unknown_bucket_id = next_id
+        next_id += 1
+        minted.append(unknown_bucket_id)
+        specs.extend(
+            _reassignment_spec(sentence, unknown_bucket_id, source_id)
+            for sentence, source_id in residue
+        )
+
+    return _ResplitApplyPlan(
+        tuple(specs),
+        seed_names,
+        seed_public_ids,
+        tuple(minted),
+        unknown_bucket_id,
+    )
+
+
+def _reassignment_spec(
+    sentence: object, target_speaker_id: int, source_speaker_id: int
+) -> SentenceReassignmentSpec:
+    """Build one reassignment spec from a re-split sentence identity."""
+    return SentenceReassignmentSpec(
+        sentence_id=sentence.sentence_id,
+        begin_time_ms=sentence.begin_time_ms,
+        end_time_ms=sentence.end_time_ms,
+        new_speaker_id=target_speaker_id,
+        original_speaker_id=source_speaker_id,
+    )
+
+
+def apply_project_resplit(
+    project_dir: Path,
+    *,
+    store_dir: Path | None = None,
+    model: str | None = None,
+    params: ResplitParams | None = None,
+    progress: CliProgressReporter | None = None,
+) -> tuple[TrackResplitPlan | None, int]:
+    """Apply the under-split rescue phase to a project on its own.
+
+    Persists the same moves the ``project run`` stabilization phase would (mint and
+    seed new tracks, gather residue into an unknown bucket, write the audit) without
+    running the iterative reassignment passes. Useful for rescuing an already
+    processed project after reviewing ``project speakers resplit``.
+
+    Returns the analysis plan and the number of new speaker tracks minted.
+    """
+    plan, minted, _ = _apply_resplit_phase(
+        project_dir, store_dir=store_dir, model=model, params=params, progress=progress
+    )
+    return plan, minted
+
+
+def _apply_resplit_phase(
+    project_dir: Path,
+    *,
+    store_dir: Path | None,
+    model: str | None,
+    params: ResplitParams | None,
+    progress: CliProgressReporter | None,
+) -> tuple[TrackResplitPlan | None, int, SpeakerMatchSummary | None]:
+    """Run the one-shot under-split rescue and persist its moves.
+
+    Returns the analysis plan (for reporting), the number of new speaker tracks minted,
+    and the refreshed aggregate match summary produced by the post-move rematch (``None``
+    when nothing was applied) — the caller surfaces it so a run that only re-split still
+    reports the new speaker set rather than the pre-resplit one. A well-split project
+    yields an empty plan and writes nothing.
+    """
+    plan = analyze_project_resplit(
+        project_dir, store_dir=store_dir, model=model, params=params
+    )
+    if not plan.promotions and not plan.residue_clusters:
+        return plan, 0, None
+    existing_ids = set(
+        load_transcript_result(
+            project_paths(project_dir).asr_dir / "sentences.json",
+            include_low_information=True,
+        ).detected_speakers
+    )
+    apply_plan = _resplit_reassignments(plan, existing_ids)
+    if not apply_plan.specs:
+        return plan, 0, None
+    emit_progress(
+        progress,
+        f"Re-splitting under-split track: {len(apply_plan.minted_speaker_ids)} "
+        "new speaker track(s)",
+    )
+    apply_result = apply_project_sentence_reassignments(
+        project_dir,
+        apply_plan.specs,
+        store_dir=store_dir,
+        provider=None,
+        model=model,
+        rematch=True,
+    )
+    match_summary = apply_result.match_summary
+    # _apply_latest_match_names re-renders the named exports iff the rematch accepted a
+    # mapping; the seed branch re-renders iff a promoted track was minted. Track whether
+    # either fired, mirroring their own guards exactly.
+    named_refreshed = bool(match_summary and match_summary.accepted_mapping)
+    _apply_latest_match_names(project_dir, match_summary)
+    if apply_plan.seed_names:
+        # Seed minted promoted tracks last so a confident centroid identity survives
+        # even when the post-move rematch probe stays below its accept threshold.
+        apply_project_speakers(
+            project_dir,
+            apply_plan.seed_names,
+            person_public_mapping=apply_plan.seed_public_ids,
+        )
+        named_refreshed = True
+    if not named_refreshed:
+        # A residue-only move changes sentence attribution without changing any name
+        # (the unknown bucket is intentionally unseeded), so neither branch above
+        # re-rendered the named exports. apply_project_sentence_reassignments only
+        # rewrites the anonymous transcript_speakers.txt, so re-render the named outputs
+        # from the moved sentences + current map (empty patch = merge into existing) —
+        # otherwise transcript_named.txt / subtitle_named.srt keep the residue sentences
+        # under their old speaker.
+        apply_project_speakers(project_dir, {})
+    safe_write_json(
+        project_paths(project_dir).speakers_dir / "speaker_resplit.json",
+        resplit_plan_payload(plan),
+    )
+    return plan, len(apply_plan.minted_speaker_ids), match_summary
+
+
 __all__ = [
     "DEFAULT_STABILIZATION_ITERATIONS",
     "DEFAULT_STABILIZATION_SAMPLE_WORKERS",
     "SpeakerStabilizationIteration",
     "SpeakerStabilizationSummary",
+    "apply_project_resplit",
     "stabilize_project_speakers",
 ]

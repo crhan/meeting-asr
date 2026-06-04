@@ -18,6 +18,8 @@ from app.speaker_sample_matching import (
     SpeakerSampleMatchSummary,
 )
 from app.speaker_stabilization import (
+    SpeakerStabilizationIteration,
+    SpeakerStabilizationSummary,
     _sentence_reassignments,
     stabilize_project_speakers,
 )
@@ -98,12 +100,140 @@ def test_stabilize_project_speakers_applies_and_refreshes(
     )
 
     summary = stabilize_project_speakers(
-        project_dir, store_dir=None, model=None, iterations=2, sample_workers=3
+        project_dir,
+        store_dir=None,
+        model=None,
+        iterations=2,
+        sample_workers=3,
+        resplit=False,  # this test isolates the iterative pass; resplit is covered separately
     )
 
     assert calls == ["refresh", "apply:1", "names", "refresh", "refresh"]
     assert summary.reassignment_count == 1
     assert summary.final_match_summary is not None
+
+
+def test_apply_resplit_phase_rerenders_named_for_residue_only(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A residue-only move (no promotions, no accepted rematch) must still re-render the
+    named exports; otherwise transcript_named.txt / subtitle_named.srt keep the moved
+    sentences under their old speaker even though sentences.json changed."""
+    from types import SimpleNamespace
+
+    from app.speaker_resplit import (
+        ResidueCluster,
+        ResplitParams,
+        ResplitSentence,
+        TrackResplitPlan,
+    )
+    from app.speaker_stabilization import _apply_resplit_phase
+
+    plan = TrackResplitPlan(
+        project_root=tmp_path,
+        provider="fake",
+        model="fake-model",
+        params=ResplitParams(),
+        library_size=2,
+        suspect_speaker_ids=(0,),
+        candidates=(),  # no promotions => no seeds
+        residue_clusters=(
+            ResidueCluster(
+                source_speaker_id=0,
+                assigned_score=None,
+                best_library_name=None,
+                best_library_score=None,
+                merge_target_speaker_id=None,
+                merge_score=None,
+                total_seconds=3.0,
+                decision="unknown-bucket",
+                sentences=(
+                    ResplitSentence(
+                        sentence_id=7, begin_time_ms=1000, end_time_ms=4000, text="x"
+                    ),
+                ),
+            ),
+        ),
+    )
+    empty_match = SpeakerMatchSummary(
+        match_path=tmp_path / "m.json",
+        provider="fake",
+        model="fake-model",
+        threshold=0.75,
+        matches=[],  # rematch accepts nobody => empty accepted_mapping
+    )
+    apply_calls: list[dict] = []
+
+    monkeypatch.setattr(
+        "app.speaker_stabilization.analyze_project_resplit", lambda *a, **k: plan
+    )
+    monkeypatch.setattr(
+        "app.speaker_stabilization.load_transcript_result",
+        lambda *a, **k: SimpleNamespace(detected_speakers=[0, 1]),
+    )
+    monkeypatch.setattr(
+        "app.speaker_stabilization.apply_project_sentence_reassignments",
+        lambda *a, **k: SentenceReassignmentApplyResult(
+            sentence_files=(),
+            anonymous_transcript_path=None,
+            deleted_samples=(),
+            match_summary=empty_match,
+            rematch_skipped_reason=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.speaker_stabilization.apply_project_speakers",
+        lambda project_dir, mappings, **k: apply_calls.append(mappings),
+    )
+    monkeypatch.setattr("app.speaker_stabilization.safe_write_json", lambda *a, **k: None)
+
+    plan_out, minted, summary_out = _apply_resplit_phase(
+        tmp_path, store_dir=None, model=None, params=None, progress=None
+    )
+
+    # Exactly one re-render, with an empty patch (re-render from updated sentences + map).
+    assert apply_calls == [{}]
+    assert minted == 1  # the single unknown bucket
+    assert summary_out is empty_match
+
+
+def test_final_match_summary_falls_back_to_resplit_phase(tmp_path: Path) -> None:
+    """A run that only re-split (no iterative reassignment) must still report the
+    post-resplit speakers via the re-split phase's own rematch summary."""
+    resplit_match = _match_summary(tmp_path)
+    summary = SpeakerStabilizationSummary(
+        iterations=(),  # iterations=0 path (unanchored track) or zero reassignments
+        minted_speaker_count=1,
+        resplit_match_summary=resplit_match,
+    )
+
+    assert summary.final_match_summary is resplit_match
+
+
+def test_iteration_match_summary_supersedes_resplit_phase(tmp_path: Path) -> None:
+    """An iteration that applied moves re-reads post-resplit artifacts, so its summary
+    wins over the earlier re-split phase summary."""
+    resplit_match = _match_summary(tmp_path / "resplit")
+    iteration_match = _match_summary(tmp_path / "iteration")
+    iteration = SpeakerStabilizationIteration(
+        index=1,
+        reassignments=(),
+        apply_result=SentenceReassignmentApplyResult(
+            sentence_files=(),
+            anonymous_transcript_path=None,
+            deleted_samples=(),
+            match_summary=iteration_match,
+            rematch_skipped_reason=None,
+        ),
+        cluster_summary=None,
+        sample_summary=None,
+    )
+    summary = SpeakerStabilizationSummary(
+        iterations=(iteration,),
+        resplit_match_summary=resplit_match,
+    )
+
+    assert summary.final_match_summary is iteration_match
 
 
 def _sample_summary(
