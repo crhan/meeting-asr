@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 
 SUPPORTED_AUDIO_FORMATS = {"wav", "flac"}
@@ -49,6 +51,79 @@ def extract_audio_for_asr(
     ]
     _run_ffmpeg(command)
     return output
+
+
+def concat_audio_for_asr(
+    input_paths: Sequence[str | Path],
+    output_path: str | Path,
+    *,
+    audio_format: str = "flac",
+) -> list[float]:
+    """
+    Concatenate several media files into one continuous ASR-ready audio track.
+
+    Each input is first normalized to mono 16kHz s16 in ``audio_format`` so the
+    sources share identical stream parameters; the normalized parts are then
+    joined with ffmpeg's concat demuxer using ``-c copy`` (lossless, gapless).
+    Per-segment durations are probed from the normalized parts so they match the
+    concatenated timeline exactly, leaving no drift against ASR timestamps.
+
+    Args:
+        input_paths: Ordered local media files.
+        output_path: Output concatenated audio path.
+        audio_format: ``wav`` or ``flac``.
+
+    Returns:
+        Per-segment durations in seconds, in input order.
+    """
+    sources = [Path(p).expanduser().resolve() for p in input_paths]
+    if not sources:
+        raise ValueError("concat_audio_for_asr requires at least one input.")
+    output = Path(output_path).expanduser().resolve()
+    normalized_format = audio_format.strip().lower()
+    if normalized_format not in SUPPORTED_AUDIO_FORMATS:
+        supported = ", ".join(sorted(SUPPORTED_AUDIO_FORMATS))
+        raise ValueError(
+            f"Unsupported audio format: {audio_format}. Supported formats: {supported}."
+        )
+    for source in sources:
+        if not source.exists():
+            raise FileNotFoundError(f"Input media file does not exist: {source}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="meeting-asr-concat-") as tmp_dir:
+        tmp = Path(tmp_dir)
+        parts: list[Path] = []
+        durations: list[float] = []
+        for index, source in enumerate(sources):
+            part = tmp / f"part_{index:03d}.{normalized_format}"
+            extract_audio_for_asr(source, part, audio_format=normalized_format)
+            durations.append(probe_media_duration_seconds(part))
+            parts.append(part)
+        list_file = tmp / "concat.txt"
+        # Parts are our own temp files (no quotes/special chars), so the simple
+        # concat-list format is safe; original input paths never appear here.
+        list_file.write_text(
+            "".join(f"file '{part}'\n" for part in parts), encoding="utf-8"
+        )
+        _run_ffmpeg(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(list_file),
+                "-c",
+                "copy",
+                str(output),
+            ]
+        )
+    return durations
 
 
 def extract_audio_to_wav(input_path: str | Path, output_path: str | Path) -> Path:

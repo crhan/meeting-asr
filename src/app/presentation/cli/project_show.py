@@ -109,8 +109,11 @@ def _detail_rows(view: ProjectShowView) -> list[tuple[str, str]]:
         ("State", view.workflow.state),
         ("Updated", _compact_timestamp(manifest.updated_at)),
         ("Meeting time", manifest.source.meeting_time or "-"),
-        ("Source file", manifest.source.original_path or manifest.source.path),
+        ("Source file", _source_file_label(manifest)),
     ]
+    segments_label = _segments_label(manifest)
+    if segments_label:
+        rows.append(("Segments", segments_label))
     rows.extend(
         [
             ("Duration", _duration_label(manifest.audio.get("duration_seconds"))),
@@ -128,6 +131,32 @@ def _detail_rows(view: ProjectShowView) -> list[tuple[str, str]]:
     if view.workflow.missing:
         rows.append(("Missing", ", ".join(view.workflow.missing)))
     return rows
+
+
+def _source_file_label(manifest: ProjectManifest) -> str:
+    """Return the source label, listing segment origins for multi-input projects."""
+    segments = manifest.audio.get("segments")
+    if isinstance(segments, list) and len(segments) > 1:
+        names = [str(seg.get("filename") or "?") for seg in segments]
+        return " + ".join(names)
+    return manifest.source.original_path or manifest.source.path
+
+
+def _segments_label(manifest: ProjectManifest) -> str | None:
+    """Return per-segment provenance for concatenated multi-input projects."""
+    segments = manifest.audio.get("segments")
+    if not isinstance(segments, list) or len(segments) <= 1:
+        return None
+    parts = []
+    for seg in segments:
+        name = str(seg.get("filename") or "?")
+        duration = seg.get("duration_seconds")
+        offset = seg.get("offset_seconds")
+        if isinstance(offset, int | float) and isinstance(duration, int | float):
+            parts.append(f"{name} (@{_duration_label(offset)} +{_duration_label(duration)})")
+        else:
+            parts.append(name)
+    return f"{len(segments)} segments: " + "; ".join(parts)
 
 
 def _title_source_label(manifest: ProjectManifest) -> str:
