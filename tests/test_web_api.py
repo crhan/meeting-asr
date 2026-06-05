@@ -420,6 +420,36 @@ def test_token_accepted_via_query_param(token_client: TestClient) -> None:
     assert token_client.get("/api/projects?token=nope").status_code == 401
 
 
+def test_require_auth_handles_non_ascii_tokens(tmp_path: Path) -> None:
+    """secrets.compare_digest raises TypeError on non-ASCII str, which would surface as a
+    500. require_auth must compare on bytes: a non-ASCII *presented* token is a clean 401
+    (a header byte sequence decodes latin-1 to a non-ASCII str on the wire), and a non-ASCII
+    *configured* token still authenticates when presented correctly. Called directly to
+    bypass the HTTP client's own header encoding limits."""
+    import pytest as _pytest
+    from fastapi import HTTPException
+
+    from app.web.deps import require_auth
+
+    secret = "naïve-tök-密码"
+    settings = _settings(tmp_path, token=secret)
+
+    # Wrong, non-ASCII presented token -> 401, never a TypeError/500.
+    with _pytest.raises(HTTPException) as exc:
+        require_auth(settings=settings, authorization=None, token="пароль")
+    assert exc.value.status_code == 401
+    with _pytest.raises(HTTPException) as exc:
+        require_auth(settings=settings, authorization="Bearer Ã©Ã¨", token=None)
+    assert exc.value.status_code == 401
+
+    # Correct non-ASCII token authenticates via both query and bearer paths (returns None).
+    assert require_auth(settings=settings, authorization=None, token=secret) is None
+    assert (
+        require_auth(settings=settings, authorization=f"Bearer {secret}", token=None)
+        is None
+    )
+
+
 def test_capture_pending_blocks_store_writes(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -68,6 +68,11 @@ def require_auth(
     presented = token
     if authorization and authorization.startswith("Bearer "):
         presented = authorization[len("Bearer ") :]
-    if presented is not None and secrets.compare_digest(presented, settings.token):
+    # Compare as bytes: secrets.compare_digest raises TypeError on non-ASCII str, so a
+    # non-ASCII --token (or a client sending any non-ASCII token) would 500 instead of
+    # returning 401. utf-8 bytes keep the compare constant-time and total.
+    if presented is not None and secrets.compare_digest(
+        presented.encode("utf-8"), settings.token.encode("utf-8")
+    ):
         return
     raise HTTPException(status_code=401, detail="Missing or invalid bearer token.")
