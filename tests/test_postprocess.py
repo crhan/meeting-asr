@@ -45,7 +45,7 @@ def test_parse_transcription_result_filters_filler_only_speaker() -> None:
             {
                 "begin_time": 5,
                 "end_time": 6,
-                "text": "我们开始看 iSee 系统。",
+                "text": "我们开始看 Acme 系统。",
                 "speaker_id": 1,
                 "id": 3,
             },
@@ -56,7 +56,7 @@ def test_parse_transcription_result_filters_filler_only_speaker() -> None:
 
     assert result.detected_speakers == [1]
     assert [sentence.text for sentence in result.sentences] == [
-        "我们开始看 iSee 系统。"
+        "我们开始看 Acme 系统。"
     ]
     assert "嗯" not in result.full_text
 

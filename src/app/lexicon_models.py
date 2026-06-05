@@ -67,8 +67,8 @@ class LexiconCorrectionRule:
 class LexiconDisambiguation:
     """One ambiguous alias whose correct form depends on sentence context.
 
-    ``guidance`` is user-authored business knowledge (e.g. "IC 指 iSee 平台时
-    改成 iSee；指个人贡献者角色时保持原样") and is fed to the polish LLM so it
+    ``guidance`` is user-authored business knowledge (e.g. "AC 指 Acme 平台时
+    改成 Acme；指个人贡献者角色时保持原样") and is fed to the polish LLM so it
     decides per occurrence instead of blanket-replacing. Such an alias is
     excluded from deterministic local correction.
     """

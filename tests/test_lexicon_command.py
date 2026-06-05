@@ -43,26 +43,26 @@ def test_set_alias_disambiguation_excludes_alias_from_blanket_rules(
     """A disambiguated alias must drop out of deterministic replacement."""
     db_path = tmp_path / "lexicon.sqlite"
     upsert_lexicon_term(
-        canonical="iSee",
+        canonical="Acme",
         category="system",
         description="",
-        aliases=("IC", "艾赛"),
+        aliases=("AC", "阿克米"),
         status="active",
         db_path=db_path,
     )
-    assert {"IC", "艾赛"} <= _wrong_texts(db_path)
+    assert {"AC", "阿克米"} <= _wrong_texts(db_path)
 
     entry = set_alias_disambiguation(
-        term="iSee",
-        alias="IC",
-        guidance="指 iSee 平台时改成 iSee；指个人贡献者角色时保持原样",
+        term="Acme",
+        alias="AC",
+        guidance="指 Acme 平台时改成 Acme；指个人贡献者角色时保持原样",
         db_path=db_path,
     )
 
-    assert entry is not None and entry.canonical == "iSee"
-    # IC is now LLM-resolved by context; 艾赛 stays a deterministic rule.
-    assert "IC" not in _wrong_texts(db_path)
-    assert "艾赛" in _wrong_texts(db_path)
+    assert entry is not None and entry.canonical == "Acme"
+    # AC is now LLM-resolved by context; 阿克米 stays a deterministic rule.
+    assert "AC" not in _wrong_texts(db_path)
+    assert "阿克米" in _wrong_texts(db_path)
     listed = list_lexicon_disambiguations(db_path=db_path)
     assert [(d.alias, d.guidance) for d in listed] == [(entry.alias, entry.guidance)]
 
@@ -71,23 +71,23 @@ def test_disambiguation_excludes_context_derived_rule(tmp_path: Path) -> None:
     """A disambiguated surface must drop out even when accepted contexts back it.
 
     Regression: blanket rules come from both aliases AND accepted context rows;
-    excluding only the alias path left the context-derived IC->iSee rule alive.
+    excluding only the alias path left the context-derived AC->Acme rule alive.
     """
     db_path = tmp_path / "lexicon.sqlite"
     upsert_lexicon_term(
-        canonical="iSee",
+        canonical="Acme",
         category="system",
         description="",
-        aliases=("IC",),
+        aliases=("AC",),
         status="active",
         db_path=db_path,
     )
     record_lexicon_contexts(
         [
             LexiconContext(
-                canonical="iSee",
-                wrong_text="IC",
-                corrected_text="iSee",
+                canonical="Acme",
+                wrong_text="AC",
+                corrected_text="Acme",
                 left_context="把",
                 right_context="维修平台",
                 category="system",
@@ -99,37 +99,37 @@ def test_disambiguation_excludes_context_derived_rule(tmp_path: Path) -> None:
         ],
         db_path=db_path,
     )
-    assert "IC" in _wrong_texts(db_path)
+    assert "AC" in _wrong_texts(db_path)
 
     set_alias_disambiguation(
-        term="iSee", alias="IC", guidance="按语境判断", db_path=db_path
+        term="Acme", alias="AC", guidance="按语境判断", db_path=db_path
     )
 
-    assert "IC" not in _wrong_texts(db_path)
+    assert "AC" not in _wrong_texts(db_path)
 
 
 def test_set_alias_disambiguation_clear_restores_blanket_rule(tmp_path: Path) -> None:
     """Clearing the guidance returns the alias to deterministic correction."""
     db_path = tmp_path / "lexicon.sqlite"
     upsert_lexicon_term(
-        canonical="iSee",
+        canonical="Acme",
         category="system",
         description="",
-        aliases=("IC",),
+        aliases=("AC",),
         status="active",
         db_path=db_path,
     )
     set_alias_disambiguation(
-        term="iSee", alias="IC", guidance="按语境判断", db_path=db_path
+        term="Acme", alias="AC", guidance="按语境判断", db_path=db_path
     )
-    assert "IC" not in _wrong_texts(db_path)
+    assert "AC" not in _wrong_texts(db_path)
 
     cleared = set_alias_disambiguation(
-        term="iSee", alias="IC", guidance="", db_path=db_path
+        term="Acme", alias="AC", guidance="", db_path=db_path
     )
 
     assert cleared is None
-    assert "IC" in _wrong_texts(db_path)
+    assert "AC" in _wrong_texts(db_path)
     assert list_lexicon_disambiguations(db_path=db_path) == []
 
 
@@ -137,10 +137,10 @@ def test_lexicon_disambiguate_command(tmp_path: Path) -> None:
     """The disambiguate CLI marks an alias ambiguous and persists the guidance."""
     db_path = tmp_path / "lexicon.sqlite"
     upsert_lexicon_term(
-        canonical="iSee",
+        canonical="Acme",
         category="system",
         description="",
-        aliases=("IC",),
+        aliases=("AC",),
         status="active",
         db_path=db_path,
     )
@@ -150,9 +150,9 @@ def test_lexicon_disambiguate_command(tmp_path: Path) -> None:
         [
             "lexicon",
             "disambiguate",
-            "iSee",
-            "IC",
-            "指 iSee 平台时改成 iSee；指角色时保持原样",
+            "Acme",
+            "AC",
+            "指 Acme 平台时改成 Acme；指角色时保持原样",
             "--lexicon-db",
             str(db_path),
             "--json",
@@ -162,8 +162,8 @@ def test_lexicon_disambiguate_command(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["cleared"] is False
-    assert payload["disambiguation"]["alias"] == "IC"
-    assert "IC" not in _wrong_texts(db_path)
+    assert payload["disambiguation"]["alias"] == "AC"
+    assert "AC" not in _wrong_texts(db_path)
 
 
 def _add_term_with_disambiguated_alias(db_path: Path, guidance: str) -> None:
@@ -381,13 +381,13 @@ def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
         [
             "lexicon",
             "add",
-            "iSee",
+            "Acme",
             "--category",
             "system",
             "--description",
             "platform name",
             "--alias",
-            "艾赛",
+            "阿克米",
             "--lexicon-db",
             str(db_path),
         ],
@@ -397,7 +397,7 @@ def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
         app, ["lexicon", "list", "--lexicon-db", str(db_path), "--plain"]
     )
     show_result = runner.invoke(
-        app, ["lexicon", "show", "艾赛", "--lexicon-db", str(db_path)]
+        app, ["lexicon", "show", "阿克米", "--lexicon-db", str(db_path)]
     )
     stats_result = runner.invoke(
         app, ["lexicon", "stats", "--lexicon-db", str(db_path)]
@@ -407,7 +407,7 @@ def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
     assert "Lexicon term saved." in add_result.output
     assert list_result.exit_code == 0
     assert re.search(r"lex-[0-9a-f]{16}", list_result.output)
-    assert "iSee" in list_result.output
+    assert "Acme" in list_result.output
     assert "system" in list_result.output
     assert plain_result.exit_code == 0
     assert (
@@ -415,13 +415,13 @@ def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
         == "id\tterm\tcategory\tstatus\taliases\tcontexts\tupdated"
     )
     assert re.search(
-        r"lex-[0-9a-f]{16}\tiSee\tsystem\tactive\t1\t0\t", plain_result.output
+        r"lex-[0-9a-f]{16}\tAcme\tsystem\tactive\t1\t0\t", plain_result.output
     )
     assert "╭" not in plain_result.output
     assert show_result.exit_code == 0
     assert "ID: lex-" in show_result.output
-    assert "Term: iSee" in show_result.output
-    assert "艾赛 (asr_error)" in show_result.output
+    assert "Term: Acme" in show_result.output
+    assert "阿克米 (asr_error)" in show_result.output
     assert stats_result.exit_code == 0
     assert "Terms: 1 active / 0 inactive / 1 total" in stats_result.output
     assert "ASR hotwords: 1" in stats_result.output
@@ -435,25 +435,25 @@ def test_lexicon_show_json_prints_term_detail(tmp_path: Path) -> None:
         [
             "lexicon",
             "add",
-            "iSee",
+            "Acme",
             "--category",
             "system",
             "--alias",
-            "艾赛",
+            "阿克米",
             "--lexicon-db",
             str(db_path),
         ],
     )
 
     result = runner.invoke(
-        app, ["lexicon", "show", "iSee", "--lexicon-db", str(db_path), "--json"]
+        app, ["lexicon", "show", "Acme", "--lexicon-db", str(db_path), "--json"]
     )
     payload = json.loads(result.output)
 
     assert result.exit_code == 0
-    assert payload["term"]["canonical"] == "iSee"
+    assert payload["term"]["canonical"] == "Acme"
     assert re.fullmatch(r"lex-[0-9a-f]{16}", payload["term"]["public_id"])
-    assert payload["aliases"][0]["alias"] == "艾赛"
+    assert payload["aliases"][0]["alias"] == "阿克米"
 
 
 def test_lexicon_commands_accept_prefixed_public_id(tmp_path: Path) -> None:
@@ -464,11 +464,11 @@ def test_lexicon_commands_accept_prefixed_public_id(tmp_path: Path) -> None:
         [
             "lexicon",
             "add",
-            "iSee",
+            "Acme",
             "--category",
             "system",
             "--alias",
-            "艾赛",
+            "阿克米",
             "--lexicon-db",
             str(db_path),
         ],
@@ -490,7 +490,7 @@ def test_lexicon_commands_accept_prefixed_public_id(tmp_path: Path) -> None:
 
     assert re.fullmatch(r"lex-[0-9a-f]{16}", public_id)
     assert show_result.exit_code == 0
-    assert json.loads(show_result.output)["term"]["canonical"] == "iSee"
+    assert json.loads(show_result.output)["term"]["canonical"] == "Acme"
     assert delete_result.exit_code == 0
     assert f"ID: {public_id}" in delete_result.output
     assert public_id in all_result.output
@@ -547,7 +547,7 @@ def test_lexicon_list_backfills_public_ids_for_existing_database(
               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               PRIMARY KEY(target_model, endpoint)
             );
-            INSERT INTO terms(canonical, category) VALUES ('iSee', 'system');
+            INSERT INTO terms(canonical, category) VALUES ('Acme', 'system');
             """
         )
 
@@ -561,7 +561,7 @@ def test_lexicon_list_backfills_public_ids_for_existing_database(
     assert re.fullmatch(r"lex-[0-9a-f]{16}", public_id)
     with sqlite3.connect(db_path) as connection:
         stored_public_id = connection.execute(
-            "SELECT public_id FROM terms WHERE canonical = 'iSee'"
+            "SELECT public_id FROM terms WHERE canonical = 'Acme'"
         ).fetchone()[0]
         schema_version = connection.execute(
             "SELECT value FROM metadata WHERE key = 'schema_version'"
@@ -578,18 +578,18 @@ def test_lexicon_delete_deactivates_term_and_hotword(tmp_path: Path) -> None:
         [
             "lexicon",
             "add",
-            "iSee",
+            "Acme",
             "--category",
             "system",
             "--alias",
-            "艾赛",
+            "阿克米",
             "--lexicon-db",
             str(db_path),
         ],
     )
 
     delete_result = runner.invoke(
-        app, ["lexicon", "delete", "iSee", "--lexicon-db", str(db_path), "--yes"]
+        app, ["lexicon", "delete", "Acme", "--lexicon-db", str(db_path), "--yes"]
     )
     active_result = runner.invoke(
         app, ["lexicon", "list", "--lexicon-db", str(db_path)]
@@ -611,7 +611,7 @@ def test_lexicon_delete_deactivates_term_and_hotword(tmp_path: Path) -> None:
 def test_lexicon_delete_prompt_shows_term_details(tmp_path: Path) -> None:
     """Interactive delete should show the resolved object before asking."""
     db_path = tmp_path / "lexicon.sqlite"
-    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+    record_lexicon_contexts([_context("阿克米", "Acme")], db_path=db_path)
     public_id = json.loads(
         runner.invoke(
             app, ["lexicon", "list", "--lexicon-db", str(db_path), "--json"]
@@ -628,9 +628,9 @@ def test_lexicon_delete_prompt_shows_term_details(tmp_path: Path) -> None:
     assert "Lexicon Delete Review" in result.output
     assert public_id in result.output
     assert "Term" in result.output
-    assert "iSee" in result.output
+    assert "Acme" in result.output
     assert "Aliases" in result.output
-    assert "艾赛 (asr_error)" in result.output
+    assert "阿克米 (asr_error)" in result.output
     assert "Contexts" in result.output
     assert "p-demo#1" in result.output
     assert "Proceed to deactivate this lexicon term?" in result.output
@@ -642,7 +642,7 @@ def test_lexicon_export_import_round_trip(tmp_path: Path) -> None:
     db_path = tmp_path / "lexicon.sqlite"
     imported_db = tmp_path / "imported.sqlite"
     output = tmp_path / "lexicon.json"
-    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+    record_lexicon_contexts([_context("阿克米", "Acme")], db_path=db_path)
 
     export_result = runner.invoke(
         app,
@@ -653,7 +653,7 @@ def test_lexicon_export_import_round_trip(tmp_path: Path) -> None:
         ["lexicon", "import", str(output), "--lexicon-db", str(imported_db)],
     )
     show_result = runner.invoke(
-        app, ["lexicon", "show", "iSee", "--lexicon-db", str(imported_db)]
+        app, ["lexicon", "show", "Acme", "--lexicon-db", str(imported_db)]
     )
 
     assert export_result.exit_code == 0
@@ -661,9 +661,9 @@ def test_lexicon_export_import_round_trip(tmp_path: Path) -> None:
     assert import_result.exit_code == 0
     assert "Terms: 1" in import_result.output
     assert show_result.exit_code == 0
-    assert "Term: iSee" in show_result.output
+    assert "Term: Acme" in show_result.output
     assert "ID: lex-" in show_result.output
-    assert "艾赛 (asr_error)" in show_result.output
+    assert "阿克米 (asr_error)" in show_result.output
     assert "p-demo#1" in show_result.output
 
 
@@ -671,7 +671,7 @@ def test_lexicon_hotwords_export_writes_dashscope_table(tmp_path: Path) -> None:
     """Hotword export should use accepted correction terms."""
     db_path = tmp_path / "lexicon.sqlite"
     output = tmp_path / "hotwords.json"
-    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+    record_lexicon_contexts([_context("阿克米", "Acme")], db_path=db_path)
 
     result = runner.invoke(
         app,
@@ -689,13 +689,13 @@ def test_lexicon_hotwords_export_writes_dashscope_table(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "ASR hotwords exported." in result.output
-    assert payload["dashscope_vocabulary"] == [{"text": "iSee", "weight": 4}]
+    assert payload["dashscope_vocabulary"] == [{"text": "Acme", "weight": 4}]
 
 
 def test_lexicon_hotwords_list_prints_local_terms(tmp_path: Path) -> None:
     """List should show the local hotwords without writing an artifact."""
     db_path = tmp_path / "lexicon.sqlite"
-    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+    record_lexicon_contexts([_context("阿克米", "Acme")], db_path=db_path)
 
     result = runner.invoke(
         app, ["lexicon", "hotwords", "list", "--lexicon-db", str(db_path)]
@@ -703,7 +703,7 @@ def test_lexicon_hotwords_list_prints_local_terms(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Hotwords: 1" in result.output
-    assert "1. iSee weight=4 category=system" in result.output
+    assert "1. Acme weight=4 category=system" in result.output
 
 
 def test_lexicon_hotwords_sync_dry_run_does_not_require_api_key(tmp_path: Path) -> None:
@@ -724,7 +724,7 @@ def test_lexicon_hotwords_sync_dry_run_does_not_require_api_key(tmp_path: Path) 
 def test_lexicon_hotwords_status_reports_current_cache(tmp_path: Path) -> None:
     """Status should compare local hotword hash with the cached vocabulary id."""
     db_path = tmp_path / "lexicon.sqlite"
-    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+    record_lexicon_contexts([_context("阿克米", "Acme")], db_path=db_path)
     hotwords = list_asr_hotwords(db_path=db_path)
     save_asr_vocabulary_state(
         AsrVocabularyState(
@@ -810,7 +810,7 @@ def test_lexicon_hotwords_remote_show_prints_vocabulary(
         lambda **kwargs: {
             "status": "OK",
             "target_model": "fun-asr",
-            "vocabulary": [{"text": "iSee", "weight": 4}],
+            "vocabulary": [{"text": "Acme", "weight": 4}],
         },
     )
 
@@ -818,7 +818,7 @@ def test_lexicon_hotwords_remote_show_prints_vocabulary(
 
     assert result.exit_code == 0
     assert "Vocabulary ID: vocab-demo" in result.output
-    assert "1. iSee weight=4" in result.output
+    assert "1. Acme weight=4" in result.output
 
 
 def test_lexicon_hotwords_remote_delete_can_clear_cache(

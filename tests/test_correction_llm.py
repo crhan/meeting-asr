@@ -21,14 +21,14 @@ from app.correction_llm import (
 def test_polish_strict_prompt_injects_lexicon_disambiguations() -> None:
     """Ambiguous-term guidance from the lexicon must reach the strict polish prompt."""
     candidates = [
-        LlmCorrectionCandidate("c0", 0, "speaker", "把IC这边维修平台跟一下。")
+        LlmCorrectionCandidate("c0", 0, "speaker", "把AC这边维修平台跟一下。")
     ]
-    guidance = "指 iSee 平台时改成 iSee；指个人贡献者(IC)角色时保持原样"
+    guidance = "指 Acme 平台时改成 Acme；指个人贡献者(AC)角色时保持原样"
 
-    prompt = _build_polish_strict_prompt(candidates, [("IC", guidance)])
+    prompt = _build_polish_strict_prompt(candidates, [("AC", guidance)])
 
     assert "术语消歧" in prompt
-    assert "「IC」" in prompt
+    assert "「AC」" in prompt
     assert guidance in prompt
 
 
@@ -39,8 +39,8 @@ def test_polish_strict_prompt_has_no_hardcoded_business_terms() -> None:
     )
 
     assert "术语消歧" not in prompt
-    # iSee is our business data and must only enter via lexicon-driven guidance.
-    assert "iSee" not in prompt
+    # Acme is our business data and must only enter via lexicon-driven guidance.
+    assert "Acme" not in prompt
 
 
 def test_propose_vocabulary_corrections_parses_dashscope_json(monkeypatch) -> None:
@@ -49,7 +49,7 @@ def test_propose_vocabulary_corrections_parses_dashscope_json(monkeypatch) -> No
 
     def fake_call(**kwargs):
         calls.update(kwargs)
-        return '{"understanding":"艾赛应为 iSee","corrections":[{"id":"c1","corrected_text":"我们看 iSee 系统。"}]}'
+        return '{"understanding":"阿克米应为 Acme","corrections":[{"id":"c1","corrected_text":"我们看 Acme 系统。"}]}'
 
     monkeypatch.setattr("app.correction_llm.generate_chat_text", fake_call)
     settings = Settings(
@@ -59,12 +59,12 @@ def test_propose_vocabulary_corrections_parses_dashscope_json(monkeypatch) -> No
     result = propose_vocabulary_corrections(
         samples=[
             LlmCorrectionSample(
-                original_text="我们看艾赛系统。",
-                corrected_text="我们看 iSee 系统。",
-                replacements=[{"wrong_text": "艾赛", "corrected_text": "iSee"}],
+                original_text="我们看阿克米系统。",
+                corrected_text="我们看 Acme 系统。",
+                replacements=[{"wrong_text": "阿克米", "corrected_text": "Acme"}],
             )
         ],
-        candidates=[LlmCorrectionCandidate("c1", 1, "敬悦", "我们看艾赛系统。")],
+        candidates=[LlmCorrectionCandidate("c1", 1, "敬悦", "我们看阿克米系统。")],
         settings=settings,
         model="qwen-test",
     )
@@ -72,8 +72,8 @@ def test_propose_vocabulary_corrections_parses_dashscope_json(monkeypatch) -> No
     assert calls["model"] == "qwen-test"
     assert calls["request_timeout"] == DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS
     assert calls["enable_thinking"] is False
-    assert result.understanding == "艾赛应为 iSee"
-    assert result.corrected_text_by_id == {"c1": "我们看 iSee 系统。"}
+    assert result.understanding == "阿克米应为 Acme"
+    assert result.corrected_text_by_id == {"c1": "我们看 Acme 系统。"}
 
 
 def test_infer_vocabulary_replacements_parses_term_level_rules(monkeypatch) -> None:

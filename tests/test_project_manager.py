@@ -676,9 +676,9 @@ def test_project_run_applies_local_lexicon_corrections(
     record_lexicon_contexts(
         [
             LexiconContext(
-                canonical="iSee",
-                wrong_text="IC",
-                corrected_text="iSee",
+                canonical="Acme",
+                wrong_text="AC",
+                corrected_text="Acme",
                 left_context="今天聊",
                 right_context="产品",
                 category="system",
@@ -701,14 +701,14 @@ def test_project_run_applies_local_lexicon_corrections(
                 {
                     "begin_time_ms": 0,
                     "end_time_ms": 1000,
-                    "text": "今天聊IC产品。",
+                    "text": "今天聊AC产品。",
                     "speaker_id": 0,
                     "sentence_id": 1,
                 },
                 {
                     "begin_time_ms": 1100,
                     "end_time_ms": 2000,
-                    "text": "PIC保持不变。",
+                    "text": "PAC保持不变。",
                     "speaker_id": 0,
                     "sentence_id": 2,
                 },
@@ -768,11 +768,11 @@ def test_project_run_applies_local_lexicon_corrections(
         manifest.outputs["corrected_named_transcript"]
         == "exports/transcript_named_corrected.txt"
     )
-    assert corrected["sentences"][0]["text"] == "今天聊iSee产品。"
-    assert corrected["sentences"][1]["text"] == "PIC保持不变。"
+    assert corrected["sentences"][0]["text"] == "今天聊Acme产品。"
+    assert corrected["sentences"][1]["text"] == "PAC保持不变。"
     assert auto_show.exit_code == 0
-    assert "今天聊iSee产品。" in auto_show.output
-    assert "PIC保持不变。" in auto_show.output
+    assert "今天聊Acme产品。" in auto_show.output
+    assert "PAC保持不变。" in auto_show.output
 
 
 def test_asr_polling_heartbeat_redacts_signed_url_query_token(
@@ -878,9 +878,9 @@ def test_transcribe_project_snapshots_lexicon_asr_hotwords(
     record_lexicon_contexts(
         [
             LexiconContext(
-                canonical="iSee",
-                wrong_text="艾赛",
-                corrected_text="iSee",
+                canonical="Acme",
+                wrong_text="阿克米",
+                corrected_text="Acme",
                 left_context="",
                 right_context="系统",
                 category="system",
@@ -940,7 +940,7 @@ def test_transcribe_project_snapshots_lexicon_asr_hotwords(
 
     artifact = project_dir / "corrections" / "asr_hotwords.json"
     payload = json.loads(artifact.read_text(encoding="utf-8"))
-    assert payload["dashscope_vocabulary"] == [{"text": "iSee", "weight": 4}]
+    assert payload["dashscope_vocabulary"] == [{"text": "Acme", "weight": 4}]
     assert submitted["vocabulary_id"] == "vocab-test"
 
 

@@ -670,7 +670,7 @@ def test_project_review_tui_can_exclude_one_proposed_change(tmp_path: Path) -> N
     diff_path = tmp_path / "proposal.diff"
     proposal_path = tmp_path / "proposal.json"
     proposal_path.write_text(json.dumps(_proposal_payload()), encoding="utf-8")
-    diff_path.write_text("- IC\n+ isee\n- AS\n+ IaaS\n", encoding="utf-8")
+    diff_path.write_text("- AC\n+ acme\n- AS\n+ IaaS\n", encoding="utf-8")
 
     def save_handler(decision: SpeakerReviewDecision) -> SpeakerReviewSaveOutcome:
         return SpeakerReviewSaveOutcome(
@@ -724,7 +724,7 @@ def test_correction_diff_viewer_uses_standard_vertical_keys(tmp_path: Path) -> N
     proposal_path = tmp_path / "proposal.json"
     diff_path = tmp_path / "proposal.diff"
     proposal_path.write_text(json.dumps(_proposal_payload()), encoding="utf-8")
-    diff_path.write_text("- IC\n+ isee\n- AS\n+ IaaS\n", encoding="utf-8")
+    diff_path.write_text("- AC\n+ acme\n- AS\n+ IaaS\n", encoding="utf-8")
     screen = CorrectionProposalDiffScreen(
         diff_path=diff_path,
         proposal_path=proposal_path,
@@ -771,11 +771,11 @@ def test_correction_diff_viewer_uses_standard_vertical_keys(tmp_path: Path) -> N
 
 def test_correction_diff_viewer_highlights_changed_tokens_only() -> None:
     """Diff rendering should highlight changed tokens, not just whole lines."""
-    styled_diff = styled_unified_diff("- 我们看一下IC系统。\n+ 我们看一下isee系统。\n")
+    styled_diff = styled_unified_diff("- 我们看一下AC系统。\n+ 我们看一下acme系统。\n")
 
-    assert styled_diff.plain == "- 我们看一下IC系统。\n+ 我们看一下isee系统。\n"
-    assert _style_for_text(styled_diff, "IC") == "bold red"
-    assert _style_for_text(styled_diff, "isee") == "bold green"
+    assert styled_diff.plain == "- 我们看一下AC系统。\n+ 我们看一下acme系统。\n"
+    assert _style_for_text(styled_diff, "AC") == "bold red"
+    assert _style_for_text(styled_diff, "acme") == "bold green"
     assert _style_for_text(styled_diff, "我们看一下") == "dim red"
 
 
@@ -2266,7 +2266,7 @@ def _proposal_payload() -> dict:
     """Build a minimal correction proposal payload with two changes."""
     return {
         "proposed_changes": [
-            _proposal_change(1, "我们看一下IC系统。", "我们看一下isee系统。"),
+            _proposal_change(1, "我们看一下AC系统。", "我们看一下acme系统。"),
             _proposal_change(2, "AS服务需要修正。", "IaaS服务需要修正。"),
         ]
     }
