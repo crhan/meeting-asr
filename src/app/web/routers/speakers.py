@@ -14,7 +14,7 @@ import asyncio
 from fastapi import APIRouter, Depends
 
 from app.core.speaker_review_service import save_speaker_review
-from app.core.voiceprint_review_service import REGISTRY
+from app.core.voiceprint_review_service import REGISTRY, CaptureConflictError
 from app.presentation.tui.speaker_matches import SpeakerMatchCandidate
 from app.presentation.tui.speaker_models import (
     ReviewSpeaker,
@@ -201,6 +201,16 @@ async def save_review(
 
     loop = asyncio.get_running_loop()
     async with locks.acquire(*keys):
+        # A pending capture's rollback would restore the pre-capture project.json /
+        # speaker_matches.json, silently clobbering this save. Refuse under the project lock
+        # (the capture run registers its txn under the same lock, so the check can't race
+        # the registration). The reassignment path is already refused inside
+        # run_store_write; this covers the naming-only path too.
+        if REGISTRY.has_pending():
+            raise CaptureConflictError(
+                "A voiceprint capture is awaiting accept/rollback; resolve it before "
+                "saving the speaker review."
+            )
         result = await loop.run_in_executor(None, runner)
 
     reassignment = result.reassignment

@@ -784,3 +784,58 @@ def test_voiceprint_lookup_miss_maps_to_404(
     resp = client.patch("/api/voiceprints/people/nope", json={"name": "X"})
     assert resp.status_code == 404
     assert resp.json()["error"] == "not_found"
+
+
+def test_naming_save_refused_when_capture_pending(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A naming-only speaker save must be refused while a capture is pending: it skips
+    run_store_write, but a later rollback restores the pre-capture project snapshot and
+    would silently clobber the saved names."""
+    import app.web.routers.speakers as speakers
+
+    monkeypatch.setattr(speakers, "resolve_web_project_ref", lambda ref, _s: tmp_path)
+    monkeypatch.setattr(speakers.REGISTRY, "has_pending", lambda: True)
+
+    def _should_not_run(*_a, **_k):
+        raise AssertionError("save ran despite a pending capture")
+
+    monkeypatch.setattr(speakers, "save_speaker_review", _should_not_run)
+
+    resp = client.post(
+        "/api/speakers/p-x/save",
+        json={
+            "mapping": {"0": "Alice"},
+            "person_mapping": {},
+            "person_public_mapping": {},
+            "ignored_speaker_ids": [],
+            "reassignments": [],
+        },
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "conflict"
+
+
+def test_capture_rollback_takes_project_lock(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Rollback restores the project snapshot, so it must hold that project's lock to
+    serialize against a concurrent project-local write (speaker save / correction accept)."""
+    import app.web.routers.voiceprints as vp
+
+    proj = tmp_path / "projects" / "p-z"
+    monkeypatch.setattr(vp.REGISTRY, "project_dir_for", lambda txn: proj)
+    monkeypatch.setattr(vp.REGISTRY, "rollback", lambda txn: None)
+
+    locks = client.app.state.locks  # type: ignore[attr-defined]
+    seen: list[str] = []
+    original_acquire = locks.acquire
+    monkeypatch.setattr(
+        locks,
+        "acquire",
+        lambda *keys: (seen.extend(keys), original_acquire(*keys))[1],
+    )
+
+    resp = client.post("/api/voiceprints/capture/transactions/txn-1/rollback")
+    assert resp.status_code == 200
+    assert f"project:{proj}" in seen

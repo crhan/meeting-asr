@@ -73,7 +73,11 @@ class CaptureTransactionRegistry:
     """Holds pending capture transactions between the run and the accept/rollback calls."""
 
     def __init__(self) -> None:
-        self._txns: dict[str, tuple[float, VoiceprintReviewTransaction]] = {}
+        # value: (created_at, transaction, project_dir) -- project_dir lets accept/rollback
+        # take that project's lock so a restore can't race a concurrent project-local write.
+        self._txns: dict[
+            str, tuple[float, VoiceprintReviewTransaction, Path]
+        ] = {}
         self._registry_lock = threading.Lock()
         self._store_write_lock = threading.Lock()
 
@@ -81,6 +85,16 @@ class CaptureTransactionRegistry:
         """Return whether any capture transaction is awaiting accept/rollback."""
         with self._registry_lock:
             return bool(self._txns)
+
+    def project_dir_for(self, txn_id: str) -> Path | None:
+        """Return the project dir a pending transaction belongs to, or None.
+
+        Callers take that project's lock around accept/rollback so the snapshot restore
+        serialises with project-local writes (speaker save, correction accept).
+        """
+        with self._registry_lock:
+            entry = self._txns.get(txn_id)
+        return entry[2] if entry else None
 
     def _raise_if_pending_locked(self) -> None:
         """Raise if a capture is pending. Caller must hold ``_store_write_lock``."""
@@ -132,7 +146,11 @@ class CaptureTransactionRegistry:
             )
             txn_id = uuid.uuid4().hex
             with self._registry_lock:
-                self._txns[txn_id] = (time.time(), summary.transaction)
+                self._txns[txn_id] = (
+                    time.time(),
+                    summary.transaction,
+                    project_dir.resolve(),
+                )
         return txn_id, summary
 
     def accept(self, txn_id: str) -> None:
@@ -172,7 +190,7 @@ class CaptureTransactionRegistry:
         with self._registry_lock:
             stale = [
                 (txn_id, txn)
-                for txn_id, (created, txn) in self._txns.items()
+                for txn_id, (created, txn, _project) in self._txns.items()
                 if now - created > max_age_seconds
             ]
             for txn_id, _ in stale:

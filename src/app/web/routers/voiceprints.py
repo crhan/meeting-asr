@@ -43,7 +43,7 @@ from app.web.deps import (
     resolve_web_project_ref,
 )
 from app.web.jobs import JobManager
-from app.web.locks import LockRegistry, store_lock_key
+from app.web.locks import LockRegistry, project_lock_key, store_lock_key
 from app.web.schemas import (
     CaptureClipOut,
     CapturePlanOut,
@@ -453,17 +453,34 @@ def capture_run(
     return JobRef(job_id=job.id, kind=job.kind, status=job.status)
 
 
+def _capture_txn_lock_keys(transaction_id: str) -> list[str]:
+    """Per-project lock keys for a capture transaction's accept/rollback.
+
+    The rollback restores the project's snapshot (project.json / speaker_matches.json), so
+    it must hold the same per-project lock a speaker save / correction accept takes, or a
+    concurrent project-local write could interleave with the restore.
+    """
+    project_dir = REGISTRY.project_dir_for(transaction_id)
+    return [project_lock_key(str(project_dir))] if project_dir else []
+
+
 @router.post("/capture/transactions/{transaction_id}/accept")
-async def capture_accept(transaction_id: str) -> dict[str, str]:
+async def capture_accept(
+    transaction_id: str, locks: LockRegistry = Depends(get_locks)
+) -> dict[str, str]:
     """Accept a pending capture transaction (keep the changes)."""
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, lambda: REGISTRY.accept(transaction_id))
+    async with locks.acquire(*_capture_txn_lock_keys(transaction_id)):
+        await loop.run_in_executor(None, lambda: REGISTRY.accept(transaction_id))
     return {"status": "accepted"}
 
 
 @router.post("/capture/transactions/{transaction_id}/rollback")
-async def capture_rollback(transaction_id: str) -> dict[str, str]:
+async def capture_rollback(
+    transaction_id: str, locks: LockRegistry = Depends(get_locks)
+) -> dict[str, str]:
     """Roll back a pending capture transaction (undo the changes)."""
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, lambda: REGISTRY.rollback(transaction_id))
+    async with locks.acquire(*_capture_txn_lock_keys(transaction_id)):
+        await loop.run_in_executor(None, lambda: REGISTRY.rollback(transaction_id))
     return {"status": "rolled_back"}

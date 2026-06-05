@@ -18,6 +18,7 @@ from app.commands.project_correct import (
     load_speaker_mapping_for_correction,
     prepare_transcript_polish_for_review,
 )
+from app.core.voiceprint_review_service import REGISTRY, CaptureConflictError
 from app.correction_proposals import load_correction_proposal
 from app.lexicon_store import get_lexicon_db_path
 from app.project_manager import load_manifest, project_paths
@@ -168,4 +169,12 @@ async def accept(
     async with locks.acquire(
         project_lock_key(str(project_dir)), store_lock_key("lexicon")
     ):
+        # This writes the project's manifest/transcript, which a pending capture's rollback
+        # would restore to the pre-capture snapshot -- silently dropping the accepted
+        # corrections. Refuse under the project lock (where the capture registers its txn).
+        if REGISTRY.has_pending():
+            raise CaptureConflictError(
+                "A voiceprint capture is awaiting accept/rollback; resolve it before "
+                "accepting corrections."
+            )
         return await loop.run_in_executor(None, work)
