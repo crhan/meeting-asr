@@ -94,6 +94,23 @@ def default_lexicon_db_path() -> Path:
     return get_data_dir() / "lexicon" / "lexicon.sqlite"
 
 
+def get_lexicon_db_path(store_dir: Path | None = None) -> Path:
+    """
+    Return the lexicon database path, optionally rebased onto a custom store dir.
+
+    Args:
+        store_dir: Optional store directory override. ``None`` uses the default XDG path;
+            otherwise the lexicon db lives under ``<store_dir>/lexicon/lexicon.sqlite`` so
+            an isolated ``--store-dir`` copy keeps the real correction dictionary untouched.
+
+    Returns:
+        SQLite database path.
+    """
+    if store_dir is None:
+        return default_lexicon_db_path()
+    return store_dir.expanduser().resolve() / "lexicon" / "lexicon.sqlite"
+
+
 def record_lexicon_contexts(
     contexts: list[LexiconContext], *, db_path: Path | None = None
 ) -> int:
@@ -1164,9 +1181,7 @@ def _import_aliases(
         disambiguation = item.get("disambiguation") if isinstance(item, dict) else None
         if isinstance(alias, str) and alias.strip():
             surface = alias.strip()
-            _upsert_alias(
-                connection, term_id, surface, str(alias_type or "asr_error")
-            )
+            _upsert_alias(connection, term_id, surface, str(alias_type or "asr_error"))
             # Only a payload that explicitly carries the key is authoritative for
             # the blanket/ambiguous state. A legacy export predating this field
             # omits the key entirely — treat that as "no opinion" and leave any
@@ -1174,9 +1189,7 @@ def _import_aliases(
             # silently wipe it). An explicit null (a new source-blanket export)
             # DOES clear stale guidance; non-empty guidance overwrites it.
             if has_disambiguation:
-                note = (
-                    disambiguation.strip() if isinstance(disambiguation, str) else ""
-                )
+                note = disambiguation.strip() if isinstance(disambiguation, str) else ""
                 connection.execute(
                     "UPDATE aliases SET disambiguation = ? "
                     "WHERE term_id = ? AND alias = ?",

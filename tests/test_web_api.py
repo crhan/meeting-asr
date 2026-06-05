@@ -106,6 +106,22 @@ def test_doctor_returns_checks(client: TestClient) -> None:
     assert "ffmpeg" in names
 
 
+def test_lexicon_writes_honor_store_dir(client: TestClient, tmp_path: Path) -> None:
+    """Lexicon writes must land under --store-dir, never the real XDG dictionary."""
+    resp = client.post(
+        "/api/lexicon/terms",
+        json={"canonical": "iSee", "category": "product", "aliases": ["IC"]},
+    )
+    assert resp.status_code == 200
+
+    # The configured store fixture is tmp_path/"store"; the lexicon db must live under it.
+    store_db = tmp_path / "store" / "lexicon" / "lexicon.sqlite"
+    assert store_db.is_file()
+    # And the term is readable back from that same isolated store.
+    terms = client.get("/api/lexicon/terms").json()["terms"]
+    assert any(t["canonical"] == "iSee" for t in terms)
+
+
 def test_health_is_open_and_reports_auth_required(token_client: TestClient) -> None:
     resp = token_client.get("/api/health")
     assert resp.status_code == 200  # health is never gated
