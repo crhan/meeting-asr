@@ -92,15 +92,16 @@ from app.project_manager import (
     transcribe_project,
     update_project_metadata,
 )
+from app.core.speaker_review_service import (
+    SpeakerReviewSaveResult,
+    save_speaker_review,
+)
 from app.presentation.tui.project import (
     load_project_picker_session,
     render_project_picker_summary,
     run_project_picker_tui,
 )
-from app.sentence_reassignment import (
-    SentenceReassignmentApplyResult,
-    apply_project_sentence_reassignments,
-)
+from app.sentence_reassignment import SentenceReassignmentApplyResult
 from app.speaker_labeling import (
     SentenceReassignmentSpec,
     build_speaker_summaries,
@@ -1987,22 +1988,13 @@ def _handle_speaker_review_decision(
         if store_dir is not None
         else (correction_options.store_dir if correction_options else None)
     )
-    reassignment_result = _persist_sentence_reassignments(
+    result = _save_speaker_review_decision(
         project_dir, decision, store_dir=effective_store_dir
     )
-    mapping_path, transcript_path, srt_path = run_with_cli_errors(
-        lambda: apply_project_speakers(
-            project_dir,
-            decision.mapping,
-            person_mapping=decision.person_mapping,
-            person_public_mapping=decision.person_public_mapping,
-            ignored_speaker_ids=decision.ignored_speaker_ids,
-        )
-    )
-    typer.echo(f"Mapping written to: {mapping_path}")
-    typer.echo(f"Named transcript written to: {transcript_path}")
-    typer.echo(f"Named subtitle written to: {srt_path}")
-    _echo_reassignment_result(reassignment_result)
+    typer.echo(f"Mapping written to: {result.mapping_path}")
+    typer.echo(f"Named transcript written to: {result.transcript_path}")
+    typer.echo(f"Named subtitle written to: {result.srt_path}")
+    _echo_reassignment_result(result.reassignment)
     if decision.action == "correct-inline":
         _run_review_inline_correction(project_dir, decision, correction_options)
         return
@@ -2045,15 +2037,8 @@ def _save_review_from_tui(
     correction_options: ProjectReviewCorrectionOptions,
 ) -> SpeakerReviewSaveOutcome:
     """Persist project review state from inside the TUI."""
-    reassignment_result = _persist_sentence_reassignments(
+    result = _save_speaker_review_decision(
         project_dir, decision, store_dir=correction_options.store_dir
-    )
-    mapping_path, transcript_path, srt_path = apply_project_speakers(
-        project_dir,
-        decision.mapping,
-        person_mapping=decision.person_mapping,
-        person_public_mapping=decision.person_public_mapping,
-        ignored_speaker_ids=decision.ignored_speaker_ids,
     )
     correction_summary = None
     if decision.action == "correct-inline":
@@ -2067,11 +2052,11 @@ def _save_review_from_tui(
                 correction_options,
             ).correction_summary
     return SpeakerReviewSaveOutcome(
-        mapping_path,
-        transcript_path,
-        srt_path,
+        result.mapping_path,
+        result.transcript_path,
+        result.srt_path,
         correction_summary,
-        reassignment_result=reassignment_result,
+        reassignment_result=result.reassignment,
     )
 
 
@@ -2121,14 +2106,20 @@ def _accept_review_correction_from_tui(
     return SpeakerReviewSaveOutcome(None, None, None, summary)
 
 
-def _persist_sentence_reassignments(
+def _save_speaker_review_decision(
     project_dir: Path,
     decision: SpeakerReviewDecision,
     *,
     store_dir: Path | None = None,
     rematch: bool = True,
-) -> SentenceReassignmentApplyResult | None:
-    """Apply pending reassignments and refresh every dependent artifact.
+) -> SpeakerReviewSaveResult:
+    """Persist one TUI review decision through the shared save service.
+
+    Adapts the TUI ``SpeakerReviewDecision`` into the presentation-neutral
+    ``save_speaker_review`` primitives so the CLI and the web UI share the exact same
+    save sequence (sentence reassignment -> speaker-map merge -> named outputs), including
+    the voiceprint-sample invalidation and rematch side effects. Wrapped in
+    ``run_with_cli_errors`` so domain failures surface as localized CLI panels.
 
     Args:
         project_dir: Project root directory.
@@ -2137,19 +2128,8 @@ def _persist_sentence_reassignments(
         rematch: Whether to rerun voiceprint matching after invalidation.
 
     Returns:
-        Apply result describing rewritten sentence files, dropped voiceprint
-        samples, and the new match summary; ``None`` when there were no
-        reassignments to apply.
-
-    Notes:
-        Reassignments rewrite ``sentences.json`` (and ``sentences_corrected.json``
-        when present), regenerate ``exports/transcript_speakers.txt``, drop
-        voiceprint samples whose audio now belongs to another speaker, and
-        rerun ``speaker_matches.json``. The named transcript and SRT remain
-        the responsibility of the caller's ``apply_project_speakers`` step.
+        The shared save result (written paths + reassignment apply result).
     """
-    if not decision.sentence_reassignments:
-        return None
     specs = [
         SentenceReassignmentSpec(
             sentence_id=item.sentence_id,
@@ -2161,9 +2141,13 @@ def _persist_sentence_reassignments(
         for item in decision.sentence_reassignments
     ]
     return run_with_cli_errors(
-        lambda: apply_project_sentence_reassignments(
+        lambda: save_speaker_review(
             project_dir,
-            specs,
+            mapping=decision.mapping,
+            person_mapping=decision.person_mapping,
+            person_public_mapping=decision.person_public_mapping,
+            ignored_speaker_ids=decision.ignored_speaker_ids,
+            reassignments=specs,
             store_dir=store_dir,
             rematch=rematch,
         )
