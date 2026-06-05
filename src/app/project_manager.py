@@ -1282,10 +1282,15 @@ def parse_mapping_items(
         # ("0=A,1=B"), equivalent to repeating --map. Names cannot contain a
         # comma (enforced by _parse_mapping_item), so splitting here is safe and
         # turns the multi-mapping special case into ordinary single items.
-        for item in raw.split(","):
-            item = item.strip()
-            if not item:
-                continue
+        items = [piece.strip() for piece in raw.split(",") if piece.strip()]
+        if not items:
+            # A wholly-empty --map value (""/whitespace/just commas) is a
+            # mistake, not a no-op; reject it instead of silently swallowing it.
+            raise typer.BadParameter(
+                f"Invalid --map value: {raw!r}. Expected speaker_id=name "
+                "(optionally several as '0=A,1=B')."
+            )
+        for item in items:
             speaker_id, name, public_id = _parse_mapping_item(item)
             if speaker_id not in known_speakers:
                 raise typer.BadParameter(

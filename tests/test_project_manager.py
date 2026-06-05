@@ -3809,6 +3809,13 @@ def test_parse_mapping_items_skips_empty_pieces() -> None:
     assert names == {0: "武一", 2: "欧丁"}
 
 
+def test_parse_mapping_items_rejects_wholly_empty_value() -> None:
+    """A blank --map value (or just commas) is a mistake, not a silent no-op."""
+    for blank in ("", "   ", ",,"):
+        with pytest.raises(typer.BadParameter):
+            project_manager.parse_mapping_items([blank], {0})
+
+
 def test_parse_mapping_items_rejects_equals_in_name() -> None:
     """A name with an extra '=' (e.g. '0=a=b') is rejected, never persisted."""
     with pytest.raises(typer.BadParameter):
