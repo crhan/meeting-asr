@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import traceback
 import uuid
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import Any
 
 from dataclasses import dataclass, field
@@ -87,20 +87,42 @@ class JobManager:
         """Return all known jobs (newest-tracked order is not guaranteed)."""
         return list(self._jobs.values())
 
-    def submit(self, kind: str, fn: JobFn, *, project_id: str | None = None) -> Job:
-        """Schedule ``fn`` to run in the background and return its :class:`Job`."""
+    def submit(
+        self,
+        kind: str,
+        fn: JobFn,
+        *,
+        project_id: str | None = None,
+        store_locks: Sequence[str] = (),
+    ) -> Job:
+        """Schedule ``fn`` to run in the background and return its :class:`Job`.
+
+        ``store_locks`` names shared-store locks (e.g. ``store_lock_key("lexicon")``) the
+        job must hold for its whole duration -- a pipeline run learns into the lexicon and
+        deletes global voiceprint samples during stabilization, so it has to contend on the
+        same store locks the inline lexicon/voiceprint routes take, not just the per-project
+        lock. Acquired together with the project lock in deadlock-free sorted order.
+        """
         job = Job(id=uuid.uuid4().hex, kind=kind, project_id=project_id)
         self._jobs[job.id] = job
         loop = self._loop
         if loop is None:
             raise RuntimeError("JobManager loop not bound; call bind_loop at startup.")
-        loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self._run(job, fn)))
+        keys = tuple(store_locks)
+        loop.call_soon_threadsafe(
+            lambda: asyncio.ensure_future(self._run(job, fn, keys))
+        )
         return job
 
-    async def _run(self, job: Job, fn: JobFn) -> None:
+    async def _run(self, job: Job, fn: JobFn, store_locks: tuple[str, ...]) -> None:
+        keys: list[str] = []
         if job.project_id is not None:
             # Same key the inline routes use, so jobs and inline saves serialise together.
-            async with self._locks.acquire(project_lock_key(job.project_id)):
+            keys.append(project_lock_key(job.project_id))
+        keys.extend(store_locks)
+        if keys:
+            # acquire() sorts keys, so project + store locks never deadlock across writers.
+            async with self._locks.acquire(*keys):
                 await self._execute(job, fn)
         else:
             await self._execute(job, fn)

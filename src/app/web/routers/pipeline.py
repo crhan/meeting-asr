@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends
 
 from app.commands.project import _run_project_workflow  # reuse the run orchestrator
 from app.core.project_models import ProjectTranscribeOptions
+from app.core.voiceprint_review_service import REGISTRY, CaptureConflictError
 from app.lexicon_store import get_lexicon_db_path
 from app.project_manager import (
     create_or_reuse_project,
@@ -38,7 +39,7 @@ from app.web.deps import (
     resolve_web_project_ref,
 )
 from app.web.jobs import JobManager
-from app.web.locks import LockRegistry, project_lock_key
+from app.web.locks import LockRegistry, project_lock_key, store_lock_key
 from app.web.schemas import (
     JobRef,
     MergeApplyIn,
@@ -85,6 +86,17 @@ async def run_pipeline(
     lexicon_db = get_lexicon_db_path(settings.store_dir)
     loop = asyncio.get_running_loop()
 
+    # A run mutates the global voiceprint store (speaker stabilization deletes overlapping
+    # samples), so a pending capture transaction would be data-corrupting: its rollback
+    # snapshot predates these deletions and would silently undo them. Refuse before any
+    # heavy work; REGISTRY.run_store_write below re-checks under the store-write lock so the
+    # check->run window cannot race.
+    if REGISTRY.has_pending():
+        raise CaptureConflictError(
+            "A voiceprint capture is awaiting accept/rollback; resolve it before "
+            "running the pipeline."
+        )
+
     # Resolve the project under a lock keyed by its content-addressed identity, so two
     # concurrent first-time runs of the same media can't both create the same directory.
     # create_or_reuse then yields the project's ACTUAL directory -- which may be a
@@ -117,26 +129,33 @@ async def run_pipeline(
     project_dir = created.project_dir
 
     def work(reporter) -> dict[str, object]:
-        summary = _run_project_workflow(
-            input_path,
-            extra_inputs=extra_inputs,
-            title=payload.title,
-            projects_dir=settings.projects_dir,
-            project_dir=project_dir,
-            meeting_time=payload.meeting_time,
-            variant=payload.variant,
-            options=options,
-            store_dir=settings.store_dir,
-            lexicon_db=lexicon_db,
-            voiceprint_model=None,
-            match_threshold=payload.match_threshold,
-            summarize=payload.summarize,
-            summary_model=None,
-            polish=payload.polish,
-            local_correction=payload.local_correction,
-            correction_model=None,
-            polish_concurrency=None,
-            progress=reporter,
+        # The workflow learns auto-accepted corrections into the shared lexicon and deletes
+        # global voiceprint samples during stabilization. Run it inside the same store-write
+        # critical section voiceprint CRUD/capture use, so a concurrent capture rollback
+        # cannot drop its deletions; the store_locks below add the cross-request mutual
+        # exclusion the lexicon/voiceprint routes also rely on.
+        summary = REGISTRY.run_store_write(
+            lambda: _run_project_workflow(
+                input_path,
+                extra_inputs=extra_inputs,
+                title=payload.title,
+                projects_dir=settings.projects_dir,
+                project_dir=project_dir,
+                meeting_time=payload.meeting_time,
+                variant=payload.variant,
+                options=options,
+                store_dir=settings.store_dir,
+                lexicon_db=lexicon_db,
+                voiceprint_model=None,
+                match_threshold=payload.match_threshold,
+                summarize=payload.summarize,
+                summary_model=None,
+                polish=payload.polish,
+                local_correction=payload.local_correction,
+                correction_model=None,
+                polish_concurrency=None,
+                progress=reporter,
+            )
         )
         return {
             "project_id": summary.project.manifest.project_id,
@@ -148,7 +167,12 @@ async def run_pipeline(
             "polished": summary.correction_summary is not None,
         }
 
-    job = jobs.submit("pipeline-run", work, project_id=str(project_dir))
+    job = jobs.submit(
+        "pipeline-run",
+        work,
+        project_id=str(project_dir),
+        store_locks=(store_lock_key("lexicon"), store_lock_key("voiceprints")),
+    )
     return JobRef(job_id=job.id, kind=job.kind, status=job.status)
 
 

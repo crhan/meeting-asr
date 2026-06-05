@@ -277,6 +277,83 @@ def test_pipeline_run_serializes_by_project_and_uses_store_lexicon(
     assert captured["lexicon_db"] == get_lexicon_db_path(tmp_path / "store")
 
 
+def _stub_pipeline_run(
+    pipeline, monkeypatch: pytest.MonkeyPatch, project_dir: Path
+) -> None:
+    """Stub the heavy run internals so /api/pipeline/run completes instantly."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(pipeline, "resolve_run_project_dir", lambda *a, **k: project_dir)
+    monkeypatch.setattr(
+        pipeline,
+        "create_or_reuse_project",
+        lambda *a, **k: SimpleNamespace(
+            project_dir=project_dir, manifest=object(), created=True
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_run_project_workflow",
+        lambda *a, **k: SimpleNamespace(
+            project=SimpleNamespace(
+                manifest=SimpleNamespace(project_id="p-abc"), project_dir=project_dir
+            ),
+            transcription=SimpleNamespace(detected_speaker_count=1, sentence_count=1),
+            applied_mapping={},
+            meeting_summary=None,
+            correction_summary=None,
+        ),
+    )
+
+
+def test_pipeline_run_holds_lexicon_and_voiceprint_store_locks(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A run learns into the lexicon (auto-accepted polish) and deletes global voiceprint
+    samples (stabilization), so the job must hold BOTH store locks, not just the project
+    lock -- otherwise it races inline lexicon/voiceprint writes."""
+    import app.web.routers.pipeline as pipeline
+
+    media = tmp_path / "clip.wav"
+    media.write_bytes(b"fake-media")
+    _stub_pipeline_run(pipeline, monkeypatch, tmp_path / "projects" / "p-abc")
+
+    locks = client.app.state.locks  # type: ignore[attr-defined]
+    seen: list[str] = []
+    original_acquire = locks.acquire
+    monkeypatch.setattr(
+        locks,
+        "acquire",
+        lambda *keys: (seen.extend(keys), original_acquire(*keys))[1],
+    )
+
+    resp = client.post("/api/pipeline/run", json={"input_path": str(media)})
+    assert resp.status_code == 200
+    snapshot = _drain_job(client, resp.json()["job_id"])
+    assert snapshot["status"] == "done"
+    assert "store:lexicon" in seen
+    assert "store:voiceprints" in seen
+
+
+def test_pipeline_run_refused_when_capture_pending(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A pending capture transaction must block a run before any heavy work: its rollback
+    snapshot predates the run's voiceprint deletions and would silently undo them."""
+    import app.web.routers.pipeline as pipeline
+
+    media = tmp_path / "clip.wav"
+    media.write_bytes(b"fake-media")
+    _stub_pipeline_run(pipeline, monkeypatch, tmp_path / "projects" / "p-abc")
+    monkeypatch.setattr(pipeline.REGISTRY, "has_pending", lambda: True)
+
+    resp = client.post("/api/pipeline/run", json={"input_path": str(media)})
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["error"] == "conflict"
+    assert "capture" in body["detail"].lower()
+
+
 def test_authenticated_url_brackets_ipv6_hosts() -> None:
     """IPv6 literal hosts must be bracketed in the printed/opened handoff URL."""
     from app.web.server import authenticated_url, base_url
