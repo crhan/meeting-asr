@@ -8,6 +8,7 @@ import {
   captureRun,
   getJob,
   type CaptureResult,
+  type ScoreChange,
 } from "../api/client";
 import { tr } from "../lib/i18n";
 import { useClipAudio } from "../lib/useClipAudio";
@@ -194,6 +195,34 @@ export function CapturePage() {
   );
 }
 
+function fmtScore(s: number | null): string {
+  return s == null ? "—" : s.toFixed(3);
+}
+
+function changeClass(c: ScoreChange): string {
+  if (c.is_critical) return "low";
+  if (c.is_warning) return "mid";
+  if (c.status === "improved") return "ok";
+  return "";
+}
+
+function ChangeRow({ c }: { c: ScoreChange }) {
+  const arrow =
+    c.delta == null ? "" : c.delta > 0 ? `▲${c.delta.toFixed(3)}` : `▼${Math.abs(c.delta).toFixed(3)}`;
+  return (
+    <div className="change-row">
+      <span className="change-label">{c.label}</span>
+      <span className="change-flow mono">
+        {c.before_name ?? "—"} {fmtScore(c.before_score)} → {c.after_name ?? "—"}{" "}
+        {fmtScore(c.after_score)}
+      </span>
+      <span className={`score-badge ${changeClass(c)}`}>
+        {c.status} {arrow}
+      </span>
+    </div>
+  );
+}
+
 function CaptureResultModal(props: {
   result: CaptureResult;
   onAccept: () => void;
@@ -201,6 +230,7 @@ function CaptureResultModal(props: {
 }) {
   const { result, onAccept, onRollback } = props;
   const risky = result.current_critical + result.historical_critical_count;
+  const notableCurrent = result.current_changes.filter((c) => c.status !== "unchanged");
   return (
     <Modal
       title={tr("Capture result", "采集结果")}
@@ -224,25 +254,48 @@ function CaptureResultModal(props: {
             <span className="subtle"> ({result.skipped_count} {tr("skipped", "跳过")})</span>
           )}
         </div>
-        <div style={{ marginTop: 8 }}>
-          {tr("This project", "本项目")}:{" "}
-          <span className="score-badge ok">↑{result.current_improved}</span>{" "}
-          <span className="score-badge mid">↓{result.current_declined}</span>{" "}
-          <span className="subtle">⟳{result.current_changed_best}</span>
-          {result.current_critical > 0 && (
-            <span className="score-badge low"> {result.current_critical} {tr("critical", "严重")}</span>
+
+        <div className="result-section">
+          <div className="result-section-head">
+            {tr("This project", "本项目")} ·{" "}
+            <span className="score-badge ok">↑{result.current_improved}</span>{" "}
+            <span className="score-badge mid">↓{result.current_declined}</span>{" "}
+            <span className="subtle">⟳{result.current_changed_best}</span>
+          </div>
+          {notableCurrent.length === 0 ? (
+            <div className="subtle">{tr("No score changes.", "分数无变化。")}</div>
+          ) : (
+            notableCurrent.map((c) => <ChangeRow key={c.speaker_id} c={c} />)
           )}
         </div>
-        <div style={{ marginTop: 8 }}>
-          {tr("Historical regression", "历史回归")}:{" "}
-          {result.historical_project_count} {tr("projects", "项目")}
-          {result.historical_critical_count > 0 && (
-            <span className="score-badge low"> {result.historical_critical_count} {tr("critical", "严重")}</span>
-          )}
-          {result.historical_warning_count > 0 && (
-            <span className="score-badge mid"> {result.historical_warning_count} {tr("warning", "警告")}</span>
+
+        <div className="result-section">
+          <div className="result-section-head">
+            {tr("Historical regression", "历史回归")} · {result.historical_project_count}{" "}
+            {tr("projects checked", "项目检查")}
+            {result.historical_critical_count > 0 && (
+              <span className="score-badge low"> {result.historical_critical_count} {tr("critical", "严重")}</span>
+            )}
+            {result.historical_warning_count > 0 && (
+              <span className="score-badge mid"> {result.historical_warning_count} {tr("warning", "警告")}</span>
+            )}
+          </div>
+          {result.historical_projects.length === 0 ? (
+            <div className="subtle">{tr("No historical regressions.", "无历史回归。")}</div>
+          ) : (
+            result.historical_projects.map((p) => (
+              <div key={p.project_id} className="hist-project">
+                <div className="hist-project-head mono subtle">
+                  {p.title || p.project_id}
+                </div>
+                {p.risky_changes.map((c) => (
+                  <ChangeRow key={`${p.project_id}:${c.speaker_id}`} c={c} />
+                ))}
+              </div>
+            ))
           )}
         </div>
+
         {risky > 0 && (
           <div className="subtle" style={{ marginTop: 10, color: "var(--yellow)" }}>
             {tr(

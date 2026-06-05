@@ -40,7 +40,9 @@ from app.web.schemas import (
     CaptureRunIn,
     CaptureSpeakerOut,
     CreatePersonIn,
+    HistoricalProjectOut,
     JobRef,
+    ScoreChangeOut,
     MergePeopleIn,
     QualityPersonOut,
     QualityReportOut,
@@ -288,6 +290,37 @@ async def merge_people(
 # ---- capture workflow (plan -> run job -> accept/rollback) ------------------
 
 
+def _change_out(change) -> ScoreChangeOut:
+    return ScoreChangeOut(
+        speaker_id=change.speaker_id,
+        label=change.label,
+        before_name=change.before_name,
+        before_score=change.before_score,
+        after_name=change.after_name,
+        after_score=change.after_score,
+        delta=change.delta,
+        status=change.status,
+        is_critical=change.is_critical,
+        is_warning=change.is_warning,
+        threshold=change.threshold,
+    )
+
+
+def _historical_out(project) -> HistoricalProjectOut:
+    return HistoricalProjectOut(
+        project_id=project.project_id,
+        title=project.title,
+        improved=project.improved_count,
+        declined=project.declined_count,
+        changed_best=project.changed_best_count,
+        warning_count=project.warning_count,
+        critical_count=project.critical_count,
+        risky_changes=[
+            _change_out(c) for c in project.changes if c.is_warning or c.is_critical
+        ],
+    )
+
+
 def _plan_out(project_ref: str, summary) -> CapturePlanOut:
     speakers = [
         CaptureSpeakerOut(
@@ -370,6 +403,8 @@ def capture_run(
             captured_count=summary.capture.sample_count,
             embedded_count=summary.embedding.embedded_count,
             skipped_count=summary.embedding.skipped_count,
+            current_project_id=current.project_id,
+            current_changes=[_change_out(c) for c in current.changes],
             current_improved=current.improved_count,
             current_declined=current.declined_count,
             current_changed_best=current.changed_best_count,
@@ -378,6 +413,11 @@ def capture_run(
             historical_project_count=evaluation.historical_project_count,
             historical_warning_count=evaluation.historical_warning_count,
             historical_critical_count=evaluation.historical_critical_count,
+            historical_projects=[
+                _historical_out(project)
+                for project in evaluation.historical
+                if project.risk_count > 0
+            ],
         ).model_dump()
 
     job = jobs.submit("voiceprint-capture", work, project_id=str(project_dir))

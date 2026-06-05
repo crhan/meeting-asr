@@ -338,11 +338,38 @@ export interface CapturePlan {
   speakers: CaptureSpeaker[];
 }
 
+export interface ScoreChange {
+  speaker_id: number;
+  label: string;
+  before_name: string | null;
+  before_score: number | null;
+  after_name: string | null;
+  after_score: number | null;
+  delta: number | null;
+  status: string;
+  is_critical: boolean;
+  is_warning: boolean;
+  threshold: number | null;
+}
+
+export interface HistoricalProject {
+  project_id: string;
+  title: string;
+  improved: number;
+  declined: number;
+  changed_best: number;
+  warning_count: number;
+  critical_count: number;
+  risky_changes: ScoreChange[];
+}
+
 export interface CaptureResult {
   transaction_id: string;
   captured_count: number;
   embedded_count: number;
   skipped_count: number;
+  current_project_id: string;
+  current_changes: ScoreChange[];
   current_improved: number;
   current_declined: number;
   current_changed_best: number;
@@ -351,6 +378,7 @@ export interface CaptureResult {
   historical_project_count: number;
   historical_warning_count: number;
   historical_critical_count: number;
+  historical_projects: HistoricalProject[];
 }
 
 export interface JobStatus {

@@ -355,13 +355,48 @@ class CaptureRunIn(BaseModel):
     padding_seconds: float = 0.5
 
 
+class ScoreChangeOut(BaseModel):
+    """One speaker's before/after voiceprint match score change."""
+
+    speaker_id: int
+    label: str
+    before_name: str | None
+    before_score: float | None
+    after_name: str | None
+    after_score: float | None
+    delta: float | None
+    status: str  # improved | declined | changed-best | lost-candidate | unchanged | ...
+    is_critical: bool
+    is_warning: bool
+    threshold: float | None
+
+
+class HistoricalProjectOut(BaseModel):
+    """One historical project's regression risk after re-embedding."""
+
+    project_id: str
+    title: str
+    improved: int
+    declined: int
+    changed_best: int
+    warning_count: int
+    critical_count: int
+    risky_changes: list[ScoreChangeOut]
+
+
 class CaptureResultOut(BaseModel):
-    """Result of a capture+embed+evaluate run (pending accept/rollback)."""
+    """Result of a capture+embed+evaluate run (pending accept/rollback).
+
+    Carries the full per-speaker and per-project detail the TUI result screen shows, so
+    the accept/rollback decision is informed -- not just aggregate counts.
+    """
 
     transaction_id: str
     captured_count: int
     embedded_count: int
     skipped_count: int
+    current_project_id: str
+    current_changes: list[ScoreChangeOut]
     current_improved: int
     current_declined: int
     current_changed_best: int
@@ -370,3 +405,4 @@ class CaptureResultOut(BaseModel):
     historical_project_count: int
     historical_warning_count: int
     historical_critical_count: int
+    historical_projects: list[HistoricalProjectOut]

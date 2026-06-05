@@ -655,6 +655,47 @@ tr.clickable {
 .capture-result > div {
   line-height: 1.7;
 }
+.result-section {
+  margin-top: 14px;
+}
+.result-section-head {
+  font-weight: 600;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.change-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.change-row:hover {
+  background: var(--surface-2);
+}
+.change-label {
+  flex: none;
+  width: 78px;
+  color: var(--text-muted);
+}
+.change-flow {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+}
+.hist-project {
+  margin-top: 8px;
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+}
+.hist-project-head {
+  font-size: 11.5px;
+  margin-bottom: 2px;
+}
 
 /* ---- toast ------------------------------------------------------------- */
 .toast {
