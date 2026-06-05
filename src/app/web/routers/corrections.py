@@ -102,9 +102,12 @@ def get_proposal(
     try:
         proposal = load_correction_proposal(paths, None)
     except RuntimeError as exc:
-        # No pending proposal yet (no proposal_*.json) is a not-found condition: the
-        # correction page renders its "no pending proposal" empty state on 404, whereas a
-        # bare RuntimeError would surface as a 500 internal-error page.
+        # Only "no proposal file" is a not-found condition -> 404, where the correction page
+        # renders its "no pending proposal" empty state. load_correction_proposal also raises
+        # RuntimeError for a MALFORMED proposal (non-object JSON); that is corruption, not
+        # absence, so let it surface as a 500 instead of hiding a repairable file behind 404.
+        if "No correction proposal found" not in str(exc):
+            raise
         raise FileNotFoundError(str(exc)) from exc
     changes = [
         CorrectionChangeOut(

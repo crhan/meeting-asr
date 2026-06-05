@@ -972,3 +972,54 @@ def test_get_clip_extracts_via_atomic_temp_then_rename(
     clips_dir = project_dir / "tmp" / "web_clips"
     assert (clips_dir / "0_1000.wav").is_file()  # appeared only via the atomic rename
     assert list(clips_dir.glob("*.tmp")) == []  # temp cleaned up
+
+
+def test_capture_pending_endpoint_reports_and_clears(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The recovery banner's endpoint surfaces a pending capture (id + project) so a txn whose
+    originating page is gone can still be accepted/rolled back, and returns null when none."""
+    from types import SimpleNamespace
+
+    import app.web.routers.voiceprints as vp
+
+    monkeypatch.setattr(
+        vp, "load_manifest", lambda _d: SimpleNamespace(project_id="p-xyz")
+    )
+    monkeypatch.setattr(
+        vp.REGISTRY, "pending_transaction", lambda: ("txn-9", tmp_path / "proj")
+    )
+    resp = client.get("/api/voiceprints/capture/pending")
+    assert resp.status_code == 200
+    assert resp.json() == {"transaction_id": "txn-9", "project_id": "p-xyz"}
+
+    monkeypatch.setattr(vp.REGISTRY, "pending_transaction", lambda: None)
+    resp = client.get("/api/voiceprints/capture/pending")
+    assert resp.status_code == 200
+    assert resp.json() is None
+
+
+def test_get_proposal_malformed_is_not_hidden_as_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A malformed proposal raises RuntimeError too, but it is corruption, not absence: it
+    must NOT be translated to the 404 'no pending proposal' empty state."""
+    from types import SimpleNamespace
+
+    import app.web.routers.corrections as corrections
+
+    monkeypatch.setattr(corrections, "resolve_web_project_ref", lambda ref, _s: tmp_path)
+    monkeypatch.setattr(
+        corrections, "project_paths", lambda root: SimpleNamespace(root=root)
+    )
+
+    def _malformed(paths, proposal_path):
+        raise RuntimeError(f"Correction proposal must be a JSON object: {paths.root}")
+
+    monkeypatch.setattr(corrections, "load_correction_proposal", _malformed)
+
+    # The malformed RuntimeError must NOT be swallowed into the 404 empty state. It is not
+    # caught by a specific handler, so it surfaces as a server error (TestClient re-raises it)
+    # -- the point being it is never silently translated to 404 like a missing proposal.
+    with pytest.raises(RuntimeError, match="must be a JSON object"):
+        client.get("/api/corrections/p-x/proposal")

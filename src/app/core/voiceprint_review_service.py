@@ -82,9 +82,30 @@ class CaptureTransactionRegistry:
         self._store_write_lock = threading.Lock()
 
     def has_pending(self) -> bool:
-        """Return whether any capture transaction is awaiting accept/rollback."""
+        """Return whether any capture transaction is awaiting accept/rollback.
+
+        Reaps abandoned transactions first (see ``sweep_stale``): nothing else calls the
+        sweep, so without this a capture whose browser cleanup never arrived (tab crash,
+        dropped sendBeacon) would block every later store write with 409 until the server
+        restarts. Sweeping on the authoritative pending gate bounds that to the sweep age.
+        """
+        self.sweep_stale()
         with self._registry_lock:
             return bool(self._txns)
+
+    def pending_transaction(self) -> tuple[str, Path] | None:
+        """Return the (id, project_dir) of the pending capture, or None.
+
+        Only one capture may be pending at a time, so this is unambiguous. The web exposes it
+        so a recovery banner can offer accept/rollback for a transaction whose originating
+        page is gone (e.g. the user left while the capture job was still running, so no page
+        ever learned the transaction id) -- otherwise it would wedge the store until swept.
+        """
+        self.sweep_stale()
+        with self._registry_lock:
+            for txn_id, (_created, _txn, project) in self._txns.items():
+                return txn_id, project
+        return None
 
     def project_dir_for(self, txn_id: str) -> Path | None:
         """Return the project dir a pending transaction belongs to, or None.
@@ -97,7 +118,14 @@ class CaptureTransactionRegistry:
         return entry[2] if entry else None
 
     def _raise_if_pending_locked(self) -> None:
-        """Raise if a capture is pending. Caller must hold ``_store_write_lock``."""
+        """Raise if a capture is pending. Caller must hold ``_store_write_lock``.
+
+        Reaps abandoned transactions first so a store write is not blocked indefinitely by a
+        capture whose browser cleanup was lost. ``sweep_stale`` takes only ``_registry_lock``
+        (never ``_store_write_lock``), so calling it while the caller holds the store-write
+        lock is safe.
+        """
+        self.sweep_stale()
         with self._registry_lock:
             if self._txns:
                 raise CaptureConflictError(

@@ -19,6 +19,7 @@ from app.core.voiceprint_review_service import (
     CaptureConflictError,
     plan_capture,
 )
+from app.project_manager import load_manifest
 from app.voiceprint_models import VoiceprintSampleRow, VoiceprintSpeakerRow
 from app.voiceprint_people import (
     create_voiceprint_person,
@@ -53,6 +54,7 @@ from app.web.schemas import (
     CreatePersonIn,
     HistoricalProjectOut,
     JobRef,
+    PendingCaptureOut,
     ScoreChangeOut,
     MergePeopleIn,
     QualityPersonOut,
@@ -489,3 +491,24 @@ async def capture_rollback(
     async with locks.acquire(*_capture_txn_lock_keys(transaction_id)):
         await loop.run_in_executor(None, lambda: REGISTRY.rollback(transaction_id))
     return {"status": "rolled_back"}
+
+
+@router.get("/capture/pending", response_model=PendingCaptureOut | None)
+def capture_pending() -> PendingCaptureOut | None:
+    """Return the capture transaction awaiting accept/rollback, or null.
+
+    Powers the app-wide recovery banner: a capture leaves a server-side transaction pending,
+    and if its originating page is gone (the user left while the capture job was still
+    running, so no page ever learned the id) the banner is the only way to accept/roll it
+    back before it blocks store writes. Reads through ``pending_transaction`` also reap any
+    abandoned transaction first.
+    """
+    pending = REGISTRY.pending_transaction()
+    if pending is None:
+        return None
+    txn_id, project_dir = pending
+    try:
+        project_id: str | None = load_manifest(project_dir).project_id
+    except Exception:  # noqa: BLE001 -- a missing/corrupt project still has a resolvable txn
+        project_id = None
+    return PendingCaptureOut(transaction_id=txn_id, project_id=project_id)

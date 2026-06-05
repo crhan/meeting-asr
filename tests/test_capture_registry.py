@@ -108,6 +108,47 @@ def test_rollback_restores_under_store_write_lock(
     assert not reg.has_pending()
 
 
+def test_has_pending_reaps_stale_transactions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """has_pending must reap abandoned transactions: nothing else calls sweep_stale, so a
+    capture whose browser cleanup never arrived would otherwise block store writes until the
+    server restarts."""
+    fake = _FakeTxn()
+    monkeypatch.setattr(
+        svc, "run_voiceprint_review_workflow", lambda **_: _FakeSummary(fake)
+    )
+    reg = svc.CaptureTransactionRegistry()
+    txn_id, _ = _run(reg)
+    assert reg.has_pending() is True  # fresh -> still blocking
+
+    # Age the transaction past the sweep cutoff; the next pending check must reap it.
+    created, txn, project = reg._txns[txn_id]
+    reg._txns[txn_id] = (created - svc._ORPHAN_MAX_AGE_SECONDS - 1, txn, project)
+    assert reg.has_pending() is False
+    assert fake.accepted is True  # stale sweep commits, never silently drops
+    assert reg._txns == {}
+
+
+def test_pending_transaction_exposes_id_and_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recovery banner needs the pending txn id + its project even when the originating
+    page is gone."""
+    monkeypatch.setattr(
+        svc, "run_voiceprint_review_workflow", lambda **_: _FakeSummary(_FakeTxn())
+    )
+    reg = svc.CaptureTransactionRegistry()
+    assert reg.pending_transaction() is None
+    txn_id, _ = _run(reg)
+    pending = reg.pending_transaction()
+    assert pending is not None
+    assert pending[0] == txn_id
+    assert pending[1] == Path("/does/not/matter").resolve()
+    reg.accept(txn_id)
+    assert reg.pending_transaction() is None
+
+
 def test_capture_conflict_is_not_a_value_error() -> None:
     """It must be RuntimeError so the web 400 ValueError handler doesn't swallow it."""
     assert issubclass(svc.CaptureConflictError, RuntimeError)

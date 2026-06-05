@@ -608,3 +608,14 @@ class CaptureResultOut(BaseModel):
     historical_warning_count: int
     historical_critical_count: int
     historical_projects: list[HistoricalProjectOut]
+
+
+class PendingCaptureOut(BaseModel):
+    """A capture transaction awaiting accept/rollback, for the app-wide recovery banner.
+
+    ``project_id`` may be null if the project the capture belongs to is no longer loadable;
+    the transaction is still resolvable by its id.
+    """
+
+    transaction_id: str
+    project_id: str | None
