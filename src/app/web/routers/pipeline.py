@@ -23,7 +23,7 @@ from app.commands.project import _run_project_workflow  # reuse the run orchestr
 from app.core.project_models import ProjectTranscribeOptions
 from app.core.project_refs import resolve_project_ref
 from app.lexicon_store import get_lexicon_db_path
-from app.project_manager import create_or_reuse_project, summarize_project
+from app.project_manager import resolve_run_project_dir, summarize_project
 from app.transcript_merge import merge_projects, write_merge_outputs
 from app.voiceprint_people import get_voiceprint_person
 from app.voiceprint_store import get_voiceprint_db_path
@@ -73,25 +73,21 @@ async def run_pipeline(
     )
     lexicon_db = get_lexicon_db_path(settings.store_dir)
 
-    # Resolve (create-or-reuse) the project BEFORE submitting so the job can be serialized
-    # by its project directory -- the same lock inline speaker/correction saves take -- and
-    # so a second run of the same media (which content-addresses to the same project) can't
-    # race it. The workflow then reuses this project; the source copy happens once.
+    # Key the job on the project's content-addressed identity (computed read-only, no
+    # creation) so the JobManager's per-project lock is held *before* create_or_reuse runs
+    # inside the job. Two concurrent first-time runs of the same media share this key, so
+    # the create happens once under the lock instead of two threads racing to write the
+    # same project.json/source -- and it's the same key inline speaker/correction saves use.
     loop = asyncio.get_running_loop()
-    created = await loop.run_in_executor(
+    project_key = await loop.run_in_executor(
         None,
-        lambda: create_or_reuse_project(
+        lambda: resolve_run_project_dir(
             input_path,
-            title=payload.title,
-            projects_dir=settings.projects_dir,
-            project_dir=None,
-            meeting_time=payload.meeting_time,
-            hash_source=True,
-            variant=payload.variant,
             extra_inputs=extra_inputs,
+            projects_dir=settings.projects_dir,
+            variant=payload.variant,
         ),
     )
-    project_dir = created.project_dir
 
     def work(reporter) -> dict[str, object]:
         summary = _run_project_workflow(
@@ -99,7 +95,7 @@ async def run_pipeline(
             extra_inputs=extra_inputs,
             title=payload.title,
             projects_dir=settings.projects_dir,
-            project_dir=project_dir,
+            project_dir=None,
             meeting_time=payload.meeting_time,
             variant=payload.variant,
             options=options,
@@ -125,7 +121,7 @@ async def run_pipeline(
             "polished": summary.correction_summary is not None,
         }
 
-    job = jobs.submit("pipeline-run", work, project_id=str(project_dir))
+    job = jobs.submit("pipeline-run", work, project_id=str(project_key))
     return JobRef(job_id=job.id, kind=job.kind, status=job.status)
 
 

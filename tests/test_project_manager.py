@@ -30,6 +30,7 @@ from app.project_manager import (
     _invalidate_downstream_artifacts,
     _parse_project_oss_upload,
     apply_project_speakers,
+    create_or_reuse_project,
     create_project,
     find_project_by_source,
     init_project_git,
@@ -39,6 +40,7 @@ from app.project_manager import (
     project_paths,
     resolve_project_audio_path,
     resolve_project_source_path,
+    resolve_run_project_dir,
     save_manifest,
     summarize_project,
 )
@@ -3828,3 +3830,28 @@ def test_parse_mapping_item_rejects_comma_in_value() -> None:
     """Defense in depth: a comma inside a single name is rejected at the item layer."""
     with pytest.raises(typer.BadParameter):
         project_manager._parse_mapping_item("0=武,一")
+
+
+def test_resolve_run_project_dir_is_pure_and_matches_create(tmp_path: Path) -> None:
+    """The identity resolver must create nothing and match create_or_reuse's project dir."""
+    source = tmp_path / "a.wav"
+    source.write_bytes(b"audio-bytes")
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+
+    resolved = resolve_run_project_dir(source, projects_dir=projects_dir)
+
+    # Pure: it hashes read-only and creates nothing.
+    assert not resolved.exists()
+    assert list(projects_dir.iterdir()) == []
+
+    # And it equals the directory create_or_reuse_project actually uses (no divergence).
+    created = create_or_reuse_project(
+        source,
+        title=None,
+        projects_dir=projects_dir,
+        project_dir=None,
+        meeting_time=None,
+        hash_source=True,
+    )
+    assert created.project_dir == resolved

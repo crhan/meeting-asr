@@ -340,6 +340,28 @@ def create_or_reuse_project(
     return ProjectCreateSummary(project_root, manifest, True)
 
 
+def resolve_run_project_dir(
+    input_path: Path,
+    *,
+    extra_inputs: Sequence[Path] = (),
+    projects_dir: Path | None = None,
+    variant: str | None = None,
+) -> Path:
+    """Compute the content-addressed project dir a default run would use (no side effects).
+
+    This mirrors the new-project identity of :func:`create_or_reuse_project` (single SHA for
+    one input, combined SHA for ordered multi-input) using the same helpers, so it cannot
+    diverge. It hashes the sources read-only and creates nothing -- callers use it to take a
+    per-project lock on a project's *identity* before creating it, so two concurrent
+    first-time runs of the same media cannot both create the same directory and clobber it.
+    """
+    sources = [input_path, *extra_inputs]
+    per_file_shas = [_sha256_file(source.expanduser().resolve()) for source in sources]
+    combined_sha = _combined_identity_sha(per_file_shas)
+    project_id = _build_project_id(combined_sha, _normalize_project_variant(variant))
+    return (_projects_parent_dir(projects_dir) / project_id).resolve()
+
+
 def _combined_identity_sha(per_file_shas: Sequence[str]) -> str:
     """Build a stable content identity for an ordered set of source files.
 
@@ -390,9 +412,7 @@ def _create_or_reuse_multi_source_project(
         same_variant = (manifest.source.variant or None) == (variant or None)
         if same_content and same_variant:
             emit_progress(progress, "Using existing project", total=1, completed=1)
-            return ProjectCreateSummary(
-                root, _load_reused_manifest(root, title), False
-            )
+            return ProjectCreateSummary(root, _load_reused_manifest(root, title), False)
         raise FileExistsError(
             f"Project directory already holds a different project: {root}"
         )
@@ -933,7 +953,9 @@ def prepare_project_audio_multi(
     segments = [dict(segment) for segment in (manifest.audio.get("segments") or [])]
     if not segments:
         raise ValueError("Project has no recorded segments to concatenate.")
-    segment_sources = [_resolve_segment_source(paths.root, segment) for segment in segments]
+    segment_sources = [
+        _resolve_segment_source(paths.root, segment) for segment in segments
+    ]
     audio_path = paths.audio_dir / f"audio.{normalized_format}"
     emit_progress(
         progress, f"Concatenating {len(segments)} segments into 16 kHz mono audio"

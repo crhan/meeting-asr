@@ -182,12 +182,10 @@ def test_pipeline_run_serializes_by_project_and_uses_store_lexicon(
     project_dir = tmp_path / "projects" / "p-abc"
     captured: dict = {}
 
+    # The job must be keyed by the content-addressed identity, resolved read-only before
+    # any creation, so concurrent first-time runs serialize on the per-project lock.
     monkeypatch.setattr(
-        pipeline,
-        "create_or_reuse_project",
-        lambda *a, **k: SimpleNamespace(
-            project_dir=project_dir, manifest=object(), created=True
-        ),
+        pipeline, "resolve_run_project_dir", lambda *a, **k: project_dir
     )
 
     def fake_workflow(input_path, **kwargs):
@@ -209,11 +207,12 @@ def test_pipeline_run_serializes_by_project_and_uses_store_lexicon(
     assert resp.status_code == 200
     snapshot = _drain_job(client, resp.json()["job_id"])
 
-    # Serialized by the resolved project dir (same key inline routes use), not unkeyed.
+    # Serialized by the resolved content-addressed identity (same key inline routes use).
     assert snapshot["project_id"] == str(project_dir)
     assert snapshot["status"] == "done"
-    # The workflow reuses that project and learns corrections into the store lexicon.
-    assert captured["project_dir"] == project_dir
+    # The workflow create-or-reuses inside the locked job (project_dir=None) and learns
+    # corrections into the store-dir lexicon, not the real XDG one.
+    assert captured["project_dir"] is None
     assert captured["lexicon_db"] == get_lexicon_db_path(tmp_path / "store")
 
 
