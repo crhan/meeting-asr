@@ -63,6 +63,12 @@ def install_exception_handlers(app: FastAPI) -> None:
     async def _not_found(_: Request, exc: FileNotFoundError) -> JSONResponse:
         return _problem(404, str(exc), kind="not_found")
 
+    @app.exception_handler(LookupError)
+    async def _lookup_miss(_: Request, exc: LookupError) -> JSONResponse:
+        # Voiceprint person/sample CRUD (rename/delete/merge/status) raises LookupError for
+        # a stale or mistyped ref -- a not-found, not a server error.
+        return _problem(404, str(exc), kind="not_found")
+
     @app.exception_handler(FileExistsError)
     async def _exists(_: Request, exc: FileExistsError) -> JSONResponse:
         # e.g. a merge into a non-empty output dir without force -- a conflict, not a 500.

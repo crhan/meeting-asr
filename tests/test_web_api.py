@@ -765,3 +765,22 @@ def test_authenticated_url_encodes_reserved_token_chars() -> None:
     url = authenticated_url(s)
     assert "a&b#c+d" not in url  # raw reserved chars must not appear unencoded
     assert parse_qs(urlparse(url).query)["token"] == ["a&b#c+d"]
+
+
+def test_voiceprint_lookup_miss_maps_to_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Voiceprint CRUD raises LookupError for a stale/mistyped ref; the web must return 404,
+    not the generic 500 the fallback handler would give."""
+    import app.web.routers.voiceprints as vp
+
+    monkeypatch.setattr(vp, "get_voiceprint_db_path", lambda s: tmp_path / "vp.sqlite")
+
+    def _boom(*_a, **_k):
+        raise LookupError("No voiceprint person found for id: nope")
+
+    monkeypatch.setattr(vp, "rename_voiceprint_person", _boom)
+
+    resp = client.patch("/api/voiceprints/people/nope", json={"name": "X"})
+    assert resp.status_code == 404
+    assert resp.json()["error"] == "not_found"
