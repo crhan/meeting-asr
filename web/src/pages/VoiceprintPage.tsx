@@ -154,7 +154,18 @@ function PersonSamples(props: {
   });
   const delSampleMut = useMutation({
     mutationFn: (index: number) => deleteSample(ref_, index),
-    onSuccess: invalidate,
+    // Deleting the person's last sample also removes the now-empty person, so refetching
+    // ["vp-person", ref_] would 404 and strand this pane on errored data. When it was the
+    // last sample, clear the selection (unmount) like the whole-person delete; otherwise
+    // just refresh in place.
+    onSuccess: () => {
+      if (data && data.samples.length <= 1) {
+        props.onChanged();
+        props.onDeleted();
+      } else {
+        invalidate();
+      }
+    },
   });
 
   if (isLoading || !data) return <div className="placeholder">{tr("Loading…", "加载中…")}</div>;
