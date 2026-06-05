@@ -643,3 +643,52 @@ def test_merge_preview_rejects_out_of_tree_ref(
     )
     assert resp.status_code == 400
     assert resp.json()["error"] == "bad_request"
+
+
+def test_get_proposal_returns_404_when_none_exists(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No pending polish proposal must surface as 404 (the correction page's empty state),
+    not the 500 a bare RuntimeError from _resolve_json would produce."""
+    from types import SimpleNamespace
+
+    import app.web.routers.corrections as corrections
+
+    monkeypatch.setattr(corrections, "resolve_web_project_ref", lambda ref, _s: tmp_path)
+    monkeypatch.setattr(
+        corrections, "project_paths", lambda root: SimpleNamespace(root=root)
+    )
+
+    def _no_proposal(paths, proposal_path):
+        raise RuntimeError(f"No correction proposal found in {paths.root}")
+
+    monkeypatch.setattr(corrections, "load_correction_proposal", _no_proposal)
+
+    resp = client.get("/api/corrections/p-x/proposal")
+    assert resp.status_code == 404
+    assert resp.json()["error"] == "not_found"
+
+
+def test_merge_apply_refuses_nonempty_dir_without_force(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Merge must not silently overwrite a non-empty output dir: force defaults to False
+    (so write_merge_outputs' guard fires) and the conflict surfaces as 409, not 500."""
+    import app.web.routers.pipeline as pipeline
+
+    proj = tmp_path / "projects" / "p-a"
+    proj.mkdir(parents=True)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "existing.txt").write_text("x", encoding="utf-8")  # non-empty
+
+    # Guard fires before the (fake) result is used, so a dummy merge result is fine.
+    monkeypatch.setattr(pipeline, "resolve_web_project_ref", lambda ref, _s: proj)
+    monkeypatch.setattr(pipeline, "merge_projects", lambda *a, **k: object())
+
+    resp = client.post(
+        "/api/pipeline/merge",
+        json={"project_refs": [str(proj)], "out_dir": str(out_dir)},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "conflict"

@@ -98,7 +98,13 @@ def get_proposal(
     """Load the latest pending transcript correction proposal."""
     project_dir = resolve_web_project_ref(project_ref, settings)
     paths = project_paths(project_dir)
-    proposal = load_correction_proposal(paths, None)
+    try:
+        proposal = load_correction_proposal(paths, None)
+    except RuntimeError as exc:
+        # No pending proposal yet (no proposal_*.json) is a not-found condition: the
+        # correction page renders its "no pending proposal" empty state on 404, whereas a
+        # bare RuntimeError would surface as a 500 internal-error page.
+        raise FileNotFoundError(str(exc)) from exc
     changes = [
         CorrectionChangeOut(
             index=index,

@@ -63,6 +63,11 @@ def install_exception_handlers(app: FastAPI) -> None:
     async def _not_found(_: Request, exc: FileNotFoundError) -> JSONResponse:
         return _problem(404, str(exc), kind="not_found")
 
+    @app.exception_handler(FileExistsError)
+    async def _exists(_: Request, exc: FileExistsError) -> JSONResponse:
+        # e.g. a merge into a non-empty output dir without force -- a conflict, not a 500.
+        return _problem(409, str(exc), kind="conflict")
+
     @app.exception_handler(ValueError)
     async def _bad_value(_: Request, exc: ValueError) -> JSONResponse:
         return _problem(400, str(exc), kind="bad_request")

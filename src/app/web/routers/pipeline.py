@@ -268,7 +268,7 @@ async def merge_apply(
             title=payload.title,
             vpp_name_resolver=_name_resolver(settings.store_dir),
         )
-        outputs = write_merge_outputs(result, out_dir, force=True)
+        outputs = write_merge_outputs(result, out_dir, force=payload.force)
         payload_out = _merge_result_payload(result)
         payload_out["out_dir"] = str(outputs.out_dir)
         payload_out["written"] = [

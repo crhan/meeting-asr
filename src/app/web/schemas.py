@@ -130,6 +130,9 @@ class MergeApplyIn(MergePreviewIn):
     """Merge several projects and write the output bundle."""
 
     out_dir: str
+    # Mirror the CLI: refuse to write into a non-empty directory unless force is set, so a
+    # merge never silently overwrites an existing bundle.
+    force: bool = False
 
 
 # ---- Transcript correction -------------------------------------------------
