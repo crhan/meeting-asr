@@ -27,7 +27,7 @@ class _FakeTxn:
 
 
 class _FakeSummary:
-    def __init__(self, txn: _FakeTxn) -> None:
+    def __init__(self, txn: object) -> None:
         self.transaction = txn
 
 
@@ -80,6 +80,32 @@ def test_run_store_write_refused_while_pending(monkeypatch: pytest.MonkeyPatch) 
 
     reg.accept(txn_id)
     assert reg.run_store_write(lambda: "ok-again") == "ok-again"
+
+
+def test_rollback_restores_under_store_write_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The snapshot restore must hold the store-write lock so no write races it."""
+    reg = svc.CaptureTransactionRegistry()
+    observed: dict[str, bool] = {}
+
+    class _LockAssertTxn:
+        def accept(self) -> None:  # pragma: no cover - not exercised here
+            pass
+
+        def rollback(self) -> None:
+            # The same lock every global-store write takes must be held during restore.
+            observed["locked_during_restore"] = reg._store_write_lock.locked()
+
+    monkeypatch.setattr(
+        svc, "run_voiceprint_review_workflow", lambda **_: _FakeSummary(_LockAssertTxn())
+    )
+
+    txn_id, _ = _run(reg)
+    reg.rollback(txn_id)
+
+    assert observed["locked_during_restore"] is True
+    assert not reg.has_pending()
 
 
 def test_capture_conflict_is_not_a_value_error() -> None:

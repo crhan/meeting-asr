@@ -136,12 +136,24 @@ class CaptureTransactionRegistry:
         return txn_id, summary
 
     def accept(self, txn_id: str) -> None:
-        """Accept a pending transaction (drop the rollback snapshot)."""
+        """Accept a pending transaction (drop the rollback snapshot).
+
+        Accept only removes the backup directory; it never touches the live store, so it
+        needs no store-write lock. Popping first makes the capture no longer pending.
+        """
         self._pop(txn_id).accept()
 
     def rollback(self, txn_id: str) -> None:
-        """Roll back a pending transaction (restore the snapshot)."""
-        self._pop(txn_id).rollback()
+        """Roll back a pending transaction (restore the snapshot).
+
+        The whole pop+restore runs under ``_store_write_lock`` -- the same critical section
+        every global-store write holds. Otherwise a CRUD write or speaker reassignment could
+        slip in after the transaction is popped (so ``run_store_write`` no longer sees it as
+        pending) and race the snapshot restore, losing or corrupting that write -- exactly
+        the data-loss class the guard exists to prevent.
+        """
+        with self._store_write_lock:
+            self._pop(txn_id).rollback()
 
     def _pop(self, txn_id: str) -> VoiceprintReviewTransaction:
         with self._registry_lock:
