@@ -18,6 +18,8 @@ from app.lexicon_store import (
     AsrVocabularyState,
     LexiconContext,
     get_asr_vocabulary_state,
+    get_lexicon_term,
+    import_lexicon_payload,
     list_asr_hotwords,
     list_lexicon_correction_rules,
     list_lexicon_disambiguations,
@@ -162,6 +164,212 @@ def test_lexicon_disambiguate_command(tmp_path: Path) -> None:
     assert payload["cleared"] is False
     assert payload["disambiguation"]["alias"] == "IC"
     assert "IC" not in _wrong_texts(db_path)
+
+
+def _add_term_with_disambiguated_alias(db_path: Path, guidance: str) -> None:
+    """Create a term with one disambiguated alias (AC) and one blanket alias.
+
+    Uses neutral placeholder fixtures only; concrete business terms must never be
+    hardcoded into this public repo (root AGENTS.md), not even in tests.
+    """
+    upsert_lexicon_term(
+        canonical="Acme",
+        category="system",
+        description="",
+        aliases=("AC", "阿克米"),
+        status="active",
+        db_path=db_path,
+    )
+    set_alias_disambiguation(
+        term="Acme", alias="AC", guidance=guidance, db_path=db_path
+    )
+
+
+def test_lexicon_show_marks_disambiguated_alias(tmp_path: Path) -> None:
+    """Show text must flag disambiguated aliases and print the full guidance."""
+    db_path = tmp_path / "lexicon.sqlite"
+    guidance = "指产品平台时改成 Acme，指其他义项时保持原样"
+    _add_term_with_disambiguated_alias(db_path, guidance)
+
+    result = runner.invoke(app, ["lexicon", "show", "Acme", "--lexicon-db", str(db_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "AC (asr_error) [ambiguous]" in result.output
+    assert f"Guidance: {guidance}" in result.output
+    # The blanket alias stays unmarked.
+    assert "阿克米 (asr_error)" in result.output
+    assert "阿克米 (asr_error) [ambiguous]" not in result.output
+
+
+def test_lexicon_show_renders_multiline_guidance(tmp_path: Path) -> None:
+    """Multi-line guidance must keep continuation lines aligned under Guidance:."""
+    db_path = tmp_path / "lexicon.sqlite"
+    guidance = "产品甲=平台一\n产品乙=平台二\n拿不准保留原词"
+    _add_term_with_disambiguated_alias(db_path, guidance)
+
+    result = runner.invoke(app, ["lexicon", "show", "Acme", "--lexicon-db", str(db_path)])
+
+    indent = " " * len("    Guidance: ")
+    assert result.exit_code == 0, result.output
+    assert "    Guidance: 产品甲=平台一" in result.output
+    assert f"{indent}产品乙=平台二" in result.output
+    assert f"{indent}拿不准保留原词" in result.output
+
+
+def test_lexicon_show_json_includes_disambiguation(tmp_path: Path) -> None:
+    """Show JSON must expose disambiguation so agents can review without SQL."""
+    db_path = tmp_path / "lexicon.sqlite"
+    guidance = "指产品平台时改成 Acme，指其他义项时保持原样"
+    _add_term_with_disambiguated_alias(db_path, guidance)
+
+    result = runner.invoke(
+        app, ["lexicon", "show", "Acme", "--lexicon-db", str(db_path), "--json"]
+    )
+    payload = json.loads(result.output)
+    by_alias = {alias["alias"]: alias for alias in payload["aliases"]}
+
+    assert result.exit_code == 0
+    assert by_alias["AC"]["disambiguation"] == guidance
+    assert by_alias["阿克米"]["disambiguation"] is None
+
+
+def test_lexicon_list_marks_ambiguous_count(tmp_path: Path) -> None:
+    """List must surface how many aliases go through polish disambiguation."""
+    db_path = tmp_path / "lexicon.sqlite"
+    _add_term_with_disambiguated_alias(db_path, "按语境判断")
+
+    json_result = runner.invoke(
+        app, ["lexicon", "list", "--lexicon-db", str(db_path), "--json"]
+    )
+    table_result = runner.invoke(
+        app, ["lexicon", "list", "--lexicon-db", str(db_path)]
+    )
+    term = json.loads(json_result.output)["terms"][0]
+
+    assert json_result.exit_code == 0
+    assert term["alias_count"] == 2
+    assert term["ambiguous_alias_count"] == 1
+    assert table_result.exit_code == 0
+    assert "ambiguous" in table_result.output
+
+
+def test_lexicon_export_import_preserves_disambiguation(tmp_path: Path) -> None:
+    """Export/import must not silently drop disambiguation guidance."""
+    db_path = tmp_path / "lexicon.sqlite"
+    imported_db = tmp_path / "imported.sqlite"
+    output = tmp_path / "lexicon.json"
+    guidance = "指产品平台时改成 Acme，指其他义项时保持原样"
+    _add_term_with_disambiguated_alias(db_path, guidance)
+
+    export_result = runner.invoke(
+        app, ["lexicon", "export", "--lexicon-db", str(db_path), "--output", str(output)]
+    )
+    import_result = runner.invoke(
+        app, ["lexicon", "import", str(output), "--lexicon-db", str(imported_db)]
+    )
+    show_result = runner.invoke(
+        app, ["lexicon", "show", "Acme", "--lexicon-db", str(imported_db), "--json"]
+    )
+    payload = json.loads(show_result.output)
+    by_alias = {alias["alias"]: alias for alias in payload["aliases"]}
+
+    assert export_result.exit_code == 0
+    assert import_result.exit_code == 0
+    assert by_alias["AC"]["disambiguation"] == guidance
+    assert by_alias["阿克米"]["disambiguation"] is None
+    # The disambiguated alias stays out of blanket replacement after import.
+    assert "AC" not in _wrong_texts(imported_db)
+
+
+def test_lexicon_import_clears_stale_disambiguation(tmp_path: Path) -> None:
+    """Importing a blanket alias must clear stale local guidance (source wins).
+
+    A restore/sync from an export where the alias was cleared must not leave the
+    target's old guidance behind, or the alias stays wrongly excluded from
+    blanket correction and is fed to polish with outdated instructions.
+    """
+    source_db = tmp_path / "source.sqlite"
+    target_db = tmp_path / "target.sqlite"
+    output = tmp_path / "lexicon.json"
+    # Source: AC is a plain blanket alias (no disambiguation).
+    upsert_lexicon_term(
+        canonical="Acme",
+        category="system",
+        description="",
+        aliases=("AC",),
+        status="active",
+        db_path=source_db,
+    )
+    runner.invoke(
+        app, ["lexicon", "export", "--lexicon-db", str(source_db), "--output", str(output)]
+    )
+    # Target already marks AC ambiguous with stale guidance.
+    upsert_lexicon_term(
+        canonical="Acme",
+        category="system",
+        description="",
+        aliases=("AC",),
+        status="active",
+        db_path=target_db,
+    )
+    set_alias_disambiguation(
+        term="Acme", alias="AC", guidance="stale guidance", db_path=target_db
+    )
+    assert "AC" not in _wrong_texts(target_db)
+
+    import_result = runner.invoke(
+        app, ["lexicon", "import", str(output), "--lexicon-db", str(target_db)]
+    )
+    show_result = runner.invoke(
+        app, ["lexicon", "show", "Acme", "--lexicon-db", str(target_db), "--json"]
+    )
+    by_alias = {
+        alias["alias"]: alias for alias in json.loads(show_result.output)["aliases"]
+    }
+
+    assert import_result.exit_code == 0
+    assert by_alias["AC"]["disambiguation"] is None
+    # Cleared guidance returns AC to deterministic blanket replacement.
+    assert "AC" in _wrong_texts(target_db)
+
+
+def test_lexicon_import_legacy_payload_preserves_guidance(tmp_path: Path) -> None:
+    """A legacy export that omits the disambiguation key must keep local guidance.
+
+    Absent key = "no opinion" (predates the field); only an explicit null clears
+    stale guidance. Importing an old backup must not silently wipe guidance the
+    user configured after that backup was taken.
+    """
+    target_db = tmp_path / "target.sqlite"
+    upsert_lexicon_term(
+        canonical="Acme",
+        category="system",
+        description="",
+        aliases=("AC",),
+        status="active",
+        db_path=target_db,
+    )
+    set_alias_disambiguation(
+        term="Acme", alias="AC", guidance="keep me", db_path=target_db
+    )
+    # Legacy payload: the alias object has no disambiguation key at all.
+    legacy_payload = {
+        "schema_version": 2,
+        "terms": [
+            {
+                "canonical": "Acme",
+                "category": "system",
+                "aliases": [{"alias": "AC", "alias_type": "asr_error"}],
+            }
+        ],
+    }
+
+    import_lexicon_payload(legacy_payload, db_path=target_db)
+    detail = get_lexicon_term("Acme", db_path=target_db)
+    ac_alias = next(alias for alias in detail.aliases if alias.alias == "AC")
+
+    assert ac_alias.disambiguation == "keep me"
+    assert "AC" not in _wrong_texts(target_db)
 
 
 def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:

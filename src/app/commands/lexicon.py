@@ -209,11 +209,13 @@ def term_delete_command(
 @app.command("disambiguate")
 def term_disambiguate_command(
     term: str = typer.Argument(..., help="Term id, canonical term, or alias."),
-    alias: str = typer.Argument(..., help="Ambiguous surface form, e.g. IC."),
+    alias: str = typer.Argument(
+        ..., help="Ambiguous surface form to resolve by sentence context."
+    ),
     guidance: str = typer.Argument(
         ...,
         help="Context rule for the polish LLM, e.g. "
-        "'指 iSee 平台时改成 iSee；指个人贡献者角色时保持原样'. Pass '' to clear.",
+        "'指某产品时改成其规范名，指其他义项时保持原样'. Pass '' to clear.",
     ),
     lexicon_db: Optional[Path] = typer.Option(
         None, "--lexicon-db", help="Override lexicon SQLite path."
@@ -590,11 +592,18 @@ def _terms_table(terms: list[LexiconTerm]) -> Table:
             term.canonical,
             term.category,
             _status_text(term.status),
-            str(term.alias_count),
+            _alias_count_text(term),
             str(term.context_count),
             term.updated_at,
         )
     return table
+
+
+def _alias_count_text(term: LexiconTerm) -> str:
+    """Render the alias count, flagging how many go through polish disambiguation."""
+    if term.ambiguous_alias_count > 0:
+        return f"{term.alias_count} [yellow]({term.ambiguous_alias_count} ambiguous)[/]"
+    return str(term.alias_count)
 
 
 def _echo_terms_plain(terms: list[LexiconTerm]) -> None:
@@ -699,10 +708,23 @@ def _context_preview_lines(detail: LexiconTermDetail) -> list[str]:
 
 
 def _echo_aliases(detail: LexiconTermDetail) -> None:
-    """Print aliases for one term."""
+    """Print aliases for one term, flagging context-disambiguated ones.
+
+    A disambiguated alias (``disambiguation`` set) is excluded from blanket
+    replacement and resolved per sentence by polish; mark it ``[ambiguous]`` and
+    print the full guidance so disambiguate config can be reviewed without SQL.
+    """
     typer.echo(f"Aliases: {len(detail.aliases)}")
     for alias in detail.aliases:
-        typer.echo(f"  - {alias.alias} ({alias.alias_type})")
+        guidance = (alias.disambiguation or "").strip()
+        if not guidance:
+            typer.echo(f"  - {alias.alias} ({alias.alias_type})")
+            continue
+        typer.echo(f"  - {alias.alias} ({alias.alias_type}) [ambiguous]")
+        lines = guidance.splitlines() or [guidance]
+        typer.echo(f"    Guidance: {lines[0]}")
+        for line in lines[1:]:
+            typer.echo(f"              {line}")
 
 
 def _echo_contexts(detail: LexiconTermDetail) -> None:
