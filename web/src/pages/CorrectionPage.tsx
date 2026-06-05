@@ -67,7 +67,10 @@ export function CorrectionPage() {
             <button
               className="btn primary"
               onClick={() => acceptMut.mutate()}
-              disabled={acceptMut.isPending || selected.size === 0}
+              // Disable while a polish job runs: it is regenerating this very proposal, so
+              // accepting the stale one would apply pre-regeneration text and leave a
+              // mismatched pending proposal behind.
+              disabled={acceptMut.isPending || selected.size === 0 || !!jobId}
             >
               {acceptMut.isPending
                 ? tr("Accepting…", "应用中…")
