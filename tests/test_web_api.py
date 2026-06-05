@@ -168,6 +168,51 @@ def test_correction_accept_records_into_store_dir_lexicon(
     assert captured["lexicon_db"] == get_lexicon_db_path(tmp_path / "store")
 
 
+def test_correction_accept_holds_lexicon_store_lock(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Accept records learned contexts into the shared lexicon, so it must hold the lexicon
+    store lock (not just the per-project lock), or it races concurrent lexicon writes."""
+    from types import SimpleNamespace
+
+    import app.web.routers.corrections as corrections
+
+    class FakeSummary:
+        accepted = True
+        change_count = 1
+        learned_count = 1
+        corrected_named_transcript_path = None
+
+    monkeypatch.setattr(
+        corrections, "resolve_web_project_ref", lambda ref, _settings: tmp_path
+    )
+    monkeypatch.setattr(
+        corrections, "project_paths", lambda root: SimpleNamespace(root=root)
+    )
+    monkeypatch.setattr(corrections, "load_manifest", lambda root: object())
+    monkeypatch.setattr(
+        corrections, "load_speaker_mapping_for_correction", lambda root: {}
+    )
+    monkeypatch.setattr(
+        corrections, "accept_correction_for_review", lambda **k: FakeSummary()
+    )
+
+    # Spy on the very LockRegistry the route resolves via Depends(get_locks).
+    locks = client.app.state.locks  # type: ignore[attr-defined]
+    seen: list[str] = []
+    original_acquire = locks.acquire
+    monkeypatch.setattr(
+        locks,
+        "acquire",
+        lambda *keys: (seen.extend(keys), original_acquire(*keys))[1],
+    )
+
+    resp = client.post("/api/corrections/p-x/accept", json={"selected_indices": [0]})
+    assert resp.status_code == 200
+    assert "store:lexicon" in seen
+    assert any(k.startswith("project:") for k in seen)
+
+
 def _drain_job(client: TestClient, job_id: str) -> dict:
     """Consume a job's SSE stream to completion, then return its snapshot."""
     with client.stream("GET", f"/api/jobs/{job_id}/events") as stream:

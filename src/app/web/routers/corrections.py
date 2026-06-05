@@ -30,7 +30,7 @@ from app.web.deps import (
     resolve_web_project_ref,
 )
 from app.web.jobs import JobManager
-from app.web.locks import LockRegistry, project_lock_key
+from app.web.locks import LockRegistry, project_lock_key, store_lock_key
 from app.web.schemas import (
     AcceptCorrectionIn,
     AcceptCorrectionOut,
@@ -155,6 +155,11 @@ async def accept(
             ),
         )
 
+    # accept_correction_for_review records learned contexts into the shared lexicon
+    # SQLite, so the per-project lock alone is not enough -- hold the lexicon store lock
+    # too, the same one the lexicon router takes, or concurrent writes race the DB.
     loop = asyncio.get_running_loop()
-    async with locks.acquire(project_lock_key(str(project_dir))):
+    async with locks.acquire(
+        project_lock_key(str(project_dir)), store_lock_key("lexicon")
+    ):
         return await loop.run_in_executor(None, work)
