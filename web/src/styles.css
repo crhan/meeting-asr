@@ -569,6 +569,55 @@ tr.clickable {
   overflow-y: auto;
 }
 
+/* ---- voiceprint page --------------------------------------------------- */
+.vp-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 16px;
+  min-height: 0;
+}
+.vp-side {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 160px);
+}
+.vp-side-head {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.speaker-list.flat {
+  border-right: none;
+  overflow-y: auto;
+}
+.vp-main {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow-y: auto;
+  max-height: calc(100vh - 160px);
+}
+.status-pill {
+  text-transform: none;
+}
+.status-pill.active {
+  color: var(--green);
+  border-color: var(--green);
+}
+.status-pill.quarantined,
+.status-pill.rejected {
+  color: var(--red);
+  border-color: var(--red);
+}
+.status-pill.verified-active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* ---- toast ------------------------------------------------------------- */
 .toast {
   position: fixed;

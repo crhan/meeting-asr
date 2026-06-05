@@ -193,6 +193,122 @@ export function clipUrl(ref: string, beginMs: number, endMs: number): string {
   return `/api/projects/${encodeURIComponent(ref)}/clip?begin_ms=${beginMs}&end_ms=${endMs}`;
 }
 
+// ---- Voiceprint registry ---------------------------------------------------
+
+export interface VoiceprintPerson {
+  person_id: number;
+  public_id: string;
+  name: string;
+  sample_count: number;
+  project_count: number;
+  embedded_sample_count: number;
+  embedding_model_count: number;
+  updated_at: string | null;
+}
+
+export interface VoiceprintSample {
+  index: number;
+  sample_id: number;
+  public_id: string;
+  speaker_public_id: string;
+  speaker_name: string;
+  project_id: string;
+  begin_time_ms: number;
+  end_time_ms: number;
+  transcript_text: string;
+  status: string;
+  clip_rel_path: string;
+}
+
+export interface VoiceprintLibrary {
+  store_dir: string | null;
+  people: VoiceprintPerson[];
+}
+
+export interface VoiceprintSamples {
+  person: VoiceprintPerson;
+  samples: VoiceprintSample[];
+}
+
+export interface QualitySample {
+  sample_public_id: string;
+  project_id: string;
+  begin_time_ms: number;
+  end_time_ms: number;
+  transcript_text: string;
+  status: string;
+  score: number | null;
+  label: string;
+  reason: string;
+}
+
+export interface QualityPerson {
+  speaker_id: number;
+  public_id: string;
+  name: string;
+  sample_count: number;
+  active_sample_count: number;
+  mean_score: number | null;
+  stdev_score: number | null;
+  suspicious_count: number;
+  critical_count: number;
+  samples: QualitySample[];
+}
+
+export interface QualityReport {
+  model: string;
+  sample_count: number;
+  suspicious_count: number;
+  critical_count: number;
+  people: QualityPerson[];
+}
+
+export const getLibrary = () => api<VoiceprintLibrary>("/api/voiceprints/library");
+
+export const getPersonSamples = (ref: string) =>
+  api<VoiceprintSamples>(`/api/voiceprints/people/${encodeURIComponent(ref)}/samples`);
+
+export const getQuality = () => api<QualityReport>("/api/voiceprints/quality");
+
+export const sampleClipUrl = (ref: string, samplePublicId: string) =>
+  `/api/voiceprints/people/${encodeURIComponent(ref)}/clips/${encodeURIComponent(samplePublicId)}`;
+
+export const setSampleStatus = (samplePublicId: string, status: string) =>
+  api<VoiceprintSample>(
+    `/api/voiceprints/samples/${encodeURIComponent(samplePublicId)}/status`,
+    { method: "PATCH", body: JSON.stringify({ status }) },
+  );
+
+export const deleteSample = (ref: string, index: number) =>
+  api<{ deleted_sample_public_id: string }>(
+    `/api/voiceprints/people/${encodeURIComponent(ref)}/samples/${index}`,
+    { method: "DELETE" },
+  );
+
+export const deletePerson = (ref: string) =>
+  api<{ deleted_sample_count: number }>(
+    `/api/voiceprints/people/${encodeURIComponent(ref)}`,
+    { method: "DELETE" },
+  );
+
+export const createPerson = (name: string) =>
+  api<VoiceprintPerson>("/api/voiceprints/people", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+
+export const renamePerson = (ref: string, name: string) =>
+  api<VoiceprintPerson>(`/api/voiceprints/people/${encodeURIComponent(ref)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+
+export const mergePeople = (fromRef: string, intoRef: string) =>
+  api<VoiceprintPerson>("/api/voiceprints/people/merge", {
+    method: "POST",
+    body: JSON.stringify({ from_ref: fromRef, into_ref: intoRef }),
+  });
+
 // ---- SSE job progress ------------------------------------------------------
 
 export interface ProgressEvent {
