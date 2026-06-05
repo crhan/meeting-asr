@@ -2,6 +2,7 @@ import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useState } from "react";
 import { getLang, setLang, tr, type Lang } from "./lib/i18n";
 import { AuthGate } from "./components/AuthGate";
+import { PendingCaptureBanner } from "./components/PendingCaptureBanner";
 import { CapturePage } from "./pages/CapturePage";
 import { CorrectionPage } from "./pages/CorrectionPage";
 import { LexiconPage } from "./pages/LexiconPage";
@@ -42,6 +43,7 @@ export function App() {
       </header>
       <main className="content">
         <AuthGate>
+          <PendingCaptureBanner />
           <Routes>
             <Route path="/" element={<Navigate to="/projects" replace />} />
             <Route path="/projects" element={<ProjectsPage />} />

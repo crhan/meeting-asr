@@ -20,6 +20,11 @@ interface SpeakerEdit {
   person_id: number | null;
   person_public_id: string | null;
   ignored: boolean;
+  // Identity stashed when ignoring, so un-ignoring restores the real name/binding instead
+  // of the generic label (which buildSaveBody would persist, erasing a confirmed name).
+  priorName?: string;
+  priorPersonId?: number | null;
+  priorPersonPublicId?: string | null;
 }
 
 function segKey(seg: { sentence_id: number | null; begin_time_ms: number; end_time_ms: number }) {
@@ -194,22 +199,32 @@ export function SpeakerReviewPage() {
   }
 
   function toggleIgnore(speakerId: number) {
-    const s = effective(data!.speakers.find((x) => x.speaker_id === speakerId)!);
+    const base = data!.speakers.find((x) => x.speaker_id === speakerId)!;
+    const s = effective(base);
     setEdits((prev) => {
       const next = new Map(prev);
       if (s.ignored) {
+        // Un-ignore: restore the identity the speaker had before it was ignored (stashed at
+        // ignore time), falling back to the loaded baseline. Writing s.label here instead
+        // would make buildSaveBody persist "Speaker N" over a confirmed name like "Alice".
+        const prior = prev.get(speakerId);
         next.set(speakerId, {
-          name: s.label,
-          person_id: null,
-          person_public_id: null,
+          name: prior?.priorName ?? base.current_name,
+          person_id: prior?.priorPersonId ?? base.person_id,
+          person_public_id: prior?.priorPersonPublicId ?? base.person_public_id,
           ignored: false,
         });
       } else {
+        // Ignore: the label is sent as the name because buildSaveBody marks a speaker ignored
+        // only when name === label; stash the real identity so un-ignore can restore it.
         next.set(speakerId, {
           name: s.label,
           person_id: null,
           person_public_id: null,
           ignored: true,
+          priorName: s.current_name,
+          priorPersonId: s.person_id,
+          priorPersonPublicId: s.person_public_id,
         });
       }
       return next;

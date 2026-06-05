@@ -427,6 +427,16 @@ export const captureRollbackUrl = (txnId: string) =>
     `/api/voiceprints/capture/transactions/${encodeURIComponent(txnId)}/rollback`,
   );
 
+export interface PendingCapture {
+  transaction_id: string;
+  project_id: string | null;
+}
+
+/** The capture transaction awaiting accept/rollback (one at most), or null. Powers the
+ *  app-wide recovery banner so an orphaned transaction can be resolved from anywhere. */
+export const getPendingCapture = () =>
+  api<PendingCapture | null>("/api/voiceprints/capture/pending");
+
 export const getJob = (jobId: string) =>
   api<JobStatus>(`/api/jobs/${encodeURIComponent(jobId)}`);
 
