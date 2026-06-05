@@ -102,6 +102,64 @@ def test_multi_source_reuses_same_ordered_inputs(tmp_path: Path) -> None:
     assert first.project_dir == second.project_dir
 
 
+def test_multi_source_variant_gets_distinct_identity(tmp_path: Path) -> None:
+    """A --variant run of the same inputs is a distinct project, not a reuse."""
+    part_a = _media(tmp_path / "a.mp4", b"AAAA")
+    part_b = _media(tmp_path / "b.mp4", b"BBBB")
+    projects = tmp_path / "projects"
+
+    plain = project_manager.create_or_reuse_project(
+        part_a,
+        title=None,
+        projects_dir=projects,
+        project_dir=None,
+        meeting_time=None,
+        hash_source=False,
+        extra_inputs=[part_b],
+    )
+    exp = project_manager.create_or_reuse_project(
+        part_a,
+        title=None,
+        projects_dir=projects,
+        project_dir=None,
+        meeting_time=None,
+        hash_source=False,
+        variant="exp",
+        extra_inputs=[part_b],
+    )
+
+    assert plain.project_dir != exp.project_dir
+    assert exp.manifest.project_id.endswith("-v-exp")
+
+
+def test_multi_source_variant_not_silently_reused_in_project_dir(tmp_path: Path) -> None:
+    """An explicit --project-dir holding a different variant is not silently reused."""
+    part_a = _media(tmp_path / "a.mp4", b"AAAA")
+    part_b = _media(tmp_path / "b.mp4", b"BBBB")
+    explicit = tmp_path / "explicit"
+
+    project_manager.create_or_reuse_project(
+        part_a,
+        title=None,
+        projects_dir=None,
+        project_dir=explicit,
+        meeting_time=None,
+        hash_source=False,
+        extra_inputs=[part_b],
+    )
+    with pytest.raises(FileExistsError):
+        project_manager.create_or_reuse_project(
+            part_a,
+            title=None,
+            projects_dir=None,
+            project_dir=explicit,
+            meeting_time=None,
+            hash_source=False,
+            variant="exp",
+            extra_inputs=[part_b],
+        )
+
+
 def test_multi_source_identity_distinct_from_single_run(tmp_path: Path) -> None:
     """A single-file run of one segment must not reuse the concatenated project."""
     part_a = _media(tmp_path / "a.mp4", b"AAAA")

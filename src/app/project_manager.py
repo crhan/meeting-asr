@@ -382,13 +382,19 @@ def _create_or_reuse_multi_source_project(
     )
     if (root / "project.json").exists():
         manifest = load_manifest(root)
-        if manifest.source.sha256 == combined_sha:
+        # Reuse only when BOTH the combined content and the variant match, so an
+        # explicit --project-dir occupied by the unvarianted (or a different
+        # variant) project of the same inputs is not silently reused — mirroring
+        # single-input reuse, which compares variant in _source_manifest_matches.
+        same_content = manifest.source.sha256 == combined_sha
+        same_variant = (manifest.source.variant or None) == (variant or None)
+        if same_content and same_variant:
             emit_progress(progress, "Using existing project", total=1, completed=1)
             return ProjectCreateSummary(
                 root, _load_reused_manifest(root, title), False
             )
         raise FileExistsError(
-            f"Project directory already holds different content: {root}"
+            f"Project directory already holds a different project: {root}"
         )
     manifest = _create_multi_source_project(
         sources,
