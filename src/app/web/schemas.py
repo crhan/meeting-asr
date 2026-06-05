@@ -198,3 +198,113 @@ class SaveSpeakerReviewOut(BaseModel):
     reassigned_count: int
     deleted_sample_count: int
     rematch_skipped_reason: str | None = None
+
+
+# ---- Voiceprint library / people / quality ---------------------------------
+
+
+class VoiceprintPersonOut(BaseModel):
+    """One person in the global voiceprint registry."""
+
+    person_id: int
+    public_id: str
+    name: str
+    sample_count: int
+    project_count: int
+    embedded_sample_count: int
+    embedding_model_count: int
+    updated_at: str | None
+
+
+class VoiceprintSampleOut(BaseModel):
+    """One stored voiceprint sample."""
+
+    index: int  # 1-based position within the person's sample list (delete key)
+    sample_id: int
+    public_id: str
+    speaker_public_id: str
+    speaker_name: str
+    project_id: str
+    begin_time_ms: int
+    end_time_ms: int
+    transcript_text: str
+    status: str
+    clip_rel_path: str
+
+
+class VoiceprintLibraryOut(BaseModel):
+    """The global voiceprint registry overview."""
+
+    store_dir: str | None
+    people: list[VoiceprintPersonOut]
+
+
+class VoiceprintSamplesOut(BaseModel):
+    """Samples for one person."""
+
+    person: VoiceprintPersonOut
+    samples: list[VoiceprintSampleOut]
+
+
+class QualitySampleOut(BaseModel):
+    """One quality-scored sample."""
+
+    sample_public_id: str
+    project_id: str
+    begin_time_ms: int
+    end_time_ms: int
+    transcript_text: str
+    status: str
+    score: float | None
+    label: str
+    reason: str
+
+
+class QualityPersonOut(BaseModel):
+    """Quality diagnostics for one person."""
+
+    speaker_id: int
+    public_id: str
+    name: str
+    sample_count: int
+    active_sample_count: int
+    mean_score: float | None
+    stdev_score: float | None
+    suspicious_count: int
+    critical_count: int
+    samples: list[QualitySampleOut]
+
+
+class QualityReportOut(BaseModel):
+    """Voiceprint quality report."""
+
+    model: str
+    sample_count: int
+    suspicious_count: int
+    critical_count: int
+    people: list[QualityPersonOut]
+
+
+class CreatePersonIn(BaseModel):
+    """Create a new voiceprint person."""
+
+    name: str
+
+
+class RenamePersonIn(BaseModel):
+    """Rename a voiceprint person."""
+
+    name: str
+
+
+class MergePeopleIn(BaseModel):
+    """Merge one person into another."""
+
+    from_ref: str
+    into_ref: str
+
+
+class SampleStatusIn(BaseModel):
+    """Update one sample's lifecycle status."""
+
+    status: str

@@ -28,6 +28,7 @@ from app.web.routers import audio as audio_router
 from app.web.routers import jobs as jobs_router
 from app.web.routers import projects as projects_router
 from app.web.routers import speakers as speakers_router
+from app.web.routers import voiceprints as voiceprints_router
 from app.web.settings import WebSettings
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -59,6 +60,7 @@ def create_app(settings: WebSettings) -> FastAPI:
     install_exception_handlers(app)
     app.include_router(projects_router.router)
     app.include_router(speakers_router.router)
+    app.include_router(voiceprints_router.router)
     app.include_router(audio_router.router)
     app.include_router(jobs_router.router)
 
