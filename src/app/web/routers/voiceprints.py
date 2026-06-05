@@ -34,6 +34,7 @@ from app.voiceprint_store import (
     get_voiceprint_db_path,
     list_voiceprint_samples,
     list_voiceprint_speakers,
+    resolve_in_store_clip_path,
     update_voiceprint_sample_status,
 )
 from app.web.deps import (
@@ -165,10 +166,16 @@ def get_sample_clip(
     db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
     rows = list_voiceprint_samples(ref, db_path)
     match = next((r for r in rows if r.public_id == sample_public_id), None)
-    if match is None or not match.clip_path.is_file():
+    if match is None:
+        raise FileNotFoundError(f"Sample clip not found: {sample_public_id}")
+    # Serve the clip rebased into the CONFIGURED store, not the absolute clip_path: under a
+    # copied --store-dir that absolute path still points at the original store, so serving it
+    # would read outside the configured copy. resolve_in_store_clip_path stays within it.
+    clip = resolve_in_store_clip_path(match, db_path.parent)
+    if clip is None or not clip.is_file():
         raise FileNotFoundError(f"Sample clip not found: {sample_public_id}")
     return FileResponse(
-        match.clip_path,
+        clip,
         media_type="audio/wav",
         headers={"Cache-Control": "private, max-age=3600"},
     )

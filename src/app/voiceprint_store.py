@@ -1133,7 +1133,7 @@ def _deleted_sample(
     Returns:
         Deleted sample summary.
     """
-    clip_target = _in_store_clip_path(row, store_dir) if delete_clip else None
+    clip_target = resolve_in_store_clip_path(row, store_dir) if delete_clip else None
     clip_deleted = _delete_clip_file(clip_target) if clip_target is not None else False
     return DeletedVoiceprintSample(
         row.sample_id,
@@ -1146,16 +1146,16 @@ def _deleted_sample(
     )
 
 
-def _in_store_clip_path(row: VoiceprintSampleRow, store_dir: Path) -> Path | None:
+def resolve_in_store_clip_path(row: VoiceprintSampleRow, store_dir: Path) -> Path | None:
     """Resolve a row's clip *within the configured store*, or None if it escapes it.
 
     The stored ``clip_path`` is the absolute path of the store the clip was first written
     to. When the active store is a *copy* (``--store-dir`` isolation -- the documented
-    safe-copy validation workflow), that absolute path still points at the ORIGINAL store,
-    so unlinking it would delete a file outside the configured store and defeat the
-    isolation. Rebase the deletion onto ``store_dir`` via the store-relative
-    ``clip_rel_path`` and refuse anything that resolves outside it. For the normal
-    (non-copied) store the rebased path equals the original absolute path, so deletion
+    safe-copy validation workflow), that absolute path still points at the ORIGINAL store.
+    Using it directly would let a delete unlink -- or playback serve -- a file OUTSIDE the
+    configured store, defeating the isolation. Rebase onto ``store_dir`` via the
+    store-relative ``clip_rel_path`` and refuse anything that resolves outside it. For the
+    normal (non-copied) store the rebased path equals the original absolute path, so
     behaviour is unchanged.
     """
     rel = Path(row.clip_rel_path)

@@ -1023,3 +1023,39 @@ def test_get_proposal_malformed_is_not_hidden_as_404(
     # -- the point being it is never silently translated to 404 like a missing proposal.
     with pytest.raises(RuntimeError, match="must be a JSON object"):
         client.get("/api/corrections/p-x/proposal")
+
+
+def test_get_sample_clip_rebases_to_configured_store(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Library clip playback must serve from the CONFIGURED store, not the row's absolute
+    clip_path. Under a copied --store-dir that absolute path points at the ORIGINAL store, so
+    serving it would read outside the configured copy (an isolation escape)."""
+    from types import SimpleNamespace
+
+    import app.web.routers.voiceprints as vp
+
+    store = tmp_path / "store" / "voiceprints"
+    store.mkdir(parents=True)
+    monkeypatch.setattr(vp, "get_voiceprint_db_path", lambda _s: store / "voiceprints.sqlite")
+
+    # Copied store: the row's absolute clip_path is the ORIGINAL store's file (outside the
+    # configured copy); clip_rel_path is store-relative.
+    outside = tmp_path / "orig" / "clips" / "x.wav"
+    outside.parent.mkdir(parents=True)
+    outside.write_bytes(b"ORIGINAL")
+    row = SimpleNamespace(
+        public_id="s1", clip_path=outside, clip_rel_path="clips/x.wav"
+    )
+    monkeypatch.setattr(vp, "list_voiceprint_samples", lambda ref, db: [row])
+
+    # The original (outside) clip must NOT be served: the rebased in-store path is absent -> 404.
+    assert client.get("/api/voiceprints/people/p1/clips/s1").status_code == 404
+
+    # When the configured store actually holds the clip, it is served from there.
+    in_store = store / "clips" / "x.wav"
+    in_store.parent.mkdir(parents=True)
+    in_store.write_bytes(b"COPY")
+    resp = client.get("/api/voiceprints/people/p1/clips/s1")
+    assert resp.status_code == 200
+    assert resp.content == b"COPY"
