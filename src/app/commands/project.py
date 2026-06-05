@@ -112,8 +112,14 @@ from app.speaker_cluster_quality import (
     analyze_project_speaker_clusters,
     speaker_cluster_quality_payload,
 )
+from app.speaker_crosstalk import (
+    DEFAULT_CROSSTALK_MAX_SAMPLES,
+    DEFAULT_CROSSTALK_SCORE_FLOOR,
+    CrosstalkParams,
+)
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
+    MATCH_STATUS_CROSSTALK,
     MATCH_STATUS_IGNORED,
     MATCH_STATUS_MATCHED,
     MATCH_STATUS_NO_CANDIDATE,
@@ -538,6 +544,17 @@ def summarize(
     typer.echo(f"Memory index JSON: {summary.json_path.resolve()}")
 
 
+def _build_crosstalk_params(
+    *, enabled: bool, max_samples: int, score_floor: float
+) -> CrosstalkParams:
+    """Build crosstalk-tier thresholds from CLI flags."""
+    return CrosstalkParams(
+        enabled=enabled,
+        max_samples=max_samples,
+        score_floor=score_floor,
+    )
+
+
 @app.command("run")
 def run(
     inputs: list[Path] = typer.Argument(
@@ -578,6 +595,26 @@ def run(
         autocompletion=complete_voiceprint_model,
     ),
     match_threshold: float = typer.Option(0.75, "--match-threshold", min=0.0, max=1.0),
+    crosstalk: bool = typer.Option(
+        True,
+        "--crosstalk/--no-crosstalk",
+        help="Flag low-confidence crosstalk/noise speakers (few samples + very low "
+        "score + non-converging candidates) so they stay anonymous and do not "
+        "block the main flow.",
+    ),
+    crosstalk_max_samples: int = typer.Option(
+        DEFAULT_CROSSTALK_MAX_SAMPLES,
+        "--crosstalk-max-samples",
+        min=1,
+        help="A speaker with more sentences than this is never flagged as crosstalk.",
+    ),
+    crosstalk_score_floor: float = typer.Option(
+        DEFAULT_CROSSTALK_SCORE_FLOOR,
+        "--crosstalk-score-floor",
+        min=0.0,
+        max=1.0,
+        help="Best voiceprint score must be below this to qualify as crosstalk.",
+    ),
     summarize: bool = typer.Option(
         True,
         "--summarize/--no-summarize",
@@ -673,6 +710,11 @@ def run(
         audio_format=audio_format,
         asr_hotwords=asr_hotwords,
     )
+    crosstalk_params = _build_crosstalk_params(
+        enabled=crosstalk,
+        max_samples=crosstalk_max_samples,
+        score_floor=crosstalk_score_floor,
+    )
     summary = run_with_progress(
         lambda reporter: _run_project_workflow(
             inputs[0],
@@ -686,6 +728,7 @@ def run(
             store_dir=store_dir,
             voiceprint_model=voiceprint_model,
             match_threshold=match_threshold,
+            crosstalk_params=crosstalk_params,
             summarize=summarize,
             summary_model=summary_model,
             polish=polish,
@@ -1005,6 +1048,37 @@ def review(
     )
 
 
+def _ensure_named_outputs_for_nonblocking_run(
+    project_dir: Path,
+    matches: SpeakerMatchSummary,
+    applied_mapping: dict[int, str],
+) -> None:
+    """Render anonymous named outputs when a non-blocking run named nobody.
+
+    When every unresolved speaker is crosstalk (or matched/ignored), the run is
+    reported complete and its final transcript/subtitle as ready. But if nothing
+    was auto-named, ``apply_project_speakers`` was skipped above and those files
+    were never written, so the run would advertise a missing "ready" output.
+    Render anonymous Speaker N outputs so a complete run actually has its final
+    transcript/subtitle for downstream to land on. Blocking runs with real
+    below-threshold/no-candidate speakers are left untouched.
+    """
+    if applied_mapping:
+        return
+    ignored = load_project_ignored_speakers(project_dir)
+    has_unresolved = any(
+        effective_match_status(match, ignored_speaker_ids=ignored)
+        in (MATCH_STATUS_BELOW_THRESHOLD, MATCH_STATUS_NO_CANDIDATE)
+        for match in matches.matches
+    )
+    if has_unresolved:
+        return
+    named_transcript = project_paths(project_dir).exports_dir / "transcript_named.txt"
+    if named_transcript.exists():
+        return
+    apply_project_speakers(project_dir, {})
+
+
 def _run_project_workflow(
     input_path: Path,
     *,
@@ -1018,6 +1092,7 @@ def _run_project_workflow(
     store_dir: Path | None,
     voiceprint_model: str | None,
     match_threshold: float,
+    crosstalk_params: CrosstalkParams | None = None,
     summarize: bool,
     summary_model: str | None,
     polish: bool,
@@ -1194,6 +1269,7 @@ def _run_project_workflow(
         sample_count=2,
         max_seconds=12.0,
         padding_seconds=0.5,
+        crosstalk_params=crosstalk_params,
         progress=progress,
     )
     _record_and_emit_run_stage(
@@ -1215,6 +1291,10 @@ def _run_project_workflow(
             person_mapping=matches.accepted_person_mapping,
             person_public_mapping=matches.accepted_person_public_mapping,
         )
+    # When applied_mapping is empty (e.g. every unresolved speaker is crosstalk),
+    # the anonymous named transcript/subtitle are rendered after stabilization by
+    # _ensure_named_outputs_for_nonblocking_run, so a completed non-blocking run
+    # never lacks its advertised final outputs.
     stabilization_summary = None
     # The iterative passes need at least one accepted in-project identity to anchor
     # reassignments; the re-split phase does not (it works off the global library), so
@@ -1249,6 +1329,9 @@ def _run_project_workflow(
         if stabilization_summary.final_match_summary is not None:
             matches = stabilization_summary.final_match_summary
             applied_mapping = matches.accepted_mapping
+    _ensure_named_outputs_for_nonblocking_run(
+        project.project_dir, matches, applied_mapping
+    )
     record_project_stage(
         project.project_dir,
         stage="complete",
@@ -2196,6 +2279,18 @@ def speakers_match(
     sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
+    crosstalk: bool = typer.Option(
+        True,
+        "--crosstalk/--no-crosstalk",
+        help="Flag low-confidence crosstalk/noise speakers (kept anonymous, "
+        "non-blocking).",
+    ),
+    crosstalk_max_samples: int = typer.Option(
+        DEFAULT_CROSSTALK_MAX_SAMPLES, "--crosstalk-max-samples", min=1
+    ),
+    crosstalk_score_floor: float = typer.Option(
+        DEFAULT_CROSSTALK_SCORE_FLOOR, "--crosstalk-score-floor", min=0.0, max=1.0
+    ),
     apply_matches: bool = typer.Option(False, "--apply"),
     progress: bool = typer.Option(
         True,
@@ -2207,6 +2302,11 @@ def speakers_match(
     resolved_project_dir = run_with_cli_errors(
         lambda: resolve_project_ref(project_dir, projects_dir)
     )
+    crosstalk_params = _build_crosstalk_params(
+        enabled=crosstalk,
+        max_samples=crosstalk_max_samples,
+        score_floor=crosstalk_score_floor,
+    )
     summary = run_with_progress(
         lambda reporter: match_project_speakers(
             resolved_project_dir,
@@ -2217,6 +2317,7 @@ def speakers_match(
             sample_count=sample_count,
             max_seconds=max_seconds,
             padding_seconds=padding_seconds,
+            crosstalk_params=crosstalk_params,
             progress=reporter,
         ),
         description="Matching project speakers",
@@ -2910,7 +3011,7 @@ def _echo_match_summary(summary: SpeakerMatchSummary) -> None:
         )
     if any(
         effective_match_status(match, ignored_speaker_ids=ignored)
-        not in (MATCH_STATUS_MATCHED, MATCH_STATUS_IGNORED)
+        not in (MATCH_STATUS_MATCHED, MATCH_STATUS_IGNORED, MATCH_STATUS_CROSSTALK)
         for match in summary.matches
     ):
         _echo_unresolved_speaker_next_steps(
@@ -2951,6 +3052,12 @@ def _voiceprint_match_cli_line(
         score = best_candidate_score(match)
         score_text = "" if score is None else f" score={score:.3f}"
         return f"{label} status=below-threshold best={name}{score_text}{threshold_text}"
+    if status == MATCH_STATUS_CROSSTALK:
+        # Suspected crosstalk/noise: kept anonymous on purpose, non-blocking.
+        name = best_candidate_name(match) or "unrecorded"
+        score = best_candidate_score(match)
+        score_text = "" if score is None else f" score={score:.3f}"
+        return f"{label} status=crosstalk best={name}{score_text}{threshold_text}"
     return f"{label} status=no-candidate{threshold_text}"
 
 
@@ -3762,7 +3869,12 @@ def _project_has_unresolved_match(
         speaker_id = speaker_id_from_match(item)
         if speaker_id is not None and speaker_id in ignored:
             continue
-        if voiceprint_match_status(item) != MATCH_STATUS_MATCHED:
+        # Crosstalk/noise clusters stay anonymous on purpose and must not block
+        # the main flow; downstream can choose to let them through.
+        if voiceprint_match_status(item) not in (
+            MATCH_STATUS_MATCHED,
+            MATCH_STATUS_CROSSTALK,
+        ):
             return True
     return False
 

@@ -9,6 +9,7 @@ MATCH_STATUS_MATCHED = "matched"
 MATCH_STATUS_BELOW_THRESHOLD = "below-threshold"
 MATCH_STATUS_NO_CANDIDATE = "no-candidate"
 MATCH_STATUS_IGNORED = "ignored"
+MATCH_STATUS_CROSSTALK = "crosstalk"
 
 
 def voiceprint_match_status(match: object) -> str:
@@ -19,10 +20,14 @@ def voiceprint_match_status(match: object) -> str:
         match: Match dataclass or JSON-like mapping.
 
     Returns:
-        One of matched, below-threshold, or no-candidate.
+        One of matched, crosstalk, below-threshold, or no-candidate.
     """
     if bool(_field(match, "accepted")) and accepted_match_name(match):
         return MATCH_STATUS_MATCHED
+    if bool(_field(match, "crosstalk")):
+        # A persisted low-confidence crosstalk/noise flag (see speaker_crosstalk).
+        # Advisory only: the speaker stays anonymous; it just must not block.
+        return MATCH_STATUS_CROSSTALK
     if best_candidate_name(match):
         return MATCH_STATUS_BELOW_THRESHOLD
     score = (

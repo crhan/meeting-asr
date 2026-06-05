@@ -7,7 +7,7 @@ import json
 import math
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Lock
 
@@ -21,6 +21,13 @@ from app.project_manager import (
     load_manifest,
     resolve_project_audio_path,
     save_manifest,
+)
+from app.speaker_crosstalk import (
+    DEFAULT_CROSSTALK_CONCENTRATION_MARGIN,
+    DEFAULT_CROSSTALK_MAX_SAMPLES,
+    DEFAULT_CROSSTALK_SCORE_FLOOR,
+    CrosstalkParams,
+    is_crosstalk,
 )
 from app.speaker_match_status import voiceprint_match_status
 from app.speaker_labeling import load_transcript_result
@@ -65,6 +72,7 @@ class SpeakerMatch:
     accepted_person_id: int | None = None
     accepted_person_public_id: str | None = None
     candidates: tuple[VoiceprintCandidate, ...] = ()
+    crosstalk: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +146,7 @@ def match_project_speakers(
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
+    crosstalk_params: CrosstalkParams | None = None,
     progress: CliProgressReporter | None = None,
 ) -> SpeakerMatchSummary:
     """
@@ -151,19 +160,29 @@ def match_project_speakers(
         threshold: Minimum accepted cosine score.
         sample_count: Maximum probe clips per speaker.
         max_seconds: Maximum seconds per probe clip.
-        padding_seconds: Context padding around each segment.
+        crosstalk_params: Crosstalk/noise tier thresholds (defaults: enabled).
         progress: Optional progress reporter.
 
     Returns:
         Match summary.
     """
     context = _match_context(project_dir, store_dir, provider, model)
+    # The crosstalk tier is a project-level decision. Persist it when given
+    # explicitly so later rematch callers (stabilization / resplit / review),
+    # which call this function without crosstalk_params, honor the run's
+    # --crosstalk/--no-crosstalk choice instead of silently re-enabling it.
+    resolved_crosstalk = _resolve_crosstalk_params(context.manifest, crosstalk_params)
+    if crosstalk_params is not None:
+        context.manifest.speakers["crosstalk"] = _crosstalk_params_payload(
+            crosstalk_params
+        )
     summary = _build_match_summary(
         context,
         threshold=threshold,
         sample_count=sample_count,
         max_seconds=max_seconds,
         padding_seconds=padding_seconds,
+        crosstalk_params=resolved_crosstalk,
         progress=progress,
     )
     emit_progress(progress, "Writing speaker match suggestions")
@@ -177,6 +196,39 @@ def match_project_speakers(
     return summary
 
 
+def _resolve_crosstalk_params(
+    manifest: ProjectManifest, explicit: CrosstalkParams | None
+) -> CrosstalkParams:
+    """Return explicit params, else the project's persisted crosstalk setting."""
+    if explicit is not None:
+        return explicit
+    stored = manifest.speakers.get("crosstalk")
+    if isinstance(stored, dict):
+        return CrosstalkParams(
+            enabled=bool(stored.get("enabled", True)),
+            max_samples=int(stored.get("max_samples", DEFAULT_CROSSTALK_MAX_SAMPLES)),
+            score_floor=float(
+                stored.get("score_floor", DEFAULT_CROSSTALK_SCORE_FLOOR)
+            ),
+            concentration_margin=float(
+                stored.get(
+                    "concentration_margin", DEFAULT_CROSSTALK_CONCENTRATION_MARGIN
+                )
+            ),
+        )
+    return CrosstalkParams()
+
+
+def _crosstalk_params_payload(params: CrosstalkParams) -> dict[str, object]:
+    """Serialize crosstalk params for the project manifest."""
+    return {
+        "enabled": params.enabled,
+        "max_samples": params.max_samples,
+        "score_floor": params.score_floor,
+        "concentration_margin": params.concentration_margin,
+    }
+
+
 def preview_project_speaker_matches(
     project_dir: Path,
     *,
@@ -187,6 +239,7 @@ def preview_project_speaker_matches(
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
+    crosstalk_params: CrosstalkParams | None = None,
     progress: CliProgressReporter | None = None,
 ) -> SpeakerMatchSummary:
     """
@@ -207,12 +260,14 @@ def preview_project_speaker_matches(
         Match summary that has not been persisted to ``speaker_matches.json``.
     """
     context = _match_context(project_dir, store_dir, provider, model)
+    resolved_crosstalk = _resolve_crosstalk_params(context.manifest, crosstalk_params)
     return _build_match_summary(
         context,
         threshold=threshold,
         sample_count=sample_count,
         max_seconds=max_seconds,
         padding_seconds=padding_seconds,
+        crosstalk_params=resolved_crosstalk,
         progress=progress,
     )
 
@@ -224,6 +279,7 @@ def _build_match_summary(
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
+    crosstalk_params: CrosstalkParams | None = None,
     progress: CliProgressReporter | None,
 ) -> SpeakerMatchSummary:
     """Build a match summary from a resolved project context."""
@@ -240,10 +296,24 @@ def _build_match_summary(
         padding_seconds,
         progress,
     )
+    matches = _flag_crosstalk_matches(matches, crosstalk_params)
     match_path = context.project_root / "speakers" / "speaker_matches.json"
     return SpeakerMatchSummary(
         match_path, context.provider, context.model, threshold, matches
     )
+
+
+def _flag_crosstalk_matches(
+    matches: list[SpeakerMatch], params: CrosstalkParams | None
+) -> list[SpeakerMatch]:
+    """Mark low-confidence crosstalk/noise clusters without moving any speaker."""
+    resolved = params if params is not None else CrosstalkParams()
+    if not resolved.enabled:
+        return matches
+    return [
+        replace(match, crosstalk=True) if is_crosstalk(match, resolved) else match
+        for match in matches
+    ]
 
 
 def _match_context(
@@ -752,6 +822,7 @@ def _matches_payload(
                 "accepted_person_id": item.accepted_person_id,
                 "accepted_person_public_id": item.accepted_person_public_id,
                 "threshold": item.threshold,
+                "crosstalk": item.crosstalk,
                 "status": voiceprint_match_status(item),
                 "candidates": [
                     {
