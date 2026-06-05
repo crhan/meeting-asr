@@ -22,7 +22,13 @@ from app.project_manager import (
     resolve_project_audio_path,
     save_manifest,
 )
-from app.speaker_crosstalk import CrosstalkParams, is_crosstalk
+from app.speaker_crosstalk import (
+    DEFAULT_CROSSTALK_CONCENTRATION_MARGIN,
+    DEFAULT_CROSSTALK_MAX_SAMPLES,
+    DEFAULT_CROSSTALK_SCORE_FLOOR,
+    CrosstalkParams,
+    is_crosstalk,
+)
 from app.speaker_match_status import voiceprint_match_status
 from app.speaker_labeling import load_transcript_result
 from app.utils import safe_write_json
@@ -161,13 +167,22 @@ def match_project_speakers(
         Match summary.
     """
     context = _match_context(project_dir, store_dir, provider, model)
+    # The crosstalk tier is a project-level decision. Persist it when given
+    # explicitly so later rematch callers (stabilization / resplit / review),
+    # which call this function without crosstalk_params, honor the run's
+    # --crosstalk/--no-crosstalk choice instead of silently re-enabling it.
+    resolved_crosstalk = _resolve_crosstalk_params(context.manifest, crosstalk_params)
+    if crosstalk_params is not None:
+        context.manifest.speakers["crosstalk"] = _crosstalk_params_payload(
+            crosstalk_params
+        )
     summary = _build_match_summary(
         context,
         threshold=threshold,
         sample_count=sample_count,
         max_seconds=max_seconds,
         padding_seconds=padding_seconds,
-        crosstalk_params=crosstalk_params,
+        crosstalk_params=resolved_crosstalk,
         progress=progress,
     )
     emit_progress(progress, "Writing speaker match suggestions")
@@ -179,6 +194,39 @@ def match_project_speakers(
     save_manifest(context.project_root, context.manifest)
     emit_progress(progress, "Speaker matching complete")
     return summary
+
+
+def _resolve_crosstalk_params(
+    manifest: ProjectManifest, explicit: CrosstalkParams | None
+) -> CrosstalkParams:
+    """Return explicit params, else the project's persisted crosstalk setting."""
+    if explicit is not None:
+        return explicit
+    stored = manifest.speakers.get("crosstalk")
+    if isinstance(stored, dict):
+        return CrosstalkParams(
+            enabled=bool(stored.get("enabled", True)),
+            max_samples=int(stored.get("max_samples", DEFAULT_CROSSTALK_MAX_SAMPLES)),
+            score_floor=float(
+                stored.get("score_floor", DEFAULT_CROSSTALK_SCORE_FLOOR)
+            ),
+            concentration_margin=float(
+                stored.get(
+                    "concentration_margin", DEFAULT_CROSSTALK_CONCENTRATION_MARGIN
+                )
+            ),
+        )
+    return CrosstalkParams()
+
+
+def _crosstalk_params_payload(params: CrosstalkParams) -> dict[str, object]:
+    """Serialize crosstalk params for the project manifest."""
+    return {
+        "enabled": params.enabled,
+        "max_samples": params.max_samples,
+        "score_floor": params.score_floor,
+        "concentration_margin": params.concentration_margin,
+    }
 
 
 def preview_project_speaker_matches(
@@ -212,13 +260,14 @@ def preview_project_speaker_matches(
         Match summary that has not been persisted to ``speaker_matches.json``.
     """
     context = _match_context(project_dir, store_dir, provider, model)
+    resolved_crosstalk = _resolve_crosstalk_params(context.manifest, crosstalk_params)
     return _build_match_summary(
         context,
         threshold=threshold,
         sample_count=sample_count,
         max_seconds=max_seconds,
         padding_seconds=padding_seconds,
-        crosstalk_params=crosstalk_params,
+        crosstalk_params=resolved_crosstalk,
         progress=progress,
     )
 

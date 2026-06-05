@@ -12,8 +12,9 @@ from app.cli import app
 from app.commands.project import (
     _ensure_named_outputs_for_nonblocking_run,
     _project_has_unresolved_match,
+    _voiceprint_match_cli_line,
 )
-from app.project_manager import create_project
+from app.project_manager import create_project, load_manifest
 from app.speaker_crosstalk import CrosstalkParams, is_crosstalk
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
@@ -26,6 +27,7 @@ from app.speaker_matching import (
     VoiceprintCandidate,
     _flag_crosstalk_matches,
     _KnownSpeakerVector,
+    match_project_speakers,
 )
 
 runner = CliRunner()
@@ -300,3 +302,77 @@ def test_ensure_named_outputs_noop_when_something_was_named(tmp_path: Path) -> N
     _ensure_named_outputs_for_nonblocking_run(project_dir, matches, {0: "X"})
 
     assert not (project_dir / "exports" / "transcript_named.txt").exists()
+
+
+# --- persisted setting honored by rematch (Codex P2) ------------------------
+
+
+def _patch_low_score_library(monkeypatch) -> None:
+    """Two library people both weakly/ambiguously similar to speaker 0's probe."""
+    monkeypatch.setattr(
+        "app.speaker_matching.extract_audio_clip", _fake_extract_audio_clip
+    )
+    monkeypatch.setattr("app.speaker_matching.embed_audio_file", _fake_embed_speaker0)
+    monkeypatch.setattr(
+        "app.speaker_matching._known_speaker_vectors",
+        lambda store_dir, model: {
+            5: _KnownSpeakerVector(5, "甲", [0.30, 0.95394], "vpp-0000000000000005"),
+            6: _KnownSpeakerVector(6, "乙", [0.28, 0.95996], "vpp-0000000000000006"),
+        },
+    )
+
+
+def _match_once(project_dir: Path, store: Path, params: CrosstalkParams | None):
+    return match_project_speakers(
+        project_dir,
+        store_dir=store,
+        provider=None,
+        model=None,
+        threshold=0.99,
+        sample_count=2,
+        max_seconds=12.0,
+        padding_seconds=0.5,
+        crosstalk_params=params,
+    )
+
+
+def test_no_crosstalk_persists_and_survives_rematch(monkeypatch, tmp_path: Path) -> None:
+    """--no-crosstalk persists, so an implicit rematch keeps the tier disabled."""
+    project_dir = _crosstalk_project(tmp_path)
+    store = tmp_path / "voiceprints"
+    _patch_low_score_library(monkeypatch)
+
+    first = _match_once(project_dir, store, CrosstalkParams(enabled=False))
+    assert all(not m.crosstalk for m in first.matches)
+    assert load_manifest(project_dir).speakers["crosstalk"]["enabled"] is False
+
+    # The rematch path (stabilization/resplit/review) passes no params; it must
+    # honor the persisted disabled setting instead of re-enabling the tier.
+    rematch = _match_once(project_dir, store, None)
+    assert all(not m.crosstalk for m in rematch.matches)
+
+
+def test_crosstalk_default_persists_enabled_and_rematch_keeps_flag(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Default (enabled) persists, so an implicit rematch keeps flagging crosstalk."""
+    project_dir = _crosstalk_project(tmp_path)
+    store = tmp_path / "voiceprints"
+    _patch_low_score_library(monkeypatch)
+
+    first = _match_once(project_dir, store, CrosstalkParams())
+    assert any(m.crosstalk for m in first.matches)
+    assert load_manifest(project_dir).speakers["crosstalk"]["enabled"] is True
+
+    rematch = _match_once(project_dir, store, None)
+    assert any(m.crosstalk for m in rematch.matches)
+
+
+# --- CLI line shows crosstalk, not no-candidate (Codex P3) ------------------
+
+
+def test_cli_line_renders_crosstalk_status() -> None:
+    """A crosstalk row reads as crosstalk, not the misleading no-candidate."""
+    line = _voiceprint_match_cli_line(_match(crosstalk=True))
+    assert "status=crosstalk" in line
+    assert "no-candidate" not in line

@@ -1277,6 +1277,10 @@ def _run_project_workflow(
             person_mapping=matches.accepted_person_mapping,
             person_public_mapping=matches.accepted_person_public_mapping,
         )
+    # When applied_mapping is empty (e.g. every unresolved speaker is crosstalk),
+    # the anonymous named transcript/subtitle are rendered after stabilization by
+    # _ensure_named_outputs_for_nonblocking_run, so a completed non-blocking run
+    # never lacks its advertised final outputs.
     stabilization_summary = None
     # The iterative passes need at least one accepted in-project identity to anchor
     # reassignments; the re-split phase does not (it works off the global library), so
@@ -3034,6 +3038,12 @@ def _voiceprint_match_cli_line(
         score = best_candidate_score(match)
         score_text = "" if score is None else f" score={score:.3f}"
         return f"{label} status=below-threshold best={name}{score_text}{threshold_text}"
+    if status == MATCH_STATUS_CROSSTALK:
+        # Suspected crosstalk/noise: kept anonymous on purpose, non-blocking.
+        name = best_candidate_name(match) or "unrecorded"
+        score = best_candidate_score(match)
+        score_text = "" if score is None else f" score={score:.3f}"
+        return f"{label} status=crosstalk best={name}{score_text}{threshold_text}"
     return f"{label} status=no-candidate{threshold_text}"
 
 
