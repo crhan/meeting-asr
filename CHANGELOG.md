@@ -5,6 +5,12 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [Unreleased]
+
+### 新增
+
+- 新增 **Web UI（`meeting-asr web`）**：把原本的 Textual TUI 全部功能搬上浏览器。`meeting-asr web` 启动一个本地 FastAPI 服务（默认 `127.0.0.1:8765`，单用户、loopback 免鉴权，非 loopback 强制 bearer token），前端是 React + TypeScript + Vite SPA（构建产物 force-include 进 wheel，发布时 hatch 钩子自动构建，安装无需 node）。覆盖：项目列表与完整 ASR 摄入管线控制台（运行管线 / summarize / merge，经后台任务 + SSE 实时进度）、**speaker review**（双栏、逐句音频播放、改名 / 接受声纹匹配 / 忽略 / 重指派 / 疑点过滤 / 保存）、**声纹采集**（候选 clip 勾选 → 采集+嵌入 → 本项目与历史项目逐发言人分数变化对比 → 接受/回滚）、**声纹库**（浏览 / 质量离群改判 / 人物 CRUD）、**文字纠错**（polish 提案逐条勾选应用）、**纠错词库**（词条/消歧/热词）、**设置**（配置凭证、环境诊断）。架构上**零业务逻辑重写**：危险落盘路径（speaker_map 合并、会删全局声纹样本的重指派 + rematch、声纹采集事务）抽进 `core/speaker_review_service.py` / `core/voiceprint_review_service.py`，CLI 与 web 共用同一条路径；长任务进度复用现有 `emit_progress`，经 `call_soon_threadsafe` 推 SSE；音频经带 HTTP Range 的端点给浏览器 `<audio>`；并发用单 worker + per-project/per-store 异步锁 + 任务串行（不引入 Redis/Celery）。用法与架构见 `docs/web-ui.md`。
+
 ## [0.11.0] - 2026-06-05
 
 ### 新增
