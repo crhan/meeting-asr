@@ -12,6 +12,7 @@ import sys
 import termios
 import tty
 import wave
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -539,8 +540,8 @@ def summarize(
 
 @app.command("run")
 def run(
-    input: Path = typer.Argument(
-        ..., metavar="INPUT", exists=True, file_okay=True, dir_okay=False
+    inputs: list[Path] = typer.Argument(
+        ..., metavar="INPUT...", exists=True, file_okay=True, dir_okay=False
     ),
     title: Optional[str] = typer.Option(None, "--title", "-t"),
     projects_dir: Optional[Path] = typer.Option(
@@ -648,8 +649,18 @@ def run(
         help="Print structured stage and heartbeat logs for agents; combine with --no-progress for clean logs.",
     ),
 ) -> None:
-    """Create a project, transcribe, summarize, and match speakers automatically."""
+    """Create a project, transcribe, summarize, and match speakers automatically.
+
+    Pass several ordered media files to merge them into one continuous project:
+    the audio is concatenated, then transcribed and voiceprint-matched once so a
+    person who appears across segments gets a single consistent speaker.
+    """
     configure_logging(verbose=should_enable_verbose_logs())
+    if len(inputs) > 1 and file_url is not None:
+        raise typer.BadParameter(
+            "--file-url cannot be combined with multiple inputs; segments are "
+            "concatenated locally before transcription."
+        )
     options = _project_transcribe_options(
         speaker_count=speaker_count,
         language=language,
@@ -664,7 +675,8 @@ def run(
     )
     summary = run_with_progress(
         lambda reporter: _run_project_workflow(
-            input,
+            inputs[0],
+            extra_inputs=inputs[1:],
             title=title,
             projects_dir=projects_dir,
             project_dir=project_dir,
@@ -996,6 +1008,7 @@ def review(
 def _run_project_workflow(
     input_path: Path,
     *,
+    extra_inputs: Sequence[Path] = (),
     title: str | None,
     projects_dir: Path | None,
     project_dir: Path | None,
@@ -1071,6 +1084,7 @@ def _run_project_workflow(
         meeting_time=meeting_time,
         hash_source=False,
         variant=variant,
+        extra_inputs=extra_inputs,
         progress=progress,
     )
     _record_and_emit_run_stage(

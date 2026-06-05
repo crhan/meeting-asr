@@ -92,6 +92,15 @@
 - `ignored` speaker（`speaker_ignore.json`）按**匿名保留**处理（与单段命名导出语义一致：仍出现，但不具名），不丢弃、即使带 vpp 也不归并；`merge.json` 记 `ignored_speaker_count`。低信息过滤口径跨段统一（默认 `include_low_information=False`），`--include-low-information` 透传。
 - 单段（N=1）走同一管线退化为直接命名导出（无段界 header）；重复传同一 project ref 去重并 warn，时间轴不翻倍。
 
+## Multi-Input Run Notes（`project run a b c …` 拼接）
+
+- **`project run` 的多输入与 `project merge` 是两条正交路径，别混。** `merge` 是「各段**已各自转写**完，事后归一」（声纹各段独立识别、靠 vpp/名拼，只能补救）；`run a b c` 是「N 段原始媒体**先拼音频、再整段转写一次**」——ASR/diarization/声纹在全量上跑一次，同一人天然只有一个 speaker。**钉钉把同一场会拆成两段闪记**就该用多输入 `run`；两段是独立录制、各自跑完才想合，用 `merge`。
+- **时间轴不需要 offset 数学**：ASR 在拼接音频上跑，时间戳本来就是统一连续时间轴（不同于 `merge` 的逐段 `Σ audio.duration_seconds` 偏移）。声纹样本、`apply_project_sentence_reassignments` 的重指派、全局库样本删除全在这条统一时间轴上，**不存在 per-segment 本地时间回映**。`audio["segments"][].offset_seconds/duration_seconds` 只是**来源溯源边界**，不参与重渲染。
+- **身份（守 Project Identity Notes）**：N=1 仍是 `p-<sha256(file)[:16]>`（逐字节不变，`create_or_reuse_project` 单输入路径**完全没动**）；N>1 是 `p-<sha256("\n".join(ordered per-file shas))[:16]>`，顺序敏感、可复用（同序重跑→reuse）。多输入 reuse **纯内容寻址**（组合 sha→`_resolve_project_root`→查 `project.json`），**绝不走 `find_project_by_source`**。
+- **单/多 reuse 不许互撞**：多段项目的 `manifest.source.original_path` **故意置 None**——否则单跑首段会经 `find_project_by_source` 的 `original_path` 分支误 reuse 多段项目（反向亦然）。`manifest.source.sha256` 存**组合身份 sha**（= project_id 来源），权威的逐段 original 落 `audio["segments"][].original_path`。改这块前先想清这两个反向碰撞。
+- **拼接策略**：`concat_audio_for_asr`（`infra/ffmpeg.py`）逐段归一到 16k mono s16 中间件 → ffprobe 各中间件时长 → concat demuxer `-c copy`（同参数、无损无缝、零漂移）。offset = 中间件时长累加（采样级，对齐 ASR 时间戳）。拼后校验 `probed ≈ Σ` 并 warn。**只有音频准备阶段分支**（`_ensure_project_audio` 见 `manifest.audio["segments"]` 就走 `prepare_project_audio_multi`），OSS/ASR 提交/解析/声纹/stabilization 全不动。`--file-url` 与多输入互斥（必须本地拼）。
+- **裁剪安全**：每段 managed copy 落 `source/<name>`（撞名加 `NN_` 前缀），拼完按 single-input 同口径裁掉（video 裁、audio 留）；用户**原始文件在 `source/` 外**，`_is_project_managed_source` 永不命中，绝不误删。`_sync_manifest_audio_metadata` 重建 audio 元数据时**保留 `segments`**（声纹/重渲染都靠它，丢了就没溯源）。
+
 ## Speaker Resplit Notes（ASR under-split 救援）
 
 - ASR diarizer 会 **under-split**：多个真人塌缩进同一条 speaker track。`speaker_stabilization` 原本只能在**已存在的项目 speaker 之间**挪句子（`_target_speaker_by_person` 只收 `assigned_person_id` 非空的人），所以「库里有声纹、但本项目还没建 track 的人」（例如某段会议里只露几句的第三人）永远救不出来。`src/app/speaker_resplit.py` 补这个缺口，作为 `stabilize_project_speakers` 的**一次性前置阶段**（迭代前跑一次，避免跨轮 ping-pong / 重复 mint），受 `project run --speaker-resplit/--no-speaker-resplit` 控制（默认开），well-split 项目下分析为空、纯 no-op。

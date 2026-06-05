@@ -9,7 +9,7 @@ import re
 import shutil
 import subprocess
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -67,6 +67,7 @@ from app.infra.dashscope_asr import (
 )
 from app.infra.ffmpeg import (
     SUPPORTED_AUDIO_FORMATS,
+    concat_audio_for_asr,
     extract_audio_for_asr,
     probe_media_duration_seconds,
 )
@@ -263,25 +264,39 @@ def create_or_reuse_project(
     meeting_time: str | None,
     hash_source: bool,
     variant: str | None = None,
+    extra_inputs: Sequence[Path] = (),
     progress: CliProgressReporter | None = None,
 ) -> ProjectCreateSummary:
     """
     Return the existing project for a source video, or create a new one.
 
     Args:
-        input_path: Local source media file.
+        input_path: Local source media file (the first segment when concatenating).
         title: Optional human title for new projects.
         projects_dir: Optional parent directory used when project_dir is omitted.
         project_dir: Explicit project directory for a new project.
         meeting_time: Optional meeting start time string for new projects.
         hash_source: Deprecated compatibility flag. Source identity is always hashed.
         variant: Optional explicit experiment variant. Variants get distinct project ids.
+        extra_inputs: Additional ordered segments to concatenate into one project.
+            When non-empty the project identity is the combined content of all
+            segments and the audio stage concatenates them into one track.
         progress: Optional progress reporter.
 
     Returns:
         Project creation summary.
     """
     resolved_variant = _normalize_project_variant(variant)
+    if extra_inputs:
+        return _create_or_reuse_multi_source_project(
+            [input_path, *extra_inputs],
+            title=title,
+            projects_dir=projects_dir,
+            project_dir=project_dir,
+            meeting_time=meeting_time,
+            variant=resolved_variant,
+            progress=progress,
+        )
     existing = _find_existing_project_for_create(
         input_path,
         projects_dir,
@@ -323,6 +338,171 @@ def create_or_reuse_project(
         source, projects_dir, project_dir, source_sha256, resolved_variant
     )
     return ProjectCreateSummary(project_root, manifest, True)
+
+
+def _combined_identity_sha(per_file_shas: Sequence[str]) -> str:
+    """Build a stable content identity for an ordered set of source files.
+
+    A single file keeps its own SHA-256 so single-input projects are
+    byte-identical to today. Multiple files hash the ordered per-file digests so
+    the identity is content-addressed, order-sensitive, and reusable for the
+    same ordered inputs.
+    """
+    if len(per_file_shas) == 1:
+        return per_file_shas[0]
+    joined = "\n".join(per_file_shas).encode("utf-8")
+    return hashlib.sha256(joined).hexdigest()
+
+
+def _create_or_reuse_multi_source_project(
+    input_paths: Sequence[Path],
+    *,
+    title: str | None,
+    projects_dir: Path | None,
+    project_dir: Path | None,
+    meeting_time: str | None,
+    variant: str | None,
+    progress: CliProgressReporter | None,
+) -> ProjectCreateSummary:
+    """Return the existing concatenated project for these ordered inputs, or create one.
+
+    Reuse is purely content-addressed via the combined identity hash, never via
+    ``find_project_by_source``: a multi-segment project deliberately leaves
+    ``source.original_path`` empty so a later single-input run of any one segment
+    cannot collide with (reuse) the concatenated project, and vice versa.
+    """
+    sources = [path.expanduser().resolve() for path in input_paths]
+    for source in sources:
+        if not source.exists():
+            raise FileNotFoundError(f"Input media file does not exist: {source}")
+    per_file_shas = [_sha256_file(source, progress) for source in sources]
+    combined_sha = _combined_identity_sha(per_file_shas)
+    root = _resolve_project_root(
+        sources[0], projects_dir, project_dir, combined_sha, variant
+    )
+    if (root / "project.json").exists():
+        manifest = load_manifest(root)
+        # Reuse only when BOTH the combined content and the variant match, so an
+        # explicit --project-dir occupied by the unvarianted (or a different
+        # variant) project of the same inputs is not silently reused — mirroring
+        # single-input reuse, which compares variant in _source_manifest_matches.
+        same_content = manifest.source.sha256 == combined_sha
+        same_variant = (manifest.source.variant or None) == (variant or None)
+        if same_content and same_variant:
+            emit_progress(progress, "Using existing project", total=1, completed=1)
+            return ProjectCreateSummary(
+                root, _load_reused_manifest(root, title), False
+            )
+        raise FileExistsError(
+            f"Project directory already holds a different project: {root}"
+        )
+    manifest = _create_multi_source_project(
+        sources,
+        per_file_shas,
+        combined_sha,
+        title=title,
+        projects_dir=projects_dir,
+        project_dir=project_dir,
+        meeting_time=meeting_time,
+        variant=variant,
+        progress=progress,
+    )
+    return ProjectCreateSummary(root, manifest, True)
+
+
+def _create_multi_source_project(
+    sources: Sequence[Path],
+    per_file_shas: Sequence[str],
+    combined_sha: str,
+    *,
+    title: str | None,
+    projects_dir: Path | None,
+    project_dir: Path | None,
+    meeting_time: str | None,
+    variant: str | None,
+    progress: CliProgressReporter | None,
+) -> ProjectManifest:
+    """Create a concatenated multi-segment project directory and manifest."""
+    primary = sources[0]
+    resolved_title, title_source = _resolve_initial_title(primary, title)
+    resolved_title = _title_with_meeting_time(resolved_title, meeting_time)
+    created_at = _now_iso()
+    root = _resolve_project_root(
+        primary, projects_dir, project_dir, combined_sha, variant
+    )
+    if (root / "project.json").exists():
+        raise FileExistsError(f"Project already exists: {root}")
+    _create_project_dirs(root)
+    staged = _stage_multi_sources(sources, root, progress)
+    segments = [
+        {
+            "index": index,
+            "original_path": str(source),
+            "filename": source.name,
+            "sha256": sha,
+            "path": _relative_path(root, staged_path),
+        }
+        for index, (source, staged_path, sha) in enumerate(
+            zip(sources, staged, per_file_shas)
+        )
+    ]
+    primary_stat = staged[0].stat()
+    manifest = ProjectManifest(
+        schema_version=SCHEMA_VERSION,
+        project_id=_build_project_id(combined_sha, variant),
+        title=resolved_title,
+        title_source=title_source,
+        title_model=None,
+        created_at=created_at,
+        updated_at=created_at,
+        status="created",
+        source=ProjectSource(
+            path=_relative_path(root, staged[0]),
+            filename=primary.name,
+            size_bytes=primary_stat.st_size,
+            mtime=datetime.fromtimestamp(primary_stat.st_mtime)
+            .astimezone()
+            .isoformat(timespec="seconds"),
+            sha256=combined_sha,
+            meeting_time=meeting_time,
+            # Left empty on purpose: the authoritative per-segment origins live in
+            # audio["segments"]; nulling this keeps single/multi reuse from colliding.
+            original_path=None,
+            variant=variant,
+        ),
+        audio={"segments": segments},
+        speakers={"detected_ids": [], "mapped": {}},
+    )
+    safe_write_text(
+        root / "source" / "original.path",
+        "".join(str(source) + "\n" for source in sources),
+    )
+    safe_write_text(root / "notes.md", f"# {resolved_title}\n")
+    save_manifest(root, manifest)
+    return manifest
+
+
+def _stage_multi_sources(
+    sources: Sequence[Path], root: Path, progress: CliProgressReporter | None
+) -> list[Path]:
+    """Copy each segment into the project source directory under unique names."""
+    staged: list[Path] = []
+    used_names: set[str] = set()
+    for index, source in enumerate(sources):
+        name = source.name
+        target = root / "source" / name
+        if name in used_names or (index > 0 and target.exists()):
+            name = f"{index:02d}_{source.name}"
+            target = root / "source" / name
+        used_names.add(name)
+        if source.resolve() == target.resolve():
+            staged.append(target)
+            continue
+        if target.exists():
+            raise FileExistsError(f"Project source file already exists: {target}")
+        _copy_file_with_progress(source, target, progress)
+        staged.append(target)
+    return staged
 
 
 def _find_existing_project_for_create(
@@ -724,6 +904,90 @@ def prepare_project_audio(
     )
     save_manifest(paths.root, manifest)
     return audio_path
+
+
+def prepare_project_audio_multi(
+    project_dir: Path,
+    *,
+    audio_format: str,
+    progress: CliProgressReporter | None = None,
+) -> Path:
+    """
+    Concatenate the project's ordered segments into one ASR-ready audio track.
+
+    The segments recorded at create time are normalized and joined on a single
+    continuous timeline; per-segment offsets/durations are written back so the
+    provenance of every part of the transcript stays recoverable.
+
+    Args:
+        project_dir: Project root.
+        audio_format: wav or flac.
+        progress: Optional progress reporter.
+
+    Returns:
+        Generated concatenated audio path.
+    """
+    normalized_format = _normalize_audio_format(audio_format)
+    paths = ensure_project_dirs(project_dir)
+    manifest = load_manifest(project_dir)
+    segments = [dict(segment) for segment in (manifest.audio.get("segments") or [])]
+    if not segments:
+        raise ValueError("Project has no recorded segments to concatenate.")
+    segment_sources = [_resolve_segment_source(paths.root, segment) for segment in segments]
+    audio_path = paths.audio_dir / f"audio.{normalized_format}"
+    emit_progress(
+        progress, f"Concatenating {len(segments)} segments into 16 kHz mono audio"
+    )
+    durations = concat_audio_for_asr(
+        segment_sources, audio_path, audio_format=normalized_format
+    )
+    emit_progress(progress, "Audio ready", advance=1)
+    offset = 0.0
+    for segment, duration in zip(segments, durations):
+        segment["offset_seconds"] = round(offset, 3)
+        segment["duration_seconds"] = round(duration, 3)
+        offset += duration
+    metadata = _audio_metadata(audio_path, normalized_format)
+    metadata["segments"] = segments
+    probed = metadata.get("duration_seconds")
+    if isinstance(probed, int | float) and abs(float(probed) - offset) > 0.5:
+        LOGGER.warning(
+            "Multi-input concat duration drift: probed=%.3f sum_of_segments=%.3f",
+            float(probed),
+            offset,
+        )
+    manifest.audio = metadata
+    manifest.status = "prepared"
+    for segment_source in segment_sources:
+        _prune_project_source_after_audio(
+            paths, manifest, segment_source, audio_path, progress
+        )
+    save_manifest(paths.root, manifest)
+    return audio_path
+
+
+def _resolve_segment_source(project_root: Path, segment: dict[str, Any]) -> Path:
+    """Resolve one concatenation source: staged copy first, then user original."""
+    staged = segment.get("path")
+    if isinstance(staged, str) and staged.strip():
+        resolved = Path(staged)
+        if not resolved.is_absolute():
+            resolved = project_root / resolved
+        if resolved.exists():
+            return resolved.resolve()
+    original = segment.get("original_path")
+    if isinstance(original, str) and original.strip():
+        candidate = Path(original).expanduser()
+        if candidate.exists():
+            return candidate.resolve()
+    raise FileNotFoundError(
+        f"Segment source is missing for {segment.get('filename') or segment}."
+    )
+
+
+def _manifest_has_segments(manifest: ProjectManifest) -> bool:
+    """Return whether the project audio is concatenated from multiple segments."""
+    return bool(manifest.audio.get("segments"))
 
 
 def transcribe_project(
@@ -1546,6 +1810,10 @@ def _ensure_project_audio(
         _sync_manifest_audio_metadata(paths.root, manifest, existing_path)
         emit_progress(progress, "Using existing project audio", advance=1)
         return existing_path
+    if _manifest_has_segments(manifest):
+        return prepare_project_audio_multi(
+            paths.root, audio_format=normalized_format, progress=progress
+        )
     return prepare_project_audio(
         paths.root, audio_format=normalized_format, progress=progress
     )
@@ -1573,6 +1841,10 @@ def _sync_manifest_audio_metadata(
 ) -> None:
     """Persist the actual reusable project audio path when metadata is stale."""
     metadata = _project_audio_metadata(root, audio_path)
+    segments = manifest.audio.get("segments")
+    if segments is not None:
+        # Multi-segment provenance is not derivable from the audio file; keep it.
+        metadata["segments"] = segments
     if manifest.audio != metadata:
         manifest.audio = metadata
         save_manifest(root, manifest)
