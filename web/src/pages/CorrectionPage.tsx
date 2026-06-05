@@ -10,6 +10,7 @@ export function CorrectionPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [jobId, setJobId] = useState<string | null>(null);
+  const [jobError, setJobError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
   const proposalQuery = useQuery({
@@ -26,7 +27,10 @@ export function CorrectionPage() {
 
   const polishMut = useMutation({
     mutationFn: () => polishProject(ref),
-    onSuccess: (r) => setJobId(r.job_id),
+    onSuccess: (r) => {
+      setJobError(null);
+      setJobId(r.job_id);
+    },
   });
 
   const acceptMut = useMutation({
@@ -88,8 +92,18 @@ export function CorrectionPage() {
               setJobId(null);
               queryClient.invalidateQueries({ queryKey: ["proposal", ref] });
             }}
-            onError={() => setJobId(null)}
+            // Keep the polish failure visible after the job panel unmounts.
+            onError={(e) => {
+              setJobError(e);
+              setJobId(null);
+            }}
           />
+        </div>
+      )}
+
+      {jobError && !jobId && (
+        <div className="error-box" style={{ marginBottom: 14 }}>
+          {jobError}
         </div>
       )}
 

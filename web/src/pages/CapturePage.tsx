@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   capturePlan,
   captureAccept,
   captureRollback,
+  captureRollbackUrl,
   captureRun,
   clipUrl,
   getJob,
@@ -37,6 +38,29 @@ export function CapturePage() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<CaptureResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+
+  // A completed capture leaves a server-side transaction pending until the user accepts or
+  // rolls it back. If they navigate away (or reload / close the tab) without deciding, that
+  // transaction wedges every later store write with HTTP 409 until the 6h server sweep, with
+  // no UI to recover it. Track the pending txn in a ref and roll it back on the way out (like
+  // the TUI does on unmount). Cleared the moment accept/rollback resolves it explicitly.
+  const pendingTxnRef = useRef<string | null>(null);
+  useEffect(() => {
+    pendingTxnRef.current = result ? result.transaction_id : null;
+  }, [result]);
+  useEffect(() => {
+    const onUnload = () => {
+      const txn = pendingTxnRef.current;
+      if (txn) navigator.sendBeacon(captureRollbackUrl(txn));
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onUnload);
+      const txn = pendingTxnRef.current;
+      // In-app navigation away from the page: best-effort rollback of an undecided capture.
+      if (txn) captureRollback(txn).catch(() => {});
+    };
+  }, []);
 
   // Pre-select recommended clips once the plan loads.
   useEffect(() => {
@@ -183,11 +207,15 @@ export function CapturePage() {
         <CaptureResultModal
           result={result}
           onAccept={async () => {
+            // Resolve the txn explicitly first so the unmount cleanup (fired by the navigate
+            // below) does not also roll back what we just accepted.
+            pendingTxnRef.current = null;
             await captureAccept(result.transaction_id);
             setResult(null);
             navigate(`/projects/${ref}/speakers`);
           }}
           onRollback={async () => {
+            pendingTxnRef.current = null;
             await captureRollback(result.transaction_id);
             setResult(null);
           }}

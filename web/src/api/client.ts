@@ -419,6 +419,14 @@ export const captureRollback = (txnId: string) =>
     { method: "POST" },
   );
 
+/** Token-carrying rollback URL for navigator.sendBeacon on tab close/reload, where an
+ *  async fetch from an unmount handler can't reliably complete. sendBeacon issues a POST
+ *  and can't set headers, so the token rides the query string like the SSE/audio paths. */
+export const captureRollbackUrl = (txnId: string) =>
+  withToken(
+    `/api/voiceprints/capture/transactions/${encodeURIComponent(txnId)}/rollback`,
+  );
+
 export const getJob = (jobId: string) =>
   api<JobStatus>(`/api/jobs/${encodeURIComponent(jobId)}`);
 

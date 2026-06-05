@@ -13,6 +13,7 @@ function RunDialog({ onClose }: { onClose: () => void }) {
   const [summarize, setSummarize] = useState(true);
   const [polish, setPolish] = useState(true);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [jobError, setJobError] = useState<string | null>(null);
 
   const runMut = useMutation({
     mutationFn: () =>
@@ -22,7 +23,10 @@ function RunDialog({ onClose }: { onClose: () => void }) {
         summarize,
         polish,
       }),
-    onSuccess: (r) => setJobId(r.job_id),
+    onSuccess: (r) => {
+      setJobError(null);
+      setJobId(r.job_id);
+    },
   });
 
   return (
@@ -34,10 +38,20 @@ function RunDialog({ onClose }: { onClose: () => void }) {
             queryClient.invalidateQueries({ queryKey: ["projects"] });
             onClose();
           }}
-          onError={() => setJobId(null)}
+          // Keep the terminal error after the job panel unmounts; clearing jobId alone would
+          // drop the only explanation and bounce the user back to a blank form.
+          onError={(e) => {
+            setJobError(e);
+            setJobId(null);
+          }}
         />
       ) : (
         <>
+          {jobError && (
+            <div className="error-box" style={{ marginBottom: 10 }}>
+              {jobError}
+            </div>
+          )}
           <input
             className="search"
             autoFocus
