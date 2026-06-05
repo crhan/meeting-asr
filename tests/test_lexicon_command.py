@@ -18,6 +18,8 @@ from app.lexicon_store import (
     AsrVocabularyState,
     LexiconContext,
     get_asr_vocabulary_state,
+    get_lexicon_term,
+    import_lexicon_payload,
     list_asr_hotwords,
     list_lexicon_correction_rules,
     list_lexicon_disambiguations,
@@ -325,6 +327,45 @@ def test_lexicon_import_clears_stale_disambiguation(tmp_path: Path) -> None:
     assert by_alias["IC"]["disambiguation"] is None
     # Cleared guidance returns IC to deterministic blanket replacement.
     assert "IC" in _wrong_texts(target_db)
+
+
+def test_lexicon_import_legacy_payload_preserves_guidance(tmp_path: Path) -> None:
+    """A legacy export that omits the disambiguation key must keep local guidance.
+
+    Absent key = "no opinion" (predates the field); only an explicit null clears
+    stale guidance. Importing an old backup must not silently wipe guidance the
+    user configured after that backup was taken.
+    """
+    target_db = tmp_path / "target.sqlite"
+    upsert_lexicon_term(
+        canonical="iSee",
+        category="system",
+        description="",
+        aliases=("IC",),
+        status="active",
+        db_path=target_db,
+    )
+    set_alias_disambiguation(
+        term="iSee", alias="IC", guidance="keep me", db_path=target_db
+    )
+    # Legacy payload: the alias object has no disambiguation key at all.
+    legacy_payload = {
+        "schema_version": 2,
+        "terms": [
+            {
+                "canonical": "iSee",
+                "category": "system",
+                "aliases": [{"alias": "IC", "alias_type": "asr_error"}],
+            }
+        ],
+    }
+
+    import_lexicon_payload(legacy_payload, db_path=target_db)
+    detail = get_lexicon_term("iSee", db_path=target_db)
+    ic_alias = next(alias for alias in detail.aliases if alias.alias == "IC")
+
+    assert ic_alias.disambiguation == "keep me"
+    assert "IC" not in _wrong_texts(target_db)
 
 
 def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
