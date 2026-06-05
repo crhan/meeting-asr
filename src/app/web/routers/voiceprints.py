@@ -299,11 +299,16 @@ async def merge_people(
 ) -> VoiceprintPersonOut:
     """Merge one person into another; returns the surviving person."""
     db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
-    await _run(
-        locks,
-        lambda: merge_voiceprint_people(payload.from_ref, payload.into_ref, db_path),
-    )
-    survivor = get_voiceprint_person(payload.into_ref, db_path)
+
+    def _merge_and_read():
+        # Read the survivor INSIDE the store-write critical section. Reading it after _run
+        # released the lock let a concurrent store mutation (e.g. deleting the survivor)
+        # slip in between, so the read could miss the just-merged person and raise a
+        # spurious 404 even though the merge committed fine. Atomic read-after-write here.
+        merge_voiceprint_people(payload.from_ref, payload.into_ref, db_path)
+        return get_voiceprint_person(payload.into_ref, db_path)
+
+    survivor = await _run(locks, _merge_and_read)
     if survivor is None:
         raise FileNotFoundError(f"Merged person not found: {payload.into_ref}")
     return _person_out(survivor)

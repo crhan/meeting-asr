@@ -9,6 +9,10 @@ safe to reuse.
 
 from __future__ import annotations
 
+import os
+import tempfile
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 
@@ -45,9 +49,23 @@ def get_clip(
     if not cache_path.is_file():
         start = max(0.0, begin_ms / 1000.0 - _LEAD_IN_SECONDS)
         duration = (end_ms - begin_ms) / 1000.0 + _LEAD_IN_SECONDS + _TAIL_PAD_SECONDS
-        extract_audio_clip(
-            source, cache_path, start_seconds=start, duration_seconds=duration
-        )
+        # Extract to a unique temp file then atomically rename into place. Sync routes run
+        # in a thread pool, so two requests for the same uncached clip would otherwise both
+        # run ffmpeg over the same path -- and worse, is_file() turns True the instant ffmpeg
+        # *creates* the file, so a concurrent request could serve a half-written WAV. An
+        # atomic os.replace makes cache_path appear only when fully written; concurrent
+        # extractions each write their own temp and the last rename wins, no corruption.
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=cache_dir, suffix=".wav.tmp")
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        try:
+            extract_audio_clip(
+                source, tmp_path, start_seconds=start, duration_seconds=duration
+            )
+            os.replace(tmp_path, cache_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
     return FileResponse(
         cache_path,
         media_type="audio/wav",

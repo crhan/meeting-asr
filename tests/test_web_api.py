@@ -852,3 +852,93 @@ def test_capture_rollback_takes_project_lock(
     resp = client.post("/api/voiceprints/capture/transactions/txn-1/rollback")
     assert resp.status_code == 200
     assert f"project:{proj}" in seen
+
+
+def test_merge_people_reads_survivor_under_store_lock(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The survivor must be read INSIDE the store-write critical section. Reading it after
+    the lock released let a concurrent store mutation delete the survivor in between, raising
+    a spurious 404 even though the merge committed -- so the read must be atomic with it."""
+    import app.web.routers.voiceprints as vp
+    from app.voiceprint_models import VoiceprintSpeakerRow
+
+    survivor = VoiceprintSpeakerRow(
+        speaker_id=1,
+        public_id="vp-into",
+        name="B",
+        sample_count=2,
+        project_count=1,
+        embedded_sample_count=2,
+        embedding_model_count=1,
+        updated_at=None,
+    )
+    state = {"survivor_exists": True}
+    events: list[str] = []
+
+    monkeypatch.setattr(vp, "get_voiceprint_db_path", lambda _s: tmp_path / "vp.sqlite")
+    monkeypatch.setattr(
+        vp, "merge_voiceprint_people", lambda *_a, **_k: events.append("merge")
+    )
+
+    def _get(_ref, _db):
+        events.append("read")
+        return survivor if state["survivor_exists"] else None
+
+    monkeypatch.setattr(vp, "get_voiceprint_person", _get)
+
+    # Simulate a concurrent store mutation that deletes the survivor the instant the store
+    # lock is released. A route that reads the survivor outside the lock would now miss it.
+    real_run = vp._run
+
+    async def racing_run(locks, fn):
+        result = await real_run(locks, fn)
+        state["survivor_exists"] = False
+        return result
+
+    monkeypatch.setattr(vp, "_run", racing_run)
+
+    resp = client.post(
+        "/api/voiceprints/people/merge",
+        json={"from_ref": "vp-from", "into_ref": "vp-into"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["public_id"] == "vp-into"
+    # Both the merge and the survivor read happened before the simulated concurrent delete.
+    assert events == ["merge", "read"]
+
+
+def test_get_clip_extracts_via_atomic_temp_then_rename(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The clip cache must be written atomically (temp file + os.replace): is_file() turns
+    True the instant ffmpeg creates the file, so a direct write could serve a half-written
+    WAV (or two concurrent extractions could corrupt it)."""
+    import app.web.routers.audio as audio
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    source = tmp_path / "audio.wav"
+    source.write_bytes(b"src")
+    monkeypatch.setattr(audio, "resolve_web_project_ref", lambda ref, _s: project_dir)
+    monkeypatch.setattr(audio, "load_manifest", lambda _d: object())
+    monkeypatch.setattr(audio, "resolve_project_audio_path", lambda _d, _m: source)
+
+    seen: dict[str, str] = {}
+
+    def fake_extract(_source, output, *, start_seconds, duration_seconds):
+        # ffmpeg always targets a temp sibling, never the live cache path.
+        seen["output"] = str(output)
+        Path(output).write_bytes(b"CLIPDATA")
+        return Path(output)
+
+    monkeypatch.setattr(audio, "extract_audio_clip", fake_extract)
+
+    resp = client.get("/api/projects/p-x/clip?begin_ms=0&end_ms=1000")
+    assert resp.status_code == 200
+    assert resp.content == b"CLIPDATA"
+    assert seen["output"].endswith(".wav.tmp")  # staged, not written in place
+
+    clips_dir = project_dir / "tmp" / "web_clips"
+    assert (clips_dir / "0_1000.wav").is_file()  # appeared only via the atomic rename
+    assert list(clips_dir.glob("*.tmp")) == []  # temp cleaned up
