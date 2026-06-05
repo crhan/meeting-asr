@@ -466,7 +466,7 @@ def delete_voiceprint_sample(
             "DELETE FROM voiceprint_samples WHERE id = ?", (row.sample_id,)
         )
         _delete_empty_speaker(connection, row.speaker_id)
-    return _deleted_sample(row, delete_clip)
+    return _deleted_sample(row, delete_clip, database_path.parent)
 
 
 def delete_voiceprint_samples_by_ids(
@@ -524,7 +524,7 @@ def delete_voiceprint_samples_by_ids(
         for speaker_id in speaker_ids:
             _delete_empty_speaker(connection, speaker_id)
     for row in sample_rows:
-        deleted.append(_deleted_sample(row, delete_clips))
+        deleted.append(_deleted_sample(row, delete_clips, database_path.parent))
     return deleted
 
 
@@ -555,7 +555,7 @@ def delete_voiceprint_speaker(
         connection.execute(
             "DELETE FROM voiceprint_speakers WHERE id = ?", (rows[0].speaker_id,)
         )
-    return [_deleted_sample(row, delete_clips) for row in rows]
+    return [_deleted_sample(row, delete_clips, database_path.parent) for row in rows]
 
 
 def _resolve_db_path(db_path: Path | None) -> Path:
@@ -1120,7 +1120,7 @@ def _delete_empty_speaker(connection: sqlite3.Connection, speaker_id: int) -> No
 
 
 def _deleted_sample(
-    row: VoiceprintSampleRow, delete_clip: bool
+    row: VoiceprintSampleRow, delete_clip: bool, store_dir: Path
 ) -> DeletedVoiceprintSample:
     """
     Delete a clip file when requested and return a summary.
@@ -1128,11 +1128,13 @@ def _deleted_sample(
     Args:
         row: Deleted database row.
         delete_clip: Whether to delete the clip file.
+        store_dir: The active store directory the deletion must stay within.
 
     Returns:
         Deleted sample summary.
     """
-    clip_deleted = _delete_clip_file(row.clip_path) if delete_clip else False
+    clip_target = _in_store_clip_path(row, store_dir) if delete_clip else None
+    clip_deleted = _delete_clip_file(clip_target) if clip_target is not None else False
     return DeletedVoiceprintSample(
         row.sample_id,
         row.public_id,
@@ -1142,6 +1144,28 @@ def _deleted_sample(
         row.clip_path,
         clip_deleted,
     )
+
+
+def _in_store_clip_path(row: VoiceprintSampleRow, store_dir: Path) -> Path | None:
+    """Resolve a row's clip *within the configured store*, or None if it escapes it.
+
+    The stored ``clip_path`` is the absolute path of the store the clip was first written
+    to. When the active store is a *copy* (``--store-dir`` isolation -- the documented
+    safe-copy validation workflow), that absolute path still points at the ORIGINAL store,
+    so unlinking it would delete a file outside the configured store and defeat the
+    isolation. Rebase the deletion onto ``store_dir`` via the store-relative
+    ``clip_rel_path`` and refuse anything that resolves outside it. For the normal
+    (non-copied) store the rebased path equals the original absolute path, so deletion
+    behaviour is unchanged.
+    """
+    rel = Path(row.clip_rel_path)
+    if rel.is_absolute():
+        return None
+    store_root = store_dir.expanduser().resolve()
+    rebased = (store_root / rel).resolve()
+    if not rebased.is_relative_to(store_root):
+        return None
+    return rebased
 
 
 def _delete_clip_file(path: Path) -> bool:
