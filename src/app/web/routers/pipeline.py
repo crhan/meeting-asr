@@ -144,7 +144,7 @@ async def run_pipeline(
                 meeting_time=payload.meeting_time,
                 variant=payload.variant,
                 options=options,
-                store_dir=settings.store_dir,
+                store_dir=settings.voiceprint_store_dir,
                 lexicon_db=lexicon_db,
                 voiceprint_model=None,
                 match_threshold=payload.match_threshold,
@@ -239,9 +239,9 @@ async def merge_preview(
             name_to_vpp=payload.name_to_vpp,
             include_low_information=payload.include_low_information,
             keep_order=payload.keep_order,
-            store_dir=settings.store_dir,
+            store_dir=settings.voiceprint_store_dir,
             title=payload.title,
-            vpp_name_resolver=_name_resolver(settings.store_dir),
+            vpp_name_resolver=_name_resolver(settings.voiceprint_store_dir),
         ),
     )
     return _merge_result_payload(result)
@@ -264,9 +264,9 @@ async def merge_apply(
             name_to_vpp=payload.name_to_vpp,
             include_low_information=payload.include_low_information,
             keep_order=payload.keep_order,
-            store_dir=settings.store_dir,
+            store_dir=settings.voiceprint_store_dir,
             title=payload.title,
-            vpp_name_resolver=_name_resolver(settings.store_dir),
+            vpp_name_resolver=_name_resolver(settings.voiceprint_store_dir),
         )
         outputs = write_merge_outputs(result, out_dir, force=payload.force)
         payload_out = _merge_result_payload(result)

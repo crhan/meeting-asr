@@ -145,7 +145,9 @@ def get_review(
 ) -> SpeakerReviewOut:
     """Load the full speaker-review session for one project."""
     project_dir = resolve_web_project_ref(project_ref, settings)
-    session = load_speaker_review_session(project_dir, store_dir=settings.store_dir)
+    session = load_speaker_review_session(
+        project_dir, store_dir=settings.voiceprint_store_dir
+    )
     return _serialize_session(session)
 
 
@@ -188,7 +190,7 @@ async def save_review(
             person_public_mapping=person_public_mapping,
             ignored_speaker_ids=payload.ignored_speaker_ids,
             reassignments=specs,
-            store_dir=settings.store_dir,
+            store_dir=settings.voiceprint_store_dir,
         )
 
     # A reassignment write must join the same store-wide critical section as voiceprint

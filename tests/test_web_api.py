@@ -692,3 +692,76 @@ def test_merge_apply_refuses_nonempty_dir_without_force(
     )
     assert resp.status_code == 409
     assert resp.json()["error"] == "conflict"
+
+
+def test_voiceprint_store_dir_rebases_onto_subdir(tmp_path: Path) -> None:
+    """store_dir is the data root; the voiceprint store lives under <root>/voiceprints,
+    mirroring the lexicon's <root>/lexicon rebasing. A bare store_dir would resolve the flat
+    <root>/voiceprints.sqlite and miss the real DB."""
+    s = WebSettings(
+        host="127.0.0.1",
+        port=1,
+        projects_dir=None,
+        store_dir=tmp_path,
+        open_browser=False,
+        token=None,
+    )
+    assert s.voiceprint_store_dir == tmp_path / "voiceprints"
+    s_none = WebSettings(
+        host="127.0.0.1",
+        port=1,
+        projects_dir=None,
+        store_dir=None,
+        open_browser=False,
+        token=None,
+    )
+    assert s_none.voiceprint_store_dir is None
+
+
+def test_voiceprint_library_resolves_db_under_voiceprints_subdir(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The library route must hand get_voiceprint_db_path the rebased voiceprints/ store,
+    not the bare data-root store_dir, or a --store-dir copy reads an empty library."""
+    import app.web.routers.voiceprints as vp
+
+    captured: dict = {}
+
+    def fake_db(store_dir):
+        captured["store_dir"] = store_dir
+        return tmp_path / "vp.sqlite"
+
+    monkeypatch.setattr(vp, "get_voiceprint_db_path", fake_db)
+    monkeypatch.setattr(vp, "list_voiceprint_speakers", lambda db: [])
+
+    resp = client.get("/api/voiceprints/library")
+    assert resp.status_code == 200
+    assert captured["store_dir"] == tmp_path / "store" / "voiceprints"
+
+
+def test_unknown_api_path_is_404_not_spa_html(client: TestClient) -> None:
+    """An unknown /api/... path must 404 as an API miss, never fall back to index.html --
+    otherwise a misspelled fetch gets 200 + HTML and fails later parsing it as JSON."""
+    resp = client.get("/api/this-route-does-not-exist")
+    assert resp.status_code == 404
+    assert "text/html" not in resp.headers.get("content-type", "")
+
+
+def test_authenticated_url_encodes_reserved_token_chars() -> None:
+    """An explicit --token may contain URL-reserved chars; the handoff URL must
+    percent-encode them so the SPA's URLSearchParams parse recovers the original."""
+    from urllib.parse import parse_qs, urlparse
+
+    from app.web.server import authenticated_url
+
+    s = WebSettings(
+        host="1.2.3.4",
+        port=8765,
+        projects_dir=None,
+        store_dir=None,
+        open_browser=False,
+        token="a&b#c+d",
+    )
+    url = authenticated_url(s)
+    assert "a&b#c+d" not in url  # raw reserved chars must not appear unencoded
+    assert parse_qs(urlparse(url).query)["token"] == ["a&b#c+d"]

@@ -15,8 +15,9 @@ import webbrowser
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
@@ -134,6 +135,12 @@ def _mount_spa(app: FastAPI) -> None:
     @app.get("/{full_path:path}")
     def _spa_fallback(full_path: str) -> FileResponse:
         """Serve a real static file if present, else fall back to index for SPA routing."""
+        # An unknown /api/... path must 404 as an API miss, not fall back to index.html:
+        # otherwise a misspelled fetch or an external client gets 200 + HTML and only fails
+        # later parsing it as JSON. Real API routes are registered before this catch-all, so
+        # only genuinely-unmatched api paths reach here.
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail=f"Not found: /{full_path}")
         candidate = (_STATIC_DIR / full_path).resolve()
         # Reject path traversal: only serve files that stay inside the static root.
         if candidate.is_file() and candidate.is_relative_to(_STATIC_DIR.resolve()):
@@ -193,7 +200,10 @@ def authenticated_url(settings: WebSettings) -> str:
     """
     base = base_url(settings)
     if settings.token:
-        return f"{base}?token={settings.token}"
+        # Percent-encode: an explicit --token may contain URL-reserved chars (& # +), which
+        # would otherwise be parsed as a different token. The SPA reads it via URLSearchParams,
+        # which decodes the percent-encoding back to the original.
+        return f"{base}?token={quote(settings.token, safe='')}"
     return base
 
 

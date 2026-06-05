@@ -1,8 +1,10 @@
 """Global voiceprint registry: library browse, people CRUD, quality, clip serving.
 
-All reads/writes target the configured store (``settings.store_dir`` -> db path), never a
-request-supplied path -- that is the guard against mutating the wrong voiceprint library.
-Writes to the shared global store run in the executor under the per-store lock.
+All reads/writes target the configured store (``settings.voiceprint_store_dir`` -> db
+path), never a request-supplied path -- that is the guard against mutating the wrong
+voiceprint library. ``voiceprint_store_dir`` rebases the data-root ``store_dir`` onto its
+``voiceprints/`` subdir, so a ``--store-dir`` copy resolves the real DB rather than a flat
+``<store_dir>/voiceprints.sqlite``. Writes run in the executor under the per-store lock.
 """
 
 from __future__ import annotations
@@ -123,10 +125,14 @@ async def _run(locks: LockRegistry, fn):
 @router.get("/library", response_model=VoiceprintLibraryOut)
 def get_library(settings: WebSettings = Depends(get_settings)) -> VoiceprintLibraryOut:
     """List all people in the global voiceprint registry."""
-    db_path = get_voiceprint_db_path(settings.store_dir)
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
     rows = list_voiceprint_speakers(db_path)
     return VoiceprintLibraryOut(
-        store_dir=str(settings.store_dir) if settings.store_dir else None,
+        store_dir=(
+            str(settings.voiceprint_store_dir)
+            if settings.voiceprint_store_dir
+            else None
+        ),
         people=[_person_out(r) for r in rows],
     )
 
@@ -136,7 +142,7 @@ def get_person_samples(
     ref: str, settings: WebSettings = Depends(get_settings)
 ) -> VoiceprintSamplesOut:
     """List stored samples for one person."""
-    db_path = get_voiceprint_db_path(settings.store_dir)
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
     person = get_voiceprint_person(ref, db_path)
     if person is None:
         raise FileNotFoundError(f"Voiceprint person not found: {ref}")
@@ -154,7 +160,7 @@ def get_sample_clip(
     settings: WebSettings = Depends(get_settings),
 ) -> FileResponse:
     """Serve one stored sample's WAV clip (with HTTP Range)."""
-    db_path = get_voiceprint_db_path(settings.store_dir)
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
     rows = list_voiceprint_samples(ref, db_path)
     match = next((r for r in rows if r.public_id == sample_public_id), None)
     if match is None or not match.clip_path.is_file():
@@ -172,7 +178,7 @@ def get_sample_clip(
 @router.get("/quality", response_model=QualityReportOut)
 def get_quality(settings: WebSettings = Depends(get_settings)) -> QualityReportOut:
     """Analyze outlier samples across the voiceprint library."""
-    report = analyze_voiceprint_quality(store_dir=settings.store_dir)
+    report = analyze_voiceprint_quality(store_dir=settings.voiceprint_store_dir)
     people = [
         QualityPersonOut(
             speaker_id=p.speaker_id,
@@ -221,7 +227,7 @@ async def set_sample_status(
     locks: LockRegistry = Depends(get_locks),
 ) -> VoiceprintSampleOut:
     """Update one sample's lifecycle status (active/quarantined/verified-active)."""
-    db_path = get_voiceprint_db_path(settings.store_dir)
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
     row = await _run(
         locks,
         lambda: update_voiceprint_sample_status(
@@ -239,7 +245,7 @@ async def delete_sample(
     locks: LockRegistry = Depends(get_locks),
 ) -> dict[str, object]:
     """Delete one sample by its 1-based position within the person's sample list."""
-    db_path = get_voiceprint_db_path(settings.store_dir)
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
     deleted = await _run(
         locks, lambda: delete_voiceprint_sample(ref, index, db_path=db_path)
     )
@@ -253,7 +259,7 @@ async def delete_person(
     locks: LockRegistry = Depends(get_locks),
 ) -> dict[str, object]:
     """Delete a person and all their stored samples."""
-    db_path = get_voiceprint_db_path(settings.store_dir)
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
     deleted = await _run(locks, lambda: delete_voiceprint_speaker(ref, db_path=db_path))
     return {"deleted_sample_count": len(deleted)}
 
@@ -265,7 +271,7 @@ async def create_person(
     locks: LockRegistry = Depends(get_locks),
 ) -> VoiceprintPersonOut:
     """Create a new voiceprint person."""
-    db_path = get_voiceprint_db_path(settings.store_dir)
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
     row = await _run(locks, lambda: create_voiceprint_person(payload.name, db_path))
     return _person_out(row)
 
@@ -278,7 +284,7 @@ async def rename_person(
     locks: LockRegistry = Depends(get_locks),
 ) -> VoiceprintPersonOut:
     """Rename a voiceprint person."""
-    db_path = get_voiceprint_db_path(settings.store_dir)
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
     row = await _run(
         locks, lambda: rename_voiceprint_person(ref, payload.name, db_path)
     )
@@ -292,7 +298,7 @@ async def merge_people(
     locks: LockRegistry = Depends(get_locks),
 ) -> VoiceprintPersonOut:
     """Merge one person into another; returns the surviving person."""
-    db_path = get_voiceprint_db_path(settings.store_dir)
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
     await _run(
         locks,
         lambda: merge_voiceprint_people(payload.from_ref, payload.into_ref, db_path),
@@ -378,7 +384,7 @@ async def capture_plan(
     project_dir = resolve_web_project_ref(project_ref, settings)
     loop = asyncio.get_running_loop()
     summary = await loop.run_in_executor(
-        None, lambda: plan_capture(project_dir, store_dir=settings.store_dir)
+        None, lambda: plan_capture(project_dir, store_dir=settings.voiceprint_store_dir)
     )
     return _plan_out(project_ref, summary)
 
@@ -403,7 +409,7 @@ def capture_run(
             "resolve it before starting another."
         )
     project_dir = resolve_web_project_ref(project_ref, settings)
-    store_dir = settings.store_dir
+    store_dir = settings.voiceprint_store_dir
 
     def work(_reporter) -> dict[str, object]:
         planned = plan_capture(
