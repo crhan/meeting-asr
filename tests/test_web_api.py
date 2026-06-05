@@ -159,6 +159,64 @@ def test_correction_accept_records_into_store_dir_lexicon(
     assert captured["lexicon_db"] == get_lexicon_db_path(tmp_path / "store")
 
 
+def _drain_job(client: TestClient, job_id: str) -> dict:
+    """Consume a job's SSE stream to completion, then return its snapshot."""
+    with client.stream("GET", f"/api/jobs/{job_id}/events") as stream:
+        for line in stream.iter_lines():
+            if line.startswith("data:") and '"end"' in line:
+                break
+    return client.get(f"/api/jobs/{job_id}").json()
+
+
+def test_pipeline_run_serializes_by_project_and_uses_store_lexicon(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The pipeline job must be keyed by its project dir and learn into the store lexicon."""
+    from types import SimpleNamespace
+
+    import app.web.routers.pipeline as pipeline
+    from app.lexicon_store import get_lexicon_db_path
+
+    media = tmp_path / "clip.wav"
+    media.write_bytes(b"fake-media")
+    project_dir = tmp_path / "projects" / "p-abc"
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        pipeline,
+        "create_or_reuse_project",
+        lambda *a, **k: SimpleNamespace(
+            project_dir=project_dir, manifest=object(), created=True
+        ),
+    )
+
+    def fake_workflow(input_path, **kwargs):
+        captured["input_path"] = input_path
+        captured.update(kwargs)
+        return SimpleNamespace(
+            project=SimpleNamespace(
+                manifest=SimpleNamespace(project_id="p-abc"), project_dir=project_dir
+            ),
+            transcription=SimpleNamespace(detected_speaker_count=1, sentence_count=3),
+            applied_mapping={},
+            meeting_summary=None,
+            correction_summary=None,
+        )
+
+    monkeypatch.setattr(pipeline, "_run_project_workflow", fake_workflow)
+
+    resp = client.post("/api/pipeline/run", json={"input_path": str(media)})
+    assert resp.status_code == 200
+    snapshot = _drain_job(client, resp.json()["job_id"])
+
+    # Serialized by the resolved project dir (same key inline routes use), not unkeyed.
+    assert snapshot["project_id"] == str(project_dir)
+    assert snapshot["status"] == "done"
+    # The workflow reuses that project and learns corrections into the store lexicon.
+    assert captured["project_dir"] == project_dir
+    assert captured["lexicon_db"] == get_lexicon_db_path(tmp_path / "store")
+
+
 def test_health_is_open_and_reports_auth_required(token_client: TestClient) -> None:
     resp = token_client.get("/api/health")
     assert resp.status_code == 200  # health is never gated

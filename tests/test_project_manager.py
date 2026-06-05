@@ -985,6 +985,7 @@ def test_project_run_generates_default_transcript_polish_proposal(
         polish_concurrency=None,
         polish_legacy=False,
         progress=None,
+        lexicon_db=None,
     ):
         calls["model"] = correction_model
         calls["polish_concurrency"] = polish_concurrency
@@ -1102,6 +1103,7 @@ def test_project_run_auto_accepts_polish_when_configured(
         polish_concurrency=None,
         polish_legacy=False,
         progress=None,
+        lexicon_db=None,
     ):
         proposal_dir = project_dir / "tmp" / "corrections"
         proposal_dir.mkdir(parents=True, exist_ok=True)

@@ -22,7 +22,8 @@ from fastapi import APIRouter, Depends
 from app.commands.project import _run_project_workflow  # reuse the run orchestrator
 from app.core.project_models import ProjectTranscribeOptions
 from app.core.project_refs import resolve_project_ref
-from app.project_manager import summarize_project
+from app.lexicon_store import get_lexicon_db_path
+from app.project_manager import create_or_reuse_project, summarize_project
 from app.transcript_merge import merge_projects, write_merge_outputs
 from app.voiceprint_people import get_voiceprint_person
 from app.voiceprint_store import get_voiceprint_db_path
@@ -50,7 +51,7 @@ def _require_file(path_str: str) -> Path:
 
 
 @router.post("/run", response_model=JobRef)
-def run_pipeline(
+async def run_pipeline(
     payload: RunPipelineIn,
     settings: WebSettings = Depends(get_settings),
     jobs: JobManager = Depends(get_jobs),
@@ -70,6 +71,27 @@ def run_pipeline(
         audio_format=payload.audio_format,
         asr_hotwords=payload.asr_hotwords,
     )
+    lexicon_db = get_lexicon_db_path(settings.store_dir)
+
+    # Resolve (create-or-reuse) the project BEFORE submitting so the job can be serialized
+    # by its project directory -- the same lock inline speaker/correction saves take -- and
+    # so a second run of the same media (which content-addresses to the same project) can't
+    # race it. The workflow then reuses this project; the source copy happens once.
+    loop = asyncio.get_running_loop()
+    created = await loop.run_in_executor(
+        None,
+        lambda: create_or_reuse_project(
+            input_path,
+            title=payload.title,
+            projects_dir=settings.projects_dir,
+            project_dir=None,
+            meeting_time=payload.meeting_time,
+            hash_source=True,
+            variant=payload.variant,
+            extra_inputs=extra_inputs,
+        ),
+    )
+    project_dir = created.project_dir
 
     def work(reporter) -> dict[str, object]:
         summary = _run_project_workflow(
@@ -77,11 +99,12 @@ def run_pipeline(
             extra_inputs=extra_inputs,
             title=payload.title,
             projects_dir=settings.projects_dir,
-            project_dir=None,
+            project_dir=project_dir,
             meeting_time=payload.meeting_time,
             variant=payload.variant,
             options=options,
             store_dir=settings.store_dir,
+            lexicon_db=lexicon_db,
             voiceprint_model=None,
             match_threshold=payload.match_threshold,
             summarize=payload.summarize,
@@ -102,7 +125,7 @@ def run_pipeline(
             "polished": summary.correction_summary is not None,
         }
 
-    job = jobs.submit("pipeline-run", work)
+    job = jobs.submit("pipeline-run", work, project_id=str(project_dir))
     return JobRef(job_id=job.id, kind=job.kind, status=job.status)
 
 

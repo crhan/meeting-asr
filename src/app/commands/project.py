@@ -1091,6 +1091,7 @@ def _run_project_workflow(
     variant: str | None,
     options: ProjectTranscribeOptions,
     store_dir: Path | None,
+    lexicon_db: Path | None = None,
     voiceprint_model: str | None,
     match_threshold: float,
     crosstalk_params: CrosstalkParams | None = None,
@@ -1195,7 +1196,7 @@ def _run_project_workflow(
             reset_total=True,
         )
         lexicon_correction_summary = _apply_run_lexicon_corrections(
-            project.project_dir, progress=progress
+            project.project_dir, progress=progress, lexicon_db=lexicon_db
         )
         _record_local_correction_runtime(
             project.project_dir, lexicon_correction_summary
@@ -1222,6 +1223,7 @@ def _run_project_workflow(
             polish_concurrency=polish_concurrency,
             polish_legacy=polish_legacy,
             progress=progress,
+            lexicon_db=lexicon_db,
         )
         if _should_auto_accept_run_polish(correction_summary):
             correction_summary = _accept_run_transcript_polish(
@@ -1524,6 +1526,7 @@ def _apply_run_lexicon_corrections(
     project_dir: Path,
     *,
     progress: CliProgressReporter | None,
+    lexicon_db: Path | None = None,
 ) -> CorrectionEditSummary:
     """
     Apply accepted local lexicon rules during ``project run``.
@@ -1531,6 +1534,7 @@ def _apply_run_lexicon_corrections(
     Args:
         project_dir: Project root.
         progress: Optional progress reporter.
+        lexicon_db: Optional lexicon database override (defaults to the XDG lexicon).
 
     Returns:
         Local correction summary.
@@ -1549,6 +1553,7 @@ def _apply_run_lexicon_corrections(
             open_proposal=False,
             category="lexicon",
             use_ai=False,
+            lexicon_db=lexicon_db,
         ),
         progress=progress,
     )
@@ -1609,6 +1614,7 @@ def _prepare_run_transcript_polish(
     polish_concurrency: int | None = None,
     polish_legacy: bool = False,
     progress: CliProgressReporter | None = None,
+    lexicon_db: Path | None = None,
 ) -> CorrectionEditSummary:
     """
     Prepare the default transcript polish proposal used by ``project run``.
@@ -1617,6 +1623,8 @@ def _prepare_run_transcript_polish(
         project_dir: Project root.
         correction_model: Optional DashScope model override.
         polish_legacy: When True, use the legacy aggressive-rewrite polish.
+        lexicon_db: Optional lexicon database override (defaults to the XDG lexicon).
+            Carried into the summary so auto-accept learns into the same store.
 
     Returns:
         Pending polish summary, or a no-change/error summary.
@@ -1634,6 +1642,7 @@ def _prepare_run_transcript_polish(
         model=correction_model,
         polish_concurrency=polish_concurrency,
         polish_legacy=polish_legacy,
+        lexicon_db=lexicon_db,
     )
     return project_correct_commands.prepare_transcript_polish_for_review(
         paths=paths,
