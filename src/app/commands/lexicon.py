@@ -209,11 +209,13 @@ def term_delete_command(
 @app.command("disambiguate")
 def term_disambiguate_command(
     term: str = typer.Argument(..., help="Term id, canonical term, or alias."),
-    alias: str = typer.Argument(..., help="Ambiguous surface form, e.g. IC."),
+    alias: str = typer.Argument(
+        ..., help="Ambiguous surface form to resolve by sentence context."
+    ),
     guidance: str = typer.Argument(
         ...,
         help="Context rule for the polish LLM, e.g. "
-        "'指 iSee 平台时改成 iSee；指个人贡献者角色时保持原样'. Pass '' to clear.",
+        "'指某产品时改成其规范名，指其他义项时保持原样'. Pass '' to clear.",
     ),
     lexicon_db: Optional[Path] = typer.Option(
         None, "--lexicon-db", help="Override lexicon SQLite path."
