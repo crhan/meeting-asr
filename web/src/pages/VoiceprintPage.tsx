@@ -108,7 +108,12 @@ function LibraryTab() {
       </div>
       <div className="vp-main">
         {selected ? (
-          <PersonSamples ref_={selected} audio={audio} onChanged={() => queryClient.invalidateQueries({ queryKey: ["vp-library"] })} />
+          <PersonSamples
+            ref_={selected}
+            audio={audio}
+            onChanged={() => queryClient.invalidateQueries({ queryKey: ["vp-library"] })}
+            onDeleted={() => setSelected(null)}
+          />
         ) : (
           <div className="placeholder">{tr("Select a person.", "选择一个人物。")}</div>
         )}
@@ -121,6 +126,7 @@ function PersonSamples(props: {
   ref_: string;
   audio: ReturnType<typeof useClipAudio>;
   onChanged: () => void;
+  onDeleted: () => void;
 }) {
   const { ref_, audio } = props;
   const queryClient = useQueryClient();
@@ -136,7 +142,16 @@ function PersonSamples(props: {
     mutationFn: (name: string) => renamePerson(ref_, name),
     onSuccess: invalidate,
   });
-  const delPersonMut = useMutation({ mutationFn: () => deletePerson(ref_), onSuccess: invalidate });
+  // Deletion can't reuse `invalidate`: refetching ["vp-person", ref_] for a person that
+  // no longer exists 404s and strands the pane on stale data. Refresh the sidebar, then
+  // tell the parent to clear the selection so this pane unmounts cleanly.
+  const delPersonMut = useMutation({
+    mutationFn: () => deletePerson(ref_),
+    onSuccess: () => {
+      props.onChanged();
+      props.onDeleted();
+    },
+  });
   const delSampleMut = useMutation({
     mutationFn: (index: number) => deleteSample(ref_, index),
     onSuccess: invalidate,
