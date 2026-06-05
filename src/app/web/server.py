@@ -26,6 +26,7 @@ from app.web.jobs import JobManager
 from app.web.locks import LockRegistry
 from app.web.routers import audio as audio_router
 from app.web.routers import jobs as jobs_router
+from app.web.routers import pipeline as pipeline_router
 from app.web.routers import projects as projects_router
 from app.web.routers import speakers as speakers_router
 from app.web.routers import voiceprints as voiceprints_router
@@ -65,6 +66,7 @@ def create_app(settings: WebSettings) -> FastAPI:
     app.include_router(projects_router.router)
     app.include_router(speakers_router.router)
     app.include_router(voiceprints_router.router)
+    app.include_router(pipeline_router.router)
     app.include_router(audio_router.router)
     app.include_router(jobs_router.router)
 

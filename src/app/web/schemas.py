@@ -85,6 +85,53 @@ class JobRef(BaseModel):
     status: str
 
 
+# ---- Ingestion pipeline ----------------------------------------------------
+
+
+class RunPipelineIn(BaseModel):
+    """Run the full project pipeline (create -> ASR -> summarize -> match)."""
+
+    input_path: str
+    extra_inputs: list[str] = []
+    title: str | None = None
+    meeting_time: str | None = None
+    variant: str | None = None
+    model: str = "fun-asr"
+    language: str | None = "zh,en"
+    speaker_count: int | None = None
+    oss_upload: str = "auto"
+    audio_format: str = "flac"
+    asr_hotwords: str = "auto"
+    summarize: bool = True
+    polish: bool = True
+    local_correction: bool = True
+    match_threshold: float = 0.75
+
+
+class SummarizeIn(BaseModel):
+    """Generate meeting memory-index artifacts for a project."""
+
+    model: str | None = None
+    update_title: bool = True
+
+
+class MergePreviewIn(BaseModel):
+    """Merge several projects into one transcript (preview, no write)."""
+
+    project_refs: list[str]
+    use_corrected: bool = True
+    name_to_vpp: bool = True
+    include_low_information: bool = False
+    keep_order: bool = False
+    title: str | None = None
+
+
+class MergeApplyIn(MergePreviewIn):
+    """Merge several projects and write the output bundle."""
+
+    out_dir: str
+
+
 # ---- Speaker review --------------------------------------------------------
 
 
