@@ -23,12 +23,17 @@ from app.commands.project import _run_project_workflow  # reuse the run orchestr
 from app.core.project_models import ProjectTranscribeOptions
 from app.core.project_refs import resolve_project_ref
 from app.lexicon_store import get_lexicon_db_path
-from app.project_manager import resolve_run_project_dir, summarize_project
+from app.project_manager import (
+    create_or_reuse_project,
+    resolve_run_project_dir,
+    summarize_project,
+)
 from app.transcript_merge import merge_projects, write_merge_outputs
 from app.voiceprint_people import get_voiceprint_person
 from app.voiceprint_store import get_voiceprint_db_path
-from app.web.deps import get_jobs, get_settings, require_auth
+from app.web.deps import get_jobs, get_locks, get_settings, require_auth
 from app.web.jobs import JobManager
+from app.web.locks import LockRegistry, project_lock_key
 from app.web.schemas import (
     JobRef,
     MergeApplyIn,
@@ -55,6 +60,7 @@ async def run_pipeline(
     payload: RunPipelineIn,
     settings: WebSettings = Depends(get_settings),
     jobs: JobManager = Depends(get_jobs),
+    locks: LockRegistry = Depends(get_locks),
 ) -> JobRef:
     """Run the full project pipeline as a background job (create -> ASR -> summarize)."""
     input_path = _require_file(payload.input_path)
@@ -72,14 +78,15 @@ async def run_pipeline(
         asr_hotwords=payload.asr_hotwords,
     )
     lexicon_db = get_lexicon_db_path(settings.store_dir)
-
-    # Key the job on the project's content-addressed identity (computed read-only, no
-    # creation) so the JobManager's per-project lock is held *before* create_or_reuse runs
-    # inside the job. Two concurrent first-time runs of the same media share this key, so
-    # the create happens once under the lock instead of two threads racing to write the
-    # same project.json/source -- and it's the same key inline speaker/correction saves use.
     loop = asyncio.get_running_loop()
-    project_key = await loop.run_in_executor(
+
+    # Resolve the project under a lock keyed by its content-addressed identity, so two
+    # concurrent first-time runs of the same media can't both create the same directory.
+    # create_or_reuse then yields the project's ACTUAL directory -- which may be a
+    # non-canonical path for a project originally made with --project-dir -- and the job is
+    # keyed by that real path, the same key inline speaker/correction saves take, so a run
+    # and an inline edit of the same project serialize instead of racing.
+    create_key = await loop.run_in_executor(
         None,
         lambda: resolve_run_project_dir(
             input_path,
@@ -88,6 +95,21 @@ async def run_pipeline(
             variant=payload.variant,
         ),
     )
+    async with locks.acquire(project_lock_key(str(create_key))):
+        created = await loop.run_in_executor(
+            None,
+            lambda: create_or_reuse_project(
+                input_path,
+                title=payload.title,
+                projects_dir=settings.projects_dir,
+                project_dir=None,
+                meeting_time=payload.meeting_time,
+                hash_source=True,
+                variant=payload.variant,
+                extra_inputs=extra_inputs,
+            ),
+        )
+    project_dir = created.project_dir
 
     def work(reporter) -> dict[str, object]:
         summary = _run_project_workflow(
@@ -95,7 +117,7 @@ async def run_pipeline(
             extra_inputs=extra_inputs,
             title=payload.title,
             projects_dir=settings.projects_dir,
-            project_dir=None,
+            project_dir=project_dir,
             meeting_time=payload.meeting_time,
             variant=payload.variant,
             options=options,
@@ -121,7 +143,7 @@ async def run_pipeline(
             "polished": summary.correction_summary is not None,
         }
 
-    job = jobs.submit("pipeline-run", work, project_id=str(project_key))
+    job = jobs.submit("pipeline-run", work, project_id=str(project_dir))
     return JobRef(job_id=job.id, kind=job.kind, status=job.status)
 
 

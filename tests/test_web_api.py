@@ -179,13 +179,19 @@ def test_pipeline_run_serializes_by_project_and_uses_store_lexicon(
 
     media = tmp_path / "clip.wav"
     media.write_bytes(b"fake-media")
-    project_dir = tmp_path / "projects" / "p-abc"
+    # The content-addressed default (create lock key) deliberately differs from the actual
+    # reused directory, to prove the JOB is keyed by the real path inline routes use.
+    create_key = tmp_path / "projects" / "p-default"
+    actual_dir = tmp_path / "custom" / "my-project"
     captured: dict = {}
 
-    # The job must be keyed by the content-addressed identity, resolved read-only before
-    # any creation, so concurrent first-time runs serialize on the per-project lock.
+    monkeypatch.setattr(pipeline, "resolve_run_project_dir", lambda *a, **k: create_key)
     monkeypatch.setattr(
-        pipeline, "resolve_run_project_dir", lambda *a, **k: project_dir
+        pipeline,
+        "create_or_reuse_project",
+        lambda *a, **k: SimpleNamespace(
+            project_dir=actual_dir, manifest=object(), created=False
+        ),
     )
 
     def fake_workflow(input_path, **kwargs):
@@ -193,7 +199,7 @@ def test_pipeline_run_serializes_by_project_and_uses_store_lexicon(
         captured.update(kwargs)
         return SimpleNamespace(
             project=SimpleNamespace(
-                manifest=SimpleNamespace(project_id="p-abc"), project_dir=project_dir
+                manifest=SimpleNamespace(project_id="p-abc"), project_dir=actual_dir
             ),
             transcription=SimpleNamespace(detected_speaker_count=1, sentence_count=3),
             applied_mapping={},
@@ -207,12 +213,13 @@ def test_pipeline_run_serializes_by_project_and_uses_store_lexicon(
     assert resp.status_code == 200
     snapshot = _drain_job(client, resp.json()["job_id"])
 
-    # Serialized by the resolved content-addressed identity (same key inline routes use).
-    assert snapshot["project_id"] == str(project_dir)
+    # Keyed by the ACTUAL reused dir (not the content-addressed default), matching the key
+    # inline speaker/correction saves take, so a run and an inline edit serialize.
+    assert snapshot["project_id"] == str(actual_dir)
     assert snapshot["status"] == "done"
-    # The workflow create-or-reuses inside the locked job (project_dir=None) and learns
-    # corrections into the store-dir lexicon, not the real XDG one.
-    assert captured["project_dir"] is None
+    # The workflow runs against that reused project and learns corrections into the
+    # store-dir lexicon, not the real XDG one.
+    assert captured["project_dir"] == actual_dir
     assert captured["lexicon_db"] == get_lexicon_db_path(tmp_path / "store")
 
 
