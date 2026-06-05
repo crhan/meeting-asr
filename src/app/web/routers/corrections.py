@@ -20,6 +20,7 @@ from app.commands.project_correct import (
 )
 from app.core.project_refs import resolve_project_ref
 from app.correction_proposals import load_correction_proposal
+from app.lexicon_store import get_lexicon_db_path
 from app.project_manager import load_manifest, project_paths
 from app.transcript_corrections import CorrectionEditOptions
 from app.web.deps import get_jobs, get_locks, get_settings, require_auth
@@ -52,6 +53,8 @@ def polish(
     """Generate a transcript polish proposal via LLM (background job)."""
     project_dir = resolve_project_ref(project_ref, settings.projects_dir)
 
+    lexicon_db = get_lexicon_db_path(settings.store_dir)
+
     def work(reporter) -> dict[str, object]:
         paths = project_paths(project_dir)
         manifest = load_manifest(paths.root)
@@ -62,6 +65,9 @@ def polish(
             use_ai=True,
             model=payload.model,
             polish_legacy=payload.legacy,
+            # Disambiguation guidance must come from the same (possibly isolated) store the
+            # accept step writes to, not the real XDG lexicon.
+            lexicon_db=lexicon_db,
         )
         summary = prepare_transcript_polish_for_review(
             paths=paths,
@@ -117,6 +123,9 @@ async def accept(
         if payload.selected_indices is not None
         else None
     )
+    # Learned correction contexts are recorded into the lexicon; honor --store-dir so an
+    # isolated experiment never leaks into the real XDG correction dictionary.
+    lexicon_db = get_lexicon_db_path(settings.store_dir)
 
     def work() -> AcceptCorrectionOut:
         paths = project_paths(project_dir)
@@ -127,7 +136,7 @@ async def accept(
             manifest=manifest,
             speaker_mapping=speaker_mapping,
             proposal_path=None,
-            lexicon_db=None,
+            lexicon_db=lexicon_db,
             selected_change_indices=selected,
         )
         return AcceptCorrectionOut(

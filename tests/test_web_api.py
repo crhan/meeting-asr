@@ -122,6 +122,43 @@ def test_lexicon_writes_honor_store_dir(client: TestClient, tmp_path: Path) -> N
     assert any(t["canonical"] == "iSee" for t in terms)
 
 
+def test_correction_accept_records_into_store_dir_lexicon(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Accepting a proposal must learn into the --store-dir lexicon, not the real XDG one."""
+    from types import SimpleNamespace
+
+    import app.web.routers.corrections as corrections
+    from app.lexicon_store import get_lexicon_db_path
+
+    captured: dict = {}
+
+    class FakeSummary:
+        accepted = True
+        change_count = 1
+        learned_count = 1
+        corrected_named_transcript_path = None
+
+    def fake_accept(**kwargs):
+        captured.update(kwargs)
+        return FakeSummary()
+
+    monkeypatch.setattr(corrections, "resolve_project_ref", lambda ref, _dir: tmp_path)
+    monkeypatch.setattr(
+        corrections, "project_paths", lambda root: SimpleNamespace(root=root)
+    )
+    monkeypatch.setattr(corrections, "load_manifest", lambda root: object())
+    monkeypatch.setattr(
+        corrections, "load_speaker_mapping_for_correction", lambda root: {}
+    )
+    monkeypatch.setattr(corrections, "accept_correction_for_review", fake_accept)
+
+    resp = client.post("/api/corrections/p-x/accept", json={"selected_indices": [0]})
+    assert resp.status_code == 200
+    # The lexicon db handed to the accept path must be the store-dir one, not None/XDG.
+    assert captured["lexicon_db"] == get_lexicon_db_path(tmp_path / "store")
+
+
 def test_health_is_open_and_reports_auth_required(token_client: TestClient) -> None:
     resp = token_client.get("/api/health")
     assert resp.status_code == 200  # health is never gated
