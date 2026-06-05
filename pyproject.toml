@@ -28,6 +28,14 @@ Homepage = "https://github.com/crhan/meeting-asr"
 Repository = "https://github.com/crhan/meeting-asr"
 Issues = "https://github.com/crhan/meeting-asr/issues"
 
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.115",
+    "python-multipart>=0.0.12",
+    "sse-starlette>=2.1",
+    "uvicorn[standard]>=0.34",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
