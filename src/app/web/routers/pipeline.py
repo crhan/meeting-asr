@@ -21,7 +21,6 @@ from fastapi import APIRouter, Depends
 
 from app.commands.project import _run_project_workflow  # reuse the run orchestrator
 from app.core.project_models import ProjectTranscribeOptions
-from app.core.project_refs import resolve_project_ref
 from app.lexicon_store import get_lexicon_db_path
 from app.project_manager import (
     create_or_reuse_project,
@@ -31,7 +30,13 @@ from app.project_manager import (
 from app.transcript_merge import merge_projects, write_merge_outputs
 from app.voiceprint_people import get_voiceprint_person
 from app.voiceprint_store import get_voiceprint_db_path
-from app.web.deps import get_jobs, get_locks, get_settings, require_auth
+from app.web.deps import (
+    get_jobs,
+    get_locks,
+    get_settings,
+    require_auth,
+    resolve_web_project_ref,
+)
 from app.web.jobs import JobManager
 from app.web.locks import LockRegistry, project_lock_key
 from app.web.schemas import (
@@ -155,7 +160,7 @@ def summarize(
     jobs: JobManager = Depends(get_jobs),
 ) -> JobRef:
     """Generate meeting memory-index artifacts for a project (background job)."""
-    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    project_dir = resolve_web_project_ref(project_ref, settings)
 
     def work(reporter) -> dict[str, object]:
         result = summarize_project(
@@ -200,7 +205,7 @@ async def merge_preview(
     settings: WebSettings = Depends(get_settings),
 ) -> dict[str, object]:
     """Merge several projects into one transcript (preview only, no write)."""
-    dirs = [resolve_project_ref(r, settings.projects_dir) for r in payload.project_refs]
+    dirs = [resolve_web_project_ref(r, settings) for r in payload.project_refs]
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None,
@@ -224,7 +229,7 @@ async def merge_apply(
     settings: WebSettings = Depends(get_settings),
 ) -> dict[str, object]:
     """Merge several projects and write the output bundle to ``out_dir``."""
-    dirs = [resolve_project_ref(r, settings.projects_dir) for r in payload.project_refs]
+    dirs = [resolve_web_project_ref(r, settings) for r in payload.project_refs]
     out_dir = Path(payload.out_dir).expanduser().resolve()
     loop = asyncio.get_running_loop()
 

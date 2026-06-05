@@ -8,9 +8,11 @@ are token-free, non-loopback binds require a bearer token.
 from __future__ import annotations
 
 import secrets
+from pathlib import Path
 
 from fastapi import Depends, Header, HTTPException, Query, Request
 
+from app.core.project_refs import resolve_project_ref
 from app.web.jobs import JobManager
 from app.web.locks import LockRegistry
 from app.web.settings import WebSettings
@@ -19,6 +21,20 @@ from app.web.settings import WebSettings
 def get_settings(request: Request) -> WebSettings:
     """Return the resolved web settings."""
     return request.app.state.settings
+
+
+def resolve_web_project_ref(project_ref: Path | str, settings: WebSettings) -> Path:
+    """Resolve a project ref for the web, refusing any that escapes the projects dir.
+
+    The shared resolver accepts filesystem paths as a CLI convenience. Over HTTP that
+    would be a path-traversal hole: a request could pass ``../../..`` or an absolute path
+    to read/write project files anywhere on disk (and extract audio from arbitrary
+    locations). The web only ever needs ids/titles of projects under ``projects_dir``, so
+    every router resolves refs through this single chokepoint with the boundary enforced.
+    """
+    return resolve_project_ref(
+        project_ref, settings.projects_dir, restrict_to_projects_dir=True
+    )
 
 
 def get_locks(request: Request) -> LockRegistry:

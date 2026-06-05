@@ -12,10 +12,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 
-from app.core.project_refs import resolve_project_ref
 from app.infra.ffmpeg import extract_audio_clip
 from app.project_manager import load_manifest, project_paths, resolve_project_audio_path
-from app.web.deps import get_settings, require_auth
+from app.web.deps import get_settings, require_auth, resolve_web_project_ref
 from app.web.settings import WebSettings
 
 router = APIRouter(
@@ -37,7 +36,7 @@ def get_clip(
     """Extract (or reuse a cached) WAV clip for one transcript time range."""
     if end_ms <= begin_ms:
         raise ValueError("end_ms must be greater than begin_ms.")
-    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    project_dir = resolve_web_project_ref(project_ref, settings)
     manifest = load_manifest(project_dir)
     source = resolve_project_audio_path(project_dir, manifest)
 

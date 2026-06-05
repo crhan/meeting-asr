@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.commands.doctor import (
     _check_editor,
@@ -28,7 +28,7 @@ from app.config import (
     set_config_value,
     unset_config_value,
 )
-from app.web.deps import get_locks, require_auth
+from app.web.deps import get_locks, get_settings, require_auth
 from app.web.locks import LockRegistry, store_lock_key
 from app.web.schemas import (
     ConfigKeyOut,
@@ -37,6 +37,7 @@ from app.web.schemas import (
     DoctorOut,
     SetConfigIn,
 )
+from app.web.settings import WebSettings
 
 router = APIRouter(tags=["config"], dependencies=[Depends(require_auth)])
 
@@ -44,12 +45,28 @@ _CONFIG_LOCK = store_lock_key("config")
 
 
 @router.get("/api/config", response_model=ConfigOut)
-def get_config(reveal: bool = Query(default=False)) -> ConfigOut:
-    """List config keys with current values (secrets masked unless reveal=true)."""
+def get_config(
+    reveal: bool = Query(default=False),
+    settings: WebSettings = Depends(get_settings),
+) -> ConfigOut:
+    """List config keys with current values (secrets masked unless reveal=true).
+
+    Revealing plaintext secrets is loopback-only: a bearer token alone must not let a
+    networked client exfiltrate DashScope/OSS credentials (we do not force HTTPS, so the
+    response could also be sniffed). On a non-loopback bind, ``reveal=true`` is refused.
+    """
+    if reveal and not settings.is_local:
+        raise HTTPException(
+            status_code=403,
+            detail="Revealing secret values is only permitted from a loopback bind.",
+        )
     values = load_config_values()
     keys = []
     for key in CONFIG_KEYS:
-        raw = values.get(key.field_name)
+        # load_config_values keys by PUBLIC name (e.g. "dashscope.api_key"), not the
+        # dataclass field_name -- looking up field_name always missed, so every key showed
+        # as unset and reveal returned nothing.
+        raw = values.get(key.name)
         is_set = bool(raw)
         shown = raw if (raw and (reveal or not key.secret)) else None
         keys.append(

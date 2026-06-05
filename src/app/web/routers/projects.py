@@ -11,10 +11,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.core.project_models import ProjectListItem
-from app.core.project_refs import list_projects, resolve_project_ref
+from app.core.project_refs import list_projects
 from app.core.project_workflow import load_project_workflow_summary
 from app.project_manager import load_manifest
-from app.web.deps import get_settings, require_auth
+from app.web.deps import get_settings, require_auth, resolve_web_project_ref
 from app.web.schemas import ProjectListResponse, ProjectSummary
 from app.web.settings import WebSettings
 
@@ -43,7 +43,7 @@ def get_project(
     project_ref: str, settings: WebSettings = Depends(get_settings)
 ) -> ProjectSummary:
     """Resolve one project by id/title/path and return its summary + workflow state."""
-    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    project_dir = resolve_web_project_ref(project_ref, settings)
     manifest = load_manifest(project_dir)
     item = ProjectListItem(
         project_dir,

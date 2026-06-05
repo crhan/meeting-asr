@@ -13,7 +13,6 @@ import asyncio
 
 from fastapi import APIRouter, Depends
 
-from app.core.project_refs import resolve_project_ref
 from app.core.speaker_review_service import save_speaker_review
 from app.core.voiceprint_review_service import REGISTRY
 from app.presentation.tui.speaker_matches import SpeakerMatchCandidate
@@ -27,7 +26,12 @@ from app.presentation.tui.speaker_session import load_speaker_review_session
 from app.presentation.tui.speaker_status import speaker_status
 from app.speaker_labeling import SentenceReassignmentSpec
 from app.speaker_match_status import MATCH_STATUS_CROSSTALK
-from app.web.deps import get_locks, get_settings, require_auth
+from app.web.deps import (
+    get_locks,
+    get_settings,
+    require_auth,
+    resolve_web_project_ref,
+)
 from app.web.locks import LockRegistry, project_lock_key, store_lock_key
 from app.web.schemas import (
     MatchPersonOut,
@@ -140,7 +144,7 @@ def get_review(
     project_ref: str, settings: WebSettings = Depends(get_settings)
 ) -> SpeakerReviewOut:
     """Load the full speaker-review session for one project."""
-    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    project_dir = resolve_web_project_ref(project_ref, settings)
     session = load_speaker_review_session(project_dir, store_dir=settings.store_dir)
     return _serialize_session(session)
 
@@ -153,7 +157,7 @@ async def save_review(
     locks: LockRegistry = Depends(get_locks),
 ) -> SaveSpeakerReviewOut:
     """Persist speaker names, person bindings, ignore flags, and reassignments."""
-    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    project_dir = resolve_web_project_ref(project_ref, settings)
     mapping = {int(k): v for k, v in payload.mapping.items()}
     person_mapping = {int(k): v for k, v in payload.person_mapping.items()}
     person_public_mapping = {

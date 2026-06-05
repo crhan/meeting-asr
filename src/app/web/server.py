@@ -79,8 +79,16 @@ def create_app(settings: WebSettings) -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict[str, object]:
-        """Liveness probe + bind metadata for the client (always unauthenticated)."""
-        return {"status": "ok", "auth_required": settings.token is not None}
+        """Liveness probe + bind metadata for the client (always unauthenticated).
+
+        ``is_local`` lets the SPA hide loopback-only affordances (e.g. revealing secret
+        config values) on a networked bind instead of offering a button that 403s.
+        """
+        return {
+            "status": "ok",
+            "auth_required": settings.token is not None,
+            "is_local": settings.is_local,
+        }
 
     @app.get("/api/auth/check", dependencies=[Depends(require_auth)])
     def auth_check() -> dict[str, bool]:

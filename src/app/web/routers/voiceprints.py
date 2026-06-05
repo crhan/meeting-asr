@@ -12,7 +12,6 @@ import asyncio
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 
-from app.core.project_refs import resolve_project_ref
 from app.core.voiceprint_review_service import (
     REGISTRY,
     CaptureConflictError,
@@ -34,7 +33,13 @@ from app.voiceprint_store import (
     list_voiceprint_speakers,
     update_voiceprint_sample_status,
 )
-from app.web.deps import get_jobs, get_locks, get_settings, require_auth
+from app.web.deps import (
+    get_jobs,
+    get_locks,
+    get_settings,
+    require_auth,
+    resolve_web_project_ref,
+)
 from app.web.jobs import JobManager
 from app.web.locks import LockRegistry, store_lock_key
 from app.web.schemas import (
@@ -370,7 +375,7 @@ async def capture_plan(
     settings: WebSettings = Depends(get_settings),
 ) -> CapturePlanOut:
     """Plan voiceprint capture candidates for a project (read-only)."""
-    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    project_dir = resolve_web_project_ref(project_ref, settings)
     loop = asyncio.get_running_loop()
     summary = await loop.run_in_executor(
         None, lambda: plan_capture(project_dir, store_dir=settings.store_dir)
@@ -397,7 +402,7 @@ def capture_run(
             "A previous voiceprint capture is still awaiting accept/rollback; "
             "resolve it before starting another."
         )
-    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    project_dir = resolve_web_project_ref(project_ref, settings)
     store_dir = settings.store_dir
 
     def work(_reporter) -> dict[str, object]:

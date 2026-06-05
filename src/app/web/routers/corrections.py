@@ -18,12 +18,17 @@ from app.commands.project_correct import (
     load_speaker_mapping_for_correction,
     prepare_transcript_polish_for_review,
 )
-from app.core.project_refs import resolve_project_ref
 from app.correction_proposals import load_correction_proposal
 from app.lexicon_store import get_lexicon_db_path
 from app.project_manager import load_manifest, project_paths
 from app.transcript_corrections import CorrectionEditOptions
-from app.web.deps import get_jobs, get_locks, get_settings, require_auth
+from app.web.deps import (
+    get_jobs,
+    get_locks,
+    get_settings,
+    require_auth,
+    resolve_web_project_ref,
+)
 from app.web.jobs import JobManager
 from app.web.locks import LockRegistry, project_lock_key
 from app.web.schemas import (
@@ -51,7 +56,7 @@ def polish(
     jobs: JobManager = Depends(get_jobs),
 ) -> JobRef:
     """Generate a transcript polish proposal via LLM (background job)."""
-    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    project_dir = resolve_web_project_ref(project_ref, settings)
 
     lexicon_db = get_lexicon_db_path(settings.store_dir)
 
@@ -91,7 +96,7 @@ def get_proposal(
     project_ref: str, settings: WebSettings = Depends(get_settings)
 ) -> ProposalOut:
     """Load the latest pending transcript correction proposal."""
-    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    project_dir = resolve_web_project_ref(project_ref, settings)
     paths = project_paths(project_dir)
     proposal = load_correction_proposal(paths, None)
     changes = [
@@ -117,7 +122,7 @@ async def accept(
     locks: LockRegistry = Depends(get_locks),
 ) -> AcceptCorrectionOut:
     """Accept the pending proposal (optionally only the selected change indices)."""
-    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    project_dir = resolve_web_project_ref(project_ref, settings)
     selected = (
         tuple(payload.selected_indices)
         if payload.selected_indices is not None

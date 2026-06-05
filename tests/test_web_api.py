@@ -56,7 +56,12 @@ def token_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_health(client: TestClient) -> None:
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "auth_required": False}
+    # 127.0.0.1 bind: loopback, no token -> is_local True, auth_required False.
+    assert resp.json() == {
+        "status": "ok",
+        "auth_required": False,
+        "is_local": True,
+    }
 
 
 def test_projects_empty(client: TestClient) -> None:
@@ -145,7 +150,9 @@ def test_correction_accept_records_into_store_dir_lexicon(
         captured.update(kwargs)
         return FakeSummary()
 
-    monkeypatch.setattr(corrections, "resolve_project_ref", lambda ref, _dir: tmp_path)
+    monkeypatch.setattr(
+        corrections, "resolve_web_project_ref", lambda ref, _settings: tmp_path
+    )
     monkeypatch.setattr(
         corrections, "project_paths", lambda root: SimpleNamespace(root=root)
     )
@@ -320,7 +327,9 @@ def test_speaker_save_marshals_decision(
         captured.update(kwargs)
         return FakeResult()
 
-    monkeypatch.setattr(speakers, "resolve_project_ref", lambda ref, _dir: tmp_path)
+    monkeypatch.setattr(
+        speakers, "resolve_web_project_ref", lambda ref, _settings: tmp_path
+    )
     monkeypatch.setattr(speakers, "save_speaker_review", fake_save)
 
     resp = client.post(
@@ -383,7 +392,9 @@ def test_speaker_reassignment_blocked_when_capture_pending(
     import app.web.routers.speakers as speakers
     from app.core.voiceprint_review_service import CaptureConflictError
 
-    monkeypatch.setattr(speakers, "resolve_project_ref", lambda ref, _dir: tmp_path)
+    monkeypatch.setattr(
+        speakers, "resolve_web_project_ref", lambda ref, _settings: tmp_path
+    )
 
     def boom(_fn):
         raise CaptureConflictError("pending capture")
@@ -409,7 +420,9 @@ def test_speaker_naming_only_save_bypasses_store_section(
         srt_path = tmp_path / "t.srt"
         reassignment = None
 
-    monkeypatch.setattr(speakers, "resolve_project_ref", lambda ref, _dir: tmp_path)
+    monkeypatch.setattr(
+        speakers, "resolve_web_project_ref", lambda ref, _settings: tmp_path
+    )
     monkeypatch.setattr(speakers, "save_speaker_review", lambda *_a, **_k: FakeResult())
 
     def fail(_fn):  # must not be reached on the naming-only path
@@ -423,3 +436,88 @@ def test_speaker_naming_only_save_bypasses_store_section(
         "/api/speakers/p-x/save", json=_save_body(with_reassignment=False)
     )
     assert resp.status_code == 200
+
+
+def _nonloopback_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, token: str
+) -> TestClient:
+    """Build a client for a non-loopback (token-protected, is_local=False) bind."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir(exist_ok=True)
+    settings = WebSettings(
+        host="0.0.0.0",
+        port=0,
+        projects_dir=projects_dir,
+        store_dir=tmp_path / "store",
+        open_browser=False,
+        token=token,
+    )
+    return TestClient(create_app(settings))
+
+
+def test_reveal_secrets_refused_on_non_loopback_bind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A token alone must not exfiltrate plaintext secrets over a networked bind."""
+    with _nonloopback_client(tmp_path, monkeypatch, token="s3cret") as client:
+        client.get("/api/health").raise_for_status()  # is_local must be False here
+        assert client.get("/api/health").json()["is_local"] is False
+        # Masked listing is fine.
+        assert client.get("/api/config?token=s3cret").status_code == 200
+        # Reveal is refused with 403, not silently honored. (HTTPException uses the
+        # Starlette default body shape {"detail": ...}, like the 401 auth rejection.)
+        denied = client.get("/api/config?reveal=true&token=s3cret")
+        assert denied.status_code == 403
+        assert "loopback" in denied.json()["detail"]
+
+
+def test_reveal_secrets_allowed_on_loopback(client: TestClient) -> None:
+    """Loopback may reveal: the gate permits it and the plaintext value comes back."""
+    client.patch(
+        "/api/config", json={"key": "dashscope.api_key", "value": "sk-test-123"}
+    ).raise_for_status()
+    body = client.get("/api/config?reveal=true")
+    assert body.status_code == 200
+    by_name = {k["name"]: k for k in body.json()["keys"]}
+    assert by_name["dashscope.api_key"]["value"] == "sk-test-123"
+
+
+def test_resolve_project_ref_restrict_blocks_escape(tmp_path: Path) -> None:
+    """restrict_to_projects_dir denies refs resolving outside the projects parent."""
+    from app.core.project_refs import resolve_project_ref
+
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    inside = projects_dir / "p-inside"
+    inside.mkdir()
+    (inside / "project.json").write_text("{}", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "project.json").write_text("{}", encoding="utf-8")
+
+    # CLI default (unrestricted): explicit on-disk paths still resolve -- behavior intact.
+    assert resolve_project_ref(outside, projects_dir) == outside.resolve()
+    # Web restriction: in-tree resolves, out-of-tree escape raises instead of resolving.
+    assert (
+        resolve_project_ref(inside, projects_dir, restrict_to_projects_dir=True)
+        == inside.resolve()
+    )
+    with pytest.raises(ValueError):
+        resolve_project_ref(outside, projects_dir, restrict_to_projects_dir=True)
+
+
+def test_merge_preview_rejects_out_of_tree_ref(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """Body-supplied project refs cannot traverse out of the configured projects dir."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "project.json").write_text("{}", encoding="utf-8")
+    resp = client.post(
+        "/api/pipeline/merge-preview", json={"project_refs": [str(outside)]}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "bad_request"

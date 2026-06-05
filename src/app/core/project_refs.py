@@ -100,7 +100,10 @@ def _timestamp_or_none(value: str | None) -> float | None:
 
 
 def resolve_project_ref(
-    project_ref: Path | str, projects_dir: Path | None = None
+    project_ref: Path | str,
+    projects_dir: Path | None = None,
+    *,
+    restrict_to_projects_dir: bool = False,
 ) -> Path:
     """
     Resolve a project path, id, or title.
@@ -108,6 +111,11 @@ def resolve_project_ref(
     Args:
         project_ref: Project reference.
         projects_dir: Optional projects parent directory.
+        restrict_to_projects_dir: When set, the resolved directory must live under the
+            projects parent; refs that resolve elsewhere (absolute paths, ``..`` escapes,
+            symlinks pointing out) raise ``ValueError``. The CLI leaves this off so
+            explicit on-disk project paths keep working; the web turns it on so a
+            request-supplied ref cannot traverse out of the configured projects dir.
 
     Returns:
         Resolved project path.
@@ -116,6 +124,20 @@ def resolve_project_ref(
     if not ref_text:
         raise ValueError("Project reference must not be empty.")
     ref_path = Path(ref_text).expanduser()
+    resolved = _resolve_project_ref_unchecked(ref_text, ref_path, projects_dir)
+    if restrict_to_projects_dir:
+        parent = _projects_parent_dir(projects_dir)
+        if not resolved.is_relative_to(parent):
+            raise ValueError(
+                f"Project reference resolves outside the projects directory: {ref_text}"
+            )
+    return resolved
+
+
+def _resolve_project_ref_unchecked(
+    ref_text: str, ref_path: Path, projects_dir: Path | None
+) -> Path:
+    """Resolve a ref to a project dir without any boundary enforcement."""
     if _looks_like_path(ref_text, ref_path):
         return _resolve_project_path(ref_path)
     projects = list_projects(projects_dir).projects
