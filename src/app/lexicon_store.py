@@ -1166,15 +1166,18 @@ def _import_aliases(
             _upsert_alias(
                 connection, term_id, surface, str(alias_type or "asr_error")
             )
-            # Preserve context-disambiguation guidance across export/import so a
-            # round-trip does not silently demote ambiguous aliases to blanket.
+            # Import is source-authoritative (term fields are overwritten too),
+            # so faithfully reproduce the source's blanket/ambiguous state for
+            # every alias it carries: write the guidance, or clear stale guidance
+            # to NULL when the source has none. Otherwise a restore/sync from a
+            # cleared export would leave the alias wrongly excluded from blanket
+            # correction and still fed to polish with outdated instructions.
             note = disambiguation.strip() if isinstance(disambiguation, str) else ""
-            if note:
-                connection.execute(
-                    "UPDATE aliases SET disambiguation = ? "
-                    "WHERE term_id = ? AND alias = ?",
-                    (note, term_id, surface),
-                )
+            connection.execute(
+                "UPDATE aliases SET disambiguation = ? "
+                "WHERE term_id = ? AND alias = ?",
+                (note or None, term_id, surface),
+            )
 
 
 def _import_contexts(

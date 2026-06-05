@@ -275,6 +275,58 @@ def test_lexicon_export_import_preserves_disambiguation(tmp_path: Path) -> None:
     assert "IC" not in _wrong_texts(imported_db)
 
 
+def test_lexicon_import_clears_stale_disambiguation(tmp_path: Path) -> None:
+    """Importing a blanket alias must clear stale local guidance (source wins).
+
+    A restore/sync from an export where the alias was cleared must not leave the
+    target's old guidance behind, or the alias stays wrongly excluded from
+    blanket correction and is fed to polish with outdated instructions.
+    """
+    source_db = tmp_path / "source.sqlite"
+    target_db = tmp_path / "target.sqlite"
+    output = tmp_path / "lexicon.json"
+    # Source: IC is a plain blanket alias (no disambiguation).
+    upsert_lexicon_term(
+        canonical="iSee",
+        category="system",
+        description="",
+        aliases=("IC",),
+        status="active",
+        db_path=source_db,
+    )
+    runner.invoke(
+        app, ["lexicon", "export", "--lexicon-db", str(source_db), "--output", str(output)]
+    )
+    # Target already marks IC ambiguous with stale guidance.
+    upsert_lexicon_term(
+        canonical="iSee",
+        category="system",
+        description="",
+        aliases=("IC",),
+        status="active",
+        db_path=target_db,
+    )
+    set_alias_disambiguation(
+        term="iSee", alias="IC", guidance="stale guidance", db_path=target_db
+    )
+    assert "IC" not in _wrong_texts(target_db)
+
+    import_result = runner.invoke(
+        app, ["lexicon", "import", str(output), "--lexicon-db", str(target_db)]
+    )
+    show_result = runner.invoke(
+        app, ["lexicon", "show", "iSee", "--lexicon-db", str(target_db), "--json"]
+    )
+    by_alias = {
+        alias["alias"]: alias for alias in json.loads(show_result.output)["aliases"]
+    }
+
+    assert import_result.exit_code == 0
+    assert by_alias["IC"]["disambiguation"] is None
+    # Cleared guidance returns IC to deterministic blanket replacement.
+    assert "IC" in _wrong_texts(target_db)
+
+
 def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
     """Local lexicon commands should manage the vocabulary knowledge base."""
     db_path = tmp_path / "lexicon.sqlite"
