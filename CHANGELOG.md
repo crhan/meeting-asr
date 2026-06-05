@@ -10,6 +10,8 @@
 ### 新增
 
 - 新增 **Web UI（`meeting-asr web`）**：把原本的 Textual TUI 全部功能搬上浏览器。`meeting-asr web` 启动一个本地 FastAPI 服务（默认 `127.0.0.1:8765`，单用户、loopback 免鉴权，非 loopback 强制 bearer token），前端是 React + TypeScript + Vite SPA（构建产物 force-include 进 wheel，发布时 hatch 钩子自动构建，安装无需 node）。覆盖：项目列表与完整 ASR 摄入管线控制台（运行管线 / summarize / merge，经后台任务 + SSE 实时进度）、**speaker review**（双栏、逐句音频播放、改名 / 接受声纹匹配 / 忽略 / 重指派 / 疑点过滤 / 保存）、**声纹采集**（候选 clip 勾选 → 采集+嵌入 → 本项目与历史项目逐发言人分数变化对比 → 接受/回滚）、**声纹库**（浏览 / 质量离群改判 / 人物 CRUD）、**文字纠错**（polish 提案逐条勾选应用）、**纠错词库**（词条/消歧/热词）、**设置**（配置凭证、环境诊断）。架构上**零业务逻辑重写**：危险落盘路径（speaker_map 合并、会删全局声纹样本的重指派 + rematch、声纹采集事务）抽进 `core/speaker_review_service.py` / `core/voiceprint_review_service.py`，CLI 与 web 共用同一条路径；长任务进度复用现有 `emit_progress`，经 `call_soon_threadsafe` 推 SSE；音频经带 HTTP Range 的端点给浏览器 `<audio>`；并发用单 worker + per-project/per-store 异步锁 + 任务串行（不引入 Redis/Celery）。用法与架构见 `docs/web-ui.md`。
+- Web UI **token 模式完整可用**（修复 PR #24 review）：`require_auth` 现在同时接受 `Authorization: Bearer` 头与 `?token=` query 参数（常数时间比较），因为 `EventSource`（SSE 进度）和 `<audio>`（clip 播放）这类浏览器托管请求无法设置请求头，否则在 token 保护的绑定下会全 401。启动时打印并自动打开带 `?token=` 的 URL，SPA 首屏读取后存入 localStorage 并抹掉地址栏；裸 URL / token 失效时弹输入框兜底（探针 `/api/auth/check`）。
+- Web UI **声纹采集事务对全局库独占**（修复 PR #24 review）：一次采集会对全局声纹库留一份回滚快照直到 accept/rollback；在它待决期间任何会改库的写（人物增删改/合并、样本状态、再发起采集）都会被拒（HTTP 409），避免一次 rollback 把这期间的编辑静默还原。
 
 ## [0.11.0] - 2026-06-05
 

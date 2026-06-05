@@ -64,11 +64,25 @@ uv run meeting-asr web --port 8765
 - **音频走 HTTP**：clip 用 ffmpeg 切成 WAV 落盘，经带 HTTP Range 的端点给浏览器 `<audio>`，可 seek。
 - **并发**：单 worker + per-project 与 per-store 的 `asyncio` 锁（排序取锁防死锁）+ 任务串行；
   不引入 Redis/Celery。
+- **声纹采集事务独占**：一次采集会对**全局声纹库**留一份回滚快照，直到用户 accept/rollback。
+  在它待决期间，任何会改库的写（人物增删改/合并、样本状态、再发起采集）都会被拒（HTTP 409），
+  否则一次 rollback 会把这期间的编辑静默还原。前端据此引导用户先接受或回滚采集结果。
 
 ## 安全
 
-单用户本地工具：loopback 绑定免鉴权。`--host` 指向非 loopback 时强制 bearer token（自动生成或
-`--token` 指定），前端把 token 存 localStorage 并带在 `Authorization` 头上。
+单用户本地工具：loopback 绑定免鉴权。`--host` 指向非 loopback 时强制 token（自动生成或
+`--token` 指定）。
+
+**Token 交接**：启动时控制台会打印一条带 `?token=` 的 URL（浏览器也会自动用它打开）。SPA 首屏
+读取 `?token=`、存入 localStorage、并从地址栏抹掉。之后：
+
+- 普通 `fetch` 调用带 `Authorization: Bearer <token>` 头；
+- `EventSource`（SSE 进度）和 `<audio>`（clip 播放）**无法设置请求头**，改用 `?token=` query 参数
+  携带——后端 `require_auth` 同时接受 header 和 query 两种凭证（常数时间比较）。
+- 没带 token 打开裸 URL 时，前端弹出 token 输入框作为兜底（探针 `/api/auth/check`）。
+
+权衡：query-param token 可能出现在访问日志里；对单用户 LAN 工具这是可接受的取舍，未引入
+cookie/CSRF 面。仍不强制 HTTPS。
 
 ## 开发
 

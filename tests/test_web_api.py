@@ -16,22 +16,35 @@ from app.web.server import create_app
 from app.web.settings import WebSettings
 
 
-@pytest.fixture
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+def _settings(tmp_path: Path, *, token: str | None) -> WebSettings:
     projects_dir = tmp_path / "projects"
-    projects_dir.mkdir()
-    settings = WebSettings(
+    projects_dir.mkdir(exist_ok=True)
+    return WebSettings(
         host="127.0.0.1",
         port=0,
         projects_dir=projects_dir,
         store_dir=tmp_path / "store",
         open_browser=False,
-        token=None,
+        token=token,
     )
-    with TestClient(create_app(settings)) as test_client:
+
+
+@pytest.fixture
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    with TestClient(create_app(_settings(tmp_path, token=None))) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def token_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A client for a token-protected (non-loopback-style) bind."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    with TestClient(create_app(_settings(tmp_path, token="s3cret"))) as test_client:
         yield test_client
 
 
@@ -86,6 +99,51 @@ def test_doctor_returns_checks(client: TestClient) -> None:
     names = {c["name"] for c in body["checks"]}
     assert "python" in names
     assert "ffmpeg" in names
+
+
+def test_health_is_open_and_reports_auth_required(token_client: TestClient) -> None:
+    resp = token_client.get("/api/health")
+    assert resp.status_code == 200  # health is never gated
+    assert resp.json()["auth_required"] is True
+
+
+def test_token_required_routes_reject_without_credential(
+    token_client: TestClient,
+) -> None:
+    assert token_client.get("/api/projects").status_code == 401
+    assert token_client.get("/api/auth/check").status_code == 401
+
+
+def test_token_accepted_via_bearer_header(token_client: TestClient) -> None:
+    headers = {"Authorization": "Bearer s3cret"}
+    assert token_client.get("/api/auth/check", headers=headers).status_code == 200
+    assert token_client.get("/api/projects", headers=headers).status_code == 200
+
+
+def test_token_accepted_via_query_param(token_client: TestClient) -> None:
+    """SSE/audio transports can't set headers; ?token= must authenticate them."""
+    assert token_client.get("/api/auth/check?token=s3cret").status_code == 200
+    assert token_client.get("/api/projects?token=s3cret").status_code == 200
+    # Wrong token is still rejected on the query path.
+    assert token_client.get("/api/projects?token=nope").status_code == 401
+
+
+def test_capture_pending_blocks_store_writes(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While a capture transaction is pending, store mutations return 409 (not silent)."""
+    import app.web.routers.voiceprints as voiceprints
+
+    # Sanity: with nothing pending, creating a person succeeds against the isolated store.
+    assert (
+        client.post("/api/voiceprints/people", json={"name": "Alice"}).status_code
+        == 200
+    )
+
+    monkeypatch.setattr(voiceprints.REGISTRY, "has_pending", lambda: True)
+    resp = client.post("/api/voiceprints/people", json={"name": "Bob"})
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "conflict"
 
 
 def test_speaker_save_marshals_decision(
