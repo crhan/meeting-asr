@@ -166,6 +166,16 @@ def resolve_token(host: str, explicit_token: str | None) -> str | None:
     return secrets.token_urlsafe(24)
 
 
+def base_url(settings: WebSettings) -> str:
+    """Return the server's base URL, bracketing IPv6 literal hosts.
+
+    IPv6 literals (``::1``, ``::``) must be wrapped in ``[...]`` in a URL authority, else
+    ``http://::1:8765/`` is rejected by browsers.
+    """
+    host = f"[{settings.host}]" if ":" in settings.host else settings.host
+    return f"http://{host}:{settings.port}/"
+
+
 def authenticated_url(settings: WebSettings) -> str:
     """Return the entry URL, carrying ``?token=`` when the bind is token-protected.
 
@@ -173,7 +183,7 @@ def authenticated_url(settings: WebSettings) -> str:
     first load, stores it, and strips it from the address bar. Without this, a fresh
     browser on a non-loopback bind would 401 on every API call.
     """
-    base = f"http://{settings.host}:{settings.port}/"
+    base = base_url(settings)
     if settings.token:
         return f"{base}?token={settings.token}"
     return base

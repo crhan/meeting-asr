@@ -108,9 +108,11 @@ def test_doctor_returns_checks(client: TestClient) -> None:
 
 def test_lexicon_writes_honor_store_dir(client: TestClient, tmp_path: Path) -> None:
     """Lexicon writes must land under --store-dir, never the real XDG dictionary."""
+    # Neutral synthetic term -- real product/term mappings are user data (AGENTS.md), never
+    # source fixtures.
     resp = client.post(
         "/api/lexicon/terms",
-        json={"canonical": "iSee", "category": "product", "aliases": ["IC"]},
+        json={"canonical": "Zigzag", "category": "product", "aliases": ["Zigzaq"]},
     )
     assert resp.status_code == 200
 
@@ -119,7 +121,7 @@ def test_lexicon_writes_honor_store_dir(client: TestClient, tmp_path: Path) -> N
     assert store_db.is_file()
     # And the term is readable back from that same isolated store.
     terms = client.get("/api/lexicon/terms").json()["terms"]
-    assert any(t["canonical"] == "iSee" for t in terms)
+    assert any(t["canonical"] == "Zigzag" for t in terms)
 
 
 def test_correction_accept_records_into_store_dir_lexicon(
@@ -221,6 +223,32 @@ def test_pipeline_run_serializes_by_project_and_uses_store_lexicon(
     # store-dir lexicon, not the real XDG one.
     assert captured["project_dir"] == actual_dir
     assert captured["lexicon_db"] == get_lexicon_db_path(tmp_path / "store")
+
+
+def test_authenticated_url_brackets_ipv6_hosts() -> None:
+    """IPv6 literal hosts must be bracketed in the printed/opened handoff URL."""
+    from app.web.server import authenticated_url, base_url
+
+    v6 = WebSettings(
+        host="::1",
+        port=8765,
+        projects_dir=None,
+        store_dir=None,
+        open_browser=False,
+        token="tok",
+    )
+    assert base_url(v6) == "http://[::1]:8765/"
+    assert authenticated_url(v6) == "http://[::1]:8765/?token=tok"
+
+    v4 = WebSettings(
+        host="127.0.0.1",
+        port=8765,
+        projects_dir=None,
+        store_dir=None,
+        open_browser=False,
+        token=None,
+    )
+    assert base_url(v4) == "http://127.0.0.1:8765/"
 
 
 def test_health_is_open_and_reports_auth_required(token_client: TestClient) -> None:

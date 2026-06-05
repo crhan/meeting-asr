@@ -80,7 +80,12 @@ def command(
 ) -> None:
     """Start the web UI server and listen for connections."""
     try:
-        from app.web.server import authenticated_url, resolve_token, run_server
+        from app.web.server import (
+            authenticated_url,
+            base_url,
+            resolve_token,
+            run_server,
+        )
         from app.web.settings import WebSettings
     except ImportError as exc:  # web extra missing
         typer.echo(_INSTALL_HINT, err=True)
@@ -103,7 +108,7 @@ def command(
         open_browser=open_browser,
         token=resolved_token,
     )
-    typer.echo(f"meeting-asr web serving at http://{host}:{port}/")
+    typer.echo(f"meeting-asr web serving at {base_url(settings)}")
     if resolved_token is not None:
         typer.echo(
             "This bind requires a token. Open this URL to authenticate automatically:\n"
