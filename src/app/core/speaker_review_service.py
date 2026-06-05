@@ -82,7 +82,12 @@ def save_speaker_review(
         mapping,
         person_mapping=person_mapping,
         person_public_mapping=person_public_mapping,
-        ignored_speaker_ids=ignored_speaker_ids or None,
+        # Pass the ignore set straight through, even when empty: apply_project_speakers
+        # treats None as "leave the existing ignore state untouched" but an empty
+        # collection as "no speakers are ignored" -- which clears a stale
+        # speaker_ignore.json. `or None` would collapse the empty case into None and strand
+        # the last un-ignored speaker as anonymous. (matches origin/main CLI save behavior)
+        ignored_speaker_ids=ignored_speaker_ids,
     )
     return SpeakerReviewSaveResult(
         mapping_path=mapping_path,
