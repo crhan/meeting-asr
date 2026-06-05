@@ -362,6 +362,65 @@ def resolve_run_project_dir(
     return (_projects_parent_dir(projects_dir) / project_id).resolve()
 
 
+def resolve_project_dir_for_run(
+    input_path: Path,
+    *,
+    extra_inputs: Sequence[Path] = (),
+    projects_dir: Path | None = None,
+    variant: str | None = None,
+) -> Path:
+    """Resolve the project dir a run will land on, creating and mutating nothing.
+
+    This mirrors :func:`create_or_reuse_project`'s *destination* exactly -- an existing
+    project for this source (which may live in a non-canonical directory created with
+    ``--project-dir``) is reused at its real on-disk path; otherwise a new project's
+    content-addressed identity path is returned. It performs no manifest write.
+
+    The web run route keys its background job by this path and lets the job's own
+    ``create_or_reuse_project`` perform the actual create + title/manifest update under that
+    project's lock. Resolving read-only first is what lets the manifest mutation happen
+    under the *returned* project's lock (the same key inline speaker/correction saves take)
+    instead of under the content-addressed identity lock, which can differ from the reused
+    directory and would otherwise let a concurrent inline save clobber the manifest.
+    """
+    resolved_variant = _normalize_project_variant(variant)
+    if extra_inputs:
+        # Multi-input identity is purely content-addressed (never find_project_by_source),
+        # so the destination is always the canonical combined-identity root -- matching
+        # _create_or_reuse_multi_source_project.
+        sources = [input_path, *extra_inputs]
+        per_file_shas = [_sha256_file(s.expanduser().resolve()) for s in sources]
+        combined_sha = _combined_identity_sha(per_file_shas)
+        return _resolve_project_root(
+            sources[0].expanduser().resolve(),
+            projects_dir,
+            None,
+            combined_sha,
+            resolved_variant,
+        )
+    # Single input: mirror create_or_reuse_project's two-pass reuse lookup (by original
+    # path, then by content hash) before falling back to the canonical identity path.
+    source = input_path.expanduser().resolve()
+    existing = _find_existing_project_for_create(
+        input_path, projects_dir, None, source_sha256=None, variant=resolved_variant
+    )
+    if existing is not None:
+        return existing
+    source_sha256 = _sha256_file(source)
+    existing = _find_existing_project_for_create(
+        input_path,
+        projects_dir,
+        None,
+        source_sha256=source_sha256,
+        variant=resolved_variant,
+    )
+    if existing is not None:
+        return existing
+    return _resolve_project_root(
+        source, projects_dir, None, source_sha256, resolved_variant
+    )
+
+
 def _combined_identity_sha(per_file_shas: Sequence[str]) -> str:
     """Build a stable content identity for an ordered set of source files.
 

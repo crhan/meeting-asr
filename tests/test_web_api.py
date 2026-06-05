@@ -233,19 +233,15 @@ def test_pipeline_run_serializes_by_project_and_uses_store_lexicon(
 
     media = tmp_path / "clip.wav"
     media.write_bytes(b"fake-media")
-    # The content-addressed default (create lock key) deliberately differs from the actual
-    # reused directory, to prove the JOB is keyed by the real path inline routes use.
-    create_key = tmp_path / "projects" / "p-default"
+    # The run's destination is resolved READ-ONLY: for a project made with --project-dir it
+    # is a non-canonical path, NOT the content-addressed identity. The job must be keyed by
+    # this real path (the key inline routes use) and the create/manifest write deferred into
+    # the job under that lock -- never done out here under a different (identity) lock.
     actual_dir = tmp_path / "custom" / "my-project"
     captured: dict = {}
 
-    monkeypatch.setattr(pipeline, "resolve_run_project_dir", lambda *a, **k: create_key)
     monkeypatch.setattr(
-        pipeline,
-        "create_or_reuse_project",
-        lambda *a, **k: SimpleNamespace(
-            project_dir=actual_dir, manifest=object(), created=False
-        ),
+        pipeline, "resolve_project_dir_for_run", lambda *a, **k: actual_dir
     )
 
     def fake_workflow(input_path, **kwargs):
@@ -283,13 +279,8 @@ def _stub_pipeline_run(
     """Stub the heavy run internals so /api/pipeline/run completes instantly."""
     from types import SimpleNamespace
 
-    monkeypatch.setattr(pipeline, "resolve_run_project_dir", lambda *a, **k: project_dir)
     monkeypatch.setattr(
-        pipeline,
-        "create_or_reuse_project",
-        lambda *a, **k: SimpleNamespace(
-            project_dir=project_dir, manifest=object(), created=True
-        ),
+        pipeline, "resolve_project_dir_for_run", lambda *a, **k: project_dir
     )
     monkeypatch.setattr(
         pipeline,
@@ -348,6 +339,28 @@ def test_pipeline_run_refused_when_capture_pending(
     monkeypatch.setattr(pipeline.REGISTRY, "has_pending", lambda: True)
 
     resp = client.post("/api/pipeline/run", json={"input_path": str(media)})
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["error"] == "conflict"
+    assert "capture" in body["detail"].lower()
+
+
+def test_pipeline_summarize_refused_when_capture_pending(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A pending capture must block summarize: summarize_project rewrites project.json, and a
+    later capture rollback restores the pre-capture snapshot -- silently dropping it."""
+    import app.web.routers.pipeline as pipeline
+
+    monkeypatch.setattr(pipeline, "resolve_web_project_ref", lambda ref, _s: tmp_path)
+
+    def fail_summarize(*_a, **_k):  # must never run while a capture is pending
+        raise AssertionError("summarize_project must not run with a capture pending")
+
+    monkeypatch.setattr(pipeline, "summarize_project", fail_summarize)
+    monkeypatch.setattr(pipeline.REGISTRY, "has_pending", lambda: True)
+
+    resp = client.post("/api/pipeline/summarize/p-x", json={})
     assert resp.status_code == 409
     body = resp.json()
     assert body["error"] == "conflict"

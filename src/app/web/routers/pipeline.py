@@ -24,8 +24,7 @@ from app.core.project_models import ProjectTranscribeOptions
 from app.core.voiceprint_review_service import REGISTRY, CaptureConflictError
 from app.lexicon_store import get_lexicon_db_path
 from app.project_manager import (
-    create_or_reuse_project,
-    resolve_run_project_dir,
+    resolve_project_dir_for_run,
     summarize_project,
 )
 from app.transcript_merge import merge_projects, write_merge_outputs
@@ -33,13 +32,12 @@ from app.voiceprint_people import get_voiceprint_person
 from app.voiceprint_store import get_voiceprint_db_path
 from app.web.deps import (
     get_jobs,
-    get_locks,
     get_settings,
     require_auth,
     resolve_web_project_ref,
 )
 from app.web.jobs import JobManager
-from app.web.locks import LockRegistry, project_lock_key, store_lock_key
+from app.web.locks import store_lock_key
 from app.web.schemas import (
     JobRef,
     MergeApplyIn,
@@ -66,7 +64,6 @@ async def run_pipeline(
     payload: RunPipelineIn,
     settings: WebSettings = Depends(get_settings),
     jobs: JobManager = Depends(get_jobs),
-    locks: LockRegistry = Depends(get_locks),
 ) -> JobRef:
     """Run the full project pipeline as a background job (create -> ASR -> summarize)."""
     input_path = _require_file(payload.input_path)
@@ -97,36 +94,24 @@ async def run_pipeline(
             "running the pipeline."
         )
 
-    # Resolve the project under a lock keyed by its content-addressed identity, so two
-    # concurrent first-time runs of the same media can't both create the same directory.
-    # create_or_reuse then yields the project's ACTUAL directory -- which may be a
-    # non-canonical path for a project originally made with --project-dir -- and the job is
-    # keyed by that real path, the same key inline speaker/correction saves take, so a run
-    # and an inline edit of the same project serialize instead of racing.
-    create_key = await loop.run_in_executor(
+    # Resolve the run's destination directory READ-ONLY (no create, no manifest write) so
+    # the job can be keyed by the project's ACTUAL directory -- which, for a project made
+    # with --project-dir, may differ from the content-addressed identity path. The job then
+    # acquires project_lock_key(project_dir) and its own create_or_reuse_project performs the
+    # actual create + title/manifest update under THAT lock, the same key inline
+    # speaker/correction saves take. Doing the create out here under the identity lock would
+    # mutate a reused non-canonical manifest under a different lock than inline saves hold,
+    # racing them. Two concurrent first-time runs both resolve the same canonical path, so
+    # their jobs share a key and serialise on the per-project lock -- no double-create.
+    project_dir = await loop.run_in_executor(
         None,
-        lambda: resolve_run_project_dir(
+        lambda: resolve_project_dir_for_run(
             input_path,
             extra_inputs=extra_inputs,
             projects_dir=settings.projects_dir,
             variant=payload.variant,
         ),
     )
-    async with locks.acquire(project_lock_key(str(create_key))):
-        created = await loop.run_in_executor(
-            None,
-            lambda: create_or_reuse_project(
-                input_path,
-                title=payload.title,
-                projects_dir=settings.projects_dir,
-                project_dir=None,
-                meeting_time=payload.meeting_time,
-                hash_source=True,
-                variant=payload.variant,
-                extra_inputs=extra_inputs,
-            ),
-        )
-    project_dir = created.project_dir
 
     def work(reporter) -> dict[str, object]:
         # The workflow learns auto-accepted corrections into the shared lexicon and deletes
@@ -186,7 +171,26 @@ def summarize(
     """Generate meeting memory-index artifacts for a project (background job)."""
     project_dir = resolve_web_project_ref(project_ref, settings)
 
+    # summarize_project rewrites project.json (summary record + title + stage). A pending
+    # capture's rollback restores the pre-capture project.json, so it would silently drop
+    # this. Fail fast for a clean 409; the in-job re-check below closes the race for a
+    # capture that registers after this check.
+    if REGISTRY.has_pending():
+        raise CaptureConflictError(
+            "A voiceprint capture is awaiting accept/rollback; resolve it before "
+            "summarizing the project."
+        )
+
     def work(reporter) -> dict[str, object]:
+        # Re-check under the job's per-project lock -- the same lock the capture job holds
+        # when it registers its txn -- so the check cannot race the registration. Without
+        # this, a capture that registers between the fail-fast above and this job running
+        # would let summarize_project's project.json write be clobbered by a later rollback.
+        if REGISTRY.has_pending():
+            raise CaptureConflictError(
+                "A voiceprint capture is awaiting accept/rollback; resolve it before "
+                "summarizing the project."
+            )
         result = summarize_project(
             project_dir,
             model=payload.model,

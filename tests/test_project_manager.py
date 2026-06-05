@@ -39,6 +39,7 @@ from app.project_manager import (
     ProjectTranscribeSummary,
     project_paths,
     resolve_project_audio_path,
+    resolve_project_dir_for_run,
     resolve_project_source_path,
     resolve_run_project_dir,
     save_manifest,
@@ -3855,3 +3856,44 @@ def test_resolve_run_project_dir_is_pure_and_matches_create(tmp_path: Path) -> N
         hash_source=True,
     )
     assert created.project_dir == resolved
+
+
+def test_resolve_project_dir_for_run_reuses_noncanonical_without_mutation(
+    tmp_path: Path,
+) -> None:
+    """The run-destination resolver must reuse a project's REAL (non-canonical) directory
+    and never mutate its manifest -- so the web run keys its job by the same dir inline
+    saves take and defers the manifest write into the job's lock, not a divergent one."""
+    source = tmp_path / "a.wav"
+    source.write_bytes(b"audio-bytes")
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    # A project made with --project-dir lives under projects_dir but NOT at the
+    # content-addressed identity path -- the divergence the lock bug relied on.
+    custom_dir = projects_dir / "my-custom-name"
+    created = create_or_reuse_project(
+        source,
+        title="Original Title",
+        projects_dir=projects_dir,
+        project_dir=custom_dir,
+        meeting_time=None,
+        hash_source=True,
+    )
+    assert created.project_dir == custom_dir
+
+    canonical = resolve_run_project_dir(source, projects_dir=projects_dir)
+    assert canonical != custom_dir  # identity path differs from the real reused dir
+    assert not canonical.exists()
+
+    manifest_path = custom_dir / "project.json"
+    before = manifest_path.read_text(encoding="utf-8")
+    mtime_before = manifest_path.stat().st_mtime_ns
+
+    resolved = resolve_project_dir_for_run(source, projects_dir=projects_dir)
+
+    # Reuse-aware: resolves to the project's real non-canonical directory.
+    assert resolved == custom_dir
+    # Read-only: the reused manifest is byte-for-byte untouched (no title write under a
+    # different lock than inline saves hold).
+    assert manifest_path.read_text(encoding="utf-8") == before
+    assert manifest_path.stat().st_mtime_ns == mtime_before
