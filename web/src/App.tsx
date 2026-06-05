@@ -2,6 +2,8 @@ import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useState } from "react";
 import { getLang, setLang, tr, type Lang } from "./lib/i18n";
 import { CapturePage } from "./pages/CapturePage";
+import { CorrectionPage } from "./pages/CorrectionPage";
+import { LexiconPage } from "./pages/LexiconPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { SpeakerReviewPage } from "./pages/SpeakerReviewPage";
 import { VoiceprintPage } from "./pages/VoiceprintPage";
@@ -30,6 +32,7 @@ export function App() {
         <nav>
           <NavLink to="/projects">{tr("Projects", "项目")}</NavLink>
           <NavLink to="/voiceprints">{tr("Voiceprints", "声纹库")}</NavLink>
+          <NavLink to="/lexicon">{tr("Lexicon", "词库")}</NavLink>
         </nav>
         <span className="spacer" />
         <LangToggle />
@@ -40,7 +43,9 @@ export function App() {
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:ref/speakers" element={<SpeakerReviewPage />} />
           <Route path="/projects/:ref/capture" element={<CapturePage />} />
+          <Route path="/projects/:ref/corrections" element={<CorrectionPage />} />
           <Route path="/voiceprints" element={<VoiceprintPage />} />
+          <Route path="/lexicon" element={<LexiconPage />} />
           <Route
             path="*"
             element={<div className="placeholder">{tr("Not found", "未找到")}</div>}

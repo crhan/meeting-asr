@@ -282,6 +282,7 @@ export function SpeakerReviewPage() {
           setReassign(new Map());
         }}
         onCapture={() => navigate(`/projects/${ref}/capture`)}
+        onCorrect={() => navigate(`/projects/${ref}/corrections`)}
       />
       <div className="review-body">
         <SpeakerSidebar
@@ -342,8 +343,9 @@ function ReviewHeader(props: {
   onSave: () => void;
   onDiscard: () => void;
   onCapture: () => void;
+  onCorrect: () => void;
 }) {
-  const { review, speakerCount, unresolved, dirty, saving, onSave, onDiscard, onCapture } =
+  const { review, speakerCount, unresolved, dirty, saving, onSave, onDiscard, onCapture, onCorrect } =
     props;
   const o = review.overview;
   return (
@@ -359,6 +361,9 @@ function ReviewHeader(props: {
         </div>
       </div>
       <div className="row gap">
+        <button className="btn ghost" onClick={onCorrect} disabled={saving}>
+          {tr("Correct text", "文字纠错")}
+        </button>
         <button className="btn ghost" onClick={onCapture} disabled={saving}>
           {tr("Capture voiceprints", "采集声纹")}
         </button>

@@ -415,6 +415,154 @@ export const captureRollback = (txnId: string) =>
 export const getJob = (jobId: string) =>
   api<JobStatus>(`/api/jobs/${encodeURIComponent(jobId)}`);
 
+// ---- Pipeline --------------------------------------------------------------
+
+export interface RunPipelineBody {
+  input_path: string;
+  title?: string | null;
+  meeting_time?: string | null;
+  model?: string;
+  summarize?: boolean;
+  polish?: boolean;
+}
+
+export const runPipeline = (body: RunPipelineBody) =>
+  api<{ job_id: string }>("/api/pipeline/run", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const summarizeProject = (ref: string) =>
+  api<{ job_id: string }>(`/api/pipeline/summarize/${encodeURIComponent(ref)}`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
+export interface MergePreview {
+  order_source: string;
+  use_corrected: boolean;
+  identity_count: number;
+  speaker_count: number;
+  sentence_count: number;
+  names: string[];
+  warnings: string[];
+  out_dir?: string;
+  written?: string[];
+}
+
+export const mergePreview = (projectRefs: string[]) =>
+  api<MergePreview>("/api/pipeline/merge-preview", {
+    method: "POST",
+    body: JSON.stringify({ project_refs: projectRefs }),
+  });
+
+export const mergeApply = (projectRefs: string[], outDir: string) =>
+  api<MergePreview>("/api/pipeline/merge", {
+    method: "POST",
+    body: JSON.stringify({ project_refs: projectRefs, out_dir: outDir }),
+  });
+
+// ---- Corrections -----------------------------------------------------------
+
+export interface CorrectionChange {
+  index: number;
+  sentence_id: number | null;
+  speaker_name: string;
+  original_text: string;
+  corrected_text: string;
+  change_type: string;
+  reason: string;
+}
+
+export interface Proposal {
+  model: string;
+  change_count: number;
+  changes: CorrectionChange[];
+}
+
+export const polishProject = (ref: string) =>
+  api<{ job_id: string }>(`/api/corrections/${encodeURIComponent(ref)}/polish`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
+export const getProposal = (ref: string) =>
+  api<Proposal>(`/api/corrections/${encodeURIComponent(ref)}/proposal`);
+
+export const acceptCorrection = (ref: string, selectedIndices: number[] | null) =>
+  api<{ accepted: boolean; change_count: number; learned_count: number }>(
+    `/api/corrections/${encodeURIComponent(ref)}/accept`,
+    { method: "POST", body: JSON.stringify({ selected_indices: selectedIndices }) },
+  );
+
+// ---- Lexicon ---------------------------------------------------------------
+
+export interface LexiconTerm {
+  term_id: number;
+  public_id: string;
+  canonical: string;
+  category: string;
+  description: string;
+  status: string;
+  alias_count: number;
+  context_count: number;
+  ambiguous_alias_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LexiconStats {
+  active_terms: number;
+  inactive_terms: number;
+  aliases: number;
+  contexts: number;
+  hotwords: number;
+  cached_vocabularies: number;
+}
+
+export interface Disambiguation {
+  alias: string;
+  canonical: string;
+  category: string;
+  guidance: string;
+}
+
+export interface Hotword {
+  text: string;
+  weight: number;
+  category: string;
+  source: string;
+}
+
+export const getLexiconTerms = (query?: string) =>
+  api<{ terms: LexiconTerm[] }>(
+    `/api/lexicon/terms?limit=500${query ? `&query=${encodeURIComponent(query)}` : ""}`,
+  );
+
+export const getLexiconStats = () => api<LexiconStats>("/api/lexicon/stats");
+
+export const getDisambiguations = () =>
+  api<Disambiguation[]>("/api/lexicon/disambiguations");
+
+export const getHotwords = () => api<Hotword[]>("/api/lexicon/hotwords");
+
+export const upsertLexiconTerm = (body: {
+  canonical: string;
+  category: string;
+  description?: string;
+  aliases?: string[];
+}) =>
+  api<LexiconTerm>("/api/lexicon/terms", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const deleteLexiconTerm = (ref: string) =>
+  api<{ deleted_public_id: string }>(
+    `/api/lexicon/terms/${encodeURIComponent(ref)}`,
+    { method: "DELETE" },
+  );
+
 // ---- SSE job progress ------------------------------------------------------
 
 export interface ProgressEvent {
