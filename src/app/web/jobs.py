@@ -4,10 +4,12 @@ A single-user local tool does not need Celery/Redis. Long operations (ASR intake
 embedding, matching, polish) are submitted here, run in the default thread-pool executor
 so they never block the event loop, and stream progress to any number of SSE subscribers.
 
-Jobs for the *same* project are serialised (an ``asyncio.Lock`` per project) so two
-speaker-review saves on one project cannot interleave; jobs for different projects run
-concurrently. Progress events are buffered on the job (so a late/reconnecting subscriber
-can replay history) and fanned out live to every subscriber queue.
+Jobs for the *same* project are serialised through the shared :class:`LockRegistry` --
+the very same per-project lock the inline mutating routes (speaker save, correction
+accept) take -- so a background pipeline run cannot interleave with an inline save (or a
+second run) on one project; different projects run concurrently. Progress events are
+buffered on the job (so a late/reconnecting subscriber can replay history) and fanned out
+live to every subscriber queue.
 """
 
 from __future__ import annotations
@@ -16,10 +18,12 @@ import asyncio
 import traceback
 import uuid
 from collections.abc import AsyncGenerator, Callable
-from dataclasses import dataclass, field
 from typing import Any
 
+from dataclasses import dataclass, field
+
 from app.core.progress import CliProgressReporter
+from app.web.locks import LockRegistry, project_lock_key
 from app.web.progress_bridge import QueueProgressReporter
 
 # A unit of work: given a progress reporter, do the blocking work and return a result.
@@ -55,11 +59,15 @@ class Job:
 
 
 class JobManager:
-    """Owns background jobs and their per-project serialisation."""
+    """Owns background jobs and their per-project serialisation.
 
-    def __init__(self) -> None:
+    Per-project serialisation is delegated to the shared :class:`LockRegistry` so jobs and
+    inline mutating routes for the same project contend on one lock, not two disjoint pools.
+    """
+
+    def __init__(self, locks: LockRegistry) -> None:
         self._jobs: dict[str, Job] = {}
-        self._project_locks: dict[str, asyncio.Lock] = {}
+        self._locks = locks
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -89,16 +97,10 @@ class JobManager:
         loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self._run(job, fn)))
         return job
 
-    def _project_lock(self, project_id: str) -> asyncio.Lock:
-        lock = self._project_locks.get(project_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._project_locks[project_id] = lock
-        return lock
-
     async def _run(self, job: Job, fn: JobFn) -> None:
         if job.project_id is not None:
-            async with self._project_lock(job.project_id):
+            # Same key the inline routes use, so jobs and inline saves serialise together.
+            async with self._locks.acquire(project_lock_key(job.project_id)):
                 await self._execute(job, fn)
         else:
             await self._execute(job, fn)

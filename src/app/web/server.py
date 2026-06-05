@@ -55,7 +55,7 @@ def create_app(settings: WebSettings) -> FastAPI:
     app = FastAPI(title="meeting-asr web", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.locks = LockRegistry()
-    app.state.jobs = JobManager()
+    app.state.jobs = JobManager(app.state.locks)
 
     # Vite dev server (localhost:5173) calls the API cross-origin during development.
     app.add_middleware(
