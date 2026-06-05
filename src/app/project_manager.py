@@ -1277,16 +1277,29 @@ def parse_mapping_items(
     """
     names: dict[int, str] = {}
     person_public_ids: dict[int, str] = {}
-    for item in mappings:
-        speaker_id, name, public_id = _parse_mapping_item(item)
-        if speaker_id not in known_speakers:
+    for raw in mappings:
+        # A single --map value may carry several comma-separated mappings
+        # ("0=A,1=B"), equivalent to repeating --map. Names cannot contain a
+        # comma (enforced by _parse_mapping_item), so splitting here is safe and
+        # turns the multi-mapping special case into ordinary single items.
+        items = [piece.strip() for piece in raw.split(",") if piece.strip()]
+        if not items:
+            # A wholly-empty --map value (""/whitespace/just commas) is a
+            # mistake, not a no-op; reject it instead of silently swallowing it.
             raise typer.BadParameter(
-                f"speaker_id={speaker_id} is not present in the transcript."
+                f"Invalid --map value: {raw!r}. Expected speaker_id=name "
+                "(optionally several as '0=A,1=B')."
             )
-        if name:
-            names[speaker_id] = name
-        if public_id:
-            person_public_ids[speaker_id] = public_id
+        for item in items:
+            speaker_id, name, public_id = _parse_mapping_item(item)
+            if speaker_id not in known_speakers:
+                raise typer.BadParameter(
+                    f"speaker_id={speaker_id} is not present in the transcript."
+                )
+            if name:
+                names[speaker_id] = name
+            if public_id:
+                person_public_ids[speaker_id] = public_id
     return names, person_public_ids
 
 
@@ -2283,6 +2296,15 @@ def _parse_mapping_item(item: str) -> tuple[int, str, str]:
                 f"Invalid voiceprint person id in --map: {item}. Expected @vpp-<16 hex>."
             )
         return speaker_id, "", public_id
+    if "," in value or "=" in value:
+        # A name carrying ',' or '=' means a malformed multi-mapping was glued
+        # into one speaker's name (e.g. "0=A,1=B" or "0=a=b"). Reject loudly
+        # instead of silently writing a garbage name into speaker_map.json.
+        raise typer.BadParameter(
+            f"Invalid speaker name in --map: {item}. A name cannot contain "
+            "',' or '='. Use one mapping per name, e.g. --map '0=A,1=B' "
+            "(comma-separated) or repeat --map (--map 0=A --map 1=B)."
+        )
     return speaker_id, value, ""
 
 
