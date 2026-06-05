@@ -46,4 +46,8 @@ jobs:
         run: uv run pytest
 
       - name: Build distributions
+        # Build + ship the React SPA in the wheel (matches the released artifact). Without
+        # this flag the hook skips the SPA, which is the base-CLI build path.
+        env:
+          MEETING_ASR_BUILD_WEB: "1"
         run: uv build

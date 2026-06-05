@@ -44,6 +44,10 @@ jobs:
         run: uv run pytest
 
       - name: Build distributions
+        # The published wheel MUST ship the React SPA; this flag makes the hook build it
+        # (and fail loudly if npm is missing) rather than silently producing a base wheel.
+        env:
+          MEETING_ASR_BUILD_WEB: "1"
         run: uv build
 
       - name: Upload distributions
