@@ -12,6 +12,8 @@ Options:
   --editable             Install this checkout in editable mode. Default for local development.
   --wheel                Install a built wheel. Use for release/user-install verification.
   --force                Overwrite executable conflicts. Not needed for normal refreshes.
+  --web                  Install the web UI ([web] extra) and build the SPA. Default.
+  --no-web               Skip the web UI extra and SPA build.
   --no-local-voiceprint  Deprecated no-op. Local SpeechBrain is now a standard dependency.
   --print-only           Print the install plan without executing it.
   --check                Inspect the current meeting-asr executable and exit.
@@ -136,6 +138,7 @@ force=0
 local_voiceprint=1
 print_only=0
 check_only=0
+web=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -161,6 +164,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-local-voiceprint)
       local_voiceprint=0
+      shift
+      ;;
+    --web)
+      web=1
+      shift
+      ;;
+    --no-web)
+      web=0
       shift
       ;;
     --print-only)
@@ -199,6 +210,21 @@ fi
 
 source_dir="$(repo_root)"
 package="."
+
+if [[ "$web" -eq 1 ]]; then
+  package=".[web]"
+  # Build the React SPA so the installed tool serves the web UI. Editable installs read
+  # static straight from the checkout; wheel installs get it via the hatch force-include.
+  if [[ -f "$source_dir/web/package.json" ]]; then
+    if command -v npm >/dev/null 2>&1; then
+      echo "Building web UI assets..."
+      (cd "$source_dir/web" && npm ci && npm run build)
+    elif [[ ! -f "$source_dir/src/app/web/static/index.html" ]]; then
+      echo "npm not found and web assets are not built; install with --no-web or build the SPA first." >&2
+      exit 1
+    fi
+  fi
+fi
 
 command=(uv tool install --python "$python_value")
 if [[ "$force" -eq 1 ]]; then
