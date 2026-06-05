@@ -164,6 +164,102 @@ def test_lexicon_disambiguate_command(tmp_path: Path) -> None:
     assert "IC" not in _wrong_texts(db_path)
 
 
+def _add_isee_with_disambiguated_alias(db_path: Path, guidance: str) -> None:
+    """Create iSee with one disambiguated alias (IC) and one blanket alias (艾赛)."""
+    upsert_lexicon_term(
+        canonical="iSee",
+        category="system",
+        description="",
+        aliases=("IC", "艾赛"),
+        status="active",
+        db_path=db_path,
+    )
+    set_alias_disambiguation(
+        term="iSee", alias="IC", guidance=guidance, db_path=db_path
+    )
+
+
+def test_lexicon_show_marks_disambiguated_alias(tmp_path: Path) -> None:
+    """Show text must flag disambiguated aliases and print the full guidance."""
+    db_path = tmp_path / "lexicon.sqlite"
+    guidance = "指 iSee 平台时改成 iSee；指个人贡献者角色时保持原样"
+    _add_isee_with_disambiguated_alias(db_path, guidance)
+
+    result = runner.invoke(app, ["lexicon", "show", "iSee", "--lexicon-db", str(db_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "IC (asr_error) [ambiguous]" in result.output
+    assert f"Guidance: {guidance}" in result.output
+    # The blanket alias stays unmarked.
+    assert "艾赛 (asr_error)" in result.output
+    assert "艾赛 (asr_error) [ambiguous]" not in result.output
+
+
+def test_lexicon_show_json_includes_disambiguation(tmp_path: Path) -> None:
+    """Show JSON must expose disambiguation so agents can review without SQL."""
+    db_path = tmp_path / "lexicon.sqlite"
+    guidance = "指 iSee 平台时改成 iSee；指个人贡献者角色时保持原样"
+    _add_isee_with_disambiguated_alias(db_path, guidance)
+
+    result = runner.invoke(
+        app, ["lexicon", "show", "iSee", "--lexicon-db", str(db_path), "--json"]
+    )
+    payload = json.loads(result.output)
+    by_alias = {alias["alias"]: alias for alias in payload["aliases"]}
+
+    assert result.exit_code == 0
+    assert by_alias["IC"]["disambiguation"] == guidance
+    assert by_alias["艾赛"]["disambiguation"] is None
+
+
+def test_lexicon_list_marks_ambiguous_count(tmp_path: Path) -> None:
+    """List must surface how many aliases go through polish disambiguation."""
+    db_path = tmp_path / "lexicon.sqlite"
+    _add_isee_with_disambiguated_alias(db_path, "按语境判断")
+
+    json_result = runner.invoke(
+        app, ["lexicon", "list", "--lexicon-db", str(db_path), "--json"]
+    )
+    table_result = runner.invoke(
+        app, ["lexicon", "list", "--lexicon-db", str(db_path)]
+    )
+    term = json.loads(json_result.output)["terms"][0]
+
+    assert json_result.exit_code == 0
+    assert term["alias_count"] == 2
+    assert term["ambiguous_alias_count"] == 1
+    assert table_result.exit_code == 0
+    assert "ambiguous" in table_result.output
+
+
+def test_lexicon_export_import_preserves_disambiguation(tmp_path: Path) -> None:
+    """Export/import must not silently drop disambiguation guidance."""
+    db_path = tmp_path / "lexicon.sqlite"
+    imported_db = tmp_path / "imported.sqlite"
+    output = tmp_path / "lexicon.json"
+    guidance = "指 iSee 平台时改成 iSee；指个人贡献者角色时保持原样"
+    _add_isee_with_disambiguated_alias(db_path, guidance)
+
+    export_result = runner.invoke(
+        app, ["lexicon", "export", "--lexicon-db", str(db_path), "--output", str(output)]
+    )
+    import_result = runner.invoke(
+        app, ["lexicon", "import", str(output), "--lexicon-db", str(imported_db)]
+    )
+    show_result = runner.invoke(
+        app, ["lexicon", "show", "iSee", "--lexicon-db", str(imported_db), "--json"]
+    )
+    payload = json.loads(show_result.output)
+    by_alias = {alias["alias"]: alias for alias in payload["aliases"]}
+
+    assert export_result.exit_code == 0
+    assert import_result.exit_code == 0
+    assert by_alias["IC"]["disambiguation"] == guidance
+    assert by_alias["艾赛"]["disambiguation"] is None
+    # The disambiguated alias stays out of blanket replacement after import.
+    assert "IC" not in _wrong_texts(imported_db)
+
+
 def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
     """Local lexicon commands should manage the vocabulary knowledge base."""
     db_path = tmp_path / "lexicon.sqlite"

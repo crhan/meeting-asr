@@ -29,6 +29,10 @@ class LexiconAlias:
     alias_type: str
     created_at: str
     updated_at: str
+    # ``None`` = deterministic blanket replacement; non-empty = polish resolves
+    # this alias by sentence context using the stored guidance (excluded from
+    # blanket rules). Read-side only; the value is authored via ``disambiguate``.
+    disambiguation: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +93,7 @@ class LexiconTerm:
     context_count: int
     created_at: str
     updated_at: str
+    ambiguous_alias_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)

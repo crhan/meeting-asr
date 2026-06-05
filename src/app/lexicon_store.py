@@ -190,7 +190,10 @@ def list_lexicon_terms(
                    t.public_id,
                    COUNT(DISTINCT a.id) AS alias_count,
                    COUNT(DISTINCT c.id) AS context_count,
-                   t.created_at, t.updated_at
+                   t.created_at, t.updated_at,
+                   COUNT(DISTINCT CASE
+                       WHEN a.disambiguation IS NOT NULL AND a.disambiguation != ''
+                       THEN a.id END) AS ambiguous_alias_count
             FROM terms AS t
             LEFT JOIN aliases AS a ON a.term_id = t.id
             LEFT JOIN contexts AS c ON c.term_id = t.id
@@ -921,7 +924,10 @@ def _load_term(connection: sqlite3.Connection, term_id: int) -> LexiconTerm:
         SELECT t.id, t.canonical, t.category, t.description, t.status,
                t.public_id,
                COUNT(DISTINCT a.id), COUNT(DISTINCT c.id),
-               t.created_at, t.updated_at
+               t.created_at, t.updated_at,
+               COUNT(DISTINCT CASE
+                   WHEN a.disambiguation IS NOT NULL AND a.disambiguation != ''
+                   THEN a.id END)
         FROM terms AS t
         LEFT JOIN aliases AS a ON a.term_id = t.id
         LEFT JOIN contexts AS c ON c.term_id = t.id
@@ -941,7 +947,7 @@ def _load_aliases(
     """Load aliases for one term."""
     rows = connection.execute(
         """
-        SELECT alias, alias_type, created_at, updated_at
+        SELECT alias, alias_type, created_at, updated_at, disambiguation
         FROM aliases
         WHERE term_id = ?
         ORDER BY alias_type ASC, alias ASC
@@ -949,7 +955,14 @@ def _load_aliases(
         (term_id,),
     ).fetchall()
     return tuple(
-        LexiconAlias(str(row[0]), str(row[1]), str(row[2]), str(row[3])) for row in rows
+        LexiconAlias(
+            str(row[0]),
+            str(row[1]),
+            str(row[2]),
+            str(row[3]),
+            str(row[4]) if row[4] is not None else None,
+        )
+        for row in rows
     )
 
 
@@ -990,6 +1003,7 @@ def _term_from_row(row) -> LexiconTerm:
         context_count=int(row[7]),
         created_at=str(row[8]),
         updated_at=str(row[9]),
+        ambiguous_alias_count=int(row[10]),
     )
 
 
@@ -1021,11 +1035,12 @@ def _term_export_payload(detail: LexiconTermDetail) -> dict[str, Any]:
     }
 
 
-def _alias_payload(alias: LexiconAlias) -> dict[str, str]:
+def _alias_payload(alias: LexiconAlias) -> dict[str, str | None]:
     """Return JSON-ready alias data."""
     return {
         "alias": alias.alias,
         "alias_type": alias.alias_type,
+        "disambiguation": alias.disambiguation,
         "created_at": alias.created_at,
         "updated_at": alias.updated_at,
     }
@@ -1145,10 +1160,21 @@ def _import_aliases(
     for item in aliases:
         alias = item.get("alias") if isinstance(item, dict) else item
         alias_type = item.get("alias_type") if isinstance(item, dict) else "asr_error"
+        disambiguation = item.get("disambiguation") if isinstance(item, dict) else None
         if isinstance(alias, str) and alias.strip():
+            surface = alias.strip()
             _upsert_alias(
-                connection, term_id, alias.strip(), str(alias_type or "asr_error")
+                connection, term_id, surface, str(alias_type or "asr_error")
             )
+            # Preserve context-disambiguation guidance across export/import so a
+            # round-trip does not silently demote ambiguous aliases to blanket.
+            note = disambiguation.strip() if isinstance(disambiguation, str) else ""
+            if note:
+                connection.execute(
+                    "UPDATE aliases SET disambiguation = ? "
+                    "WHERE term_id = ? AND alias = ?",
+                    (note, term_id, surface),
+                )
 
 
 def _import_contexts(
