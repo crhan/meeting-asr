@@ -368,7 +368,7 @@ def _build_polish_strict_prompt(
     Args:
         candidates: Transcript sentences to inspect.
         disambiguations: Optional ``(surface, guidance)`` pairs from the lexicon
-            for context-dependent ASCII terms (e.g. IC -> iSee only when it means
+            for context-dependent ASCII terms (e.g. AC -> Acme only when it means
             the platform). Business terms come from config, never hardcoded here.
 
     Returns:

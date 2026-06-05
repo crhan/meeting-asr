@@ -29,13 +29,13 @@ def test_project_transcript_show_auto_prefers_corrected_output(tmp_path: Path) -
     project_dir = _sample_project(tmp_path)
     _write_transcript_outputs(project_dir)
     (project_dir / "exports" / "transcript_named_corrected.txt").write_text(
-        "欧丁: iSee\n", encoding="utf-8"
+        "欧丁: Acme\n", encoding="utf-8"
     )
 
     result = runner.invoke(app, ["project", "transcript", "show", str(project_dir)])
 
     assert result.exit_code == 0
-    assert result.output == "欧丁: iSee\n"
+    assert result.output == "欧丁: Acme\n"
 
 
 def test_project_transcript_show_accepts_project_id(tmp_path: Path) -> None:

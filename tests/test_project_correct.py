@@ -39,7 +39,7 @@ def test_project_correct_edit_writes_corrected_outputs_and_learns_context(
 ) -> None:
     """Editing the review file should write corrected artifacts and lexicon context."""
     project_dir = _sample_project(tmp_path)
-    editor_script = _editor_script(tmp_path, "艾赛", "iSee")
+    editor_script = _editor_script(tmp_path, "阿克米", "Acme")
     lexicon_db = tmp_path / "lexicon.sqlite"
 
     result = runner.invoke(
@@ -65,13 +65,13 @@ def test_project_correct_edit_writes_corrected_outputs_and_learns_context(
     assert "Vocabulary correction accepted." in result.output
     assert "Changed sentences: 1" in result.output
     assert "Learned contexts: 1" in result.output
-    assert "艾赛" in (project_dir / "asr" / "sentences.json").read_text(
+    assert "阿克米" in (project_dir / "asr" / "sentences.json").read_text(
         encoding="utf-8"
     )
-    assert "iSee" in (project_dir / "asr" / "sentences_corrected.json").read_text(
+    assert "Acme" in (project_dir / "asr" / "sentences_corrected.json").read_text(
         encoding="utf-8"
     )
-    assert "敬悦: 我们看一下iSee系统。" in (
+    assert "敬悦: 我们看一下Acme系统。" in (
         project_dir / "exports" / "transcript_named_corrected.txt"
     ).read_text(encoding="utf-8")
     assert (project_dir / "exports" / "subtitle_named_corrected.srt").exists()
@@ -79,9 +79,9 @@ def test_project_correct_edit_writes_corrected_outputs_and_learns_context(
     hotwords = json.loads(
         (project_dir / "corrections" / "asr_hotwords.json").read_text(encoding="utf-8")
     )
-    assert hotwords["dashscope_vocabulary"] == [{"text": "iSee", "weight": 4}]
-    assert _fetch_one(lexicon_db, "SELECT canonical FROM terms") == "iSee"
-    assert _fetch_one(lexicon_db, "SELECT alias FROM aliases") == "艾赛"
+    assert hotwords["dashscope_vocabulary"] == [{"text": "Acme", "weight": 4}]
+    assert _fetch_one(lexicon_db, "SELECT canonical FROM terms") == "Acme"
+    assert _fetch_one(lexicon_db, "SELECT alias FROM aliases") == "阿克米"
     assert _fetch_one(lexicon_db, "SELECT category FROM terms") == "system"
 
 
@@ -104,7 +104,7 @@ def test_project_correct_edit_no_open_only_creates_review_file(tmp_path: Path) -
 def test_project_correct_edit_can_leave_proposal_pending(tmp_path: Path) -> None:
     """Without acceptance, edit should produce proposal files but not final artifacts."""
     project_dir = _sample_project(tmp_path)
-    editor_script = _editor_script(tmp_path, "艾赛", "iSee")
+    editor_script = _editor_script(tmp_path, "阿克米", "Acme")
 
     result = runner.invoke(
         app,
@@ -131,7 +131,7 @@ def test_project_correct_edit_can_leave_proposal_pending(tmp_path: Path) -> None
 def test_project_correct_accept_applies_latest_proposal(tmp_path: Path) -> None:
     """Accept command should apply a pending proposal and learn contexts."""
     project_dir = _sample_project(tmp_path)
-    editor_script = _editor_script(tmp_path, "艾赛", "iSee")
+    editor_script = _editor_script(tmp_path, "阿克米", "Acme")
     lexicon_db = tmp_path / "lexicon.sqlite"
     runner.invoke(
         app,
@@ -162,10 +162,10 @@ def test_project_correct_accept_applies_latest_proposal(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Vocabulary correction accepted." in result.output
-    assert "iSee" in (project_dir / "asr" / "sentences_corrected.json").read_text(
+    assert "Acme" in (project_dir / "asr" / "sentences_corrected.json").read_text(
         encoding="utf-8"
     )
-    assert _fetch_one(lexicon_db, "SELECT canonical FROM terms") == "iSee"
+    assert _fetch_one(lexicon_db, "SELECT canonical FROM terms") == "Acme"
 
 
 def test_project_correct_edit_can_use_existing_review_file(tmp_path: Path) -> None:
@@ -174,7 +174,7 @@ def test_project_correct_edit_can_use_existing_review_file(tmp_path: Path) -> No
     runner.invoke(app, ["project", "correct", "edit", str(project_dir), "--no-open"])
     review_file = next((project_dir / "tmp" / "corrections").glob("review_*.md"))
     review_file.write_text(
-        review_file.read_text(encoding="utf-8").replace("艾赛", "iSee"),
+        review_file.read_text(encoding="utf-8").replace("阿克米", "Acme"),
         encoding="utf-8",
     )
 
@@ -202,8 +202,8 @@ def test_project_correct_understands_whole_ascii_term_replacement(
     tmp_path: Path,
 ) -> None:
     """Partial character diffs inside ASCII terms should learn the whole term."""
-    project_dir = _sample_project_with_text(tmp_path, "我们看一下 ic 系统。")
-    editor_script = _editor_script(tmp_path, "ic", "isee")
+    project_dir = _sample_project_with_text(tmp_path, "我们看一下 ac 系统。")
+    editor_script = _editor_script(tmp_path, "ac", "asee")
 
     result = runner.invoke(
         app,
@@ -221,7 +221,7 @@ def test_project_correct_understands_whole_ascii_term_replacement(
     )
 
     assert result.exit_code == 0
-    assert "ic -> isee" in result.output
+    assert "ac -> asee" in result.output
     assert "C -> see" not in result.output
     assert "c -> see" not in result.output
 
@@ -1012,7 +1012,7 @@ def test_project_correct_polish_proposal_markdown_groups_by_change_type(
 def test_project_transcript_show_can_select_corrected_output(tmp_path: Path) -> None:
     """Corrected transcript artifacts should be viewable through project transcript show."""
     project_dir = _sample_project(tmp_path)
-    editor_script = _editor_script(tmp_path, "艾赛", "iSee")
+    editor_script = _editor_script(tmp_path, "阿克米", "Acme")
 
     runner.invoke(
         app,
@@ -1033,7 +1033,7 @@ def test_project_transcript_show_can_select_corrected_output(tmp_path: Path) -> 
     )
 
     assert result.exit_code == 0
-    assert "iSee" in result.output
+    assert "Acme" in result.output
 
 
 def test_project_review_correction_action_uses_editor_correction_flow(
@@ -1041,7 +1041,7 @@ def test_project_review_correction_action_uses_editor_correction_flow(
 ) -> None:
     """Project review's correction action should reuse the CLI editor-diff workflow."""
     project_dir = _sample_project(tmp_path)
-    editor_script = _editor_script(tmp_path, "艾赛", "iSee")
+    editor_script = _editor_script(tmp_path, "阿克米", "Acme")
     lexicon_db = tmp_path / "lexicon.sqlite"
     options = project_commands.ProjectReviewCorrectionOptions(
         edit_options=CorrectionEditOptions(
@@ -1061,10 +1061,10 @@ def test_project_review_correction_action_uses_editor_correction_flow(
         options,
     )
 
-    assert "iSee" in (project_dir / "asr" / "sentences_corrected.json").read_text(
+    assert "Acme" in (project_dir / "asr" / "sentences_corrected.json").read_text(
         encoding="utf-8"
     )
-    assert "敬悦: 我们看一下iSee系统。" in (
+    assert "敬悦: 我们看一下Acme系统。" in (
         project_dir / "exports" / "transcript_named_corrected.txt"
     ).read_text(encoding="utf-8")
     assert _fetch_one(lexicon_db, "SELECT category FROM terms") == "system"
@@ -1097,20 +1097,20 @@ def test_project_review_inline_correction_does_not_open_editor(tmp_path: Path) -
                 speaker_id=0,
                 begin_time_ms=1000,
                 end_time_ms=1500,
-                original_text="我们看一下艾赛系统。",
-                corrected_text="我们看一下iSee系统。",
+                original_text="我们看一下阿克米系统。",
+                corrected_text="我们看一下Acme系统。",
             ),
         ),
         options,
     )
 
-    assert "iSee" in (project_dir / "asr" / "sentences_corrected.json").read_text(
+    assert "Acme" in (project_dir / "asr" / "sentences_corrected.json").read_text(
         encoding="utf-8"
     )
-    assert "敬悦: 我们看一下iSee系统。" in (
+    assert "敬悦: 我们看一下Acme系统。" in (
         project_dir / "exports" / "transcript_named_corrected.txt"
     ).read_text(encoding="utf-8")
-    assert _fetch_one(lexicon_db, "SELECT canonical FROM terms") == "iSee"
+    assert _fetch_one(lexicon_db, "SELECT canonical FROM terms") == "Acme"
 
 
 def test_project_review_inline_correction_keeps_multiple_tui_edits(
@@ -1119,7 +1119,7 @@ def test_project_review_inline_correction_keeps_multiple_tui_edits(
     """Project review should process every staged TUI text edit in one proposal."""
     project_dir = _sample_project_with_sentences(
         tmp_path,
-        ["我们看一下艾赛系统。", "AS服务需要修正。"],
+        ["我们看一下阿克米系统。", "AS服务需要修正。"],
     )
     lexicon_db = tmp_path / "lexicon.sqlite"
     options = project_commands.ProjectReviewCorrectionOptions(
@@ -1142,7 +1142,7 @@ def test_project_review_inline_correction_keeps_multiple_tui_edits(
             action="correct-inline",
             correction_edits=(
                 SentenceCorrectionEdit(
-                    1, 0, 1000, 1500, "我们看一下艾赛系统。", "我们看一下iSee系统。"
+                    1, 0, 1000, 1500, "我们看一下阿克米系统。", "我们看一下Acme系统。"
                 ),
                 SentenceCorrectionEdit(
                     2, 0, 2000, 2500, "AS服务需要修正。", "IaaS服务需要修正。"
@@ -1155,7 +1155,7 @@ def test_project_review_inline_correction_keeps_multiple_tui_edits(
     corrected = (project_dir / "exports" / "transcript_named_corrected.txt").read_text(
         encoding="utf-8"
     )
-    assert "敬悦: 我们看一下iSee系统。" in corrected
+    assert "敬悦: 我们看一下Acme系统。" in corrected
     assert "敬悦: IaaS服务需要修正。" in corrected
     proposal = _latest_proposal(project_dir)
     assert len(proposal["sample_changes"]) == 2
@@ -1165,7 +1165,7 @@ def test_project_review_can_accept_selected_correction_changes(tmp_path: Path) -
     """Accepting a proposal with selected indices should exclude rejected changes."""
     project_dir = _sample_project_with_sentences(
         tmp_path,
-        ["我们看一下艾赛系统。", "AS服务需要修正。"],
+        ["我们看一下阿克米系统。", "AS服务需要修正。"],
     )
     paths = project_paths(project_dir)
     manifest = load_manifest(project_dir)
@@ -1178,7 +1178,7 @@ def test_project_review_can_accept_selected_correction_changes(tmp_path: Path) -
         speaker_mapping={0: "敬悦"},
         correction_edits=[
             SentenceCorrectionEdit(
-                1, 0, 1000, 1500, "我们看一下艾赛系统。", "我们看一下iSee系统。"
+                1, 0, 1000, 1500, "我们看一下阿克米系统。", "我们看一下Acme系统。"
             ),
             SentenceCorrectionEdit(
                 2, 0, 2000, 2500, "AS服务需要修正。", "IaaS服务需要修正。"
@@ -1199,14 +1199,14 @@ def test_project_review_can_accept_selected_correction_changes(tmp_path: Path) -
     corrected = (project_dir / "exports" / "transcript_named_corrected.txt").read_text(
         encoding="utf-8"
     )
-    assert "敬悦: 我们看一下iSee系统。" in corrected
+    assert "敬悦: 我们看一下Acme系统。" in corrected
     assert "敬悦: AS服务需要修正。" in corrected
     assert "IaaS服务需要修正" not in corrected
 
 
 def _sample_project(tmp_path: Path) -> Path:
     """Create a project fixture with one mapped speaker and one ASR error."""
-    return _sample_project_with_text(tmp_path, "我们看一下艾赛系统。")
+    return _sample_project_with_text(tmp_path, "我们看一下阿克米系统。")
 
 
 def _sample_project_with_text(tmp_path: Path, text: str) -> Path:

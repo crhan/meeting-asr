@@ -481,7 +481,7 @@ def list_lexicon_correction_rules(
             ).fetchall()
         }
     rules = _lexicon_correction_rules_from_rows(context_rows, alias_rows, limit)
-    # Context-ambiguous surfaces (e.g. IC -> iSee only when it means the
+    # Context-ambiguous surfaces (e.g. AC -> Acme only when it means the
     # platform) are resolved by the polish LLM, never blanket-replaced. Drop
     # them whether the rule came from an alias or an accepted-context row.
     return [rule for rule in rules if rule.wrong_text not in disambiguated]
@@ -493,7 +493,7 @@ def list_lexicon_disambiguations(
     """
     Return ambiguous aliases that must be resolved by sentence context.
 
-    These aliases (e.g. ``IC`` -> ``iSee`` only when it means the platform)
+    These aliases (e.g. ``AC`` -> ``Acme`` only when it means the platform)
     carry user-authored guidance and are deliberately excluded from
     deterministic local correction; the polish LLM decides per occurrence.
 

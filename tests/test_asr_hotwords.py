@@ -37,7 +37,7 @@ class FakeVocabularyClient:
 def test_sync_asr_hotwords_creates_and_caches_vocabulary(tmp_path: Path) -> None:
     """Accepted correction terms should sync once and reuse cached vocabulary ids."""
     db_path = tmp_path / "lexicon.sqlite"
-    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+    record_lexicon_contexts([_context("阿克米", "Acme")], db_path=db_path)
     client = FakeVocabularyClient()
 
     first = sync_asr_hotwords(
@@ -50,7 +50,7 @@ def test_sync_asr_hotwords_creates_and_caches_vocabulary(tmp_path: Path) -> None
     assert first.changed is True
     assert first.vocabulary_id == "vocab-demo"
     assert first.hotword_count == 1
-    assert client.created[0][2] == [{"text": "iSee", "weight": 4}]
+    assert client.created[0][2] == [{"text": "Acme", "weight": 4}]
     assert second.changed is False
     assert second.vocabulary_id == "vocab-demo"
     assert len(client.created) == 1
@@ -96,7 +96,7 @@ def test_resolve_asr_hotwords_carries_lexicon_hotwords(tmp_path: Path) -> None:
     """A resolution should carry the lexicon hotwords and snapshot them on demand."""
     db_path = tmp_path / "lexicon.sqlite"
     output = tmp_path / "corrections" / "asr_hotwords.json"
-    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+    record_lexicon_contexts([_context("阿克米", "Acme")], db_path=db_path)
 
     # An explicit vocabulary id skips remote sync, so this exercises the carried
     # hotwords without any DashScope call.
@@ -111,16 +111,16 @@ def test_resolve_asr_hotwords_carries_lexicon_hotwords(tmp_path: Path) -> None:
 
     assert result.vocabulary_id == "vocab-explicit-1"
     assert result.source == "explicit"
-    assert [item.text for item in result.hotwords] == ["iSee"]
+    assert [item.text for item in result.hotwords] == ["Acme"]
     assert payload["count"] == 1
-    assert payload["dashscope_vocabulary"] == [{"text": "iSee", "weight": 4}]
+    assert payload["dashscope_vocabulary"] == [{"text": "Acme", "weight": 4}]
 
 
 def test_resolve_asr_hotwords_off_carries_no_hotwords(tmp_path: Path) -> None:
     """Disabled hotwords should carry an empty table, not the lexicon."""
     db_path = tmp_path / "lexicon.sqlite"
     output = tmp_path / "corrections" / "asr_hotwords.json"
-    record_lexicon_contexts([_context("艾赛", "iSee")], db_path=db_path)
+    record_lexicon_contexts([_context("阿克米", "Acme")], db_path=db_path)
 
     result = resolve_asr_hotwords(
         mode="off",
