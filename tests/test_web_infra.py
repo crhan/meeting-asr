@@ -3,10 +3,31 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 
+import pytest
+
+from app.commands.web import _port_available
 from app.core.progress import CliProgressEvent
 from app.web.locks import LockRegistry, project_lock_key, store_lock_key
 from app.web.progress_bridge import QueueProgressReporter, event_to_payload
+
+
+def test_port_available_ipv4_free_port() -> None:
+    # Port 0 is an ephemeral free port, so a probe must always succeed.
+    assert _port_available("127.0.0.1", 0) is True
+
+
+def test_port_available_handles_ipv6_host() -> None:
+    """An IPv6 host must probe with AF_INET6, not be falsely reported unavailable."""
+    try:
+        probe = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        probe.bind(("::1", 0))
+        probe.close()
+    except OSError:
+        pytest.skip("no IPv6 loopback in this environment")
+    # With the AF_INET bug this returned False (cannot bind ::1 on an IPv4 socket).
+    assert _port_available("::1", 0) is True
 
 
 def test_event_to_payload_is_json_safe() -> None:

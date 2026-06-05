@@ -27,10 +27,24 @@ def _port_available(host: str, port: int) -> bool:
 
     A pre-flight check gives a clean, actionable error instead of uvicorn's confusing
     "started ... address already in use ... shutdown" sequence when the port is taken.
+
+    The socket family must match the host: an ``AF_INET`` socket cannot bind an IPv6
+    address like ``::1``/``::``, so an IPv6 host would always (wrongly) look unavailable.
     """
+    import ipaddress
     import socket
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+    try:
+        family = (
+            socket.AF_INET6
+            if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address)
+            else socket.AF_INET
+        )
+    except ValueError:
+        # Hostname rather than a literal IP; default to IPv4 for the probe.
+        family = socket.AF_INET
+
+    with socket.socket(family, socket.SOCK_STREAM) as probe:
         probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind((host, port))
