@@ -24,9 +24,18 @@ export function PendingCaptureBanner() {
         ? captureAccept(data!.transaction_id)
         : captureRollback(data!.transaction_id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["pending-capture"] });
-      queryClient.invalidateQueries({ queryKey: ["voiceprints"] });
-      queryClient.invalidateQueries({ queryKey: ["speakers"] });
+      // Accept/rollback changed the global store + possibly a project's matches. Invalidate
+      // the keys the pages actually use (by prefix) so library/quality/sample and speaker
+      // review panes reflect it -- "voiceprints" was a stale guess that matched nothing.
+      for (const key of [
+        ["pending-capture"],
+        ["vp-library"],
+        ["vp-person"],
+        ["vp-quality"],
+        ["speakers"],
+      ]) {
+        queryClient.invalidateQueries({ queryKey: key });
+      }
     },
   });
 

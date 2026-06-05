@@ -35,7 +35,12 @@ export function CorrectionPage() {
 
   const acceptMut = useMutation({
     mutationFn: () => acceptCorrection(ref, [...selected]),
-    onSuccess: () => navigate(`/projects/${ref}/speakers`),
+    onSuccess: async () => {
+      // Accepting rewrites the transcript; drop the cached review so navigating back shows
+      // the corrected sentences instead of the still-fresh pre-correction text.
+      await queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
+      navigate(`/projects/${ref}/speakers`);
+    },
   });
 
   const noProposal =

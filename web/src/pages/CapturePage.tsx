@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   capturePlan,
   captureAccept,
@@ -24,6 +24,7 @@ function fmtMs(ms: number): string {
 export function CapturePage() {
   const { ref = "" } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const audio = useClipAudio();
 
   const { data, isLoading, error } = useQuery({
@@ -212,6 +213,9 @@ export function CapturePage() {
             pendingTxnRef.current = null;
             await captureAccept(result.transaction_id);
             setResult(null);
+            // Accepting changed the speaker matches; drop the cached review so navigating back
+            // remounts SpeakerReviewPage with fresh data instead of the pre-capture snapshot.
+            await queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
             navigate(`/projects/${ref}/speakers`);
           }}
           onRollback={async () => {
