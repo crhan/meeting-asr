@@ -22,6 +22,23 @@ _INSTALL_HINT = (
 )
 
 
+def _port_available(host: str, port: int) -> bool:
+    """Return whether ``(host, port)`` can be bound right now.
+
+    A pre-flight check gives a clean, actionable error instead of uvicorn's confusing
+    "started ... address already in use ... shutdown" sequence when the port is taken.
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
 def command(
     host: str = typer.Option(
         "127.0.0.1", "--host", help="Bind host. Non-loopback binds require a token."
@@ -54,6 +71,14 @@ def command(
     except ImportError as exc:  # web extra missing
         typer.echo(_INSTALL_HINT, err=True)
         raise typer.Exit(code=1) from exc
+
+    if not _port_available(host, port):
+        typer.echo(
+            f"Port {port} on {host} is already in use by another process.\n"
+            f"Pick a free port, e.g.:  meeting-asr web --port {port + 1}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
     resolved_token = resolve_token(host, token)
     settings = WebSettings(
