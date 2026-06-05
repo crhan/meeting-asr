@@ -54,6 +54,11 @@ path = "hatch_build.py"
 cache-keys = [
   { file = "pyproject.toml" },
   { file = "src/**/*.py" },
+  # The wheel also force-includes the built React SPA and is shaped by the build hook, so a
+  # web-only change (or a fresh `npm run build`) must bust uv's cached local-package wheel --
+  # otherwise `uv tool install .[web]` / install-tool.sh --wheel reuses a stale or SPA-less wheel.
+  { file = "hatch_build.py" },
+  { file = "src/app/web/static/**/*" },
 ]
 
 [dependency-groups]
