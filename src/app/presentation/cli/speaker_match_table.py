@@ -12,6 +12,7 @@ from rich.table import Table
 from app.postprocess import speaker_id_to_label
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
+    MATCH_STATUS_CROSSTALK,
     MATCH_STATUS_IGNORED,
     MATCH_STATUS_MATCHED,
     MATCH_STATUS_NO_CANDIDATE,
@@ -168,6 +169,7 @@ def _status_text(status: str) -> str:
         MATCH_STATUS_BELOW_THRESHOLD: "yellow",
         MATCH_STATUS_NO_CANDIDATE: "red",
         MATCH_STATUS_IGNORED: "cyan",
+        MATCH_STATUS_CROSSTALK: "magenta",
     }
     return f"[{styles.get(status, 'white')}]{status}[/]"
 
@@ -178,6 +180,8 @@ def _candidate_text(row: SpeakerMatchRow) -> str:
         return f"accepted: {row.candidate or 'unknown'}"
     if row.status == MATCH_STATUS_BELOW_THRESHOLD:
         return f"best: {row.candidate or 'unknown'}"
+    if row.status == MATCH_STATUS_CROSSTALK:
+        return "suspected crosstalk/noise"
     if row.status == MATCH_STATUS_IGNORED:
         return "ignored"
     return "-"

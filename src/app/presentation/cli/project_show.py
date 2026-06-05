@@ -30,7 +30,11 @@ from app.presentation.cli.speaker_match_table import (
 )
 from app.postprocess import speaker_id_to_label
 from app.speaker_labeling import load_project_ignored_speakers
-from app.speaker_match_status import MATCH_STATUS_IGNORED, MATCH_STATUS_MATCHED
+from app.speaker_match_status import (
+    MATCH_STATUS_CROSSTALK,
+    MATCH_STATUS_IGNORED,
+    MATCH_STATUS_MATCHED,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,7 +320,8 @@ def _command_rows(view: ProjectShowView) -> list[tuple[str, str]]:
 def _has_unresolved_matches(view: ProjectShowView) -> bool:
     """Return whether voiceprint results still need human review."""
     return any(
-        row.status not in (MATCH_STATUS_MATCHED, MATCH_STATUS_IGNORED)
+        row.status
+        not in (MATCH_STATUS_MATCHED, MATCH_STATUS_IGNORED, MATCH_STATUS_CROSSTALK)
         for row in _speaker_match_rows(view)
     )
 
