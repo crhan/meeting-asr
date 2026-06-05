@@ -215,7 +215,9 @@ if [[ "$web" -eq 1 ]]; then
   package=".[web]"
   # Build the React SPA so the installed tool serves the web UI. Editable installs read
   # static straight from the checkout; wheel installs get it via the hatch force-include.
-  if [[ -f "$source_dir/web/package.json" ]]; then
+  # Skip for a dry-run: --print-only must only print the plan, never npm ci + vite build,
+  # which hit the network and rewrite web/node_modules and src/app/web/static.
+  if [[ "$print_only" -eq 0 && -f "$source_dir/web/package.json" ]]; then
     if command -v npm >/dev/null 2>&1; then
       echo "Building web UI assets..."
       (cd "$source_dir/web" && npm ci && npm run build)
