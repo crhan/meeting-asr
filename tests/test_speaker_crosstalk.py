@@ -9,7 +9,10 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from app.cli import app
-from app.commands.project import _project_has_unresolved_match
+from app.commands.project import (
+    _ensure_named_outputs_for_nonblocking_run,
+    _project_has_unresolved_match,
+)
 from app.project_manager import create_project
 from app.speaker_crosstalk import CrosstalkParams, is_crosstalk
 from app.speaker_match_status import (
@@ -19,6 +22,7 @@ from app.speaker_match_status import (
 )
 from app.speaker_matching import (
     SpeakerMatch,
+    SpeakerMatchSummary,
     VoiceprintCandidate,
     _flag_crosstalk_matches,
     _KnownSpeakerVector,
@@ -250,3 +254,49 @@ def test_match_flags_crosstalk_non_blocking(monkeypatch, tmp_path: Path) -> None
     # Non-destructive: the speaker stays anonymous and no sentence moved.
     assert not (project_dir / "speakers" / "speaker_map.json").exists()
     assert (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8") == before
+
+
+# --- complete-run anonymous outputs -----------------------------------------
+
+
+def _summary(project_dir: Path, matches: list[SpeakerMatch]) -> SpeakerMatchSummary:
+    return SpeakerMatchSummary(
+        match_path=project_dir / "speakers" / "speaker_matches.json",
+        provider="local-speechbrain",
+        model="m",
+        threshold=0.99,
+        matches=matches,
+    )
+
+
+def test_ensure_named_outputs_renders_anonymous_for_crosstalk_only(
+    tmp_path: Path,
+) -> None:
+    """A non-blocking crosstalk-only run still gets its 'ready' named outputs."""
+    project_dir = _crosstalk_project(tmp_path)
+    matches = _summary(project_dir, [_match(crosstalk=True)])
+
+    _ensure_named_outputs_for_nonblocking_run(project_dir, matches, {})
+
+    assert (project_dir / "exports" / "transcript_named.txt").exists()
+    assert (project_dir / "exports" / "subtitle_named.srt").exists()
+
+
+def test_ensure_named_outputs_skips_blocking_run(tmp_path: Path) -> None:
+    """A real below-threshold speaker keeps the run blocking; no anon render."""
+    project_dir = _crosstalk_project(tmp_path)
+    matches = _summary(project_dir, [_match(crosstalk=False)])
+
+    _ensure_named_outputs_for_nonblocking_run(project_dir, matches, {})
+
+    assert not (project_dir / "exports" / "transcript_named.txt").exists()
+
+
+def test_ensure_named_outputs_noop_when_something_was_named(tmp_path: Path) -> None:
+    """When a speaker was auto-named the workflow already rendered; helper no-ops."""
+    project_dir = _crosstalk_project(tmp_path)
+    matches = _summary(project_dir, [_match(crosstalk=True)])
+
+    _ensure_named_outputs_for_nonblocking_run(project_dir, matches, {0: "X"})
+
+    assert not (project_dir / "exports" / "transcript_named.txt").exists()

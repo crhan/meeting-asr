@@ -1036,6 +1036,37 @@ def review(
     )
 
 
+def _ensure_named_outputs_for_nonblocking_run(
+    project_dir: Path,
+    matches: SpeakerMatchSummary,
+    applied_mapping: dict[int, str],
+) -> None:
+    """Render anonymous named outputs when a non-blocking run named nobody.
+
+    When every unresolved speaker is crosstalk (or matched/ignored), the run is
+    reported complete and its final transcript/subtitle as ready. But if nothing
+    was auto-named, ``apply_project_speakers`` was skipped above and those files
+    were never written, so the run would advertise a missing "ready" output.
+    Render anonymous Speaker N outputs so a complete run actually has its final
+    transcript/subtitle for downstream to land on. Blocking runs with real
+    below-threshold/no-candidate speakers are left untouched.
+    """
+    if applied_mapping:
+        return
+    ignored = load_project_ignored_speakers(project_dir)
+    has_unresolved = any(
+        effective_match_status(match, ignored_speaker_ids=ignored)
+        in (MATCH_STATUS_BELOW_THRESHOLD, MATCH_STATUS_NO_CANDIDATE)
+        for match in matches.matches
+    )
+    if has_unresolved:
+        return
+    named_transcript = project_paths(project_dir).exports_dir / "transcript_named.txt"
+    if named_transcript.exists():
+        return
+    apply_project_speakers(project_dir, {})
+
+
 def _run_project_workflow(
     input_path: Path,
     *,
@@ -1280,6 +1311,9 @@ def _run_project_workflow(
         if stabilization_summary.final_match_summary is not None:
             matches = stabilization_summary.final_match_summary
             applied_mapping = matches.accepted_mapping
+    _ensure_named_outputs_for_nonblocking_run(
+        project.project_dir, matches, applied_mapping
+    )
     record_project_stage(
         project.project_dir,
         stage="complete",
