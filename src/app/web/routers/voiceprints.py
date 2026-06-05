@@ -12,6 +12,8 @@ import asyncio
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 
+from app.core.project_refs import resolve_project_ref
+from app.core.voiceprint_review_service import REGISTRY, plan_capture
 from app.voiceprint_models import VoiceprintSampleRow, VoiceprintSpeakerRow
 from app.voiceprint_people import (
     create_voiceprint_person,
@@ -28,10 +30,17 @@ from app.voiceprint_store import (
     list_voiceprint_speakers,
     update_voiceprint_sample_status,
 )
-from app.web.deps import get_locks, get_settings, require_auth
+from app.web.deps import get_jobs, get_locks, get_settings, require_auth
+from app.web.jobs import JobManager
 from app.web.locks import LockRegistry, store_lock_key
 from app.web.schemas import (
+    CaptureClipOut,
+    CapturePlanOut,
+    CaptureResultOut,
+    CaptureRunIn,
+    CaptureSpeakerOut,
     CreatePersonIn,
+    JobRef,
     MergePeopleIn,
     QualityPersonOut,
     QualityReportOut,
@@ -274,3 +283,118 @@ async def merge_people(
     if survivor is None:
         raise FileNotFoundError(f"Merged person not found: {payload.into_ref}")
     return _person_out(survivor)
+
+
+# ---- capture workflow (plan -> run job -> accept/rollback) ------------------
+
+
+def _plan_out(project_ref: str, summary) -> CapturePlanOut:
+    speakers = [
+        CaptureSpeakerOut(
+            speaker_id=sp.speaker_id,
+            name=sp.name,
+            person_public_id=sp.person_public_id,
+            clips=[
+                CaptureClipOut(
+                    rel_path=c.rel_path,
+                    begin_time_ms=c.source_begin_time_ms,
+                    end_time_ms=c.source_end_time_ms,
+                    duration_seconds=c.duration_seconds,
+                    text=c.text,
+                    selection_score=c.selection_score,
+                    selection_reason=c.selection_reason,
+                    audio_score=c.audio_score,
+                    audio_reason=c.audio_reason,
+                    recommended=c.recommended,
+                )
+                for c in sp.clips
+            ],
+        )
+        for sp in summary.speakers
+    ]
+    return CapturePlanOut(
+        project_ref=project_ref,
+        target_sample_count=summary.target_sample_count,
+        sample_count=summary.sample_count,
+        speakers=speakers,
+    )
+
+
+@router.post("/capture/{project_ref}/plan", response_model=CapturePlanOut)
+async def capture_plan(
+    project_ref: str,
+    settings: WebSettings = Depends(get_settings),
+) -> CapturePlanOut:
+    """Plan voiceprint capture candidates for a project (read-only)."""
+    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    loop = asyncio.get_running_loop()
+    summary = await loop.run_in_executor(
+        None, lambda: plan_capture(project_dir, store_dir=settings.store_dir)
+    )
+    return _plan_out(project_ref, summary)
+
+
+@router.post("/capture/{project_ref}/run", response_model=JobRef)
+def capture_run(
+    project_ref: str,
+    payload: CaptureRunIn,
+    settings: WebSettings = Depends(get_settings),
+    jobs: JobManager = Depends(get_jobs),
+) -> JobRef:
+    """Run capture+embed+evaluate for the selected clips as a background job.
+
+    The job result carries a ``transaction_id`` plus the evaluation summary; the client
+    then accepts or rolls the transaction back.
+    """
+    project_dir = resolve_project_ref(project_ref, settings.projects_dir)
+    store_dir = settings.store_dir
+
+    def work(_reporter) -> dict[str, object]:
+        planned = plan_capture(
+            project_dir,
+            store_dir=store_dir,
+            sample_count=payload.sample_count,
+            max_seconds=payload.max_seconds,
+            padding_seconds=payload.padding_seconds,
+        )
+        txn_id, summary = REGISTRY.run(
+            project_dir=project_dir,
+            planned=planned,
+            selected_clip_rel_paths=frozenset(payload.selected_clip_rel_paths),
+            store_dir=store_dir,
+        )
+        evaluation = summary.evaluation
+        current = evaluation.current
+        return CaptureResultOut(
+            transaction_id=txn_id,
+            captured_count=summary.capture.sample_count,
+            embedded_count=summary.embedding.embedded_count,
+            skipped_count=summary.embedding.skipped_count,
+            current_improved=current.improved_count,
+            current_declined=current.declined_count,
+            current_changed_best=current.changed_best_count,
+            current_warning=current.warning_count,
+            current_critical=current.critical_count,
+            historical_project_count=evaluation.historical_project_count,
+            historical_warning_count=evaluation.historical_warning_count,
+            historical_critical_count=evaluation.historical_critical_count,
+        ).model_dump()
+
+    job = jobs.submit("voiceprint-capture", work, project_id=str(project_dir))
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status)
+
+
+@router.post("/capture/transactions/{transaction_id}/accept")
+async def capture_accept(transaction_id: str) -> dict[str, str]:
+    """Accept a pending capture transaction (keep the changes)."""
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, lambda: REGISTRY.accept(transaction_id))
+    return {"status": "accepted"}
+
+
+@router.post("/capture/transactions/{transaction_id}/rollback")
+async def capture_rollback(transaction_id: str) -> dict[str, str]:
+    """Roll back a pending capture transaction (undo the changes)."""
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, lambda: REGISTRY.rollback(transaction_id))
+    return {"status": "rolled_back"}

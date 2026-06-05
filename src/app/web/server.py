@@ -41,6 +41,10 @@ def create_app(settings: WebSettings) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # Capture the running loop so jobs can be spawned from sync-route worker threads.
         app.state.jobs.bind_loop(asyncio.get_running_loop())
+        # Reclaim any capture backup dirs orphaned by a previous crash.
+        from app.core.voiceprint_review_service import cleanup_orphan_backups
+
+        cleanup_orphan_backups()
         yield
 
     app = FastAPI(title="meeting-asr web", version="0.1.0", lifespan=lifespan)

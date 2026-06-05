@@ -308,3 +308,65 @@ class SampleStatusIn(BaseModel):
     """Update one sample's lifecycle status."""
 
     status: str
+
+
+# ---- Voiceprint capture workflow -------------------------------------------
+
+
+class CaptureClipOut(BaseModel):
+    """One candidate clip in a capture plan."""
+
+    rel_path: str
+    begin_time_ms: int
+    end_time_ms: int
+    duration_seconds: float
+    text: str
+    selection_score: float
+    selection_reason: str
+    audio_score: float | None
+    audio_reason: str
+    recommended: bool
+
+
+class CaptureSpeakerOut(BaseModel):
+    """One named speaker's candidate clips."""
+
+    speaker_id: int
+    name: str
+    person_public_id: str | None
+    clips: list[CaptureClipOut]
+
+
+class CapturePlanOut(BaseModel):
+    """Dry-run capture plan for one project."""
+
+    project_ref: str
+    target_sample_count: int
+    sample_count: int
+    speakers: list[CaptureSpeakerOut]
+
+
+class CaptureRunIn(BaseModel):
+    """Request to run capture for the selected clips."""
+
+    selected_clip_rel_paths: list[str]
+    sample_count: int = 3
+    max_seconds: float = 12.0
+    padding_seconds: float = 0.5
+
+
+class CaptureResultOut(BaseModel):
+    """Result of a capture+embed+evaluate run (pending accept/rollback)."""
+
+    transaction_id: str
+    captured_count: int
+    embedded_count: int
+    skipped_count: int
+    current_improved: int
+    current_declined: int
+    current_changed_best: int
+    current_warning: int
+    current_critical: int
+    historical_project_count: int
+    historical_warning_count: int
+    historical_critical_count: int
