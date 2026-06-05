@@ -4,6 +4,8 @@
 // production; in dev, Vite proxies /api to the server). A bearer token, if present in
 // localStorage, is attached -- needed only for non-loopback binds.
 
+import { getToken, withToken } from "../lib/auth";
+
 export class ApiError extends Error {
   status: number;
   kind: string;
@@ -15,7 +17,7 @@ export class ApiError extends Error {
 }
 
 function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("masr_token");
+  const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -190,7 +192,10 @@ export function saveSpeakerReview(
 }
 
 export function clipUrl(ref: string, beginMs: number, endMs: number): string {
-  return `/api/projects/${encodeURIComponent(ref)}/clip?begin_ms=${beginMs}&end_ms=${endMs}`;
+  // <audio> can't set Authorization headers, so carry the token in the query string.
+  return withToken(
+    `/api/projects/${encodeURIComponent(ref)}/clip?begin_ms=${beginMs}&end_ms=${endMs}`,
+  );
 }
 
 // ---- Voiceprint registry ---------------------------------------------------
@@ -271,7 +276,9 @@ export const getPersonSamples = (ref: string) =>
 export const getQuality = () => api<QualityReport>("/api/voiceprints/quality");
 
 export const sampleClipUrl = (ref: string, samplePublicId: string) =>
-  `/api/voiceprints/people/${encodeURIComponent(ref)}/clips/${encodeURIComponent(samplePublicId)}`;
+  withToken(
+    `/api/voiceprints/people/${encodeURIComponent(ref)}/clips/${encodeURIComponent(samplePublicId)}`,
+  );
 
 export const setSampleStatus = (samplePublicId: string, status: string) =>
   api<VoiceprintSample>(
@@ -606,6 +613,19 @@ export const unsetConfig = (key: string) =>
 
 export const getDoctor = () => api<Doctor>("/api/doctor");
 
+// ---- Health + auth ---------------------------------------------------------
+
+export interface Health {
+  status: string;
+  auth_required: boolean;
+}
+
+/** Unauthenticated liveness + bind metadata; tells the SPA whether a token is needed. */
+export const getHealth = () => api<Health>("/api/health");
+
+/** Token probe: resolves when the presented credential is valid, throws 401 otherwise. */
+export const getAuthCheck = () => api<{ ok: boolean }>("/api/auth/check");
+
 // ---- SSE job progress ------------------------------------------------------
 
 export interface ProgressEvent {
@@ -623,7 +643,8 @@ export function subscribeToJob(
   jobId: string,
   onEvent: (event: ProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(`/api/jobs/${jobId}/events`);
+  // EventSource can't set headers, so the token rides along as a query param.
+  const source = new EventSource(withToken(`/api/jobs/${jobId}/events`));
   source.onmessage = (msg) => {
     try {
       onEvent(JSON.parse(msg.data) as ProgressEvent);

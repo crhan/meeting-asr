@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getJob, type ProgressEvent } from "../api/client";
+import { withToken } from "./auth";
 
 export interface JobStreamState {
   status: string; // queued | running | done | error
@@ -29,7 +30,7 @@ export function useJobStream(jobId: string | null): JobStreamState {
       return;
     }
     setState(INITIAL);
-    const src = new EventSource(`/api/jobs/${jobId}/events`);
+    const src = new EventSource(withToken(`/api/jobs/${jobId}/events`));
 
     src.onmessage = (msg) => {
       let ev: ProgressEvent;

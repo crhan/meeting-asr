@@ -16,11 +16,12 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 
+from app.web.deps import require_auth
 from app.web.errors import install_exception_handlers
 from app.web.jobs import JobManager
 from app.web.locks import LockRegistry
@@ -78,8 +79,17 @@ def create_app(settings: WebSettings) -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict[str, object]:
-        """Liveness probe + bind metadata for the client."""
+        """Liveness probe + bind metadata for the client (always unauthenticated)."""
         return {"status": "ok", "auth_required": settings.token is not None}
+
+    @app.get("/api/auth/check", dependencies=[Depends(require_auth)])
+    def auth_check() -> dict[str, bool]:
+        """Token probe: 200 if the presented credential is valid, else 401.
+
+        The SPA calls this to decide whether to render the app or prompt for a token,
+        without depending on any particular project existing.
+        """
+        return {"ok": True}
 
     _mount_spa(app)
     return app
@@ -156,9 +166,22 @@ def resolve_token(host: str, explicit_token: str | None) -> str | None:
     return secrets.token_urlsafe(24)
 
 
+def authenticated_url(settings: WebSettings) -> str:
+    """Return the entry URL, carrying ``?token=`` when the bind is token-protected.
+
+    Opening (or printing) this URL is the token handoff: the SPA reads ``?token=`` on
+    first load, stores it, and strips it from the address bar. Without this, a fresh
+    browser on a non-loopback bind would 401 on every API call.
+    """
+    base = f"http://{settings.host}:{settings.port}/"
+    if settings.token:
+        return f"{base}?token={settings.token}"
+    return base
+
+
 def _open_browser_when_ready(settings: WebSettings) -> None:
     """Open the default browser shortly after the server starts."""
-    url = f"http://{settings.host}:{settings.port}/"
+    url = authenticated_url(settings)
 
     def _open() -> None:
         import time

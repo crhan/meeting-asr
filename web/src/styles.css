@@ -797,3 +797,51 @@ tr.clickable {
   cursor: pointer;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
+
+/* ---- Auth gate (token-protected binds) ---------------------------------- */
+.auth-gate {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+.auth-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 420px;
+  max-width: 90vw;
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.auth-card h2 {
+  margin: 0;
+}
+.auth-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.auth-card input {
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+}
+.auth-card button {
+  padding: 10px 12px;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.auth-card .auth-error {
+  color: var(--red);
+}
