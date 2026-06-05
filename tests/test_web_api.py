@@ -10,10 +10,15 @@ import json
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app.web.server import create_app
-from app.web.settings import WebSettings
+# The web extra (fastapi/uvicorn/sse-starlette) is optional; skip this whole module
+# cleanly when it is not installed instead of aborting collection for the entire suite.
+pytest.importorskip("fastapi")
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.web.server import create_app  # noqa: E402
+from app.web.settings import WebSettings  # noqa: E402
 
 
 def _settings(tmp_path: Path, *, token: str | None) -> WebSettings:
@@ -133,6 +138,7 @@ def test_capture_pending_blocks_store_writes(
 ) -> None:
     """While a capture transaction is pending, store mutations return 409 (not silent)."""
     import app.web.routers.voiceprints as voiceprints
+    from app.core.voiceprint_review_service import CaptureConflictError
 
     # Sanity: with nothing pending, creating a person succeeds against the isolated store.
     assert (
@@ -140,7 +146,11 @@ def test_capture_pending_blocks_store_writes(
         == 200
     )
 
-    monkeypatch.setattr(voiceprints.REGISTRY, "has_pending", lambda: True)
+    # CRUD writes go through REGISTRY.run_store_write; a pending capture makes it raise.
+    def boom(_fn):
+        raise CaptureConflictError("pending capture")
+
+    monkeypatch.setattr(voiceprints.REGISTRY, "run_store_write", boom)
     resp = client.post("/api/voiceprints/people", json={"name": "Bob"})
     assert resp.status_code == 409
     assert resp.json()["error"] == "conflict"
@@ -198,3 +208,73 @@ def test_speaker_save_marshals_decision(
     assert spec.new_speaker_id == 0
     assert spec.original_speaker_id == 1
     assert resp.json()["reassigned_count"] == 1
+
+
+def _save_body(*, with_reassignment: bool) -> dict:
+    body: dict = {
+        "mapping": {"0": "Alice"},
+        "person_mapping": {},
+        "person_public_mapping": {},
+        "ignored_speaker_ids": [],
+        "reassignments": [],
+    }
+    if with_reassignment:
+        body["reassignments"] = [
+            {
+                "sentence_id": 5,
+                "begin_time_ms": 100,
+                "end_time_ms": 200,
+                "original_speaker_id": 1,
+                "new_speaker_id": 0,
+            }
+        ]
+    return body
+
+
+def test_speaker_reassignment_blocked_when_capture_pending(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A reassignment write touches the global store, so it must 409 while a capture pends."""
+    import app.web.routers.speakers as speakers
+    from app.core.voiceprint_review_service import CaptureConflictError
+
+    monkeypatch.setattr(speakers, "resolve_project_ref", lambda ref, _dir: tmp_path)
+
+    def boom(_fn):
+        raise CaptureConflictError("pending capture")
+
+    monkeypatch.setattr(speakers.REGISTRY, "run_store_write", boom)
+
+    resp = client.post(
+        "/api/speakers/p-x/save", json=_save_body(with_reassignment=True)
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "conflict"
+
+
+def test_speaker_naming_only_save_bypasses_store_section(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Naming-only saves never touch the global store, so they must not enter run_store_write."""
+    import app.web.routers.speakers as speakers
+
+    class FakeResult:
+        mapping_path = tmp_path / "speaker_map.json"
+        transcript_path = tmp_path / "t.txt"
+        srt_path = tmp_path / "t.srt"
+        reassignment = None
+
+    monkeypatch.setattr(speakers, "resolve_project_ref", lambda ref, _dir: tmp_path)
+    monkeypatch.setattr(speakers, "save_speaker_review", lambda *_a, **_k: FakeResult())
+
+    def fail(_fn):  # must not be reached on the naming-only path
+        raise AssertionError(
+            "naming-only save must not enter the store critical section"
+        )
+
+    monkeypatch.setattr(speakers.REGISTRY, "run_store_write", fail)
+
+    resp = client.post(
+        "/api/speakers/p-x/save", json=_save_body(with_reassignment=False)
+    )
+    assert resp.status_code == 200

@@ -6,6 +6,7 @@ import {
   captureAccept,
   captureRollback,
   captureRun,
+  clipUrl,
   getJob,
   type CaptureResult,
   type ScoreChange,
@@ -154,9 +155,10 @@ export function CapturePage() {
                     onClick={() =>
                       audio.toggle(
                         key,
-                        // Plan clips are extracted under the project; play via the
-                        // project clip endpoint by time range.
-                        `/api/projects/${encodeURIComponent(ref)}/clip?begin_ms=${c.begin_time_ms}&end_ms=${c.end_time_ms}`,
+                        // Plan clips are extracted under the project; play via the project
+                        // clip endpoint by time range. clipUrl carries the auth token so
+                        // playback works on token-protected binds too.
+                        clipUrl(ref, c.begin_time_ms, c.end_time_ms),
                       )
                     }
                   >

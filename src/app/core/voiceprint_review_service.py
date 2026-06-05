@@ -82,6 +82,31 @@ class CaptureTransactionRegistry:
         with self._registry_lock:
             return bool(self._txns)
 
+    def _raise_if_pending_locked(self) -> None:
+        """Raise if a capture is pending. Caller must hold ``_store_write_lock``."""
+        with self._registry_lock:
+            if self._txns:
+                raise CaptureConflictError(
+                    "A voiceprint capture is awaiting accept/rollback; resolve it before "
+                    "editing the store."
+                )
+
+    def run_store_write(self, fn):
+        """Run a global-store mutation in the same critical section as capture runs.
+
+        Every write to the global voiceprint store (people/sample CRUD, and the sample
+        invalidation a speaker reassignment performs) must go through here. It holds the
+        same ``_store_write_lock`` a capture run holds across its snapshot+write+register
+        window, and re-checks for a pending capture *under that lock*. That ordering is
+        what closes the race a bare ``has_pending()`` pre-check cannot: a mutation can only
+        run either fully before a capture's snapshot (so the snapshot includes it) or after
+        the capture has registered its transaction (so the pending check now refuses it) --
+        never interleaved with the snapshot where a later rollback would silently drop it.
+        """
+        with self._store_write_lock:
+            self._raise_if_pending_locked()
+            return fn()
+
     def run(
         self,
         *,
@@ -98,12 +123,7 @@ class CaptureTransactionRegistry:
         registration happen under ``_store_write_lock`` so they cannot interleave.
         """
         with self._store_write_lock:
-            with self._registry_lock:
-                if self._txns:
-                    raise CaptureConflictError(
-                        "A previous voiceprint capture is still awaiting accept/rollback; "
-                        "resolve it before starting another."
-                    )
+            self._raise_if_pending_locked()
             summary = run_voiceprint_review_workflow(
                 project_dir=project_dir,
                 planned=planned,

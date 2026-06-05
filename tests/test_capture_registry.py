@@ -63,6 +63,25 @@ def test_registry_rejects_overlapping_pending(monkeypatch: pytest.MonkeyPatch) -
     assert not reg.has_pending()
 
 
+def test_run_store_write_refused_while_pending(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Store writes must join the capture critical section and be refused while pending."""
+    monkeypatch.setattr(
+        svc, "run_voiceprint_review_workflow", lambda **_: _FakeSummary(_FakeTxn())
+    )
+    reg = svc.CaptureTransactionRegistry()
+
+    # No pending capture: the write runs.
+    assert reg.run_store_write(lambda: "ok") == "ok"
+
+    txn_id, _ = _run(reg)
+    # Pending capture: the same write path is refused, not silently allowed through.
+    with pytest.raises(svc.CaptureConflictError):
+        reg.run_store_write(lambda: "should-not-run")
+
+    reg.accept(txn_id)
+    assert reg.run_store_write(lambda: "ok-again") == "ok-again"
+
+
 def test_capture_conflict_is_not_a_value_error() -> None:
     """It must be RuntimeError so the web 400 ValueError handler doesn't swallow it."""
     assert issubclass(svc.CaptureConflictError, RuntimeError)

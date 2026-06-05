@@ -99,20 +99,17 @@ def _sample_out(index: int, row: VoiceprintSampleRow) -> VoiceprintSampleOut:
 
 
 async def _run(locks: LockRegistry, fn):
-    """Run a blocking store write in the executor under the global store lock.
+    """Run a blocking store write in the executor, serialized with capture runs.
 
-    Refuses the write while a capture transaction is pending: that transaction holds a
-    rollback snapshot of this same store, so any edit made now would be silently reverted
-    if the user later rolls back. The caller must accept/rollback the capture first.
+    The write goes through ``REGISTRY.run_store_write``, which holds the same store-write
+    lock a capture run holds across its snapshot+write+register window and re-checks for a
+    pending capture under that lock -- so a CRUD write can never interleave with a capture's
+    snapshot and be silently reverted by a later rollback. It raises ``CaptureConflictError``
+    (HTTP 409) when a capture is still awaiting accept/rollback.
     """
-    if REGISTRY.has_pending():
-        raise CaptureConflictError(
-            "A voiceprint capture is awaiting accept/rollback; resolve it before editing "
-            "the store."
-        )
     loop = asyncio.get_running_loop()
     async with locks.acquire(_STORE_LOCK):
-        return await loop.run_in_executor(None, fn)
+        return await loop.run_in_executor(None, lambda: REGISTRY.run_store_write(fn))
 
 
 # ---- library + people reads ------------------------------------------------

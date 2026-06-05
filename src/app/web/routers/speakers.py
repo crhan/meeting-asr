@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends
 
 from app.core.project_refs import resolve_project_ref
 from app.core.speaker_review_service import save_speaker_review
+from app.core.voiceprint_review_service import REGISTRY
 from app.presentation.tui.speaker_matches import SpeakerMatchCandidate
 from app.presentation.tui.speaker_models import (
     ReviewSpeaker,
@@ -175,20 +176,26 @@ async def save_review(
     if specs:
         keys.append(store_lock_key("voiceprints"))
 
+    def do_save():
+        return save_speaker_review(
+            project_dir,
+            mapping=mapping,
+            person_mapping=person_mapping,
+            person_public_mapping=person_public_mapping,
+            ignored_speaker_ids=payload.ignored_speaker_ids,
+            reassignments=specs,
+            store_dir=settings.store_dir,
+        )
+
+    # A reassignment write must join the same store-wide critical section as voiceprint
+    # CRUD and capture runs (and be refused while a capture is pending), otherwise a later
+    # capture rollback could silently undo the sample invalidation. Naming-only saves never
+    # touch the global store, so they skip it.
+    runner = (lambda: REGISTRY.run_store_write(do_save)) if specs else do_save
+
     loop = asyncio.get_running_loop()
     async with locks.acquire(*keys):
-        result = await loop.run_in_executor(
-            None,
-            lambda: save_speaker_review(
-                project_dir,
-                mapping=mapping,
-                person_mapping=person_mapping,
-                person_public_mapping=person_public_mapping,
-                ignored_speaker_ids=payload.ignored_speaker_ids,
-                reassignments=specs,
-                store_dir=settings.store_dir,
-            ),
-        )
+        result = await loop.run_in_executor(None, runner)
 
     reassignment = result.reassignment
     return SaveSpeakerReviewOut(
