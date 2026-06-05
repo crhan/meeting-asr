@@ -25,7 +25,9 @@ from app.web.errors import install_exception_handlers
 from app.web.jobs import JobManager
 from app.web.locks import LockRegistry
 from app.web.routers import audio as audio_router
+from app.web.routers import corrections as corrections_router
 from app.web.routers import jobs as jobs_router
+from app.web.routers import lexicon as lexicon_router
 from app.web.routers import pipeline as pipeline_router
 from app.web.routers import projects as projects_router
 from app.web.routers import speakers as speakers_router
@@ -67,6 +69,8 @@ def create_app(settings: WebSettings) -> FastAPI:
     app.include_router(speakers_router.router)
     app.include_router(voiceprints_router.router)
     app.include_router(pipeline_router.router)
+    app.include_router(corrections_router.router)
+    app.include_router(lexicon_router.router)
     app.include_router(audio_router.router)
     app.include_router(jobs_router.router)
 

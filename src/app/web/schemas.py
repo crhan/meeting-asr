@@ -132,6 +132,115 @@ class MergeApplyIn(MergePreviewIn):
     out_dir: str
 
 
+# ---- Transcript correction -------------------------------------------------
+
+
+class PolishIn(BaseModel):
+    """Generate a transcript polish proposal."""
+
+    model: str | None = None
+    legacy: bool = False
+
+
+class CorrectionChangeOut(BaseModel):
+    """One proposed transcript change."""
+
+    index: int
+    sentence_id: int | None
+    speaker_name: str
+    original_text: str
+    corrected_text: str
+    change_type: str
+    reason: str
+
+
+class ProposalOut(BaseModel):
+    """A pending transcript correction proposal."""
+
+    model: str
+    change_count: int
+    changes: list[CorrectionChangeOut]
+
+
+class AcceptCorrectionIn(BaseModel):
+    """Accept a correction proposal, optionally only the selected change indices."""
+
+    selected_indices: list[int] | None = None
+
+
+class AcceptCorrectionOut(BaseModel):
+    """Result of accepting a correction proposal."""
+
+    accepted: bool
+    change_count: int
+    learned_count: int
+    corrected_transcript_path: str | None
+
+
+# ---- Lexicon ---------------------------------------------------------------
+
+
+class LexiconTermOut(BaseModel):
+    """One cross-project lexicon term."""
+
+    term_id: int
+    public_id: str
+    canonical: str
+    category: str
+    description: str
+    status: str
+    alias_count: int
+    context_count: int
+    ambiguous_alias_count: int
+    created_at: str
+    updated_at: str
+
+
+class LexiconTermsOut(BaseModel):
+    """A page of lexicon terms."""
+
+    terms: list[LexiconTermOut]
+
+
+class UpsertTermIn(BaseModel):
+    """Create or update a lexicon term."""
+
+    canonical: str
+    category: str = "unknown"
+    description: str = ""
+    aliases: list[str] = []
+    status: str = "active"
+
+
+class LexiconStatsOut(BaseModel):
+    """Aggregate lexicon statistics."""
+
+    active_terms: int
+    inactive_terms: int
+    aliases: int
+    contexts: int
+    hotwords: int
+    cached_vocabularies: int
+
+
+class DisambiguationOut(BaseModel):
+    """One context-dependent alias with user guidance."""
+
+    alias: str
+    canonical: str
+    category: str
+    guidance: str
+
+
+class HotwordOut(BaseModel):
+    """One ASR hotword entry."""
+
+    text: str
+    weight: int
+    category: str
+    source: str
+
+
 # ---- Speaker review --------------------------------------------------------
 
 
