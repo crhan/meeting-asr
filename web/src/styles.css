@@ -1,0 +1,152 @@
+:root {
+  --bg: #0f1115;
+  --surface: #181b22;
+  --surface-2: #20242e;
+  --border: #2b313c;
+  --text: #e6e8ec;
+  --text-muted: #9aa3b2;
+  --accent: #5b8cff;
+  --green: #4caf7f;
+  --yellow: #e0b341;
+  --red: #e0625a;
+  --magenta: #c77dff;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.topbar .brand {
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.topbar nav {
+  display: flex;
+  gap: 14px;
+}
+.topbar .spacer {
+  flex: 1;
+}
+
+.content {
+  padding: 18px;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.lang-toggle {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+.subtle {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+
+table.projects {
+  width: 100%;
+  border-collapse: collapse;
+}
+table.projects th,
+table.projects td {
+  text-align: left;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+table.projects th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+table.projects tr:hover td {
+  background: var(--surface);
+}
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12.5px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+.badge.state-completed,
+.badge.state-corrected {
+  color: var(--green);
+  border-color: var(--green);
+}
+.badge.state-transcribed {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.badge.state-broken {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.placeholder {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.error-box {
+  border: 1px solid var(--red);
+  color: var(--red);
+  background: rgba(224, 98, 90, 0.08);
+  border-radius: 8px;
+  padding: 12px 14px;
+}

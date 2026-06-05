@@ -16,3 +16,9 @@ evals/private/
 
 # Agent runtime worktrees
 .claude/
+
+# Web UI (React/Vite) build artifacts; the SPA bundle is regenerated at wheel-build
+# time (P4 packaging) and the server serves a hint when it is absent.
+web/node_modules/
+web/dist/
+src/app/web/static/
