@@ -241,6 +241,49 @@ class HotwordOut(BaseModel):
     source: str
 
 
+# ---- Config + diagnostics --------------------------------------------------
+
+
+class ConfigKeyOut(BaseModel):
+    """One global config key and its current value."""
+
+    name: str
+    env_name: str
+    secret: bool
+    is_set: bool
+    value: str | None  # null for masked (unrevealed) secrets
+
+
+class ConfigOut(BaseModel):
+    """Global configuration."""
+
+    config_file: str
+    keys: list[ConfigKeyOut]
+
+
+class SetConfigIn(BaseModel):
+    """Set one config key."""
+
+    key: str
+    value: str
+
+
+class DoctorCheckOut(BaseModel):
+    """One diagnostic check result."""
+
+    name: str
+    status: str  # ok | warn | fail
+    detail: str
+    fix_prompt: str | None
+
+
+class DoctorOut(BaseModel):
+    """Environment diagnostics."""
+
+    ok: bool
+    checks: list[DoctorCheckOut]
+
+
 # ---- Speaker review --------------------------------------------------------
 
 
