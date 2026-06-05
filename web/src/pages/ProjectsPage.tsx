@@ -34,6 +34,7 @@ function RunDialog({ onClose }: { onClose: () => void }) {
             queryClient.invalidateQueries({ queryKey: ["projects"] });
             onClose();
           }}
+          onError={() => setJobId(null)}
         />
       ) : (
         <>

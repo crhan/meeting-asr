@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getConfig,
   getDoctor,
+  getHealth,
   setConfig,
   unsetConfig,
   type ConfigKey,
@@ -31,9 +32,14 @@ export function SettingsPage() {
 function ConfigTab() {
   const queryClient = useQueryClient();
   const [reveal, setReveal] = useState(false);
+  // Revealing plaintext secrets is loopback-only on the server (it 403s otherwise), so
+  // only offer the toggle on a loopback bind and never request reveal on a networked one.
+  const health = useQuery({ queryKey: ["health"], queryFn: getHealth });
+  const canReveal = health.data?.is_local ?? false;
+  const showSecrets = reveal && canReveal;
   const { data, isLoading } = useQuery({
-    queryKey: ["config", reveal],
-    queryFn: () => getConfig(reveal),
+    queryKey: ["config", showSecrets],
+    queryFn: () => getConfig(showSecrets),
   });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["config"] });
   const setMut = useMutation({
@@ -53,10 +59,12 @@ function ConfigTab() {
     <div>
       <div className="row gap" style={{ marginBottom: 10 }}>
         <span className="subtle mono">{data?.config_file}</span>
-        <label className="row gap subtle" style={{ marginLeft: "auto" }}>
-          <input type="checkbox" checked={reveal} onChange={(e) => setReveal(e.target.checked)} />
-          {tr("Reveal secrets", "显示密钥")}
-        </label>
+        {canReveal && (
+          <label className="row gap subtle" style={{ marginLeft: "auto" }}>
+            <input type="checkbox" checked={reveal} onChange={(e) => setReveal(e.target.checked)} />
+            {tr("Reveal secrets", "显示密钥")}
+          </label>
+        )}
       </div>
       <table className="projects">
         <thead>
@@ -111,8 +119,8 @@ function DoctorTab() {
         </button>
       </div>
       <div className="checks">
-        {(data?.checks ?? []).map((c, i) => (
-          <div key={i} className="check-row">
+        {(data?.checks ?? []).map((c) => (
+          <div key={c.name} className="check-row">
             <span className={`status-dot status-${c.status === "ok" ? "matched" : c.status === "warn" ? "mismatch" : "conflict"}`} />
             <div className="check-body">
               <div>

@@ -247,7 +247,9 @@ function QualityTab() {
   const sorted = [...data.people].sort(
     (a, b) => b.critical_count - a.critical_count || b.suspicious_count - a.suspicious_count,
   );
-  const sel = selected ? sorted.find((p) => p.public_id === selected) : sorted[0];
+  // Fall back to the first row when the selection is stale (e.g. the person dropped out
+  // of the list), so the highlighted card and the rendered samples never disagree.
+  const sel = (selected && sorted.find((p) => p.public_id === selected)) || sorted[0];
 
   return (
     <div>
@@ -261,7 +263,7 @@ function QualityTab() {
           {sorted.map((p) => (
             <button
               key={p.public_id}
-              className={`speaker-card ${(sel?.public_id ?? sorted[0]?.public_id) === p.public_id ? "active" : ""}`}
+              className={`speaker-card ${sel?.public_id === p.public_id ? "active" : ""}`}
               onClick={() => setSelected(p.public_id)}
             >
               <div className="speaker-card-top">

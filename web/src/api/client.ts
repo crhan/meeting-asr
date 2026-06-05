@@ -618,6 +618,8 @@ export const getDoctor = () => api<Doctor>("/api/doctor");
 export interface Health {
   status: string;
   auth_required: boolean;
+  /** Loopback bind: gates loopback-only affordances like revealing secret config. */
+  is_local: boolean;
 }
 
 /** Unauthenticated liveness + bind metadata; tells the SPA whether a token is needed. */
