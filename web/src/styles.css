@@ -618,6 +618,44 @@ tr.clickable {
   border-color: var(--accent);
 }
 
+/* ---- capture page ------------------------------------------------------ */
+.capture-speaker {
+  margin-bottom: 18px;
+}
+.capture-speaker-head {
+  font-size: 15px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.capture-clips {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.capture-clip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.capture-clip.on {
+  border-color: var(--accent);
+  background: rgba(91, 140, 255, 0.06);
+}
+.capture-clip input[type="checkbox"] {
+  margin-top: 8px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.capture-result > div {
+  line-height: 1.7;
+}
+
 /* ---- toast ------------------------------------------------------------- */
 .toast {
   position: fixed;

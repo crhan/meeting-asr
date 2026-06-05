@@ -309,6 +309,84 @@ export const mergePeople = (fromRef: string, intoRef: string) =>
     body: JSON.stringify({ from_ref: fromRef, into_ref: intoRef }),
   });
 
+// ---- Voiceprint capture workflow -------------------------------------------
+
+export interface CaptureClip {
+  rel_path: string;
+  begin_time_ms: number;
+  end_time_ms: number;
+  duration_seconds: number;
+  text: string;
+  selection_score: number;
+  selection_reason: string;
+  audio_score: number | null;
+  audio_reason: string;
+  recommended: boolean;
+}
+
+export interface CaptureSpeaker {
+  speaker_id: number;
+  name: string;
+  person_public_id: string | null;
+  clips: CaptureClip[];
+}
+
+export interface CapturePlan {
+  project_ref: string;
+  target_sample_count: number;
+  sample_count: number;
+  speakers: CaptureSpeaker[];
+}
+
+export interface CaptureResult {
+  transaction_id: string;
+  captured_count: number;
+  embedded_count: number;
+  skipped_count: number;
+  current_improved: number;
+  current_declined: number;
+  current_changed_best: number;
+  current_warning: number;
+  current_critical: number;
+  historical_project_count: number;
+  historical_warning_count: number;
+  historical_critical_count: number;
+}
+
+export interface JobStatus {
+  id: string;
+  kind: string;
+  status: string;
+  error: string | null;
+  result: unknown;
+}
+
+export const capturePlan = (ref: string) =>
+  api<CapturePlan>(`/api/voiceprints/capture/${encodeURIComponent(ref)}/plan`, {
+    method: "POST",
+  });
+
+export const captureRun = (ref: string, selectedClipRelPaths: string[]) =>
+  api<{ job_id: string }>(`/api/voiceprints/capture/${encodeURIComponent(ref)}/run`, {
+    method: "POST",
+    body: JSON.stringify({ selected_clip_rel_paths: selectedClipRelPaths }),
+  });
+
+export const captureAccept = (txnId: string) =>
+  api<{ status: string }>(
+    `/api/voiceprints/capture/transactions/${encodeURIComponent(txnId)}/accept`,
+    { method: "POST" },
+  );
+
+export const captureRollback = (txnId: string) =>
+  api<{ status: string }>(
+    `/api/voiceprints/capture/transactions/${encodeURIComponent(txnId)}/rollback`,
+    { method: "POST" },
+  );
+
+export const getJob = (jobId: string) =>
+  api<JobStatus>(`/api/jobs/${encodeURIComponent(jobId)}`);
+
 // ---- SSE job progress ------------------------------------------------------
 
 export interface ProgressEvent {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   clipUrl,
@@ -54,6 +54,7 @@ const STATUS_LABEL: Record<string, [string, string]> = {
 
 export function SpeakerReviewPage() {
   const { ref = "" } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({
     queryKey: ["speakers", ref],
@@ -280,6 +281,7 @@ export function SpeakerReviewPage() {
           setEdits(new Map());
           setReassign(new Map());
         }}
+        onCapture={() => navigate(`/projects/${ref}/capture`)}
       />
       <div className="review-body">
         <SpeakerSidebar
@@ -339,8 +341,10 @@ function ReviewHeader(props: {
   saving: boolean;
   onSave: () => void;
   onDiscard: () => void;
+  onCapture: () => void;
 }) {
-  const { review, speakerCount, unresolved, dirty, saving, onSave, onDiscard } = props;
+  const { review, speakerCount, unresolved, dirty, saving, onSave, onDiscard, onCapture } =
+    props;
   const o = review.overview;
   return (
     <div className="review-head">
@@ -355,6 +359,9 @@ function ReviewHeader(props: {
         </div>
       </div>
       <div className="row gap">
+        <button className="btn ghost" onClick={onCapture} disabled={saving}>
+          {tr("Capture voiceprints", "采集声纹")}
+        </button>
         {dirty && (
           <button className="btn ghost" onClick={onDiscard} disabled={saving}>
             {tr("Discard", "撤销")}

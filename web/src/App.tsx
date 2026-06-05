@@ -1,6 +1,7 @@
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useState } from "react";
 import { getLang, setLang, tr, type Lang } from "./lib/i18n";
+import { CapturePage } from "./pages/CapturePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { SpeakerReviewPage } from "./pages/SpeakerReviewPage";
 import { VoiceprintPage } from "./pages/VoiceprintPage";
@@ -38,6 +39,7 @@ export function App() {
           <Route path="/" element={<Navigate to="/projects" replace />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:ref/speakers" element={<SpeakerReviewPage />} />
+          <Route path="/projects/:ref/capture" element={<CapturePage />} />
           <Route path="/voiceprints" element={<VoiceprintPage />} />
           <Route
             path="*"
