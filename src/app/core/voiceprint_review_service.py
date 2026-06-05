@@ -39,6 +39,18 @@ _BACKUP_PREFIX = "meeting-asr-voiceprint-review-"
 _ORPHAN_MAX_AGE_SECONDS = 6 * 3600
 
 
+class CaptureConflictError(RuntimeError):
+    """A store mutation was attempted while a capture transaction is pending.
+
+    A pending capture holds a pre-run snapshot of the GLOBAL voiceprint store; rolling it
+    back restores that snapshot. If unrelated store edits (rename/delete/merge a person,
+    sample status, another capture) landed in between, the rollback would silently discard
+    them. The web layer therefore makes a pending capture exclusive over the store and
+    maps this error to HTTP 409. It is ``RuntimeError`` (not ``ValueError``) so the generic
+    400 handler does not swallow it.
+    """
+
+
 def plan_capture(
     project_dir: Path,
     *,
@@ -65,6 +77,11 @@ class CaptureTransactionRegistry:
         self._registry_lock = threading.Lock()
         self._store_write_lock = threading.Lock()
 
+    def has_pending(self) -> bool:
+        """Return whether any capture transaction is awaiting accept/rollback."""
+        with self._registry_lock:
+            return bool(self._txns)
+
     def run(
         self,
         *,
@@ -73,17 +90,29 @@ class CaptureTransactionRegistry:
         selected_clip_rel_paths: frozenset[str],
         store_dir: Path | None,
     ) -> tuple[str, VoiceprintReviewWorkflowSummary]:
-        """Run the capture+embed+evaluate workflow and register its transaction."""
+        """Run the capture+embed+evaluate workflow and register its transaction.
+
+        Only one capture may be pending at a time: a second run while an earlier one still
+        awaits accept/rollback would snapshot a store that already includes the first run's
+        writes, so rolling back either one could corrupt the other. The check and the
+        registration happen under ``_store_write_lock`` so they cannot interleave.
+        """
         with self._store_write_lock:
+            with self._registry_lock:
+                if self._txns:
+                    raise CaptureConflictError(
+                        "A previous voiceprint capture is still awaiting accept/rollback; "
+                        "resolve it before starting another."
+                    )
             summary = run_voiceprint_review_workflow(
                 project_dir=project_dir,
                 planned=planned,
                 selected_clip_rel_paths=selected_clip_rel_paths,
                 store_dir=store_dir,
             )
-        txn_id = uuid.uuid4().hex
-        with self._registry_lock:
-            self._txns[txn_id] = (time.time(), summary.transaction)
+            txn_id = uuid.uuid4().hex
+            with self._registry_lock:
+                self._txns[txn_id] = (time.time(), summary.transaction)
         return txn_id, summary
 
     def accept(self, txn_id: str) -> None:

@@ -19,6 +19,8 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.core.voiceprint_review_service import CaptureConflictError
+
 
 def _looks_like_usage_error(exc: BaseException) -> bool:
     """Return whether ``exc`` quacks like a Typer/Click usage error.
@@ -52,6 +54,10 @@ def _problem(status_code: int, detail: str, *, kind: str) -> JSONResponse:
 
 def install_exception_handlers(app: FastAPI) -> None:
     """Register web-boundary exception handlers on the app."""
+
+    @app.exception_handler(CaptureConflictError)
+    async def _conflict(_: Request, exc: CaptureConflictError) -> JSONResponse:
+        return _problem(409, str(exc), kind="conflict")
 
     @app.exception_handler(FileNotFoundError)
     async def _not_found(_: Request, exc: FileNotFoundError) -> JSONResponse:

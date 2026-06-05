@@ -13,7 +13,11 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 
 from app.core.project_refs import resolve_project_ref
-from app.core.voiceprint_review_service import REGISTRY, plan_capture
+from app.core.voiceprint_review_service import (
+    REGISTRY,
+    CaptureConflictError,
+    plan_capture,
+)
 from app.voiceprint_models import VoiceprintSampleRow, VoiceprintSpeakerRow
 from app.voiceprint_people import (
     create_voiceprint_person,
@@ -95,7 +99,17 @@ def _sample_out(index: int, row: VoiceprintSampleRow) -> VoiceprintSampleOut:
 
 
 async def _run(locks: LockRegistry, fn):
-    """Run a blocking store write in the executor under the global store lock."""
+    """Run a blocking store write in the executor under the global store lock.
+
+    Refuses the write while a capture transaction is pending: that transaction holds a
+    rollback snapshot of this same store, so any edit made now would be silently reverted
+    if the user later rolls back. The caller must accept/rollback the capture first.
+    """
+    if REGISTRY.has_pending():
+        raise CaptureConflictError(
+            "A voiceprint capture is awaiting accept/rollback; resolve it before editing "
+            "the store."
+        )
     loop = asyncio.get_running_loop()
     async with locks.acquire(_STORE_LOCK):
         return await loop.run_in_executor(None, fn)
@@ -379,6 +393,13 @@ def capture_run(
     The job result carries a ``transaction_id`` plus the evaluation summary; the client
     then accepts or rolls the transaction back.
     """
+    # Fail fast before queueing if a prior capture is unresolved; ``REGISTRY.run`` also
+    # enforces this so a race between the check and the executor cannot slip through.
+    if REGISTRY.has_pending():
+        raise CaptureConflictError(
+            "A previous voiceprint capture is still awaiting accept/rollback; "
+            "resolve it before starting another."
+        )
     project_dir = resolve_project_ref(project_ref, settings.projects_dir)
     store_dir = settings.store_dir
 
