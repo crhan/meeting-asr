@@ -83,6 +83,116 @@ export function getProject(ref: string): Promise<ProjectSummary> {
   return api<ProjectSummary>(`/api/projects/${encodeURIComponent(ref)}`);
 }
 
+// ---- Speaker review --------------------------------------------------------
+
+export interface SpeakerSegment {
+  sentence_id: number | null;
+  begin_time_ms: number;
+  end_time_ms: number;
+  text: string;
+  speaker_id: number | null;
+  score: number | null;
+  score_status: string | null;
+}
+
+export interface MatchPerson {
+  person_id: number | null;
+  name: string;
+  score: number | null;
+  person_public_id: string | null;
+}
+
+export interface SpeakerMatch {
+  best_name: string | null;
+  best_score: number | null;
+  accepted: boolean;
+  threshold: number | null;
+  status: string;
+  candidates: MatchPerson[];
+}
+
+export interface ReviewSpeaker {
+  speaker_id: number;
+  label: string;
+  current_name: string;
+  ignored: boolean;
+  person_id: number | null;
+  person_public_id: string | null;
+  status: string;
+  crosstalk: boolean;
+  segment_count: number;
+  duration_ms: number;
+  match: SpeakerMatch | null;
+  segments: SpeakerSegment[];
+}
+
+export interface Person {
+  person_id: number;
+  name: string;
+  public_id: string;
+}
+
+export interface ReviewOverview {
+  project_id: string;
+  title: string;
+  project_status: string;
+  source_name: string;
+  duration_ms: number;
+  match_file_exists: boolean;
+}
+
+export interface SpeakerReview {
+  project_id: string;
+  project_dir: string;
+  overview: ReviewOverview;
+  speakers: ReviewSpeaker[];
+  people: Person[];
+  allow_correction: boolean;
+}
+
+export interface Reassignment {
+  sentence_id: number | null;
+  begin_time_ms: number;
+  end_time_ms: number;
+  original_speaker_id: number | null;
+  new_speaker_id: number;
+}
+
+export interface SaveSpeakerReviewBody {
+  mapping: Record<string, string>;
+  person_mapping: Record<string, number>;
+  person_public_mapping: Record<string, string>;
+  ignored_speaker_ids: number[];
+  reassignments: Reassignment[];
+}
+
+export interface SaveSpeakerReviewResult {
+  mapping_path: string;
+  transcript_path: string;
+  srt_path: string;
+  reassigned_count: number;
+  deleted_sample_count: number;
+  rematch_skipped_reason: string | null;
+}
+
+export function getSpeakerReview(ref: string): Promise<SpeakerReview> {
+  return api<SpeakerReview>(`/api/speakers/${encodeURIComponent(ref)}`);
+}
+
+export function saveSpeakerReview(
+  ref: string,
+  body: SaveSpeakerReviewBody,
+): Promise<SaveSpeakerReviewResult> {
+  return api<SaveSpeakerReviewResult>(
+    `/api/speakers/${encodeURIComponent(ref)}/save`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export function clipUrl(ref: string, beginMs: number, endMs: number): string {
+  return `/api/projects/${encodeURIComponent(ref)}/clip?begin_ms=${beginMs}&end_ms=${endMs}`;
+}
+
 // ---- SSE job progress ------------------------------------------------------
 
 export interface ProgressEvent {

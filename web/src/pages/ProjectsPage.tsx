@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { listProjects, type ProjectSummary } from "../api/client";
 import { tr } from "../lib/i18n";
 
@@ -16,6 +17,7 @@ function formatTime(value: string | null): string {
 }
 
 export function ProjectsPage() {
+  const navigate = useNavigate();
   const { data, isLoading, error } = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
@@ -55,7 +57,12 @@ export function ProjectsPage() {
           </thead>
           <tbody>
             {projects.map((p) => (
-              <tr key={p.project_id}>
+              <tr
+                key={p.project_id}
+                className="clickable"
+                onClick={() => navigate(`/projects/${p.project_id}/speakers`)}
+                title={tr("Open speaker review", "打开 speaker review")}
+              >
                 <td className="mono">{p.project_id}</td>
                 <td>{p.title || tr("(untitled)", "（无标题）")}</td>
                 <td>
