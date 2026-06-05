@@ -563,6 +563,49 @@ export const deleteLexiconTerm = (ref: string) =>
     { method: "DELETE" },
   );
 
+// ---- Config + diagnostics --------------------------------------------------
+
+export interface ConfigKey {
+  name: string;
+  env_name: string;
+  secret: boolean;
+  is_set: boolean;
+  value: string | null;
+}
+
+export interface Config {
+  config_file: string;
+  keys: ConfigKey[];
+}
+
+export interface DoctorCheck {
+  name: string;
+  status: string;
+  detail: string;
+  fix_prompt: string | null;
+}
+
+export interface Doctor {
+  ok: boolean;
+  checks: DoctorCheck[];
+}
+
+export const getConfig = (reveal = false) =>
+  api<Config>(`/api/config${reveal ? "?reveal=true" : ""}`);
+
+export const setConfig = (key: string, value: string) =>
+  api<{ key: string }>("/api/config", {
+    method: "PATCH",
+    body: JSON.stringify({ key, value }),
+  });
+
+export const unsetConfig = (key: string) =>
+  api<{ key: string }>(`/api/config/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+  });
+
+export const getDoctor = () => api<Doctor>("/api/doctor");
+
 // ---- SSE job progress ------------------------------------------------------
 
 export interface ProgressEvent {

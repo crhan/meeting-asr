@@ -762,6 +762,27 @@ tr.clickable {
   font-size: 12.5px;
 }
 
+/* ---- diagnostics ------------------------------------------------------- */
+.checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.check-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.check-row .status-dot {
+  margin-top: 5px;
+}
+.check-body {
+  flex: 1;
+  line-height: 1.5;
+}
+
 /* ---- toast ------------------------------------------------------------- */
 .toast {
   position: fixed;

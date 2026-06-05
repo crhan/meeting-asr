@@ -5,6 +5,7 @@ import { CapturePage } from "./pages/CapturePage";
 import { CorrectionPage } from "./pages/CorrectionPage";
 import { LexiconPage } from "./pages/LexiconPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { SpeakerReviewPage } from "./pages/SpeakerReviewPage";
 import { VoiceprintPage } from "./pages/VoiceprintPage";
 
@@ -33,6 +34,7 @@ export function App() {
           <NavLink to="/projects">{tr("Projects", "项目")}</NavLink>
           <NavLink to="/voiceprints">{tr("Voiceprints", "声纹库")}</NavLink>
           <NavLink to="/lexicon">{tr("Lexicon", "词库")}</NavLink>
+          <NavLink to="/settings">{tr("Settings", "设置")}</NavLink>
         </nav>
         <span className="spacer" />
         <LangToggle />
@@ -46,6 +48,7 @@ export function App() {
           <Route path="/projects/:ref/corrections" element={<CorrectionPage />} />
           <Route path="/voiceprints" element={<VoiceprintPage />} />
           <Route path="/lexicon" element={<LexiconPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route
             path="*"
             element={<div className="placeholder">{tr("Not found", "未找到")}</div>}
