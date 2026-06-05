@@ -5,6 +5,20 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [0.11.0] - 2026-06-05
+
+### 新增
+
+- `project run` 支持**多输入拼接成单一连续项目**：`meeting-asr project run a.mp4 b.mp4 c.mp4 ...` 把多段媒体先拼成一条连续音频，再在全量上**只跑一次** ASR、diarization 与声纹匹配，所以跨段说话的同一个人天然只有一条 speaker（不必事后归一）。典型场景是钉钉把同一场会拆成两段闪记——这与事后合并各自已转写产物的 `project merge` 是两条正交路径。拼接用 ffmpeg 把每段归一到 16k mono s16 中间件、按 concat demuxer `-c copy` 无损无缝零漂移地接起来；时间轴本就统一连续，无需 offset 数学。项目身份守恒：N=1 与今日逐字节一致（同 `project_id`、同 manifest）；N>1 的 `project_id` 是有序各段 sha 的组合内容哈希，顺序敏感、同序重跑可复用；多段 manifest 故意把 `source.original_path` 置空，使单/多输入在复用时绝不互撞，逐段溯源落 `audio.segments`。`project show` 展示分段来源；`--file-url` 与多输入互斥。
+- 新增**声纹低置信 crosstalk/噪音放行档**。会尾常混入另一拨人的零碎串场（样本极少、声纹分数极低、候选对不上），以前这种 cluster 卡在 below-threshold，逼下游瞎猜名或整场绕过。crosstalk 档只给它打一个 **advisory 标记**:speaker 仍是匿名 `Speaker N`、句子一字不改、不移动、不改名，只是不再阻塞主流程、下游可选择放行落地。判据刻意保守且非对称——`sample_count ≤ 3` **且** `0 < best_score < 0.5` **且**候选不集中才标;要求 best_score 大于 0(库里有弱候选但对不上)是关键,空库/选错 model 时绝不把正常 speaker 全标噪音;有清晰弱领先者仍判为「真人只是低于阈值」。标志持久化进 `speaker_matches.json` 的 `crosstalk` 字段,在 run / `speakers match` / `project show` 三处未决门禁里与 matched 同列放行,match 表渲染为 magenta。`project run` 与 `project speakers match` 新增 `--crosstalk/--no-crosstalk`、`--crosstalk-max-samples`、`--crosstalk-score-floor`(默认开),设定落 `manifest.speakers["crosstalk"]`,后续 rematch 不会偷偷把关掉的档重新打开。与 resplit 的 unknown 桶正交可叠加。
+- `lexicon show` / `lexicon list` 现在**展示别名消歧状态**(issue #18)。`disambiguate` 把语境指引写进别名(NULL=盲替;非 NULL=排除盲替、由 polish 逐句判别),但此前读侧完全看不见,配完无法复核只能手写 SQL 查库。现在 `lexicon show` 给消歧别名标 `[ambiguous]` 并打印指引全文,`lexicon list` 在 Aliases 列旁标 `(N ambiguous)`,`--json` 一并带 `disambiguation` / `ambiguous_alias_count` 字段。
+
+### 修复
+
+- `project speakers apply --map` 支持**逗号分隔的多重映射**并**拒绝垃圾名**。此前 `--map '0=武一,2=欧丁,3=墨泪'` 会把整串糊进 speaker 0 的名字、静默丢掉后两条;现在单个 `--map` 值按 `,` 拆分(等价于重复 `--map`),且含 `,` 或 `=` 的名字会被明确报错而非写进 `speaker_map.json`。另修:整体为空的 `--map` 值不再被静默跳过而是报错;`--variant` 在按 `--project-dir` 复用多输入项目时被正确尊重。
+- `lexicon` 消歧字段的 export/import **往返不再静默丢失**:此前导出再导入会把所有消歧别名降级回盲替。现在往返保留指引,且 import 能区分「缺消歧键」与「显式 null」、blanket 来源会清掉过期消歧标记。
+- crosstalk-only(全员判串场)的非阻塞运行现在**补渲染匿名命名产物**:`accepted_mapping` 为空、`apply` 被跳过时,stabilization 后仍补出匿名 `Speaker N` 的 `transcript_named.txt` / `subtitle_named.srt`,让 run summary 报的「ready」名副其实;`--no-crosstalk` 经一次 rematch 重指派后不再失效,crosstalk 在声纹 CLI 行也显式渲染(不再 fall through 成误导性的 `no-candidate`)。
+
 ## [0.10.0] - 2026-06-04
 
 ### 新增
