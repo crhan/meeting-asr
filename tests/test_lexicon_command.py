@@ -195,6 +195,21 @@ def test_lexicon_show_marks_disambiguated_alias(tmp_path: Path) -> None:
     assert "艾赛 (asr_error) [ambiguous]" not in result.output
 
 
+def test_lexicon_show_renders_multiline_guidance(tmp_path: Path) -> None:
+    """Multi-line guidance must keep continuation lines aligned under Guidance:."""
+    db_path = tmp_path / "lexicon.sqlite"
+    guidance = "灵启=蚂蚁 istack\n灵骏=阿里云\n拿不准保留原词"
+    _add_isee_with_disambiguated_alias(db_path, guidance)
+
+    result = runner.invoke(app, ["lexicon", "show", "iSee", "--lexicon-db", str(db_path)])
+
+    indent = " " * len("    Guidance: ")
+    assert result.exit_code == 0, result.output
+    assert "    Guidance: 灵启=蚂蚁 istack" in result.output
+    assert f"{indent}灵骏=阿里云" in result.output
+    assert f"{indent}拿不准保留原词" in result.output
+
+
 def test_lexicon_show_json_includes_disambiguation(tmp_path: Path) -> None:
     """Show JSON must expose disambiguation so agents can review without SQL."""
     db_path = tmp_path / "lexicon.sqlite"
