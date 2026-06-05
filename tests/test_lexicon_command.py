@@ -166,73 +166,77 @@ def test_lexicon_disambiguate_command(tmp_path: Path) -> None:
     assert "IC" not in _wrong_texts(db_path)
 
 
-def _add_isee_with_disambiguated_alias(db_path: Path, guidance: str) -> None:
-    """Create iSee with one disambiguated alias (IC) and one blanket alias (艾赛)."""
+def _add_term_with_disambiguated_alias(db_path: Path, guidance: str) -> None:
+    """Create a term with one disambiguated alias (AC) and one blanket alias.
+
+    Uses neutral placeholder fixtures only; concrete business terms must never be
+    hardcoded into this public repo (root AGENTS.md), not even in tests.
+    """
     upsert_lexicon_term(
-        canonical="iSee",
+        canonical="Acme",
         category="system",
         description="",
-        aliases=("IC", "艾赛"),
+        aliases=("AC", "阿克米"),
         status="active",
         db_path=db_path,
     )
     set_alias_disambiguation(
-        term="iSee", alias="IC", guidance=guidance, db_path=db_path
+        term="Acme", alias="AC", guidance=guidance, db_path=db_path
     )
 
 
 def test_lexicon_show_marks_disambiguated_alias(tmp_path: Path) -> None:
     """Show text must flag disambiguated aliases and print the full guidance."""
     db_path = tmp_path / "lexicon.sqlite"
-    guidance = "指 iSee 平台时改成 iSee；指个人贡献者角色时保持原样"
-    _add_isee_with_disambiguated_alias(db_path, guidance)
+    guidance = "指产品平台时改成 Acme，指其他义项时保持原样"
+    _add_term_with_disambiguated_alias(db_path, guidance)
 
-    result = runner.invoke(app, ["lexicon", "show", "iSee", "--lexicon-db", str(db_path)])
+    result = runner.invoke(app, ["lexicon", "show", "Acme", "--lexicon-db", str(db_path)])
 
     assert result.exit_code == 0, result.output
-    assert "IC (asr_error) [ambiguous]" in result.output
+    assert "AC (asr_error) [ambiguous]" in result.output
     assert f"Guidance: {guidance}" in result.output
     # The blanket alias stays unmarked.
-    assert "艾赛 (asr_error)" in result.output
-    assert "艾赛 (asr_error) [ambiguous]" not in result.output
+    assert "阿克米 (asr_error)" in result.output
+    assert "阿克米 (asr_error) [ambiguous]" not in result.output
 
 
 def test_lexicon_show_renders_multiline_guidance(tmp_path: Path) -> None:
     """Multi-line guidance must keep continuation lines aligned under Guidance:."""
     db_path = tmp_path / "lexicon.sqlite"
-    guidance = "灵启=蚂蚁 istack\n灵骏=阿里云\n拿不准保留原词"
-    _add_isee_with_disambiguated_alias(db_path, guidance)
+    guidance = "产品甲=平台一\n产品乙=平台二\n拿不准保留原词"
+    _add_term_with_disambiguated_alias(db_path, guidance)
 
-    result = runner.invoke(app, ["lexicon", "show", "iSee", "--lexicon-db", str(db_path)])
+    result = runner.invoke(app, ["lexicon", "show", "Acme", "--lexicon-db", str(db_path)])
 
     indent = " " * len("    Guidance: ")
     assert result.exit_code == 0, result.output
-    assert "    Guidance: 灵启=蚂蚁 istack" in result.output
-    assert f"{indent}灵骏=阿里云" in result.output
+    assert "    Guidance: 产品甲=平台一" in result.output
+    assert f"{indent}产品乙=平台二" in result.output
     assert f"{indent}拿不准保留原词" in result.output
 
 
 def test_lexicon_show_json_includes_disambiguation(tmp_path: Path) -> None:
     """Show JSON must expose disambiguation so agents can review without SQL."""
     db_path = tmp_path / "lexicon.sqlite"
-    guidance = "指 iSee 平台时改成 iSee；指个人贡献者角色时保持原样"
-    _add_isee_with_disambiguated_alias(db_path, guidance)
+    guidance = "指产品平台时改成 Acme，指其他义项时保持原样"
+    _add_term_with_disambiguated_alias(db_path, guidance)
 
     result = runner.invoke(
-        app, ["lexicon", "show", "iSee", "--lexicon-db", str(db_path), "--json"]
+        app, ["lexicon", "show", "Acme", "--lexicon-db", str(db_path), "--json"]
     )
     payload = json.loads(result.output)
     by_alias = {alias["alias"]: alias for alias in payload["aliases"]}
 
     assert result.exit_code == 0
-    assert by_alias["IC"]["disambiguation"] == guidance
-    assert by_alias["艾赛"]["disambiguation"] is None
+    assert by_alias["AC"]["disambiguation"] == guidance
+    assert by_alias["阿克米"]["disambiguation"] is None
 
 
 def test_lexicon_list_marks_ambiguous_count(tmp_path: Path) -> None:
     """List must surface how many aliases go through polish disambiguation."""
     db_path = tmp_path / "lexicon.sqlite"
-    _add_isee_with_disambiguated_alias(db_path, "按语境判断")
+    _add_term_with_disambiguated_alias(db_path, "按语境判断")
 
     json_result = runner.invoke(
         app, ["lexicon", "list", "--lexicon-db", str(db_path), "--json"]
@@ -254,8 +258,8 @@ def test_lexicon_export_import_preserves_disambiguation(tmp_path: Path) -> None:
     db_path = tmp_path / "lexicon.sqlite"
     imported_db = tmp_path / "imported.sqlite"
     output = tmp_path / "lexicon.json"
-    guidance = "指 iSee 平台时改成 iSee；指个人贡献者角色时保持原样"
-    _add_isee_with_disambiguated_alias(db_path, guidance)
+    guidance = "指产品平台时改成 Acme，指其他义项时保持原样"
+    _add_term_with_disambiguated_alias(db_path, guidance)
 
     export_result = runner.invoke(
         app, ["lexicon", "export", "--lexicon-db", str(db_path), "--output", str(output)]
@@ -264,17 +268,17 @@ def test_lexicon_export_import_preserves_disambiguation(tmp_path: Path) -> None:
         app, ["lexicon", "import", str(output), "--lexicon-db", str(imported_db)]
     )
     show_result = runner.invoke(
-        app, ["lexicon", "show", "iSee", "--lexicon-db", str(imported_db), "--json"]
+        app, ["lexicon", "show", "Acme", "--lexicon-db", str(imported_db), "--json"]
     )
     payload = json.loads(show_result.output)
     by_alias = {alias["alias"]: alias for alias in payload["aliases"]}
 
     assert export_result.exit_code == 0
     assert import_result.exit_code == 0
-    assert by_alias["IC"]["disambiguation"] == guidance
-    assert by_alias["艾赛"]["disambiguation"] is None
+    assert by_alias["AC"]["disambiguation"] == guidance
+    assert by_alias["阿克米"]["disambiguation"] is None
     # The disambiguated alias stays out of blanket replacement after import.
-    assert "IC" not in _wrong_texts(imported_db)
+    assert "AC" not in _wrong_texts(imported_db)
 
 
 def test_lexicon_import_clears_stale_disambiguation(tmp_path: Path) -> None:
@@ -287,46 +291,46 @@ def test_lexicon_import_clears_stale_disambiguation(tmp_path: Path) -> None:
     source_db = tmp_path / "source.sqlite"
     target_db = tmp_path / "target.sqlite"
     output = tmp_path / "lexicon.json"
-    # Source: IC is a plain blanket alias (no disambiguation).
+    # Source: AC is a plain blanket alias (no disambiguation).
     upsert_lexicon_term(
-        canonical="iSee",
+        canonical="Acme",
         category="system",
         description="",
-        aliases=("IC",),
+        aliases=("AC",),
         status="active",
         db_path=source_db,
     )
     runner.invoke(
         app, ["lexicon", "export", "--lexicon-db", str(source_db), "--output", str(output)]
     )
-    # Target already marks IC ambiguous with stale guidance.
+    # Target already marks AC ambiguous with stale guidance.
     upsert_lexicon_term(
-        canonical="iSee",
+        canonical="Acme",
         category="system",
         description="",
-        aliases=("IC",),
+        aliases=("AC",),
         status="active",
         db_path=target_db,
     )
     set_alias_disambiguation(
-        term="iSee", alias="IC", guidance="stale guidance", db_path=target_db
+        term="Acme", alias="AC", guidance="stale guidance", db_path=target_db
     )
-    assert "IC" not in _wrong_texts(target_db)
+    assert "AC" not in _wrong_texts(target_db)
 
     import_result = runner.invoke(
         app, ["lexicon", "import", str(output), "--lexicon-db", str(target_db)]
     )
     show_result = runner.invoke(
-        app, ["lexicon", "show", "iSee", "--lexicon-db", str(target_db), "--json"]
+        app, ["lexicon", "show", "Acme", "--lexicon-db", str(target_db), "--json"]
     )
     by_alias = {
         alias["alias"]: alias for alias in json.loads(show_result.output)["aliases"]
     }
 
     assert import_result.exit_code == 0
-    assert by_alias["IC"]["disambiguation"] is None
-    # Cleared guidance returns IC to deterministic blanket replacement.
-    assert "IC" in _wrong_texts(target_db)
+    assert by_alias["AC"]["disambiguation"] is None
+    # Cleared guidance returns AC to deterministic blanket replacement.
+    assert "AC" in _wrong_texts(target_db)
 
 
 def test_lexicon_import_legacy_payload_preserves_guidance(tmp_path: Path) -> None:
@@ -338,34 +342,34 @@ def test_lexicon_import_legacy_payload_preserves_guidance(tmp_path: Path) -> Non
     """
     target_db = tmp_path / "target.sqlite"
     upsert_lexicon_term(
-        canonical="iSee",
+        canonical="Acme",
         category="system",
         description="",
-        aliases=("IC",),
+        aliases=("AC",),
         status="active",
         db_path=target_db,
     )
     set_alias_disambiguation(
-        term="iSee", alias="IC", guidance="keep me", db_path=target_db
+        term="Acme", alias="AC", guidance="keep me", db_path=target_db
     )
     # Legacy payload: the alias object has no disambiguation key at all.
     legacy_payload = {
         "schema_version": 2,
         "terms": [
             {
-                "canonical": "iSee",
+                "canonical": "Acme",
                 "category": "system",
-                "aliases": [{"alias": "IC", "alias_type": "asr_error"}],
+                "aliases": [{"alias": "AC", "alias_type": "asr_error"}],
             }
         ],
     }
 
     import_lexicon_payload(legacy_payload, db_path=target_db)
-    detail = get_lexicon_term("iSee", db_path=target_db)
-    ic_alias = next(alias for alias in detail.aliases if alias.alias == "IC")
+    detail = get_lexicon_term("Acme", db_path=target_db)
+    ac_alias = next(alias for alias in detail.aliases if alias.alias == "AC")
 
-    assert ic_alias.disambiguation == "keep me"
-    assert "IC" not in _wrong_texts(target_db)
+    assert ac_alias.disambiguation == "keep me"
+    assert "AC" not in _wrong_texts(target_db)
 
 
 def test_lexicon_add_list_show_and_stats(tmp_path: Path) -> None:
