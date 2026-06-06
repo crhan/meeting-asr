@@ -215,6 +215,15 @@ class UpsertTermIn(BaseModel):
     status: str = "active"
 
 
+class SetDisambiguationIn(BaseModel):
+    """Mark an alias as context-ambiguous. An empty ``guidance`` clears it, returning the
+    alias to deterministic blanket replacement (mirrors ``lexicon disambiguate``)."""
+
+    term: str
+    alias: str
+    guidance: str = ""
+
+
 class LexiconStatsOut(BaseModel):
     """Aggregate lexicon statistics."""
 

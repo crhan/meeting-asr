@@ -1076,6 +1076,39 @@ def test_delete_person_with_zero_samples(client: TestClient) -> None:
     assert client.delete(f"/api/voiceprints/people/{ref}").status_code == 404
 
 
+def test_set_and_clear_alias_disambiguation(client: TestClient) -> None:
+    """The web lexicon must expose the disambiguate mutation, not just a read endpoint -- a
+    web-only user has to be able to mark a context-ambiguous alias (so it is routed to LLM
+    guidance instead of blanket replacement) and clear it again, mirroring the CLI."""
+    created = client.post(
+        "/api/lexicon/terms",
+        json={"canonical": "Canonical Term", "category": "unknown", "aliases": ["amb"]},
+    )
+    assert created.status_code == 200
+
+    marked = client.post(
+        "/api/lexicon/disambiguations",
+        json={"term": "Canonical Term", "alias": "amb", "guidance": "resolve by context"},
+    )
+    assert marked.status_code == 200
+    body = marked.json()
+    assert body is not None
+    assert body["alias"] == "amb"
+    assert body["guidance"] == "resolve by context"
+    assert any(d["alias"] == "amb" for d in client.get("/api/lexicon/disambiguations").json())
+
+    # Empty guidance clears it (null response) and drops it from the list.
+    cleared = client.post(
+        "/api/lexicon/disambiguations",
+        json={"term": "Canonical Term", "alias": "amb", "guidance": ""},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json() is None
+    assert not any(
+        d["alias"] == "amb" for d in client.get("/api/lexicon/disambiguations").json()
+    )
+
+
 def _vp_sample_row(public_id: str, speaker: str, status: str = "active"):
     """A minimal stand-in for VoiceprintSampleRow carrying every field _sample_out reads."""
     from types import SimpleNamespace

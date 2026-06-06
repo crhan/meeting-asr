@@ -6,8 +6,10 @@ import {
   getHotwords,
   getLexiconStats,
   getLexiconTerms,
+  setDisambiguation,
   upsertLexiconTerm,
 } from "../api/client";
+import type { Disambiguation } from "../api/client";
 import { tr } from "../lib/i18n";
 
 type Tab = "terms" | "disambiguations" | "hotwords";
@@ -130,30 +132,85 @@ function TermsTab() {
 }
 
 function DisambiguationsTab() {
+  const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["lex-disambig"],
     queryFn: getDisambiguations,
   });
+  const invalidate = () => {
+    // Marking/clearing an ambiguous alias changes the alias's correction routing and the
+    // term's ambiguous_alias_count, so refresh the disambiguation list, the terms table, and
+    // the header stats together.
+    queryClient.invalidateQueries({ queryKey: ["lex-disambig"] });
+    queryClient.invalidateQueries({ queryKey: ["lex-terms"] });
+    queryClient.invalidateQueries({ queryKey: ["lex-stats"] });
+  };
+  const mut = useMutation({
+    mutationFn: setDisambiguation,
+    onSuccess: invalidate,
+  });
+
+  const add = () => {
+    const term = window.prompt(tr("Term (canonical, id, or alias):", "词条（标准词/ID/别名）："));
+    if (!term?.trim()) return;
+    const alias = window.prompt(tr("Ambiguous alias:", "歧义别名："));
+    if (!alias?.trim()) return;
+    const guidance = window.prompt(
+      tr(
+        "Context guidance for the polish LLM (empty cancels):",
+        "给润色 LLM 的语境判别指引（留空则取消）：",
+      ),
+    );
+    if (!guidance?.trim()) return;
+    mut.mutate({ term: term.trim(), alias: alias.trim(), guidance: guidance.trim() });
+  };
+
+  // Edit an existing row by its canonical term; empty guidance clears it back to blanket.
+  const edit = (d: Disambiguation) => {
+    const guidance = window.prompt(
+      tr(
+        `Guidance for '${d.alias}' (empty clears the ambiguity):`,
+        `'${d.alias}' 的判别指引（留空则清除歧义标记）：`,
+      ),
+      d.guidance,
+    );
+    if (guidance == null) return;
+    mut.mutate({ term: d.canonical, alias: d.alias, guidance: guidance.trim() });
+  };
+
   if (isLoading) return <div className="placeholder">{tr("Loading…", "加载中…")}</div>;
   return (
-    <table className="projects">
-      <thead>
-        <tr>
-          <th>{tr("Alias", "别名")}</th>
-          <th>{tr("Canonical", "标准词")}</th>
-          <th>{tr("Guidance", "判别指引")}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {(data ?? []).map((d) => (
-          <tr key={`${d.alias} ${d.canonical}`}>
-            <td className="mono">{d.alias}</td>
-            <td>{d.canonical}</td>
-            <td className="subtle">{d.guidance}</td>
+    <div>
+      <div className="row gap" style={{ marginBottom: 10 }}>
+        <button className="btn" onClick={add} disabled={mut.isPending}>
+          {tr("Mark alias ambiguous", "标记歧义别名")}
+        </button>
+      </div>
+      <table className="projects">
+        <thead>
+          <tr>
+            <th>{tr("Alias", "别名")}</th>
+            <th>{tr("Canonical", "标准词")}</th>
+            <th>{tr("Guidance", "判别指引")}</th>
+            <th></th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {(data ?? []).map((d) => (
+            <tr key={`${d.alias} ${d.canonical}`}>
+              <td className="mono">{d.alias}</td>
+              <td>{d.canonical}</td>
+              <td className="subtle">{d.guidance}</td>
+              <td>
+                <button className="btn ghost" onClick={() => edit(d)} disabled={mut.isPending}>
+                  {tr("Edit", "编辑")}
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

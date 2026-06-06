@@ -19,6 +19,7 @@ from app.lexicon_store import (
     list_asr_hotwords,
     list_lexicon_disambiguations,
     list_lexicon_terms,
+    set_alias_disambiguation,
     upsert_lexicon_term,
 )
 from app.web.deps import get_locks, get_settings, require_auth
@@ -29,6 +30,7 @@ from app.web.schemas import (
     LexiconStatsOut,
     LexiconTermOut,
     LexiconTermsOut,
+    SetDisambiguationIn,
     UpsertTermIn,
 )
 from app.web.settings import WebSettings
@@ -110,6 +112,39 @@ def get_disambiguations(
         )
         for row in rows
     ]
+
+
+@router.post("/disambiguations", response_model=DisambiguationOut | None)
+async def set_disambiguation(
+    payload: SetDisambiguationIn,
+    settings: WebSettings = Depends(get_settings),
+    locks: LockRegistry = Depends(get_locks),
+) -> DisambiguationOut | None:
+    """Mark an alias as context-ambiguous so polish resolves it per sentence, or clear it.
+
+    Mirrors ``meeting-asr lexicon disambiguate``: an empty ``guidance`` returns the alias to
+    deterministic blanket replacement (response is null). Without this, a web-only user could
+    add aliases but never mark business-ambiguous ones (e.g. a surface that means a product in
+    one context and a person in another), leaving them wrongly blanket-replaced.
+    """
+    db_path = get_lexicon_db_path(settings.store_dir)
+    entry = await _run(
+        locks,
+        lambda: set_alias_disambiguation(
+            term=payload.term,
+            alias=payload.alias,
+            guidance=payload.guidance,
+            db_path=db_path,
+        ),
+    )
+    if entry is None:
+        return None
+    return DisambiguationOut(
+        alias=entry.alias,
+        canonical=entry.canonical,
+        category=entry.category,
+        guidance=entry.guidance,
+    )
 
 
 @router.get("/hotwords", response_model=list[HotwordOut])

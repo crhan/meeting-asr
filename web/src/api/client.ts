@@ -588,6 +588,17 @@ export const deleteLexiconTerm = (ref: string) =>
     { method: "DELETE" },
   );
 
+// Mark an alias as context-ambiguous (empty guidance clears it -> response is null).
+export const setDisambiguation = (body: {
+  term: string;
+  alias: string;
+  guidance: string;
+}) =>
+  api<Disambiguation | null>("/api/lexicon/disambiguations", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
 // ---- Config + diagnostics --------------------------------------------------
 
 export interface ConfigKey {
