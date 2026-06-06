@@ -25,7 +25,47 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+try:
+    from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+except ModuleNotFoundError:  # pragma: no cover - hatchling is only present at build time
+    # hatchling is a build-backend dependency, absent from the runtime/test venv. Falling back
+    # to ``object`` lets the module import so ``build_spa`` can be unit-tested; the real base
+    # class is always present during an actual ``uv build`` (where this hook runs).
+    BuildHookInterface = object  # type: ignore[assignment,misc]
+
+
+def build_spa(
+    root: Path,
+    *,
+    build_web: bool,
+    run=subprocess.run,
+    which=shutil.which,
+) -> None:
+    """(Re)build the React SPA from ``web/`` when an explicit web build is requested.
+
+    ``MEETING_ASR_BUILD_WEB=1`` means "produce fresh web assets" (CI / release / explicit web
+    install), so it rebuilds *unconditionally* -- it must never trust an existing (gitignored,
+    possibly stale) ``src/app/web/static`` from an earlier build, or a release could ship an old
+    UI after ``web/src`` changed. Without the flag this is a no-op and the caller ships whatever
+    static already exists (the base-CLI build path). Missing ``web/`` sources or ``npm`` under
+    the flag fail loudly rather than silently shipping (or omitting) the UI.
+    """
+    if not build_web:
+        return
+    web_dir = root / "web"
+    if not (web_dir / "package.json").is_file():
+        raise RuntimeError(
+            "MEETING_ASR_BUILD_WEB=1 but web/ frontend sources are missing; "
+            "cannot build the SPA."
+        )
+    npm = which("npm")
+    if npm is None:
+        raise RuntimeError(
+            "MEETING_ASR_BUILD_WEB=1 but npm is unavailable; cannot build the SPA. "
+            "Run `npm --prefix web ci && npm --prefix web run build` before building."
+        )
+    run([npm, "--prefix", str(web_dir), "ci"], check=True)
+    run([npm, "--prefix", str(web_dir), "run", "build"], check=True)
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -39,27 +79,11 @@ class CustomBuildHook(BuildHookInterface):
 
         root = Path(self.root)
         static_dir = root / "src" / "app" / "web" / "static"
-        static_index = static_dir / "index.html"
-        web_dir = root / "web"
 
-        if not static_index.is_file() and os.environ.get("MEETING_ASR_BUILD_WEB") == "1":
-            if not (web_dir / "package.json").is_file():
-                raise RuntimeError(
-                    "MEETING_ASR_BUILD_WEB=1 but web/ frontend sources are missing; "
-                    "cannot build the SPA."
-                )
-            npm = shutil.which("npm")
-            if npm is None:
-                raise RuntimeError(
-                    "MEETING_ASR_BUILD_WEB=1 but the web assets are not built and npm is "
-                    "unavailable. Run `npm --prefix web ci && npm --prefix web run build` "
-                    "before building."
-                )
-            subprocess.run([npm, "--prefix", str(web_dir), "ci"], check=True)
-            subprocess.run([npm, "--prefix", str(web_dir), "run", "build"], check=True)
+        build_spa(root, build_web=os.environ.get("MEETING_ASR_BUILD_WEB") == "1")
 
         # Ship the SPA only if it exists now. Doing this through build_data (instead of an
         # unconditional pyproject force-include) is what lets a base build with no static
         # succeed rather than erroring on a missing force-include path.
-        if static_index.is_file():
+        if (static_dir / "index.html").is_file():
             build_data.setdefault("force_include", {})[str(static_dir)] = "app/web/static"
