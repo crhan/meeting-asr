@@ -76,10 +76,16 @@ export function CorrectionPage() {
             <button
               className="btn primary"
               onClick={() => acceptMut.mutate()}
-              // Disable while a polish job runs: it is regenerating this very proposal, so
-              // accepting the stale one would apply pre-regeneration text and leave a
-              // mismatched pending proposal behind.
-              disabled={acceptMut.isPending || selected.size === 0 || !!jobId}
+              // Disable while a polish job runs OR while the proposal is (re)fetching: a
+              // regenerate rewrites this very proposal file, so accepting against the still-
+              // displayed stale proposal would send old selection indices that the backend
+              // applies to the freshly written proposal -- the wrong subset of changes.
+              disabled={
+                acceptMut.isPending ||
+                selected.size === 0 ||
+                !!jobId ||
+                proposalQuery.isFetching
+              }
             >
               {acceptMut.isPending
                 ? tr("Accepting…", "应用中…")
@@ -93,9 +99,12 @@ export function CorrectionPage() {
         <div style={{ marginBottom: 14 }}>
           <JobProgress
             jobId={jobId}
-            onDone={() => {
+            onDone={async () => {
+              // Refetch the regenerated proposal BEFORE clearing jobId. Clearing first would
+              // re-enable Accept against the stale proposal during the refetch window; keeping
+              // jobId set holds the job panel (and the disabled Accept) until fresh data lands.
+              await queryClient.invalidateQueries({ queryKey: ["proposal", ref] });
               setJobId(null);
-              queryClient.invalidateQueries({ queryKey: ["proposal", ref] });
             }}
             // Keep the polish failure visible after the job panel unmounts.
             onError={(e) => {
