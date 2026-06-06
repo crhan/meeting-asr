@@ -1998,8 +1998,12 @@ def _handle_speaker_review_decision(
         if store_dir is not None
         else (correction_options.store_dir if correction_options else None)
     )
-    result = _save_speaker_review_decision(
-        project_dir, decision, store_dir=effective_store_dir
+    # CLI boundary: convert domain failures to localized panels here (the shared helper raises
+    # raw so the TUI save worker can surface the real message in its own modal).
+    result = run_with_cli_errors(
+        lambda: _save_speaker_review_decision(
+            project_dir, decision, store_dir=effective_store_dir
+        )
     )
     typer.echo(f"Mapping written to: {result.mapping_path}")
     typer.echo(f"Named transcript written to: {result.transcript_path}")
@@ -2128,8 +2132,9 @@ def _save_speaker_review_decision(
     Adapts the TUI ``SpeakerReviewDecision`` into the presentation-neutral
     ``save_speaker_review`` primitives so the CLI and the web UI share the exact same
     save sequence (sentence reassignment -> speaker-map merge -> named outputs), including
-    the voiceprint-sample invalidation and rematch side effects. Wrapped in
-    ``run_with_cli_errors`` so domain failures surface as localized CLI panels.
+    the voiceprint-sample invalidation and rematch side effects. Domain failures propagate
+    raw; the CLI caller converts them to localized panels at its boundary, while the TUI save
+    worker keeps the real exception for its error modal.
 
     Args:
         project_dir: Project root directory.
@@ -2150,17 +2155,18 @@ def _save_speaker_review_decision(
         )
         for item in decision.sentence_reassignments
     ]
-    return run_with_cli_errors(
-        lambda: save_speaker_review(
-            project_dir,
-            mapping=decision.mapping,
-            person_mapping=decision.person_mapping,
-            person_public_mapping=decision.person_public_mapping,
-            ignored_speaker_ids=decision.ignored_speaker_ids,
-            reassignments=specs,
-            store_dir=store_dir,
-            rematch=rematch,
-        )
+    # Raise domain errors raw -- the CLI caller wraps this in run_with_cli_errors at its
+    # boundary, but the TUI save worker (via _save_review_from_tui) needs the real exception so
+    # its error modal shows a useful message instead of an opaque typer.Exit.
+    return save_speaker_review(
+        project_dir,
+        mapping=decision.mapping,
+        person_mapping=decision.person_mapping,
+        person_public_mapping=decision.person_public_mapping,
+        ignored_speaker_ids=decision.ignored_speaker_ids,
+        reassignments=specs,
+        store_dir=store_dir,
+        rematch=rematch,
     )
 
 
