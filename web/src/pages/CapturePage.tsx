@@ -237,14 +237,19 @@ function fmtScore(s: number | null): string {
   return s == null ? "—" : s.toFixed(3);
 }
 
-function changeClass(c: ScoreChange): string {
+function changeClass(c: ScoreChange, current: boolean): string {
+  // For the CURRENT project a changed-best is the EXPECTED result of adding its own samples (a
+  // better candidate won), so it reads as green success -- NOT the regression-risk red that
+  // same status means for a historical reverse check. (See AGENTS.md Voiceprint Review Notes:
+  // backend is_critical is tuned for historical checks; the current view must reinterpret it.)
+  if (current && c.status === "changed-best") return "ok";
   if (c.is_critical) return "low";
   if (c.is_warning) return "mid";
   if (c.status === "improved") return "ok";
   return "";
 }
 
-function ChangeRow({ c }: { c: ScoreChange }) {
+function ChangeRow({ c, current = false }: { c: ScoreChange; current?: boolean }) {
   const arrow =
     c.delta == null ? "" : c.delta > 0 ? `▲${c.delta.toFixed(3)}` : `▼${Math.abs(c.delta).toFixed(3)}`;
   return (
@@ -254,7 +259,7 @@ function ChangeRow({ c }: { c: ScoreChange }) {
         {c.before_name ?? "—"} {fmtScore(c.before_score)} → {c.after_name ?? "—"}{" "}
         {fmtScore(c.after_score)}
       </span>
-      <span className={`score-badge ${changeClass(c)}`}>
+      <span className={`score-badge ${changeClass(c, current)}`}>
         {c.status} {arrow}
       </span>
     </div>
@@ -267,7 +272,11 @@ function CaptureResultModal(props: {
   onRollback: () => void;
 }) {
   const { result, onAccept, onRollback } = props;
-  const risky = result.current_critical + result.historical_critical_count;
+  // current changed-best is expected success, not a regression -- exclude it from the warning.
+  // changed-best is disjoint from the other current criticals (below-threshold / lost-candidate),
+  // so subtracting its count leaves exactly the genuinely-risky current changes.
+  const currentRisky = result.current_critical - result.current_changed_best;
+  const risky = currentRisky + result.historical_critical_count;
   const notableCurrent = result.current_changes.filter((c) => c.status !== "unchanged");
   return (
     <Modal
@@ -303,7 +312,7 @@ function CaptureResultModal(props: {
           {notableCurrent.length === 0 ? (
             <div className="subtle">{tr("No score changes.", "分数无变化。")}</div>
           ) : (
-            notableCurrent.map((c) => <ChangeRow key={c.speaker_id} c={c} />)
+            notableCurrent.map((c) => <ChangeRow key={c.speaker_id} c={c} current />)
           )}
         </div>
 
