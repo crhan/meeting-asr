@@ -39,7 +39,11 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    with TestClient(create_app(_settings(tmp_path, token=None))) as test_client:
+    # base_url gives a loopback Host header: a tokenless bind now requires one (DNS-rebinding
+    # guard), and TestClient's default "testserver" Host would otherwise be rejected.
+    with TestClient(
+        create_app(_settings(tmp_path, token=None)), base_url="http://127.0.0.1:8765"
+    ) as test_client:
         yield test_client
 
 
@@ -1129,6 +1133,21 @@ def test_validate_capture_selection_detects_plan_drift() -> None:
     # Selected rel_path no longer exists in the recomputed plan -> refuse.
     with pytest.raises(CaptureConflictError):
         _validate_capture_selection(planned, [sel(rel_path="speaker_9/clip_999.wav")])
+
+
+def test_tokenless_loopback_rejects_foreign_host(client: TestClient) -> None:
+    """A tokenless loopback bind must reject requests whose Host is not a loopback name --
+    that closes DNS rebinding, where a remote page rebinds to 127.0.0.1 and reaches the
+    unauthenticated secret-reveal / mutating routes as same-origin (CORS does not help)."""
+    # A rebinding attacker's Host (its own domain) -> 403, even though auth is otherwise off.
+    rebind = client.get("/api/auth/check", headers={"Host": "evil.example.com"})
+    assert rebind.status_code == 403
+
+    # A genuine loopback Host is allowed through (auth still skipped on the loopback bind).
+    ok = client.get("/api/auth/check", headers={"Host": "127.0.0.1:8765"})
+    assert ok.status_code == 200
+    ok_localhost = client.get("/api/auth/check", headers={"Host": "localhost:8765"})
+    assert ok_localhost.status_code == 200
 
 
 def test_cors_allows_only_vite_dev_origin(client: TestClient) -> None:

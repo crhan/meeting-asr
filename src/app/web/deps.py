@@ -47,10 +47,41 @@ def get_jobs(request: Request) -> JobManager:
     return request.app.state.jobs
 
 
+_LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _host_name(raw: str) -> str:
+    """Return the lowercased hostname from a Host header, dropping any port.
+
+    Handles IPv6 literals (``[::1]`` / ``[::1]:8765``) which embed colons, so a naive
+    rsplit on ``:`` would mangle them.
+    """
+    raw = raw.strip()
+    if raw.startswith("["):
+        return raw[1:].split("]", 1)[0].lower()
+    return (raw.rsplit(":", 1)[0] if ":" in raw else raw).lower()
+
+
+def _is_trusted_loopback_host(host_header: str | None, settings: WebSettings) -> bool:
+    """Whether a tokenless loopback request's Host header is a real loopback name.
+
+    A DNS-rebinding page keeps its own hostname (e.g. ``evil.com``) in the Host header even
+    after its DNS rebinds to 127.0.0.1, so the browser treats the request as same-origin
+    (CORS does not help) while this server would otherwise serve it unauthenticated. Requiring
+    a loopback Host blocks that: the attacker cannot forge a loopback Host from the victim's
+    browser. A missing Host (anomalous for HTTP/1.1) is rejected.
+    """
+    if not host_header:
+        return False
+    name = _host_name(host_header)
+    return name in _LOOPBACK_HOSTNAMES or name == settings.host.strip().lower()
+
+
 def require_auth(
     settings: WebSettings = Depends(get_settings),
     authorization: str | None = Header(default=None),
     token: str | None = Query(default=None),
+    host: str | None = Header(default=None),
 ) -> None:
     """Enforce bearer-token auth on non-loopback binds.
 
@@ -62,8 +93,17 @@ def require_auth(
     transports -- ``EventSource`` (SSE) and the ``<audio>`` element -- cannot set request
     headers, so they would otherwise be locked out of a token-protected bind. This is a
     single-user LAN tool; the token may surface in access logs, an accepted tradeoff here.
+
+    On a tokenless loopback bind, the request's Host must still be a loopback name. That
+    closes DNS rebinding: without it a remote page could rebind to 127.0.0.1 and reach the
+    unauthenticated secret-reveal / mutating routes as same-origin.
     """
     if settings.token is None:
+        if not _is_trusted_loopback_host(host, settings):
+            raise HTTPException(
+                status_code=403,
+                detail="Unexpected Host header for a loopback bind.",
+            )
         return
     presented = token
     if authorization and authorization.startswith("Bearer "):
