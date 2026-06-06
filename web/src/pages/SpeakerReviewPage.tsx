@@ -380,10 +380,23 @@ function ReviewHeader(props: {
         </div>
       </div>
       <div className="row gap">
-        <button className="btn ghost" onClick={onCorrect} disabled={saving}>
+        {/* Capture/Correct reload from on-disk speaker_map.json + transcript artifacts, so
+            leaving with unsaved edits (dirty) would act on stale/anonymous identities -- e.g.
+            "accept match -> Capture" would capture under the old name. Block until saved. */}
+        <button
+          className="btn ghost"
+          onClick={onCorrect}
+          disabled={saving || dirty}
+          title={dirty ? tr("Save changes first", "请先保存改动") : undefined}
+        >
           {tr("Correct text", "文字纠错")}
         </button>
-        <button className="btn ghost" onClick={onCapture} disabled={saving}>
+        <button
+          className="btn ghost"
+          onClick={onCapture}
+          disabled={saving || dirty}
+          title={dirty ? tr("Save changes first", "请先保存改动") : undefined}
+        >
           {tr("Capture voiceprints", "采集声纹")}
         </button>
         {dirty && (
