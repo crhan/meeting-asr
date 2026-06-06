@@ -233,10 +233,17 @@ export function CapturePage() {
         <CaptureResultModal
           result={result}
           onAccept={async () => {
-            // Resolve the txn explicitly first so the unmount cleanup (fired by the navigate
-            // below) does not also roll back what we just accepted.
+            // Keep the txn ref armed until the accept actually succeeds: if it fails or the tab
+            // closes mid-flight, the unload/unmount cleanup must still roll the pending txn back
+            // (clearing first would strand it pending until the server sweep). Clear only after
+            // success, so the navigate below does not redundantly roll back what we accepted.
+            try {
+              await captureAccept(result.transaction_id);
+            } catch (e) {
+              setRunError((e as Error).message);
+              return;
+            }
             pendingTxnRef.current = null;
-            await captureAccept(result.transaction_id);
             setResult(null);
             // Accepting changed the speaker matches; drop the cached review so navigating back
             // remounts SpeakerReviewPage with fresh data instead of the pre-capture snapshot.
@@ -248,8 +255,15 @@ export function CapturePage() {
             navigate(`/projects/${ref}/speakers`);
           }}
           onRollback={async () => {
+            // Same as accept: clear the ref only after the rollback succeeds, so a failed/aborted
+            // rollback leaves the cleanup armed to retry rather than stranding the txn pending.
+            try {
+              await captureRollback(result.transaction_id);
+            } catch (e) {
+              setRunError((e as Error).message);
+              return;
+            }
             pendingTxnRef.current = null;
-            await captureRollback(result.transaction_id);
             setResult(null);
           }}
         />
