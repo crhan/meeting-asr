@@ -34,7 +34,11 @@ export function CorrectionPage() {
   });
 
   const acceptMut = useMutation({
-    mutationFn: () => acceptCorrection(ref, [...selected]),
+    // Pass the reviewed proposal's id so the server refuses (409) if it was regenerated since,
+    // rather than applying these indices to a different proposal. The Accept button only renders
+    // when proposalQuery.data exists, so proposal_id is present here.
+    mutationFn: () =>
+      acceptCorrection(ref, [...selected], proposalQuery.data!.proposal_id),
     onSuccess: async () => {
       // Accepting rewrites the transcript; drop the cached review so navigating back shows
       // the corrected sentences instead of the still-fresh pre-correction text.

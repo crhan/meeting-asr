@@ -10,8 +10,10 @@ project lock.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.commands.project_correct import (
     accept_correction_for_review,
@@ -92,6 +94,21 @@ def polish(
     return JobRef(job_id=job.id, kind=job.kind, status=job.status)
 
 
+def _proposal_id(proposal) -> str:
+    """Content hash identifying exactly this proposal.
+
+    Lets an accept bind to the proposal the user reviewed: a regenerate (another tab / the CLI)
+    changes the changes, hence the hash, so the accept is refused instead of applying the
+    reviewed selection indices to a different proposal.
+    """
+    payload = [
+        [c.sentence_id, c.original_text, c.corrected_text, c.change_type, c.reason]
+        for c in proposal.proposed_changes
+    ]
+    blob = json.dumps([proposal.model, payload], ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
 @router.get("/{project_ref}/proposal", response_model=ProposalOut)
 def get_proposal(
     project_ref: str, settings: WebSettings = Depends(get_settings)
@@ -121,7 +138,12 @@ def get_proposal(
         )
         for index, change in enumerate(proposal.proposed_changes)
     ]
-    return ProposalOut(model=proposal.model, change_count=len(changes), changes=changes)
+    return ProposalOut(
+        model=proposal.model,
+        change_count=len(changes),
+        changes=changes,
+        proposal_id=_proposal_id(proposal),
+    )
 
 
 @router.post("/{project_ref}/accept", response_model=AcceptCorrectionOut)
@@ -146,6 +168,19 @@ async def accept(
         paths = project_paths(project_dir)
         manifest = load_manifest(paths.root)
         speaker_mapping = load_speaker_mapping_for_correction(paths.root)
+        # Bind the accept to the reviewed proposal: if it was regenerated (another tab/CLI)
+        # since the user reviewed it, the selected indices belong to a different proposal, so
+        # applying them would write the wrong subset. Refuse (409) and let the user re-review.
+        if payload.proposal_id is not None:
+            current = load_correction_proposal(paths, None)
+            if _proposal_id(current) != payload.proposal_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "The correction proposal changed since you reviewed it. "
+                        "Reload the proposal and re-select before accepting."
+                    ),
+                )
         summary = accept_correction_for_review(
             paths=paths,
             manifest=manifest,

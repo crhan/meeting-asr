@@ -172,6 +172,69 @@ def test_correction_accept_records_into_store_dir_lexicon(
     assert captured["lexicon_db"] == get_lexicon_db_path(tmp_path / "store")
 
 
+def test_correction_accept_refuses_stale_proposal_id(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Accept must refuse (409) when the reviewed proposal_id no longer matches the on-disk
+    proposal -- a regenerate (another tab/CLI) would otherwise apply the reviewed indices to a
+    different proposal and write the wrong subset."""
+    from types import SimpleNamespace
+
+    import app.web.routers.corrections as corrections
+
+    change = SimpleNamespace(
+        sentence_id=1,
+        original_text="a",
+        corrected_text="b",
+        change_type="x",
+        reason="r",
+    )
+    proposal = SimpleNamespace(model="m", proposed_changes=[change])
+    expected_id = corrections._proposal_id(proposal)
+
+    accepted: dict = {}
+
+    class FakeSummary:
+        accepted = True
+        change_count = 1
+        learned_count = 1
+        corrected_named_transcript_path = None
+
+    monkeypatch.setattr(
+        corrections, "resolve_web_project_ref", lambda ref, _settings: tmp_path
+    )
+    monkeypatch.setattr(
+        corrections, "project_paths", lambda root: SimpleNamespace(root=root)
+    )
+    monkeypatch.setattr(corrections, "load_manifest", lambda root: object())
+    monkeypatch.setattr(
+        corrections, "load_speaker_mapping_for_correction", lambda root: {}
+    )
+    monkeypatch.setattr(corrections, "load_correction_proposal", lambda paths, p: proposal)
+
+    def fake_accept(**kwargs):
+        accepted["called"] = True
+        return FakeSummary()
+
+    monkeypatch.setattr(corrections, "accept_correction_for_review", fake_accept)
+
+    # Stale id (proposal regenerated since review) -> 409, and accept never runs.
+    stale = client.post(
+        "/api/corrections/p-x/accept",
+        json={"selected_indices": [0], "proposal_id": "0000staleid0000"},
+    )
+    assert stale.status_code == 409
+    assert "called" not in accepted
+
+    # Matching id -> accepted.
+    ok = client.post(
+        "/api/corrections/p-x/accept",
+        json={"selected_indices": [0], "proposal_id": expected_id},
+    )
+    assert ok.status_code == 200
+    assert accepted.get("called") is True
+
+
 def test_correction_accept_holds_lexicon_store_lock(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

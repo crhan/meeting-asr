@@ -163,12 +163,16 @@ class ProposalOut(BaseModel):
     model: str
     change_count: int
     changes: list[CorrectionChangeOut]
+    proposal_id: str  # content hash; accept must echo it so a regenerate is not mis-applied
 
 
 class AcceptCorrectionIn(BaseModel):
     """Accept a correction proposal, optionally only the selected change indices."""
 
     selected_indices: list[int] | None = None
+    # The proposal_id the user reviewed; the accept is refused if the on-disk proposal changed
+    # (regenerated in another tab/CLI) so reviewed indices are never applied to a different one.
+    proposal_id: str | None = None
 
 
 class AcceptCorrectionOut(BaseModel):

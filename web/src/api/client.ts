@@ -515,6 +515,7 @@ export interface Proposal {
   model: string;
   change_count: number;
   changes: CorrectionChange[];
+  proposal_id: string;
 }
 
 export const polishProject = (ref: string) =>
@@ -526,10 +527,18 @@ export const polishProject = (ref: string) =>
 export const getProposal = (ref: string) =>
   api<Proposal>(`/api/corrections/${encodeURIComponent(ref)}/proposal`);
 
-export const acceptCorrection = (ref: string, selectedIndices: number[] | null) =>
+export const acceptCorrection = (
+  ref: string,
+  selectedIndices: number[] | null,
+  proposalId: string,
+) =>
   api<{ accepted: boolean; change_count: number; learned_count: number }>(
     `/api/corrections/${encodeURIComponent(ref)}/accept`,
-    { method: "POST", body: JSON.stringify({ selected_indices: selectedIndices }) },
+    {
+      method: "POST",
+      // Echo the reviewed proposal's id so the server refuses if it changed (regenerated).
+      body: JSON.stringify({ selected_indices: selectedIndices, proposal_id: proposalId }),
+    },
   );
 
 // ---- Lexicon ---------------------------------------------------------------
