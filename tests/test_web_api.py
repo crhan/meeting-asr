@@ -1089,37 +1089,81 @@ def test_validate_capture_selection_detects_plan_drift() -> None:
     planned = SimpleNamespace(
         speakers=[
             SimpleNamespace(
+                name="Reviewer",
+                person_public_id="vp-abc",
                 clips=[
                     SimpleNamespace(
                         rel_path="speaker_0/clip_001.wav",
                         source_begin_time_ms=1000,
                         source_end_time_ms=2000,
                     )
-                ]
+                ],
             )
         ]
     )
 
-    # Matching selection -> returns the validated rel_path set.
-    ok = _validate_capture_selection(
-        planned,
-        [SelectedCaptureClipIn(rel_path="speaker_0/clip_001.wav", begin_time_ms=1000, end_time_ms=2000)],
-    )
-    assert ok == frozenset({"speaker_0/clip_001.wav"})
-
-    # Same rel_path now maps to a different time window (project edited) -> refuse.
-    with pytest.raises(CaptureConflictError):
-        _validate_capture_selection(
-            planned,
-            [SelectedCaptureClipIn(rel_path="speaker_0/clip_001.wav", begin_time_ms=5000, end_time_ms=6000)],
+    def sel(**over):
+        base = dict(
+            rel_path="speaker_0/clip_001.wav",
+            begin_time_ms=1000,
+            end_time_ms=2000,
+            name="Reviewer",
+            person_public_id="vp-abc",
         )
+        base.update(over)
+        return SelectedCaptureClipIn(**base)
+
+    # Matching selection -> returns the validated rel_path set.
+    assert _validate_capture_selection(planned, [sel()]) == frozenset({"speaker_0/clip_001.wav"})
+
+    # Same rel_path now maps to a different time window (audio drift) -> refuse.
+    with pytest.raises(CaptureConflictError):
+        _validate_capture_selection(planned, [sel(begin_time_ms=5000, end_time_ms=6000)])
+
+    # Same rel_path + times but the speaker was renamed / rebound (identity drift) -> refuse.
+    with pytest.raises(CaptureConflictError):
+        _validate_capture_selection(planned, [sel(name="Someone Else")])
+    with pytest.raises(CaptureConflictError):
+        _validate_capture_selection(planned, [sel(person_public_id="vp-other")])
 
     # Selected rel_path no longer exists in the recomputed plan -> refuse.
     with pytest.raises(CaptureConflictError):
-        _validate_capture_selection(
-            planned,
-            [SelectedCaptureClipIn(rel_path="speaker_9/clip_999.wav", begin_time_ms=1000, end_time_ms=2000)],
-        )
+        _validate_capture_selection(planned, [sel(rel_path="speaker_9/clip_999.wav")])
+
+
+def test_delete_sample_resolves_stable_public_id(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deleting a sample resolves its stable public_id to the current position, so a stale
+    library pane cannot delete the wrong row via an index that shifted under it."""
+    from types import SimpleNamespace
+
+    import app.web.routers.voiceprints as vp
+
+    rows = [
+        SimpleNamespace(public_id="s1"),
+        SimpleNamespace(public_id="s2"),
+        SimpleNamespace(public_id="s3"),
+    ]
+    monkeypatch.setattr(vp, "list_voiceprint_samples", lambda ref, db: rows)
+
+    captured: dict = {}
+
+    def fake_delete(ref, index, *, db_path):
+        captured["ref"] = ref
+        captured["index"] = index
+        return SimpleNamespace(public_id="s2")
+
+    monkeypatch.setattr(vp, "delete_voiceprint_sample", fake_delete)
+
+    resp = client.delete("/api/voiceprints/people/p1/samples/s2")
+    assert resp.status_code == 200
+    # "s2" is the 2nd row -> resolved to 1-based index 2, regardless of any client-side position.
+    assert captured["index"] == 2
+    assert resp.json()["deleted_sample_public_id"] == "s2"
+
+    # A public_id absent from the current list is a clean 404, never a wrong-row delete.
+    assert client.delete("/api/voiceprints/people/p1/samples/gone").status_code == 404
 
 
 def test_set_and_clear_alias_disambiguation(client: TestClient) -> None:

@@ -561,13 +561,17 @@ class SelectedCaptureClipIn(BaseModel):
     """One clip the user picked, carrying the stable identifiers it was shown under.
 
     Capture rel_paths are index-based (``speaker_N/clip_NNN.wav``); the plan is recomputed at
-    capture time, so the server validates these begin/end markers against the fresh plan to
-    detect a plan that drifted (project edited between planning and capture) before embedding.
+    capture time, so the server validates these markers against the fresh plan to detect a plan
+    that drifted (project edited between planning and capture) before embedding. begin/end guard
+    the audio; name + person_public_id guard the IDENTITY (a rename / vpp rebind can keep the
+    same rel_path+times yet store the clip under a different person than the user reviewed).
     """
 
     rel_path: str
     begin_time_ms: int
     end_time_ms: int
+    name: str
+    person_public_id: str | None = None
 
 
 class CaptureRunIn(BaseModel):

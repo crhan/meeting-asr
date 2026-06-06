@@ -258,18 +258,33 @@ async def set_sample_status(
     return _sample_out(index, row)
 
 
-@router.delete("/people/{ref}/samples/{index}")
+@router.delete("/people/{ref}/samples/{sample_public_id}")
 async def delete_sample(
     ref: str,
-    index: int,
+    sample_public_id: str,
     settings: WebSettings = Depends(get_settings),
     locks: LockRegistry = Depends(get_locks),
 ) -> dict[str, object]:
-    """Delete one sample by its 1-based position within the person's sample list."""
+    """Delete one sample by its stable public id.
+
+    A 1-based list position is unsafe across requests: if the library pane is stale (another
+    tab captured/deleted a sample for this person first), the same index now refers to a
+    different row and would delete the wrong sample. Resolve the public id to its current
+    position inside the store-write lock so the lookup and delete cannot interleave.
+    """
     db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
-    deleted = await _run(
-        locks, lambda: delete_voiceprint_sample(ref, index, db_path=db_path)
-    )
+
+    def _resolve_and_delete():
+        rows = list_voiceprint_samples(ref, db_path)
+        index = next(
+            (i + 1 for i, r in enumerate(rows) if r.public_id == sample_public_id),
+            None,
+        )
+        if index is None:
+            raise LookupError(f"Voiceprint sample not found: {sample_public_id}")
+        return delete_voiceprint_sample(ref, index, db_path=db_path)
+
+    deleted = await _run(locks, _resolve_and_delete)
     return {"deleted_sample_public_id": deleted.public_id}
 
 
@@ -427,13 +442,22 @@ def _validate_capture_selection(
     (begin,end) it was shown under; if any drifted from the recomputed clip, refuse the whole
     capture so the user re-reviews rather than silently capturing the wrong clip.
     """
+    # Key each clip by rel_path -> (audio window, identity). Identity (name + person) matters
+    # because a rename / vpp rebind keeps the same rel_path+times but would store the clip under
+    # a different person than the user reviewed.
     recomputed = {
-        clip.rel_path: (clip.source_begin_time_ms, clip.source_end_time_ms)
+        clip.rel_path: (
+            clip.source_begin_time_ms,
+            clip.source_end_time_ms,
+            speaker.name,
+            speaker.person_public_id,
+        )
         for speaker in planned.speakers
         for clip in speaker.clips
     }
     for sel in selected:
-        if recomputed.get(sel.rel_path) != (sel.begin_time_ms, sel.end_time_ms):
+        expected = (sel.begin_time_ms, sel.end_time_ms, sel.name, sel.person_public_id)
+        if recomputed.get(sel.rel_path) != expected:
             raise CaptureConflictError(
                 "The capture plan changed since you reviewed it (the project was edited). "
                 "Reload the capture page and re-select before capturing."

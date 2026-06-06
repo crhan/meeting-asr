@@ -120,17 +120,30 @@ export function CapturePage() {
     setRunError(null);
     setRunning(true);
     try {
-      // Send each pick's stable (begin,end) alongside its index-based rel_path so the server
-      // can detect a plan that drifted since this page loaded (project edited elsewhere) and
-      // refuse, instead of capturing the wrong clip into the selected person's voiceprint.
+      // Send each pick's stable (begin,end) AND identity (name + person) alongside its
+      // index-based rel_path so the server can detect a plan that drifted since this page loaded
+      // (project edited elsewhere) -- whether the audio window OR the speaker identity changed --
+      // and refuse, instead of capturing the wrong clip or storing it under the wrong person.
       const byRel = new Map(
-        (data?.speakers ?? []).flatMap((sp) => sp.clips.map((c) => [c.rel_path, c] as const)),
+        (data?.speakers ?? []).flatMap((sp) =>
+          sp.clips.map(
+            (c) =>
+              [
+                c.rel_path,
+                {
+                  rel_path: c.rel_path,
+                  begin_time_ms: c.begin_time_ms,
+                  end_time_ms: c.end_time_ms,
+                  name: sp.name,
+                  person_public_id: sp.person_public_id,
+                },
+              ] as const,
+          ),
+        ),
       );
       const selectedClips = [...selected].flatMap((rel) => {
         const c = byRel.get(rel);
-        return c
-          ? [{ rel_path: rel, begin_time_ms: c.begin_time_ms, end_time_ms: c.end_time_ms }]
-          : [];
+        return c ? [c] : [];
       });
       const { job_id } = await captureRun(ref, selectedClips);
       setJobId(job_id);

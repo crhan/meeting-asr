@@ -286,9 +286,11 @@ export const setSampleStatus = (samplePublicId: string, status: string) =>
     { method: "PATCH", body: JSON.stringify({ status }) },
   );
 
-export const deleteSample = (ref: string, index: number) =>
+// Delete by stable public id, not list position: a stale library pane could otherwise resolve
+// an index to the wrong row after another tab captured/deleted a sample for this person.
+export const deleteSample = (ref: string, samplePublicId: string) =>
   api<{ deleted_sample_public_id: string }>(
-    `/api/voiceprints/people/${encodeURIComponent(ref)}/samples/${index}`,
+    `/api/voiceprints/people/${encodeURIComponent(ref)}/samples/${encodeURIComponent(samplePublicId)}`,
     { method: "DELETE" },
   );
 
@@ -405,6 +407,8 @@ export interface SelectedCaptureClip {
   rel_path: string;
   begin_time_ms: number;
   end_time_ms: number;
+  name: string;
+  person_public_id: string | null;
 }
 
 export const captureRun = (ref: string, selectedClips: SelectedCaptureClip[]) =>

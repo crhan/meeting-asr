@@ -153,7 +153,7 @@ function PersonSamples(props: {
     },
   });
   const delSampleMut = useMutation({
-    mutationFn: (index: number) => deleteSample(ref_, index),
+    mutationFn: (samplePublicId: string) => deleteSample(ref_, samplePublicId),
     // Deleting the person's last sample also removes the now-empty person, so refetching
     // ["vp-person", ref_] would 404 and strand this pane on errored data. When it was the
     // last sample, clear the selection (unmount) like the whole-person delete; otherwise
@@ -225,7 +225,7 @@ function PersonSamples(props: {
                 title={tr("Delete sample", "删除样本")}
                 onClick={() => {
                   if (window.confirm(tr("Delete this sample?", "删除这条样本？")))
-                    delSampleMut.mutate(s.index);
+                    delSampleMut.mutate(s.public_id);
                 }}
               >
                 🗑
