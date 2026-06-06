@@ -971,11 +971,14 @@ def test_get_clip_extracts_via_atomic_temp_then_rename(
     resp = client.get("/api/projects/p-x/clip?begin_ms=0&end_ms=1000")
     assert resp.status_code == 200
     assert resp.content == b"CLIPDATA"
-    assert seen["output"].endswith(".wav.tmp")  # staged, not written in place
+    # Staged to a temp, not the live cache path, AND the temp must end in .wav so ffmpeg can
+    # infer the output format (a ".tmp" tail fails with "Unable to choose an output format").
+    assert seen["output"].endswith(".wav")
+    assert not seen["output"].endswith("0_1000.wav")
 
     clips_dir = project_dir / "tmp" / "web_clips"
     assert (clips_dir / "0_1000.wav").is_file()  # appeared only via the atomic rename
-    assert list(clips_dir.glob("*.tmp")) == []  # temp cleaned up
+    assert list(clips_dir.glob("*.tmp.wav")) == []  # temp cleaned up
 
 
 def test_capture_pending_endpoint_reports_and_clears(

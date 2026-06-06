@@ -56,7 +56,10 @@ def get_clip(
         # atomic os.replace makes cache_path appear only when fully written; concurrent
         # extractions each write their own temp and the last rename wins, no corruption.
         cache_dir.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(dir=cache_dir, suffix=".wav.tmp")
+        # The suffix MUST end in .wav: extract_audio_clip does not force -f wav, so ffmpeg
+        # infers the output container from the final extension. A ".tmp" tail makes it fail
+        # with "Unable to choose an output format", breaking every uncached clip.
+        fd, tmp_name = tempfile.mkstemp(dir=cache_dir, suffix=".tmp.wav")
         os.close(fd)
         tmp_path = Path(tmp_name)
         try:
