@@ -557,10 +557,23 @@ class CapturePlanOut(BaseModel):
     speakers: list[CaptureSpeakerOut]
 
 
+class SelectedCaptureClipIn(BaseModel):
+    """One clip the user picked, carrying the stable identifiers it was shown under.
+
+    Capture rel_paths are index-based (``speaker_N/clip_NNN.wav``); the plan is recomputed at
+    capture time, so the server validates these begin/end markers against the fresh plan to
+    detect a plan that drifted (project edited between planning and capture) before embedding.
+    """
+
+    rel_path: str
+    begin_time_ms: int
+    end_time_ms: int
+
+
 class CaptureRunIn(BaseModel):
     """Request to run capture for the selected clips."""
 
-    selected_clip_rel_paths: list[str]
+    selected_clips: list[SelectedCaptureClipIn]
     sample_count: int = 3
     max_seconds: float = 12.0
     padding_seconds: float = 0.5

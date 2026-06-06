@@ -63,6 +63,7 @@ from app.web.schemas import (
     QualitySampleOut,
     RenamePersonIn,
     SampleStatusIn,
+    SelectedCaptureClipIn,
     VoiceprintLibraryOut,
     VoiceprintPersonOut,
     VoiceprintSampleOut,
@@ -414,6 +415,32 @@ async def capture_plan(
     return _plan_out(project_ref, summary)
 
 
+def _validate_capture_selection(
+    planned, selected: list[SelectedCaptureClipIn]
+) -> frozenset[str]:
+    """Match the browser's selection against the freshly recomputed plan, or refuse.
+
+    Capture rel_paths are index-based (``speaker_N/clip_NNN.wav``) and the plan is recomputed
+    at capture time. If the project was edited between planning and capture (another tab, the
+    CLI), the same rel_path can now point at a different sentence -- embedding it would write
+    the WRONG audio into the selected person's voiceprint. Each selection carries the stable
+    (begin,end) it was shown under; if any drifted from the recomputed clip, refuse the whole
+    capture so the user re-reviews rather than silently capturing the wrong clip.
+    """
+    recomputed = {
+        clip.rel_path: (clip.source_begin_time_ms, clip.source_end_time_ms)
+        for speaker in planned.speakers
+        for clip in speaker.clips
+    }
+    for sel in selected:
+        if recomputed.get(sel.rel_path) != (sel.begin_time_ms, sel.end_time_ms):
+            raise CaptureConflictError(
+                "The capture plan changed since you reviewed it (the project was edited). "
+                "Reload the capture page and re-select before capturing."
+            )
+    return frozenset(sel.rel_path for sel in selected)
+
+
 @router.post("/capture/{project_ref}/run", response_model=JobRef)
 def capture_run(
     project_ref: str,
@@ -444,10 +471,13 @@ def capture_run(
             max_seconds=payload.max_seconds,
             padding_seconds=payload.padding_seconds,
         )
+        # Guard against a plan that drifted between the browser's plan view and now: refuse
+        # rather than embed the wrong audio under a stale index-based rel_path.
+        selected_rel_paths = _validate_capture_selection(planned, payload.selected_clips)
         txn_id, summary = REGISTRY.run(
             project_dir=project_dir,
             planned=planned,
-            selected_clip_rel_paths=frozenset(payload.selected_clip_rel_paths),
+            selected_clip_rel_paths=selected_rel_paths,
             store_dir=store_dir,
         )
         evaluation = summary.evaluation

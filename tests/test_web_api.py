@@ -1076,6 +1076,52 @@ def test_delete_person_with_zero_samples(client: TestClient) -> None:
     assert client.delete(f"/api/voiceprints/people/{ref}").status_code == 404
 
 
+def test_validate_capture_selection_detects_plan_drift() -> None:
+    """Capture must refuse a selection whose stable (begin,end) no longer matches the freshly
+    recomputed plan -- index-based rel_paths can otherwise embed the wrong audio if the project
+    was edited between planning and capture."""
+    from types import SimpleNamespace
+
+    from app.core.voiceprint_review_service import CaptureConflictError
+    from app.web.routers.voiceprints import _validate_capture_selection
+    from app.web.schemas import SelectedCaptureClipIn
+
+    planned = SimpleNamespace(
+        speakers=[
+            SimpleNamespace(
+                clips=[
+                    SimpleNamespace(
+                        rel_path="speaker_0/clip_001.wav",
+                        source_begin_time_ms=1000,
+                        source_end_time_ms=2000,
+                    )
+                ]
+            )
+        ]
+    )
+
+    # Matching selection -> returns the validated rel_path set.
+    ok = _validate_capture_selection(
+        planned,
+        [SelectedCaptureClipIn(rel_path="speaker_0/clip_001.wav", begin_time_ms=1000, end_time_ms=2000)],
+    )
+    assert ok == frozenset({"speaker_0/clip_001.wav"})
+
+    # Same rel_path now maps to a different time window (project edited) -> refuse.
+    with pytest.raises(CaptureConflictError):
+        _validate_capture_selection(
+            planned,
+            [SelectedCaptureClipIn(rel_path="speaker_0/clip_001.wav", begin_time_ms=5000, end_time_ms=6000)],
+        )
+
+    # Selected rel_path no longer exists in the recomputed plan -> refuse.
+    with pytest.raises(CaptureConflictError):
+        _validate_capture_selection(
+            planned,
+            [SelectedCaptureClipIn(rel_path="speaker_9/clip_999.wav", begin_time_ms=1000, end_time_ms=2000)],
+        )
+
+
 def test_set_and_clear_alias_disambiguation(client: TestClient) -> None:
     """The web lexicon must expose the disambiguate mutation, not just a read endpoint -- a
     web-only user has to be able to mark a context-ambiguous alias (so it is routed to LLM

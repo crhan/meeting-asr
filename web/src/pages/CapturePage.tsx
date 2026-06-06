@@ -120,7 +120,19 @@ export function CapturePage() {
     setRunError(null);
     setRunning(true);
     try {
-      const { job_id } = await captureRun(ref, [...selected]);
+      // Send each pick's stable (begin,end) alongside its index-based rel_path so the server
+      // can detect a plan that drifted since this page loaded (project edited elsewhere) and
+      // refuse, instead of capturing the wrong clip into the selected person's voiceprint.
+      const byRel = new Map(
+        (data?.speakers ?? []).flatMap((sp) => sp.clips.map((c) => [c.rel_path, c] as const)),
+      );
+      const selectedClips = [...selected].flatMap((rel) => {
+        const c = byRel.get(rel);
+        return c
+          ? [{ rel_path: rel, begin_time_ms: c.begin_time_ms, end_time_ms: c.end_time_ms }]
+          : [];
+      });
+      const { job_id } = await captureRun(ref, selectedClips);
       setJobId(job_id);
     } catch (e) {
       setRunError((e as Error).message);

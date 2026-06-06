@@ -401,10 +401,18 @@ export const capturePlan = (ref: string) =>
     method: "POST",
   });
 
-export const captureRun = (ref: string, selectedClipRelPaths: string[]) =>
+export interface SelectedCaptureClip {
+  rel_path: string;
+  begin_time_ms: number;
+  end_time_ms: number;
+}
+
+export const captureRun = (ref: string, selectedClips: SelectedCaptureClip[]) =>
   api<{ job_id: string }>(`/api/voiceprints/capture/${encodeURIComponent(ref)}/run`, {
     method: "POST",
-    body: JSON.stringify({ selected_clip_rel_paths: selectedClipRelPaths }),
+    // Send each pick's stable (begin,end) so the server can reject a drifted plan instead of
+    // capturing the wrong clip under a stale index-based rel_path.
+    body: JSON.stringify({ selected_clips: selectedClips }),
   });
 
 export const captureAccept = (txnId: string) =>
