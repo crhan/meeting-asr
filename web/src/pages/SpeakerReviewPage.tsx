@@ -125,6 +125,10 @@ export function SpeakerReviewPage() {
         ),
       );
       queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
+      // The capture plan is built from the saved speaker map + reassignments and is cached with
+      // staleTime: Infinity, so a rename/ignore/reassign here would otherwise leave the capture
+      // page showing a plan that no longer matches what /capture/run recomputes server-side.
+      queryClient.invalidateQueries({ queryKey: ["capture-plan", ref] });
     },
     onError: (e) => setToast(tr("Save failed: ", "保存失败：") + (e as Error).message),
   });

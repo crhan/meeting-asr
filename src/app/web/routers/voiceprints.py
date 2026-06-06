@@ -237,13 +237,24 @@ async def set_sample_status(
 ) -> VoiceprintSampleOut:
     """Update one sample's lifecycle status (active/quarantined/verified-active)."""
     db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
-    row = await _run(
-        locks,
-        lambda: update_voiceprint_sample_status(
+
+    def _update_and_index() -> tuple[int, VoiceprintSampleRow]:
+        updated = update_voiceprint_sample_status(
             sample_public_id, payload.status, db_path
-        ),
-    )
-    return _sample_out(0, row)
+        )
+        # The response schema documents `index` as the 1-based delete key. A status change does
+        # not reorder a person's sample list, so recompute the row's position in the very list
+        # the delete endpoint resolves against (ORDER BY project_id, source_begin_time_ms) --
+        # otherwise this returned 0, an index the delete endpoint can never accept.
+        siblings = list_voiceprint_samples(updated.speaker_public_id, db_path)
+        index = next(
+            (i + 1 for i, r in enumerate(siblings) if r.public_id == updated.public_id),
+            0,
+        )
+        return index, updated
+
+    index, row = await _run(locks, _update_and_index)
+    return _sample_out(index, row)
 
 
 @router.delete("/people/{ref}/samples/{index}")

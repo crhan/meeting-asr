@@ -1059,3 +1059,56 @@ def test_get_sample_clip_rebases_to_configured_store(
     resp = client.get("/api/voiceprints/people/p1/clips/s1")
     assert resp.status_code == 200
     assert resp.content == b"COPY"
+
+
+def _vp_sample_row(public_id: str, speaker: str, status: str = "active"):
+    """A minimal stand-in for VoiceprintSampleRow carrying every field _sample_out reads."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        sample_id=hash(public_id) & 0xFFFF,
+        public_id=public_id,
+        speaker_public_id=speaker,
+        speaker_name="Someone",
+        project_id="p-test",
+        source_begin_time_ms=0,
+        source_end_time_ms=1000,
+        transcript_text="hi",
+        sample_status=status,
+        clip_rel_path=f"clips/{public_id}.wav",
+    )
+
+
+def test_set_sample_status_returns_valid_delete_index(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PATCH /samples/{id}/status must return the sample's real 1-based position within its
+    person's list (the documented delete key), not a hardcoded 0 the delete endpoint rejects."""
+    import app.web.routers.voiceprints as vp
+
+    monkeypatch.setattr(vp, "get_voiceprint_db_path", lambda _s: tmp_path / "vp.sqlite")
+    monkeypatch.setattr(
+        vp,
+        "update_voiceprint_sample_status",
+        lambda pid, status, db: _vp_sample_row(pid, "p1", status),
+    )
+    # The target ("s2") sits second in its person's ordered sample list -> index must be 2.
+    monkeypatch.setattr(
+        vp,
+        "list_voiceprint_samples",
+        lambda ref, db: [
+            _vp_sample_row("s1", "p1"),
+            _vp_sample_row("s2", "p1"),
+            _vp_sample_row("s3", "p1"),
+        ],
+    )
+
+    resp = client.patch(
+        "/api/voiceprints/samples/s2/status", json={"status": "quarantined"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["public_id"] == "s2"
+    assert body["status"] == "quarantined"
+    # The bug returned 0 here; a 1-based delete key is never 0.
+    assert body["index"] == 2

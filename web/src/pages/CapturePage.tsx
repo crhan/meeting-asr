@@ -216,6 +216,10 @@ export function CapturePage() {
             // Accepting changed the speaker matches; drop the cached review so navigating back
             // remounts SpeakerReviewPage with fresh data instead of the pre-capture snapshot.
             await queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
+            // The just-captured speakers now have voiceprints, so the cached (staleTime: Infinity)
+            // capture plan is stale too -- drop it so a later return here re-plans against the
+            // new library state instead of re-offering already-captured clips.
+            await queryClient.invalidateQueries({ queryKey: ["capture-plan", ref] });
             navigate(`/projects/${ref}/speakers`);
           }}
           onRollback={async () => {
