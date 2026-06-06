@@ -1131,6 +1131,18 @@ def test_validate_capture_selection_detects_plan_drift() -> None:
         _validate_capture_selection(planned, [sel(rel_path="speaker_9/clip_999.wav")])
 
 
+def test_cors_allows_only_vite_dev_origin(client: TestClient) -> None:
+    """CORS must grant only the Vite dev origin, not any localhost port -- otherwise any local
+    page could read loopback secret-reveal responses (GET /api/config?reveal=true) cross-origin
+    and exfiltrate DashScope/OSS keys."""
+    allowed = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
+    assert allowed.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+    # A different localhost origin (another local dev server / XSS'd app) is NOT granted access.
+    other = client.get("/api/health", headers={"Origin": "http://localhost:3000"})
+    assert other.headers.get("access-control-allow-origin") is None
+
+
 def test_delete_sample_resolves_stable_public_id(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

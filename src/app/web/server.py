@@ -58,10 +58,15 @@ def create_app(settings: WebSettings) -> FastAPI:
     app.state.locks = LockRegistry()
     app.state.jobs = JobManager(app.state.locks)
 
-    # Vite dev server (localhost:5173) calls the API cross-origin during development.
+    # CORS is only for the Vite dev server (pinned to :5173), and only for the rare direct-call
+    # setup -- the normal `npm run dev` proxies /api server-side, so the browser is same-origin
+    # and needs no CORS. The production SPA is served same-origin from here. Allow ONLY the Vite
+    # dev origins: a broad "any localhost port" rule would let any other local page (another dev
+    # server, an XSS'd local app) read loopback-only secret-reveal responses (GET
+    # /api/config?reveal=true) cross-origin and exfiltrate DashScope/OSS keys.
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
