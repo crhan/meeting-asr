@@ -1061,6 +1061,21 @@ def test_get_sample_clip_rebases_to_configured_store(
     assert resp.content == b"COPY"
 
 
+def test_delete_person_with_zero_samples(client: TestClient) -> None:
+    """A person created via the API has zero samples; the Delete-person endpoint must still
+    remove it (it used to 404 because deletion resolved the speaker through its sample list)."""
+    created = client.post("/api/voiceprints/people", json={"name": "Empty Person"})
+    assert created.status_code == 200
+    ref = created.json()["public_id"]
+
+    resp = client.delete(f"/api/voiceprints/people/{ref}")
+    assert resp.status_code == 200
+    assert resp.json()["deleted_sample_count"] == 0
+
+    # Really gone, and a second delete of the now-absent ref is a clean 404 (not a 500).
+    assert client.delete(f"/api/voiceprints/people/{ref}").status_code == 404
+
+
 def _vp_sample_row(public_id: str, speaker: str, status: str = "active"):
     """A minimal stand-in for VoiceprintSampleRow carrying every field _sample_out reads."""
     from types import SimpleNamespace

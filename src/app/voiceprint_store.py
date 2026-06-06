@@ -546,14 +546,22 @@ def delete_voiceprint_speaker(
         Deleted sample summaries.
     """
     rows = list_voiceprint_samples(speaker, db_path)
-    if not rows:
-        raise LookupError(f"No voiceprint samples found for: {speaker}")
     database_path = _resolve_db_path(db_path)
     with sqlite3.connect(database_path) as connection:
         _configure_connection(connection)
         _ensure_schema(connection)
+        if rows:
+            speaker_id = rows[0].speaker_id
+        else:
+            # A person created via the API (or whose samples were all removed) still owns a
+            # speaker row with zero samples. Resolve it directly so it can be deleted instead
+            # of being un-deletable; a genuinely absent speaker still raises LookupError.
+            speaker_row = _find_speaker(connection, speaker)
+            if speaker_row is None:
+                raise LookupError(f"No voiceprint speaker found for: {speaker}")
+            speaker_id = speaker_row.speaker_id
         connection.execute(
-            "DELETE FROM voiceprint_speakers WHERE id = ?", (rows[0].speaker_id,)
+            "DELETE FROM voiceprint_speakers WHERE id = ?", (speaker_id,)
         )
     return [_deleted_sample(row, delete_clips, database_path.parent) for row in rows]
 
