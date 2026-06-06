@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import sys
 
 import pytest
+import typer
 
+from app.commands import web as web_command
 from app.commands.web import _port_available
 from app.core.progress import CliProgressEvent
 from app.web.locks import LockRegistry, project_lock_key, store_lock_key
@@ -16,6 +19,32 @@ from app.web.progress_bridge import QueueProgressReporter, event_to_payload
 def test_port_available_ipv4_free_port() -> None:
     # Port 0 is an ephemeral free port, so a probe must always succeed.
     assert _port_available("127.0.0.1", 0) is True
+
+
+def test_web_command_missing_uvicorn_shows_install_hint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A partial web install (fastapi present, uvicorn absent) must fail with the install hint
+    before printing the serving URL -- not pass the import guard and crash later with a raw
+    ModuleNotFoundError out of run_server's lazy `import uvicorn`."""
+    # None in sys.modules makes `import uvicorn` raise ImportError even though fastapi/app.web
+    # import fine, simulating the partial install. monkeypatch restores it afterwards.
+    monkeypatch.setitem(sys.modules, "uvicorn", None)
+
+    with pytest.raises(typer.Exit) as exc:
+        web_command.command(
+            host="127.0.0.1",
+            port=0,
+            projects_dir=None,
+            store_dir=None,
+            token=None,
+            open_browser=False,
+        )
+    assert exc.value.exit_code == 1
+    combined = "".join(capsys.readouterr())
+    assert "Web UI dependencies are not installed" in combined
+    # The URL must never be printed on the dependency-failure path.
+    assert "serving at" not in combined
 
 
 def test_port_available_handles_ipv6_host() -> None:

@@ -27,12 +27,16 @@ export function PendingCaptureBanner() {
       // Accept/rollback changed the global store + possibly a project's matches. Invalidate
       // the keys the pages actually use (by prefix) so library/quality/sample and speaker
       // review panes reflect it -- "voiceprints" was a stale guess that matched nothing.
+      // capture-plan is included because CapturePage caches its plan with staleTime: Infinity;
+      // resolving a capture from here (the cross-page recovery path) changes voiceprint/person
+      // bindings, so returning to capture must re-plan rather than show the pre-capture plan.
       for (const key of [
         ["pending-capture"],
         ["vp-library"],
         ["vp-person"],
         ["vp-quality"],
         ["speakers"],
+        ["capture-plan"],
       ]) {
         queryClient.invalidateQueries({ queryKey: key });
       }

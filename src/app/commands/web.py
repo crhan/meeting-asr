@@ -80,6 +80,12 @@ def command(
 ) -> None:
     """Start the web UI server and listen for connections."""
     try:
+        # uvicorn is part of the web extra but run_server imports it lazily, so probe it up
+        # front here too. Otherwise a partial install (fastapi present, uvicorn missing) would
+        # pass this block, print the serving URL, and only then crash with a raw
+        # ModuleNotFoundError instead of this actionable install hint.
+        import uvicorn  # noqa: F401
+
         from app.web.server import (
             authenticated_url,
             base_url,
