@@ -1078,6 +1078,7 @@ def transcribe_project(
     *,
     step_offset: int = 0,
     step_total: int | None = None,
+    lexicon_db: Path | None = None,
 ) -> ProjectTranscribeSummary:
     """
     Run DashScope transcription for a project.
@@ -1088,6 +1089,9 @@ def transcribe_project(
         progress: Optional progress reporter.
         step_offset: Number of workflow steps before transcription.
         step_total: Optional total workflow step count.
+        lexicon_db: Optional lexicon database for ASR hotword resolution/snapshot. Defaults to
+            the XDG lexicon; pass the configured store's lexicon so an isolated ``--store-dir``
+            run never reads/syncs hotwords from the wrong (default) lexicon.
 
     Returns:
         Transcription summary.
@@ -1180,7 +1184,7 @@ def transcribe_project(
         step_total=transcribe_steps,
         reset_total=True,
     )
-    hotwords = _resolve_project_asr_hotwords(settings, options)
+    hotwords = _resolve_project_asr_hotwords(settings, options, lexicon_db=lexicon_db)
     task_response = _submit_project_task(settings, file_url, options, hotwords)
     task_id = _extract_task_id(task_response)
     record_project_stage(
@@ -2331,11 +2335,14 @@ def _submit_project_task(
 
 
 def _resolve_project_asr_hotwords(
-    settings, options: ProjectTranscribeOptions
+    settings, options: ProjectTranscribeOptions, *, lexicon_db: Path | None = None
 ) -> AsrHotwordResolution:
     """Resolve ASR hotwords for one project transcription."""
     return resolve_asr_hotwords(
-        mode=options.asr_hotwords, settings=settings, target_model=options.model
+        mode=options.asr_hotwords,
+        settings=settings,
+        target_model=options.model,
+        db_path=lexicon_db,
     )
 
 

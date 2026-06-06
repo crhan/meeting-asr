@@ -1181,6 +1181,7 @@ def _run_project_workflow(
         progress=progress,
         step_offset=1,
         step_total=step_total,
+        lexicon_db=lexicon_db,
     )
     lexicon_correction_summary = None
     if local_correction:

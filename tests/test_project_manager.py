@@ -836,7 +836,7 @@ def test_asr_polling_heartbeat_redacts_signed_url_query_token(
     monkeypatch.setattr(
         project_manager,
         "_resolve_project_asr_hotwords",
-        lambda settings, options: AsrHotwordResolution(None, "disabled"),
+        lambda settings, options, **_kw: AsrHotwordResolution(None, "disabled"),
     )
     monkeypatch.setattr(project_manager, "record_dashscope_wait", lambda **_: None)
 
@@ -3897,3 +3897,44 @@ def test_resolve_project_dir_for_run_reuses_noncanonical_without_mutation(
     # different lock than inline saves hold).
     assert manifest_path.read_text(encoding="utf-8") == before
     assert manifest_path.stat().st_mtime_ns == mtime_before
+
+
+def test_resolve_project_asr_hotwords_threads_lexicon_db(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ASR hotword resolution must use the configured lexicon db. Otherwise an isolated web run
+    started with --store-dir would read/sync hotwords from the default XDG lexicon, not its
+    own store -- the same store-isolation hazard the project guards everywhere else."""
+    import app.project_manager as pm
+    from app.core.project_models import ProjectTranscribeOptions
+
+    captured: dict = {}
+
+    def fake_resolve(*, mode, settings, target_model, db_path=None):
+        captured["mode"] = mode
+        captured["db_path"] = db_path
+        return SimpleNamespace(vocabulary_id=None, source="off", hotwords=())
+
+    monkeypatch.setattr(pm, "resolve_asr_hotwords", fake_resolve)
+
+    options = ProjectTranscribeOptions(
+        speaker_count=None,
+        language=None,
+        model="paraformer",
+        oss_upload=False,
+        file_url=None,
+        generate_srt=True,
+        timestamp_alignment=True,
+        disfluency_removal=False,
+        audio_format="wav",
+        asr_hotwords="auto",
+    )
+
+    lex = tmp_path / "store" / "lexicon" / "lexicon.sqlite"
+    pm._resolve_project_asr_hotwords(SimpleNamespace(), options, lexicon_db=lex)
+    assert captured["db_path"] == lex
+    assert captured["mode"] == "auto"
+
+    # No override -> default XDG lexicon (db_path None), preserving CLI behavior.
+    pm._resolve_project_asr_hotwords(SimpleNamespace(), options)
+    assert captured["db_path"] is None
