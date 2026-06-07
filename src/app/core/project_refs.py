@@ -10,12 +10,17 @@ from app.config import get_default_projects_dir
 from app.core.project_models import ProjectListItem, ProjectListResult, ProjectManifest
 
 
-def list_projects(projects_dir: Path | None) -> ProjectListResult:
+def list_projects(
+    projects_dir: Path | None, *, restrict_to_projects_dir: bool = False
+) -> ProjectListResult:
     """
     List known projects under a parent directory.
 
     Args:
         projects_dir: Optional projects parent directory.
+        restrict_to_projects_dir: Skip directory entries that resolve outside the projects
+            parent (notably symlinks). CLI listings leave this off for compatibility; the
+            web turns it on so the project list cannot reveal out-of-tree projects.
 
     Returns:
         Project list result.
@@ -29,12 +34,15 @@ def list_projects(projects_dir: Path | None) -> ProjectListResult:
     for child in parent.iterdir():
         if not child.is_dir() or not (child / "project.json").is_file():
             continue
-        manifest = _load_manifest_or_none(child)
+        project_dir = child.resolve()
+        if restrict_to_projects_dir and not project_dir.is_relative_to(parent):
+            continue
+        manifest = _load_manifest_or_none(project_dir)
         if manifest is None:
             continue
         projects.append(
             ProjectListItem(
-                child.resolve(),
+                project_dir,
                 manifest.project_id,
                 manifest.title,
                 manifest.source.meeting_time,

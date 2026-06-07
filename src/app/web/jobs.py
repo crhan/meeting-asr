@@ -15,7 +15,9 @@ live to every subscriber queue.
 from __future__ import annotations
 
 import asyncio
+import threading
 import traceback
+import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import Any
@@ -30,6 +32,9 @@ from app.web.progress_bridge import QueueProgressReporter
 JobFn = Callable[[CliProgressReporter], Any]
 
 _SENTINEL: dict[str, object] = {"type": "end"}
+_MAX_JOBS = 100
+_MAX_EVENTS_PER_JOB = 500
+_SUBSCRIBER_QUEUE_SIZE = 100
 
 
 @dataclass(slots=True)
@@ -39,6 +44,7 @@ class Job:
     id: str
     kind: str
     project_id: str | None
+    created_at: float = field(default_factory=time.time)
     status: str = "queued"  # queued | running | done | error
     result: Any = None
     error: str | None = None
@@ -67,6 +73,7 @@ class JobManager:
 
     def __init__(self, locks: LockRegistry) -> None:
         self._jobs: dict[str, Job] = {}
+        self._jobs_lock = threading.Lock()
         self._locks = locks
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -81,11 +88,13 @@ class JobManager:
 
     def get(self, job_id: str) -> Job | None:
         """Return a job by id, or None."""
-        return self._jobs.get(job_id)
+        with self._jobs_lock:
+            return self._jobs.get(job_id)
 
     def list_jobs(self) -> list[Job]:
         """Return all known jobs (newest-tracked order is not guaranteed)."""
-        return list(self._jobs.values())
+        with self._jobs_lock:
+            return list(self._jobs.values())
 
     def submit(
         self,
@@ -103,11 +112,18 @@ class JobManager:
         same store locks the inline lexicon/voiceprint routes take, not just the per-project
         lock. Acquired together with the project lock in deadlock-free sorted order.
         """
-        job = Job(id=uuid.uuid4().hex, kind=kind, project_id=project_id)
-        self._jobs[job.id] = job
         loop = self._loop
         if loop is None:
             raise RuntimeError("JobManager loop not bound; call bind_loop at startup.")
+        job = Job(id=uuid.uuid4().hex, kind=kind, project_id=project_id)
+        with self._jobs_lock:
+            self._jobs[job.id] = job
+            self._prune_jobs_locked()
+            if len(self._jobs) > _MAX_JOBS:
+                self._jobs.pop(job.id, None)
+                raise RuntimeError(
+                    "Too many active jobs; wait for current jobs to finish."
+                )
         keys = tuple(store_locks)
         loop.call_soon_threadsafe(
             lambda: asyncio.ensure_future(self._run(job, fn, keys))
@@ -152,8 +168,34 @@ class JobManager:
     def _publish(self, job: Job, payload: dict[str, object]) -> None:
         """Append to history and fan out to subscribers. Runs on the loop thread."""
         job.events.append(payload)
-        for queue in job.subscribers:
-            queue.put_nowait(payload)
+        if len(job.events) > _MAX_EVENTS_PER_JOB:
+            del job.events[: len(job.events) - _MAX_EVENTS_PER_JOB]
+        for queue in tuple(job.subscribers):
+            try:
+                queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                if payload is _SENTINEL:
+                    try:
+                        queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
+                    try:
+                        queue.put_nowait(payload)
+                    except asyncio.QueueFull:
+                        pass
+
+    def _prune_jobs_locked(self) -> None:
+        """Keep memory bounded by pruning oldest terminal jobs first."""
+        while len(self._jobs) > _MAX_JOBS:
+            terminal = [
+                (job.created_at, job_id)
+                for job_id, job in self._jobs.items()
+                if job.status in {"done", "error"}
+            ]
+            if not terminal:
+                return
+            _, oldest_id = min(terminal)
+            self._jobs.pop(oldest_id, None)
 
     async def stream(self, job: Job) -> AsyncGenerator[dict[str, object]]:
         """Yield this job's events: buffered history first, then live updates.
@@ -162,7 +204,9 @@ class JobManager:
         them, so on the single loop thread it is atomic -- no event is dropped or
         duplicated across the hand-off.
         """
-        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(
+            maxsize=_SUBSCRIBER_QUEUE_SIZE
+        )
         history = list(job.events)
         job.subscribers.add(queue)
         try:

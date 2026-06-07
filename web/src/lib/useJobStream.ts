@@ -31,6 +31,26 @@ export function useJobStream(jobId: string | null): JobStreamState {
     }
     setState(INITIAL);
     const src = new EventSource(withToken(`/api/jobs/${jobId}/events`));
+    const syncSnapshot = () => {
+      getJob(jobId)
+        .then((job) => {
+          const terminal = job.status === "done" || job.status === "error";
+          setState((prev) => ({
+            ...prev,
+            status: job.status,
+            result: terminal ? job.result : prev.result,
+            error: job.error ?? prev.error,
+            done: terminal ? true : prev.done,
+          }));
+          if (terminal) src.close();
+        })
+        .catch((e) =>
+          setState((prev) => ({
+            ...prev,
+            error: (e as Error).message,
+          })),
+        );
+    };
 
     src.onmessage = (msg) => {
       let ev: ProgressEvent;
@@ -75,7 +95,9 @@ export function useJobStream(jobId: string | null): JobStreamState {
     };
 
     src.onerror = () => {
-      // EventSource auto-reconnects; nothing to do.
+      // EventSource auto-reconnects, but if the terminal frame was missed the page would
+      // otherwise hang in running state. A one-shot snapshot closes that gap.
+      syncSnapshot();
     };
 
     return () => src.close();

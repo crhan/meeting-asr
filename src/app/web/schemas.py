@@ -8,7 +8,7 @@ the OpenAPI/validation it expects.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.project_models import ProjectListItem
 from app.core.project_workflow import ProjectWorkflowSummary
@@ -585,10 +585,10 @@ class SelectedCaptureClipIn(BaseModel):
 class CaptureRunIn(BaseModel):
     """Request to run capture for the selected clips."""
 
-    selected_clips: list[SelectedCaptureClipIn]
-    sample_count: int = 3
-    max_seconds: float = 12.0
-    padding_seconds: float = 0.5
+    selected_clips: list[SelectedCaptureClipIn] = Field(min_length=1, max_length=100)
+    sample_count: int = Field(default=3, ge=1, le=10)
+    max_seconds: float = Field(default=12.0, gt=0, le=60.0)
+    padding_seconds: float = Field(default=0.5, ge=0, le=5.0)
 
 
 class ScoreChangeOut(BaseModel):

@@ -853,6 +853,30 @@ def test_resolve_project_ref_restrict_blocks_escape(tmp_path: Path) -> None:
         resolve_project_ref(outside, projects_dir, restrict_to_projects_dir=True)
 
 
+def test_projects_list_skips_out_of_tree_symlinks(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """The web project list must not reveal projects symlinked from outside projects_dir."""
+    from app.project_manager import create_project
+
+    source = tmp_path / "source.wav"
+    source.write_bytes(b"fake")
+    outside = tmp_path / "outside-project"
+    create_project(
+        source,
+        title="Outside",
+        projects_dir=tmp_path / "unused",
+        project_dir=outside,
+        meeting_time=None,
+        hash_source=False,
+    )
+    (tmp_path / "projects" / "linked-outside").symlink_to(outside)
+
+    resp = client.get("/api/projects")
+    assert resp.status_code == 200
+    assert resp.json()["projects"] == []
+
+
 def test_merge_preview_rejects_out_of_tree_ref(
     client: TestClient, tmp_path: Path
 ) -> None:
@@ -902,7 +926,7 @@ def test_merge_apply_refuses_nonempty_dir_without_force(
 
     proj = tmp_path / "projects" / "p-a"
     proj.mkdir(parents=True)
-    out_dir = tmp_path / "out"
+    out_dir = tmp_path / "projects" / "out"
     out_dir.mkdir()
     (out_dir / "existing.txt").write_text("x", encoding="utf-8")  # non-empty
 
@@ -916,6 +940,26 @@ def test_merge_apply_refuses_nonempty_dir_without_force(
     )
     assert resp.status_code == 409
     assert resp.json()["error"] == "conflict"
+
+
+def test_merge_apply_rejects_out_of_tree_output_dir(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Web merge output must stay under the configured projects dir."""
+    import app.web.routers.pipeline as pipeline
+
+    proj = tmp_path / "projects" / "p-a"
+    proj.mkdir(parents=True)
+    outside = tmp_path / "outside-merge"
+
+    monkeypatch.setattr(pipeline, "resolve_web_project_ref", lambda ref, _s: proj)
+
+    resp = client.post(
+        "/api/pipeline/merge",
+        json={"project_refs": [str(proj)], "out_dir": str(outside)},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "bad_request"
 
 
 def test_voiceprint_store_dir_rebases_onto_subdir(tmp_path: Path) -> None:
@@ -1323,6 +1367,20 @@ def test_validate_capture_selection_detects_plan_drift() -> None:
     # Selected rel_path no longer exists in the recomputed plan -> refuse.
     with pytest.raises(CaptureConflictError):
         _validate_capture_selection(planned, [sel(rel_path="speaker_9/clip_999.wav")])
+
+
+def test_capture_run_rejects_unbounded_parameters(client: TestClient) -> None:
+    """Capture run must bound expensive extraction parameters at the HTTP boundary."""
+    resp = client.post(
+        "/api/voiceprints/capture/p-x/run",
+        json={
+            "selected_clips": [],
+            "sample_count": 999,
+            "max_seconds": 999,
+            "padding_seconds": 99,
+        },
+    )
+    assert resp.status_code == 422
 
 
 def test_tokenless_loopback_rejects_foreign_host(client: TestClient) -> None:

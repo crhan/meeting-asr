@@ -7,7 +7,13 @@
 export type Lang = "en" | "zh";
 
 function detectLang(): Lang {
-  const stored = localStorage.getItem("masr_lang");
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem("masr_lang");
+  } catch {
+    // Storage can be disabled (private browsing / locked-down browser). Fall back to browser
+    // language rather than crashing the whole SPA during module initialization.
+  }
   if (stored === "en" || stored === "zh") return stored;
   return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
 }
@@ -20,7 +26,11 @@ export function getLang(): Lang {
 
 export function setLang(lang: Lang): void {
   current = lang;
-  localStorage.setItem("masr_lang", lang);
+  try {
+    localStorage.setItem("masr_lang", lang);
+  } catch {
+    // Keep the in-memory language for this session even when persistence is unavailable.
+  }
 }
 
 export function tr(en: string, zh: string): string {

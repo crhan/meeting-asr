@@ -59,6 +59,22 @@ def _require_file(path_str: str) -> Path:
     return path.resolve()
 
 
+def _resolve_merge_out_dir(path_str: str, settings: WebSettings) -> Path:
+    """Resolve a merge output directory without letting web write arbitrary paths."""
+    if settings.projects_dir is None:
+        raise ValueError("merge output requires a configured projects_dir")
+    root = settings.projects_dir.expanduser().resolve()
+    raw = Path(path_str).expanduser()
+    out_dir = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
+    try:
+        out_dir.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"merge output directory must stay under projects_dir: {root}"
+        ) from exc
+    return out_dir
+
+
 @router.post("/run", response_model=JobRef)
 async def run_pipeline(
     payload: RunPipelineIn,
@@ -258,7 +274,7 @@ async def merge_apply(
 ) -> dict[str, object]:
     """Merge several projects and write the output bundle to ``out_dir``."""
     dirs = [resolve_web_project_ref(r, settings) for r in payload.project_refs]
-    out_dir = Path(payload.out_dir).expanduser().resolve()
+    out_dir = _resolve_merge_out_dir(payload.out_dir, settings)
     loop = asyncio.get_running_loop()
 
     def work() -> dict[str, object]:

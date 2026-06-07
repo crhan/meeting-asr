@@ -26,7 +26,7 @@ router = APIRouter(
 @router.get("", response_model=ProjectListResponse)
 def get_projects(settings: WebSettings = Depends(get_settings)) -> ProjectListResponse:
     """List projects under the configured projects directory, with workflow state."""
-    result = list_projects(settings.projects_dir)
+    result = list_projects(settings.projects_dir, restrict_to_projects_dir=True)
     summaries = [
         ProjectSummary.from_item(
             item, load_project_workflow_summary(item.project_dir, item.project_id)

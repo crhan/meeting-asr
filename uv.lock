@@ -704,6 +704,7 @@ source = { editable = "." }
 dependencies = [
     { name = "dashscope" },
     { name = "oss2" },
+    { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "requests" },
     { name = "rich" },
@@ -734,6 +735,7 @@ requires-dist = [
     { name = "dashscope", specifier = ">=1.20.14" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
     { name = "oss2", specifier = ">=2.19.1" },
+    { name = "pydantic", specifier = ">=2.10" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.12" },
     { name = "requests", specifier = ">=2.32.3" },
