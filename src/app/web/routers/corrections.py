@@ -171,16 +171,15 @@ async def accept(
         # Bind the accept to the reviewed proposal: if it was regenerated (another tab/CLI)
         # since the user reviewed it, the selected indices belong to a different proposal, so
         # applying them would write the wrong subset. Refuse (409) and let the user re-review.
-        if payload.proposal_id is not None:
-            current = load_correction_proposal(paths, None)
-            if _proposal_id(current) != payload.proposal_id:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "The correction proposal changed since you reviewed it. "
-                        "Reload the proposal and re-select before accepting."
-                    ),
-                )
+        current = load_correction_proposal(paths, None)
+        if _proposal_id(current) != payload.proposal_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The correction proposal changed since you reviewed it. "
+                    "Reload the proposal and re-select before accepting."
+                ),
+            )
         summary = accept_correction_for_review(
             paths=paths,
             manifest=manifest,

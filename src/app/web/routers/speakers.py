@@ -10,8 +10,10 @@ reassignment touches the global voiceprint store, per-store) locks.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.speaker_review_service import save_speaker_review
 from app.core.voiceprint_review_service import REGISTRY, CaptureConflictError
@@ -26,6 +28,9 @@ from app.presentation.tui.speaker_session import load_speaker_review_session
 from app.presentation.tui.speaker_status import speaker_status
 from app.speaker_labeling import SentenceReassignmentSpec
 from app.speaker_match_status import MATCH_STATUS_CROSSTALK
+from app.voiceprint_ids import valid_person_public_id
+from app.voiceprint_people import get_voiceprint_person
+from app.voiceprint_store import get_voiceprint_db_path
 from app.web.deps import (
     get_locks,
     get_settings,
@@ -49,6 +54,70 @@ from app.web.settings import WebSettings
 router = APIRouter(
     prefix="/api/speakers", tags=["speakers"], dependencies=[Depends(require_auth)]
 )
+
+_REVIEW_REVISION_FILES = (
+    "project.json",
+    "asr/sentences.json",
+    "asr/sentences_corrected.json",
+    "speakers/speaker_map.json",
+    "speakers/speaker_person_map.json",
+    "speakers/speaker_ignore.json",
+    "speakers/speaker_matches.json",
+)
+
+
+def _review_revision(project_dir: Path) -> str:
+    """Hash the persisted project state that a speaker-review save depends on."""
+    digest = hashlib.sha256()
+    root = project_dir.resolve()
+    for rel_path in _REVIEW_REVISION_FILES:
+        path = root / rel_path
+        digest.update(rel_path.encode("utf-8"))
+        digest.update(b"\0")
+        if not path.exists():
+            digest.update(b"missing")
+            digest.update(b"\0")
+            continue
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()[:16]
+
+
+def _require_current_revision(project_dir: Path, reviewed_revision: str) -> None:
+    """Reject saves based on a stale review session."""
+    current = _review_revision(project_dir)
+    if current != reviewed_revision:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The speaker review changed since you loaded it. Reload before saving."
+            ),
+        )
+
+
+def _validate_person_public_mapping(
+    person_public_mapping: dict[int, str],
+    *,
+    store_dir: Path | None,
+) -> dict[int, str]:
+    """Return stripped public ids after checking shape and current store existence."""
+    if not person_public_mapping:
+        return {}
+    db_path = get_voiceprint_db_path(store_dir)
+    validated: dict[int, str] = {}
+    for speaker_id, raw_public_id in sorted(person_public_mapping.items()):
+        public_id = raw_public_id.strip()
+        if not valid_person_public_id(public_id):
+            raise ValueError(
+                f"Invalid voiceprint person id for speaker {speaker_id}: "
+                f"{raw_public_id!r}. Expected vpp-<16 hex>."
+            )
+        if get_voiceprint_person(public_id, db_path) is None:
+            raise ValueError(
+                f"Voiceprint person does not exist for speaker {speaker_id}: {public_id}"
+            )
+        validated[speaker_id] = public_id
+    return validated
 
 
 def _serialize_match(match: SpeakerMatchCandidate | None) -> SpeakerMatchOut | None:
@@ -111,7 +180,9 @@ def _serialize_speaker(
     )
 
 
-def _serialize_session(session: SpeakerReviewSession) -> SpeakerReviewOut:
+def _serialize_session(
+    session: SpeakerReviewSession, *, review_revision: str
+) -> SpeakerReviewOut:
     overview = session.overview
     speakers = [
         _serialize_speaker(
@@ -122,6 +193,7 @@ def _serialize_session(session: SpeakerReviewSession) -> SpeakerReviewOut:
     return SpeakerReviewOut(
         project_id=overview.project_id,
         project_dir=str(session.project_dir),
+        review_revision=review_revision,
         overview=ReviewOverviewOut(
             project_id=overview.project_id,
             title=overview.title,
@@ -140,15 +212,24 @@ def _serialize_session(session: SpeakerReviewSession) -> SpeakerReviewOut:
 
 
 @router.get("/{project_ref}", response_model=SpeakerReviewOut)
-def get_review(
-    project_ref: str, settings: WebSettings = Depends(get_settings)
+async def get_review(
+    project_ref: str,
+    settings: WebSettings = Depends(get_settings),
+    locks: LockRegistry = Depends(get_locks),
 ) -> SpeakerReviewOut:
     """Load the full speaker-review session for one project."""
     project_dir = resolve_web_project_ref(project_ref, settings)
-    session = load_speaker_review_session(
-        project_dir, store_dir=settings.voiceprint_store_dir
-    )
-    return _serialize_session(session)
+    loop = asyncio.get_running_loop()
+    async with locks.acquire(project_lock_key(str(project_dir))):
+        session = await loop.run_in_executor(
+            None,
+            lambda: load_speaker_review_session(
+                project_dir, store_dir=settings.voiceprint_store_dir
+            ),
+        )
+        return _serialize_session(
+            session, review_revision=_review_revision(project_dir)
+        )
 
 
 @router.post("/{project_ref}/save", response_model=SaveSpeakerReviewOut)
@@ -179,7 +260,7 @@ async def save_review(
     # Reassignments touch the global voiceprint store (sample invalidation + rematch);
     # naming-only saves stay project-local, so only take the store lock when needed.
     keys = [project_lock_key(str(project_dir))]
-    if specs:
+    if specs or person_public_mapping:
         keys.append(store_lock_key("voiceprints"))
 
     def do_save():
@@ -201,6 +282,10 @@ async def save_review(
 
     loop = asyncio.get_running_loop()
     async with locks.acquire(*keys):
+        _require_current_revision(project_dir, payload.review_revision)
+        person_public_mapping = _validate_person_public_mapping(
+            person_public_mapping, store_dir=settings.voiceprint_store_dir
+        )
         # A pending capture's rollback would restore the pre-capture project.json /
         # speaker_matches.json, silently clobbering this save. Refuse under the project lock
         # (the capture run registers its txn under the same lock, so the check can't race

@@ -146,6 +146,7 @@ export interface ReviewOverview {
 export interface SpeakerReview {
   project_id: string;
   project_dir: string;
+  review_revision: string;
   overview: ReviewOverview;
   speakers: ReviewSpeaker[];
   people: Person[];
@@ -161,6 +162,7 @@ export interface Reassignment {
 }
 
 export interface SaveSpeakerReviewBody {
+  review_revision: string;
   mapping: Record<string, string>;
   person_mapping: Record<string, number>;
   person_public_mapping: Record<string, string>;

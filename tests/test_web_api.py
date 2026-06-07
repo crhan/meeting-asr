@@ -143,6 +143,14 @@ def test_correction_accept_records_into_store_dir_lexicon(
     from app.lexicon_store import get_lexicon_db_path
 
     captured: dict = {}
+    change = SimpleNamespace(
+        sentence_id=1,
+        original_text="a",
+        corrected_text="b",
+        change_type="x",
+        reason="r",
+    )
+    proposal = SimpleNamespace(model="m", proposed_changes=[change])
 
     class FakeSummary:
         accepted = True
@@ -164,12 +172,27 @@ def test_correction_accept_records_into_store_dir_lexicon(
     monkeypatch.setattr(
         corrections, "load_speaker_mapping_for_correction", lambda root: {}
     )
+    monkeypatch.setattr(
+        corrections, "load_correction_proposal", lambda paths, p: proposal
+    )
     monkeypatch.setattr(corrections, "accept_correction_for_review", fake_accept)
 
-    resp = client.post("/api/corrections/p-x/accept", json={"selected_indices": [0]})
+    resp = client.post(
+        "/api/corrections/p-x/accept",
+        json={
+            "selected_indices": [0],
+            "proposal_id": corrections._proposal_id(proposal),
+        },
+    )
     assert resp.status_code == 200
     # The lexicon db handed to the accept path must be the store-dir one, not None/XDG.
     assert captured["lexicon_db"] == get_lexicon_db_path(tmp_path / "store")
+
+
+def test_correction_accept_requires_proposal_id(client: TestClient) -> None:
+    """Accept must be bound to the proposal the user reviewed."""
+    resp = client.post("/api/corrections/p-x/accept", json={"selected_indices": [0]})
+    assert resp.status_code == 422
 
 
 def test_correction_accept_refuses_stale_proposal_id(
@@ -210,7 +233,9 @@ def test_correction_accept_refuses_stale_proposal_id(
     monkeypatch.setattr(
         corrections, "load_speaker_mapping_for_correction", lambda root: {}
     )
-    monkeypatch.setattr(corrections, "load_correction_proposal", lambda paths, p: proposal)
+    monkeypatch.setattr(
+        corrections, "load_correction_proposal", lambda paths, p: proposal
+    )
 
     def fake_accept(**kwargs):
         accepted["called"] = True
@@ -250,6 +275,15 @@ def test_correction_accept_holds_lexicon_store_lock(
         learned_count = 1
         corrected_named_transcript_path = None
 
+    change = SimpleNamespace(
+        sentence_id=1,
+        original_text="a",
+        corrected_text="b",
+        change_type="x",
+        reason="r",
+    )
+    proposal = SimpleNamespace(model="m", proposed_changes=[change])
+
     monkeypatch.setattr(
         corrections, "resolve_web_project_ref", lambda ref, _settings: tmp_path
     )
@@ -259,6 +293,9 @@ def test_correction_accept_holds_lexicon_store_lock(
     monkeypatch.setattr(corrections, "load_manifest", lambda root: object())
     monkeypatch.setattr(
         corrections, "load_speaker_mapping_for_correction", lambda root: {}
+    )
+    monkeypatch.setattr(
+        corrections, "load_correction_proposal", lambda paths, p: proposal
     )
     monkeypatch.setattr(
         corrections, "accept_correction_for_review", lambda **k: FakeSummary()
@@ -274,7 +311,13 @@ def test_correction_accept_holds_lexicon_store_lock(
         lambda *keys: (seen.extend(keys), original_acquire(*keys))[1],
     )
 
-    resp = client.post("/api/corrections/p-x/accept", json={"selected_indices": [0]})
+    resp = client.post(
+        "/api/corrections/p-x/accept",
+        json={
+            "selected_indices": [0],
+            "proposal_id": corrections._proposal_id(proposal),
+        },
+    )
     assert resp.status_code == 200
     assert "store:lexicon" in seen
     assert any(k.startswith("project:") for k in seen)
@@ -546,6 +589,7 @@ def test_speaker_save_marshals_decision(
     """The save endpoint must translate the JSON body into the exact service primitives."""
     import app.web.routers.speakers as speakers
 
+    person = client.post("/api/voiceprints/people", json={"name": "Alice"}).json()
     captured: dict = {}
 
     class FakeResult:
@@ -567,9 +611,10 @@ def test_speaker_save_marshals_decision(
     resp = client.post(
         "/api/speakers/p-x/save",
         json={
+            "review_revision": speakers._review_revision(tmp_path),
             "mapping": {"0": "Alice", "1": "Bob"},
             "person_mapping": {"0": 7},
-            "person_public_mapping": {"0": "vpp-abc"},
+            "person_public_mapping": {"0": person["public_id"]},
             "ignored_speaker_ids": [2],
             "reassignments": [
                 {
@@ -587,7 +632,7 @@ def test_speaker_save_marshals_decision(
     # Speaker-id keys are parsed to ints; reassignment becomes a spec.
     assert captured["mapping"] == {0: "Alice", 1: "Bob"}
     assert captured["person_mapping"] == {0: 7}
-    assert captured["person_public_mapping"] == {0: "vpp-abc"}
+    assert captured["person_public_mapping"] == {0: person["public_id"]}
     assert list(captured["ignored_speaker_ids"]) == [2]
     spec = captured["reassignments"][0]
     assert spec.sentence_id == 5
@@ -596,8 +641,73 @@ def test_speaker_save_marshals_decision(
     assert resp.json()["reassigned_count"] == 1
 
 
+def test_speaker_save_refuses_stale_review_revision(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A save based on an old review snapshot must not overwrite newer project files."""
+    import app.web.routers.speakers as speakers
+
+    monkeypatch.setattr(
+        speakers, "resolve_web_project_ref", lambda ref, _settings: tmp_path
+    )
+
+    def _should_not_run(*_a, **_k):
+        raise AssertionError("save ran despite stale review_revision")
+
+    monkeypatch.setattr(speakers, "save_speaker_review", _should_not_run)
+
+    resp = client.post(
+        "/api/speakers/p-x/save",
+        json={
+            "review_revision": "not-current",
+            "mapping": {"0": "Alice"},
+            "person_mapping": {},
+            "person_public_mapping": {},
+            "ignored_speaker_ids": [],
+            "reassignments": [],
+        },
+    )
+
+    assert resp.status_code == 409
+    assert "speaker review changed" in resp.json()["detail"]
+
+
+def test_speaker_save_validates_public_person_ids(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Public voiceprint bindings must be real current-store person ids."""
+    import app.web.routers.speakers as speakers
+
+    monkeypatch.setattr(
+        speakers, "resolve_web_project_ref", lambda ref, _settings: tmp_path
+    )
+
+    def _should_not_run(*_a, **_k):
+        raise AssertionError("save ran despite invalid person_public_mapping")
+
+    monkeypatch.setattr(speakers, "save_speaker_review", _should_not_run)
+
+    body = {
+        "review_revision": speakers._review_revision(tmp_path),
+        "mapping": {"0": "Alice"},
+        "person_mapping": {},
+        "person_public_mapping": {"0": "vpp-abc"},
+        "ignored_speaker_ids": [],
+        "reassignments": [],
+    }
+    bad_shape = client.post("/api/speakers/p-x/save", json=body)
+    assert bad_shape.status_code == 400
+    assert bad_shape.json()["error"] == "bad_request"
+
+    body["person_public_mapping"] = {"0": "vpp-0000000000000001"}
+    missing = client.post("/api/speakers/p-x/save", json=body)
+    assert missing.status_code == 400
+    assert "does not exist" in missing.json()["detail"]
+
+
 def _save_body(*, with_reassignment: bool) -> dict:
     body: dict = {
+        "review_revision": "test-revision",
         "mapping": {"0": "Alice"},
         "person_mapping": {},
         "person_public_mapping": {},
@@ -627,6 +737,7 @@ def test_speaker_reassignment_blocked_when_capture_pending(
     monkeypatch.setattr(
         speakers, "resolve_web_project_ref", lambda ref, _settings: tmp_path
     )
+    monkeypatch.setattr(speakers, "_require_current_revision", lambda *_a, **_k: None)
 
     def boom(_fn):
         raise CaptureConflictError("pending capture")
@@ -655,6 +766,7 @@ def test_speaker_naming_only_save_bypasses_store_section(
     monkeypatch.setattr(
         speakers, "resolve_web_project_ref", lambda ref, _settings: tmp_path
     )
+    monkeypatch.setattr(speakers, "_require_current_revision", lambda *_a, **_k: None)
     monkeypatch.setattr(speakers, "save_speaker_review", lambda *_a, **_k: FakeResult())
 
     def fail(_fn):  # must not be reached on the naming-only path
@@ -764,7 +876,9 @@ def test_get_proposal_returns_404_when_none_exists(
 
     import app.web.routers.corrections as corrections
 
-    monkeypatch.setattr(corrections, "resolve_web_project_ref", lambda ref, _s: tmp_path)
+    monkeypatch.setattr(
+        corrections, "resolve_web_project_ref", lambda ref, _s: tmp_path
+    )
     monkeypatch.setattr(
         corrections, "project_paths", lambda root: SimpleNamespace(root=root)
     )
@@ -905,6 +1019,7 @@ def test_naming_save_refused_when_capture_pending(
     import app.web.routers.speakers as speakers
 
     monkeypatch.setattr(speakers, "resolve_web_project_ref", lambda ref, _s: tmp_path)
+    monkeypatch.setattr(speakers, "_require_current_revision", lambda *_a, **_k: None)
     monkeypatch.setattr(speakers.REGISTRY, "has_pending", lambda: True)
 
     def _should_not_run(*_a, **_k):
@@ -915,6 +1030,7 @@ def test_naming_save_refused_when_capture_pending(
     resp = client.post(
         "/api/speakers/p-x/save",
         json={
+            "review_revision": "test-revision",
             "mapping": {"0": "Alice"},
             "person_mapping": {},
             "person_public_mapping": {},
@@ -1078,7 +1194,9 @@ def test_get_proposal_malformed_is_not_hidden_as_404(
 
     import app.web.routers.corrections as corrections
 
-    monkeypatch.setattr(corrections, "resolve_web_project_ref", lambda ref, _s: tmp_path)
+    monkeypatch.setattr(
+        corrections, "resolve_web_project_ref", lambda ref, _s: tmp_path
+    )
     monkeypatch.setattr(
         corrections, "project_paths", lambda root: SimpleNamespace(root=root)
     )
@@ -1107,7 +1225,9 @@ def test_get_sample_clip_rebases_to_configured_store(
 
     store = tmp_path / "store" / "voiceprints"
     store.mkdir(parents=True)
-    monkeypatch.setattr(vp, "get_voiceprint_db_path", lambda _s: store / "voiceprints.sqlite")
+    monkeypatch.setattr(
+        vp, "get_voiceprint_db_path", lambda _s: store / "voiceprints.sqlite"
+    )
 
     # Copied store: the row's absolute clip_path is the ORIGINAL store's file (outside the
     # configured copy); clip_rel_path is store-relative.
@@ -1184,11 +1304,15 @@ def test_validate_capture_selection_detects_plan_drift() -> None:
         return SelectedCaptureClipIn(**base)
 
     # Matching selection -> returns the validated rel_path set.
-    assert _validate_capture_selection(planned, [sel()]) == frozenset({"speaker_0/clip_001.wav"})
+    assert _validate_capture_selection(planned, [sel()]) == frozenset(
+        {"speaker_0/clip_001.wav"}
+    )
 
     # Same rel_path now maps to a different time window (audio drift) -> refuse.
     with pytest.raises(CaptureConflictError):
-        _validate_capture_selection(planned, [sel(begin_time_ms=5000, end_time_ms=6000)])
+        _validate_capture_selection(
+            planned, [sel(begin_time_ms=5000, end_time_ms=6000)]
+        )
 
     # Same rel_path + times but the speaker was renamed / rebound (identity drift) -> refuse.
     with pytest.raises(CaptureConflictError):
@@ -1275,14 +1399,20 @@ def test_set_and_clear_alias_disambiguation(client: TestClient) -> None:
 
     marked = client.post(
         "/api/lexicon/disambiguations",
-        json={"term": "Canonical Term", "alias": "amb", "guidance": "resolve by context"},
+        json={
+            "term": "Canonical Term",
+            "alias": "amb",
+            "guidance": "resolve by context",
+        },
     )
     assert marked.status_code == 200
     body = marked.json()
     assert body is not None
     assert body["alias"] == "amb"
     assert body["guidance"] == "resolve by context"
-    assert any(d["alias"] == "amb" for d in client.get("/api/lexicon/disambiguations").json())
+    assert any(
+        d["alias"] == "amb" for d in client.get("/api/lexicon/disambiguations").json()
+    )
 
     # Empty guidance clears it (null response) and drops it from the list.
     cleared = client.post(

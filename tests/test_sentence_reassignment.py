@@ -26,9 +26,7 @@ from app.voiceprint_store import (
 
 
 @pytest.fixture(autouse=True)
-def _isolate_xdg_data_home(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _isolate_xdg_data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep default voiceprint lookups inside the test sandbox."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
 
@@ -145,6 +143,52 @@ def test_apply_invalidates_only_overlapping_voiceprint_samples(tmp_path: Path) -
     )
     remaining_clips = {row.clip_path.name for row in remaining}
     assert remaining_clips == {"clip_other.wav", "clip_other_time.wav"}
+
+
+def test_stale_reassignment_raises_before_writes_or_sample_deletes(
+    tmp_path: Path,
+) -> None:
+    """A stale reassignment spec must fail atomically before downstream invalidation."""
+    project_dir = _make_project(tmp_path)
+    _write_sentences(project_dir, _sentences_payload())
+    store_dir = tmp_path / "voiceprints"
+    project_id = _project_id(project_dir)
+    sample = _stored_sample(
+        store_dir,
+        project_dir / "source" / "meeting.mp4",
+        speaker_name="speaker-1-overlap",
+        project_id=project_id,
+        project_speaker_id=1,
+        source_begin_time_ms=2000,
+        source_end_time_ms=2400,
+        clip_filename="clip_overlap.wav",
+    )
+    store_voiceprint_samples([sample], get_voiceprint_db_path(store_dir))
+
+    with pytest.raises(ValueError, match="no longer matches"):
+        apply_project_sentence_reassignments(
+            project_dir,
+            [
+                SentenceReassignmentSpec(
+                    sentence_id=2,
+                    begin_time_ms=2000,
+                    end_time_ms=2500,
+                    new_speaker_id=0,
+                    original_speaker_id=9,
+                )
+            ],
+            store_dir=store_dir,
+            rematch=False,
+        )
+
+    raw = json.loads(
+        (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8")
+    )
+    assert raw["sentences"][1]["speaker_id"] == 1
+    remaining = list_voiceprint_samples_for_project(
+        project_id, get_voiceprint_db_path(store_dir)
+    )
+    assert {row.clip_path.name for row in remaining} == {"clip_overlap.wav"}
 
 
 def test_apply_runs_rematch_when_requested(
@@ -307,9 +351,10 @@ def test_delete_via_copied_store_does_not_unlink_original_clip(
     assert orig_clip.exists()
     assert list_voiceprint_samples_for_project("proj-1", copy_db) == []
     # Sanity: the original DB still references the (still-present) clip.
-    assert {row.clip_path.name for row in list_voiceprint_samples_for_project(
-        "proj-1", orig_db
-    )} == {"one.wav"}
+    assert {
+        row.clip_path.name
+        for row in list_voiceprint_samples_for_project("proj-1", orig_db)
+    } == {"one.wav"}
 
 
 def _make_project(tmp_path: Path) -> Path:

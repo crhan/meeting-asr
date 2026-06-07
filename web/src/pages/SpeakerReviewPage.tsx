@@ -275,6 +275,7 @@ export function SpeakerReviewPage() {
       ];
     });
     return {
+      review_revision: data!.review_revision,
       mapping,
       person_mapping,
       person_public_mapping,

@@ -163,7 +163,9 @@ class ProposalOut(BaseModel):
     model: str
     change_count: int
     changes: list[CorrectionChangeOut]
-    proposal_id: str  # content hash; accept must echo it so a regenerate is not mis-applied
+    proposal_id: (
+        str  # content hash; accept must echo it so a regenerate is not mis-applied
+    )
 
 
 class AcceptCorrectionIn(BaseModel):
@@ -172,7 +174,7 @@ class AcceptCorrectionIn(BaseModel):
     selected_indices: list[int] | None = None
     # The proposal_id the user reviewed; the accept is refused if the on-disk proposal changed
     # (regenerated in another tab/CLI) so reviewed indices are never applied to a different one.
-    proposal_id: str | None = None
+    proposal_id: str
 
 
 class AcceptCorrectionOut(BaseModel):
@@ -377,6 +379,7 @@ class SpeakerReviewOut(BaseModel):
 
     project_id: str
     project_dir: str
+    review_revision: str
     overview: ReviewOverviewOut
     speakers: list[ReviewSpeakerOut]
     people: list[PersonOut]
@@ -396,6 +399,7 @@ class ReassignmentIn(BaseModel):
 class SaveSpeakerReviewIn(BaseModel):
     """Speaker-review save request (mirrors the TUI decision)."""
 
+    review_revision: str
     # JSON object keys are strings; speaker ids are parsed server-side.
     mapping: dict[str, str] = {}
     person_mapping: dict[str, int] = {}
