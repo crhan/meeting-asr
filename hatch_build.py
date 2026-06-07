@@ -27,7 +27,7 @@ from pathlib import Path
 
 try:
     from hatchling.builders.hooks.plugin.interface import BuildHookInterface
-except ModuleNotFoundError:  # pragma: no cover - hatchling is only present at build time
+except ModuleNotFoundError:
     # hatchling is a build-backend dependency, absent from the runtime/test venv. Falling back
     # to ``object`` lets the module import so ``build_spa`` can be unit-tested; the real base
     # class is always present during an actual ``uv build`` (where this hook runs).
@@ -79,11 +79,19 @@ class CustomBuildHook(BuildHookInterface):
 
         root = Path(self.root)
         static_dir = root / "src" / "app" / "web" / "static"
+        build_web = os.environ.get("MEETING_ASR_BUILD_WEB") == "1"
 
-        build_spa(root, build_web=os.environ.get("MEETING_ASR_BUILD_WEB") == "1")
+        build_spa(root, build_web=build_web)
 
         # Ship the SPA only if it exists now. Doing this through build_data (instead of an
         # unconditional pyproject force-include) is what lets a base build with no static
         # succeed rather than erroring on a missing force-include path.
         if (static_dir / "index.html").is_file():
-            build_data.setdefault("force_include", {})[str(static_dir)] = "app/web/static"
+            build_data.setdefault("force_include", {})[str(static_dir)] = (
+                "app/web/static"
+            )
+        elif build_web:
+            raise RuntimeError(
+                "MEETING_ASR_BUILD_WEB=1 completed but src/app/web/static/index.html "
+                "is missing; refusing to build a web wheel without the SPA."
+            )

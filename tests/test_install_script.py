@@ -43,6 +43,7 @@ def test_install_script_wheel_mode_is_explicit() -> None:
 
     assert "Mode: wheel" in result.stdout
     assert "--editable" not in result.stdout
+    assert "env MEETING_ASR_BUILD_WEB=1 uv tool install" in result.stdout
 
 
 def test_install_script_force_is_explicit() -> None:

@@ -80,3 +80,18 @@ def test_build_spa_fails_loudly_when_web_sources_missing(tmp_path: Path) -> None
             run=lambda *a, **_k: None,
             which=lambda _name: "/usr/bin/npm",
         )
+
+
+def test_build_hook_refuses_web_wheel_when_spa_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If BUILD_WEB=1 did not leave index.html in static, the wheel must fail."""
+    _web_sources(tmp_path)
+    hook = hatch_build.CustomBuildHook()
+    hook.target_name = "wheel"
+    hook.root = str(tmp_path)
+    monkeypatch.setenv("MEETING_ASR_BUILD_WEB", "1")
+    monkeypatch.setattr(hatch_build, "build_spa", lambda *_a, **_k: None)
+
+    with pytest.raises(RuntimeError, match="static/index.html"):
+        hook.initialize("0.0.0", {})

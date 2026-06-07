@@ -214,10 +214,11 @@ package="."
 if [[ "$web" -eq 1 ]]; then
   package=".[web]"
   # Build the React SPA so the installed tool serves the web UI. Editable installs read
-  # static straight from the checkout; wheel installs get it via the hatch force-include.
+  # static straight from the checkout; wheel installs let the hatch hook rebuild and assert
+  # the SPA via MEETING_ASR_BUILD_WEB=1.
   # Skip for a dry-run: --print-only must only print the plan, never npm ci + vite build,
   # which hit the network and rewrite web/node_modules and src/app/web/static.
-  if [[ "$print_only" -eq 0 && -f "$source_dir/web/package.json" ]]; then
+  if [[ "$editable" -eq 1 && "$print_only" -eq 0 && -f "$source_dir/web/package.json" ]]; then
     if command -v npm >/dev/null 2>&1; then
       echo "Building web UI assets..."
       (cd "$source_dir/web" && npm ci && npm run build)
@@ -228,14 +229,19 @@ if [[ "$web" -eq 1 ]]; then
   fi
 fi
 
-command=(uv tool install --python "$python_value")
+install_command=(uv tool install --python "$python_value")
 if [[ "$force" -eq 1 ]]; then
-  command+=(--force)
+  install_command+=(--force)
 fi
 if [[ "$editable" -eq 1 ]]; then
-  command+=(--editable)
+  install_command+=(--editable)
 fi
-command+=("$package")
+install_command+=("$package")
+
+command=("${install_command[@]}")
+if [[ "$web" -eq 1 && "$editable" -eq 0 ]]; then
+  command=(env MEETING_ASR_BUILD_WEB=1 "${install_command[@]}")
+fi
 
 echo "Meeting-ASR install plan"
 echo "Source: $source_dir"
