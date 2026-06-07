@@ -5,24 +5,39 @@ interface ModalProps {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  closeDisabled?: boolean;
 }
 
 /** Centered modal dialog. Closes on Escape and backdrop click. */
-export function Modal({ title, onClose, children, footer }: ModalProps) {
+export function Modal({
+  title,
+  onClose,
+  children,
+  footer,
+  closeDisabled = false,
+}: ModalProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !closeDisabled) onClose();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  }, [closeDisabled, onClose]);
 
   return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
+    <div
+      className="modal-backdrop"
+      onMouseDown={closeDisabled ? undefined : onClose}
+    >
       <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span>{title}</span>
-          <button className="icon-btn" onClick={onClose} aria-label="close">
+          <button
+            className="icon-btn"
+            onClick={onClose}
+            aria-label="close"
+            disabled={closeDisabled}
+          >
             ✕
           </button>
         </div>

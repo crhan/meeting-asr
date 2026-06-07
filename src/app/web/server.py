@@ -47,7 +47,8 @@ def create_app(settings: WebSettings) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # Capture the running loop so jobs can be spawned from sync-route worker threads.
         app.state.jobs.bind_loop(asyncio.get_running_loop())
-        # Reclaim any capture backup dirs orphaned by a previous crash.
+        # Reclaim old pre-registration backup dirs; metadata-bearing pending transactions are
+        # restored by REGISTRY and must stay available for explicit accept/rollback.
         from app.core.voiceprint_review_service import cleanup_orphan_backups
 
         cleanup_orphan_backups()

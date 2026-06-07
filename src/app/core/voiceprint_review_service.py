@@ -17,6 +17,7 @@ threading lock so two captures cannot corrupt the shared global store.
 
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 import threading
@@ -36,6 +37,7 @@ DEFAULT_MAX_SECONDS = 12.0
 DEFAULT_PADDING_SECONDS = 0.5
 
 _BACKUP_PREFIX = "meeting-asr-voiceprint-review-"
+_METADATA_FILE = "transaction.json"
 _ORPHAN_MAX_AGE_SECONDS = 6 * 3600
 
 
@@ -72,22 +74,21 @@ def plan_capture(
 class CaptureTransactionRegistry:
     """Holds pending capture transactions between the run and the accept/rollback calls."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, load_persisted: bool = False) -> None:
         # value: (created_at, transaction, project_dir) -- project_dir lets accept/rollback
         # take that project's lock so a restore can't race a concurrent project-local write.
-        self._txns: dict[
-            str, tuple[float, VoiceprintReviewTransaction, Path]
-        ] = {}
+        self._txns: dict[str, tuple[float, VoiceprintReviewTransaction, Path]] = {}
         self._registry_lock = threading.Lock()
         self._store_write_lock = threading.Lock()
+        if load_persisted:
+            self._load_persisted()
 
     def has_pending(self) -> bool:
         """Return whether any capture transaction is awaiting accept/rollback.
 
-        Reaps abandoned transactions first (see ``sweep_stale``): nothing else calls the
-        sweep, so without this a capture whose browser cleanup never arrived (tab crash,
-        dropped sendBeacon) would block every later store write with 409 until the server
-        restarts. Sweeping on the authoritative pending gate bounds that to the sweep age.
+        Keeps persisted transactions pending until the user accepts or rolls them back.
+        That is deliberate: a restart must not silently commit or discard the rollback
+        snapshot. ``sweep_stale`` only drops entries whose backup directory already vanished.
         """
         self.sweep_stale()
         with self._registry_lock:
@@ -120,10 +121,8 @@ class CaptureTransactionRegistry:
     def _raise_if_pending_locked(self) -> None:
         """Raise if a capture is pending. Caller must hold ``_store_write_lock``.
 
-        Reaps abandoned transactions first so a store write is not blocked indefinitely by a
-        capture whose browser cleanup was lost. ``sweep_stale`` takes only ``_registry_lock``
-        (never ``_store_write_lock``), so calling it while the caller holds the store-write
-        lock is safe.
+        ``sweep_stale`` takes only ``_registry_lock`` (never ``_store_write_lock``), so
+        calling it while the caller holds the store-write lock is safe.
         """
         self.sweep_stale()
         with self._registry_lock:
@@ -173,9 +172,20 @@ class CaptureTransactionRegistry:
                 store_dir=store_dir,
             )
             txn_id = uuid.uuid4().hex
+            created_at = time.time()
+            try:
+                _persist_transaction_metadata(
+                    txn_id=txn_id,
+                    created_at=created_at,
+                    transaction=summary.transaction,
+                    project_dir=project_dir.resolve(),
+                )
+            except Exception:
+                summary.transaction.rollback()
+                raise
             with self._registry_lock:
                 self._txns[txn_id] = (
-                    time.time(),
+                    created_at,
                     summary.transaction,
                     project_dir.resolve(),
                 )
@@ -185,9 +195,11 @@ class CaptureTransactionRegistry:
         """Accept a pending transaction (drop the rollback snapshot).
 
         Accept only removes the backup directory; it never touches the live store, so it
-        needs no store-write lock. Popping first makes the capture no longer pending.
+        needs no store-write lock. The registry entry is removed only after accept succeeds,
+        otherwise the user has no handle to retry a failed cleanup.
         """
-        self._pop(txn_id).accept()
+        self._get(txn_id).accept()
+        self._discard(txn_id)
 
     def rollback(self, txn_id: str) -> None:
         """Roll back a pending transaction (restore the snapshot).
@@ -199,47 +211,152 @@ class CaptureTransactionRegistry:
         the data-loss class the guard exists to prevent.
         """
         with self._store_write_lock:
-            self._pop(txn_id).rollback()
+            self._get(txn_id).rollback()
+            self._discard(txn_id)
 
-    def _pop(self, txn_id: str) -> VoiceprintReviewTransaction:
+    def _get(self, txn_id: str) -> VoiceprintReviewTransaction:
         with self._registry_lock:
-            entry = self._txns.pop(txn_id, None)
+            entry = self._txns.get(txn_id)
         if entry is None:
             raise FileNotFoundError(f"Unknown or expired capture transaction: {txn_id}")
         return entry[1]
 
-    def sweep_stale(self, *, max_age_seconds: float = _ORPHAN_MAX_AGE_SECONDS) -> None:
-        """Accept (commit) transactions older than the cutoff to reclaim disk.
-
-        A stale transaction means the user never decided; its changes are already
-        committed to the store, so we keep them and just drop the rollback snapshot.
-        """
-        now = time.time()
+    def _discard(self, txn_id: str) -> None:
         with self._registry_lock:
-            stale = [
-                (txn_id, txn)
-                for txn_id, (created, txn, _project) in self._txns.items()
-                if now - created > max_age_seconds
+            self._txns.pop(txn_id, None)
+
+    def sweep_stale(self, *, max_age_seconds: float = _ORPHAN_MAX_AGE_SECONDS) -> None:
+        """Drop registry entries whose rollback snapshot has already disappeared.
+
+        Age alone is not a reason to accept: if a transaction has persisted metadata, the
+        recovery banner can still surface it after a restart and the user should decide.
+        """
+        del max_age_seconds
+        with self._registry_lock:
+            vanished = [
+                txn_id
+                for txn_id, (_created, txn, _project) in self._txns.items()
+                if isinstance(getattr(txn, "backup_dir", None), Path)
+                and not txn.backup_dir.exists()
             ]
-            for txn_id, _ in stale:
+            for txn_id in vanished:
                 self._txns.pop(txn_id, None)
-        for _, txn in stale:
-            txn.accept()
+
+    def _load_persisted(self) -> None:
+        """Restore pending transaction handles from backup metadata on process start."""
+        for backup_dir in _backup_root().glob(f"{_BACKUP_PREFIX}*"):
+            metadata_path = backup_dir / _METADATA_FILE
+            if not metadata_path.is_file():
+                continue
+            try:
+                txn_id, created_at, transaction, project_dir = (
+                    _load_transaction_metadata(metadata_path)
+                )
+            except Exception:
+                continue
+            self._txns[txn_id] = (created_at, transaction, project_dir)
 
 
 def cleanup_orphan_backups() -> None:
-    """Remove leftover capture backup directories from crashed runs (startup sweep)."""
-    tmp_root = Path(tempfile.gettempdir())
+    """Remove old backup dirs that never reached transaction registration."""
+    tmp_root = _backup_root()
     if not tmp_root.is_dir():
         return
     cutoff = time.time() - _ORPHAN_MAX_AGE_SECONDS
     for child in tmp_root.glob(f"{_BACKUP_PREFIX}*"):
         try:
-            if child.is_dir() and child.stat().st_mtime < cutoff:
+            # A metadata-bearing directory is a recoverable pending transaction. Keep it so
+            # the registry can restore the accept/rollback handle after restart.
+            if (
+                child.is_dir()
+                and not (child / _METADATA_FILE).exists()
+                and child.stat().st_mtime < cutoff
+            ):
                 shutil.rmtree(child, ignore_errors=True)
         except OSError:
             continue
 
 
+def _backup_root() -> Path:
+    """Return the temp root used for voiceprint rollback snapshots."""
+    return Path(tempfile.gettempdir())
+
+
+def _persist_transaction_metadata(
+    *,
+    txn_id: str,
+    created_at: float,
+    transaction: VoiceprintReviewTransaction,
+    project_dir: Path,
+) -> None:
+    """Persist enough transaction state to recover accept/rollback after restart."""
+    if not isinstance(transaction, VoiceprintReviewTransaction):
+        return
+    metadata = {
+        "version": 1,
+        "transaction_id": txn_id,
+        "created_at": created_at,
+        "project_dir": str(project_dir),
+        "backup_dir": str(transaction.backup_dir),
+        "db_path": str(transaction.db_path),
+        "db_backup_path": str(transaction.db_backup_path),
+        "db_existed": transaction.db_existed,
+        "project_manifest_path": str(transaction.project_manifest_path),
+        "project_manifest_backup_path": str(transaction.project_manifest_backup_path),
+        "project_manifest_existed": transaction.project_manifest_existed,
+        "match_path": str(transaction.match_path),
+        "match_backup_path": str(transaction.match_backup_path),
+        "match_existed": transaction.match_existed,
+        "clip_backups": [
+            {
+                "clip_path": str(clip_path),
+                "backup_path": str(backup_path),
+                "existed": existed,
+            }
+            for clip_path, backup_path, existed in transaction.clip_backups
+        ],
+    }
+    metadata_path = transaction.backup_dir / _METADATA_FILE
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def _load_transaction_metadata(
+    metadata_path: Path,
+) -> tuple[str, float, VoiceprintReviewTransaction, Path]:
+    """Load one persisted capture transaction metadata file."""
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        raise ValueError(f"Unsupported capture transaction metadata: {metadata_path}")
+    backup_dir = Path(str(payload["backup_dir"]))
+    transaction = VoiceprintReviewTransaction(
+        backup_dir=backup_dir,
+        db_path=Path(str(payload["db_path"])),
+        db_backup_path=Path(str(payload["db_backup_path"])),
+        db_existed=bool(payload["db_existed"]),
+        project_manifest_path=Path(str(payload["project_manifest_path"])),
+        project_manifest_backup_path=Path(str(payload["project_manifest_backup_path"])),
+        project_manifest_existed=bool(payload["project_manifest_existed"]),
+        match_path=Path(str(payload["match_path"])),
+        match_backup_path=Path(str(payload["match_backup_path"])),
+        match_existed=bool(payload["match_existed"]),
+        clip_backups=tuple(
+            (
+                Path(str(item["clip_path"])),
+                Path(str(item["backup_path"])),
+                bool(item["existed"]),
+            )
+            for item in payload.get("clip_backups", [])
+            if isinstance(item, dict)
+        ),
+    )
+    txn_id = str(payload["transaction_id"])
+    created_at = float(payload.get("created_at", metadata_path.stat().st_mtime))
+    project_dir = Path(str(payload["project_dir"])).resolve()
+    return txn_id, created_at, transaction, project_dir
+
+
 # Process-local singleton: the web server runs a single uvicorn worker.
-REGISTRY = CaptureTransactionRegistry()
+REGISTRY = CaptureTransactionRegistry(load_persisted=True)

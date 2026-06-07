@@ -241,7 +241,7 @@ export function CapturePage() {
               await captureAccept(result.transaction_id);
             } catch (e) {
               setRunError((e as Error).message);
-              return;
+              throw e;
             }
             pendingTxnRef.current = null;
             setResult(null);
@@ -261,7 +261,7 @@ export function CapturePage() {
               await captureRollback(result.transaction_id);
             } catch (e) {
               setRunError((e as Error).message);
-              return;
+              throw e;
             }
             pendingTxnRef.current = null;
             setResult(null);
@@ -307,27 +307,50 @@ function ChangeRow({ c, current = false }: { c: ScoreChange; current?: boolean }
 
 function CaptureResultModal(props: {
   result: CaptureResult;
-  onAccept: () => void;
-  onRollback: () => void;
+  onAccept: () => Promise<void>;
+  onRollback: () => Promise<void>;
 }) {
   const { result, onAccept, onRollback } = props;
+  const [resolving, setResolving] = useState<"accept" | "rollback" | null>(null);
   // current changed-best is expected success, not a regression -- exclude it from the warning.
   // changed-best is disjoint from the other current criticals (below-threshold / lost-candidate),
   // so subtracting its count leaves exactly the genuinely-risky current changes.
   const currentRisky = result.current_critical - result.current_changed_best;
   const risky = currentRisky + result.historical_critical_count;
   const notableCurrent = result.current_changes.filter((c) => c.status !== "unchanged");
+  const resolve = async (action: "accept" | "rollback", run: () => Promise<void>) => {
+    if (resolving) return;
+    setResolving(action);
+    try {
+      await run();
+    } catch {
+      setResolving(null);
+    }
+  };
   return (
     <Modal
       title={tr("Capture result", "采集结果")}
-      onClose={props.onRollback}
+      onClose={() => void resolve("rollback", onRollback)}
+      closeDisabled={resolving !== null}
       footer={
         <div className="row gap">
-          <button className="btn ghost" onClick={onRollback}>
-            {tr("Rollback", "回滚")}
+          <button
+            className="btn ghost"
+            disabled={resolving !== null}
+            onClick={() => void resolve("rollback", onRollback)}
+          >
+            {resolving === "rollback"
+              ? tr("Rolling back…", "回滚中…")
+              : tr("Rollback", "回滚")}
           </button>
-          <button className="btn primary" onClick={onAccept}>
-            {tr("Accept", "接受")}
+          <button
+            className="btn primary"
+            disabled={resolving !== null}
+            onClick={() => void resolve("accept", onAccept)}
+          >
+            {resolving === "accept"
+              ? tr("Accepting…", "接受中…")
+              : tr("Accept", "接受")}
           </button>
         </div>
       }

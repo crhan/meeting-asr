@@ -26,6 +26,25 @@ class _FakeTxn:
         self.rolled_back = True
 
 
+class _FailingTxn(_FakeTxn):
+    def __init__(
+        self, *, fail_accept: bool = False, fail_rollback: bool = False
+    ) -> None:
+        super().__init__()
+        self.fail_accept = fail_accept
+        self.fail_rollback = fail_rollback
+
+    def accept(self) -> None:
+        if self.fail_accept:
+            raise RuntimeError("accept failed")
+        super().accept()
+
+    def rollback(self) -> None:
+        if self.fail_rollback:
+            raise RuntimeError("rollback failed")
+        super().rollback()
+
+
 class _FakeSummary:
     def __init__(self, txn: object) -> None:
         self.transaction = txn
@@ -98,7 +117,9 @@ def test_rollback_restores_under_store_write_lock(
             observed["locked_during_restore"] = reg._store_write_lock.locked()
 
     monkeypatch.setattr(
-        svc, "run_voiceprint_review_workflow", lambda **_: _FakeSummary(_LockAssertTxn())
+        svc,
+        "run_voiceprint_review_workflow",
+        lambda **_: _FakeSummary(_LockAssertTxn()),
     )
 
     txn_id, _ = _run(reg)
@@ -108,12 +129,10 @@ def test_rollback_restores_under_store_write_lock(
     assert not reg.has_pending()
 
 
-def test_has_pending_reaps_stale_transactions(
+def test_has_pending_does_not_auto_accept_stale_transactions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """has_pending must reap abandoned transactions: nothing else calls sweep_stale, so a
-    capture whose browser cleanup never arrived would otherwise block store writes until the
-    server restarts."""
+    """Age alone must not silently accept or clear a pending capture transaction."""
     fake = _FakeTxn()
     monkeypatch.setattr(
         svc, "run_voiceprint_review_workflow", lambda **_: _FakeSummary(fake)
@@ -122,12 +141,105 @@ def test_has_pending_reaps_stale_transactions(
     txn_id, _ = _run(reg)
     assert reg.has_pending() is True  # fresh -> still blocking
 
-    # Age the transaction past the sweep cutoff; the next pending check must reap it.
+    # Age past the historical sweep cutoff; it must still wait for an explicit decision.
     created, txn, project = reg._txns[txn_id]
     reg._txns[txn_id] = (created - svc._ORPHAN_MAX_AGE_SECONDS - 1, txn, project)
-    assert reg.has_pending() is False
-    assert fake.accepted is True  # stale sweep commits, never silently drops
-    assert reg._txns == {}
+    assert reg.has_pending() is True
+    assert fake.accepted is False
+    assert txn_id in reg._txns
+
+
+def test_accept_failure_keeps_transaction_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed accept must remain retryable instead of popping the pending handle."""
+    fake = _FailingTxn(fail_accept=True)
+    monkeypatch.setattr(
+        svc, "run_voiceprint_review_workflow", lambda **_: _FakeSummary(fake)
+    )
+    reg = svc.CaptureTransactionRegistry()
+    txn_id, _ = _run(reg)
+
+    with pytest.raises(RuntimeError, match="accept failed"):
+        reg.accept(txn_id)
+
+    assert reg.has_pending() is True
+    assert reg.project_dir_for(txn_id) == Path("/does/not/matter").resolve()
+
+
+def test_rollback_failure_keeps_transaction_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed rollback must remain retryable instead of popping the pending handle."""
+    fake = _FailingTxn(fail_rollback=True)
+    monkeypatch.setattr(
+        svc, "run_voiceprint_review_workflow", lambda **_: _FakeSummary(fake)
+    )
+    reg = svc.CaptureTransactionRegistry()
+    txn_id, _ = _run(reg)
+
+    with pytest.raises(RuntimeError, match="rollback failed"):
+        reg.rollback(txn_id)
+
+    assert reg.has_pending() is True
+    assert reg.project_dir_for(txn_id) == Path("/does/not/matter").resolve()
+
+
+def test_persisted_transaction_restores_after_registry_recreation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A service restart must recover the pending accept/rollback transaction handle."""
+    monkeypatch.setattr(svc.tempfile, "gettempdir", lambda: str(tmp_path))
+    backup_dir = tmp_path / "meeting-asr-voiceprint-review-abc"
+    backup_dir.mkdir()
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    db_path = tmp_path / "store" / "voiceprints.sqlite"
+    db_path.parent.mkdir()
+    db_path.write_text("after", encoding="utf-8")
+    db_backup_path = backup_dir / "voiceprints.sqlite"
+    db_backup_path.write_text("before", encoding="utf-8")
+    manifest_path = project_dir / "project.json"
+    manifest_path.write_text('{"status":"after"}', encoding="utf-8")
+    manifest_backup_path = backup_dir / "project.json"
+    manifest_backup_path.write_text('{"status":"before"}', encoding="utf-8")
+    match_path = project_dir / "speakers" / "speaker_matches.json"
+    match_path.parent.mkdir()
+    match_path.write_text('{"after":true}', encoding="utf-8")
+    match_backup_path = backup_dir / "speaker_matches.json"
+    match_backup_path.write_text('{"before":true}', encoding="utf-8")
+    txn = svc.VoiceprintReviewTransaction(
+        backup_dir=backup_dir,
+        db_path=db_path,
+        db_backup_path=db_backup_path,
+        db_existed=True,
+        project_manifest_path=manifest_path,
+        project_manifest_backup_path=manifest_backup_path,
+        project_manifest_existed=True,
+        match_path=match_path,
+        match_backup_path=match_backup_path,
+        match_existed=True,
+        clip_backups=(),
+    )
+    monkeypatch.setattr(
+        svc, "run_voiceprint_review_workflow", lambda **_: _FakeSummary(txn)
+    )
+
+    reg = svc.CaptureTransactionRegistry()
+    txn_id, _ = reg.run(
+        project_dir=project_dir,
+        planned=None,
+        selected_clip_rel_paths=frozenset(),
+        store_dir=None,
+    )
+    restored = svc.CaptureTransactionRegistry(load_persisted=True)
+
+    assert restored.pending_transaction() == (txn_id, project_dir.resolve())
+    restored.rollback(txn_id)
+    assert db_path.read_text(encoding="utf-8") == "before"
+    assert manifest_path.read_text(encoding="utf-8") == '{"status":"before"}'
+    assert match_path.read_text(encoding="utf-8") == '{"before":true}'
+    assert not backup_dir.exists()
 
 
 def test_pending_transaction_exposes_id_and_project(
