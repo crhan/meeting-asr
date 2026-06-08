@@ -962,6 +962,71 @@ def test_merge_apply_rejects_out_of_tree_output_dir(
     assert resp.json()["error"] == "bad_request"
 
 
+def test_merge_apply_falls_back_to_default_projects_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no configured projects_dir, merge-apply must fall back to the default XDG
+    projects dir (mirroring the read paths) instead of 400ing -- otherwise the feature is
+    dead in the default `meeting-asr web` invocation while merge-preview still works."""
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    import app.web.routers.pipeline as pipeline
+    from app.config import get_default_projects_dir
+
+    default_root = get_default_projects_dir()
+    proj = default_root / "p-a"
+    proj.mkdir(parents=True)
+
+    captured: dict = {}
+    dummy_result = SimpleNamespace(
+        merged_corrected=SimpleNamespace(sentences=[]),
+        merged_raw=None,
+        order_source="x",
+        use_corrected=True,
+        identities=[],
+        mapping={},
+        warnings=[],
+    )
+
+    def fake_write(result, out_dir, *, force):
+        captured["out_dir"] = out_dir
+        return SimpleNamespace(
+            out_dir=out_dir,
+            transcript=None,
+            transcript_corrected=None,
+            subtitle=None,
+            subtitle_corrected=None,
+            manifest=None,
+        )
+
+    monkeypatch.setattr(pipeline, "resolve_web_project_ref", lambda ref, _s: proj)
+    monkeypatch.setattr(pipeline, "merge_projects", lambda *a, **k: dummy_result)
+    monkeypatch.setattr(pipeline, "write_merge_outputs", fake_write)
+
+    settings = WebSettings(
+        host="127.0.0.1",
+        port=0,
+        projects_dir=None,  # the default `meeting-asr web` invocation
+        store_dir=tmp_path / "store",
+        open_browser=False,
+        token=None,
+    )
+    with TestClient(create_app(settings), base_url="http://127.0.0.1:8765") as client:
+        resp = client.post(
+            "/api/pipeline/merge",
+            json={"project_refs": [str(proj)], "out_dir": "merged-out"},
+        )
+    assert resp.status_code == 200
+    # A relative out_dir rebases onto the default projects dir, and the bundle is written
+    # there -- no longer refused for lack of an explicit --projects-dir.
+    assert captured["out_dir"] == (default_root / "merged-out").resolve()
+    assert resp.json()["out_dir"] == str((default_root / "merged-out").resolve())
+
+
 def test_voiceprint_store_dir_rebases_onto_subdir(tmp_path: Path) -> None:
     """store_dir is the data root; the voiceprint store lives under <root>/voiceprints,
     mirroring the lexicon's <root>/lexicon rebasing. A bare store_dir would resolve the flat

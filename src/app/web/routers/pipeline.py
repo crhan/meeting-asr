@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends
 
 from app.commands.project import _run_project_workflow  # reuse the run orchestrator
 from app.core.project_models import ProjectTranscribeOptions
+from app.core.project_refs import _projects_parent_dir
 from app.core.voiceprint_review_service import REGISTRY, CaptureConflictError
 from app.lexicon_store import get_lexicon_db_path
 from app.project_manager import (
@@ -61,9 +62,11 @@ def _require_file(path_str: str) -> Path:
 
 def _resolve_merge_out_dir(path_str: str, settings: WebSettings) -> Path:
     """Resolve a merge output directory without letting web write arbitrary paths."""
-    if settings.projects_dir is None:
-        raise ValueError("merge output requires a configured projects_dir")
-    root = settings.projects_dir.expanduser().resolve()
+    # Mirror the read paths (list/show/clip): with no configured projects_dir, fall back to
+    # the default XDG projects dir instead of refusing -- otherwise merge-apply is broken in
+    # the default `meeting-asr web` invocation while merge-preview (a read) still works. The
+    # under-root containment check below is unchanged, so output still cannot escape the root.
+    root = _projects_parent_dir(settings.projects_dir)
     raw = Path(path_str).expanduser()
     out_dir = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
     try:
