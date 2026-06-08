@@ -191,6 +191,69 @@ def test_stale_reassignment_raises_before_writes_or_sample_deletes(
     assert {row.clip_path.name for row in remaining} == {"clip_overlap.wav"}
 
 
+def test_retry_of_already_applied_reassignment_is_a_clean_noop(
+    tmp_path: Path,
+) -> None:
+    """A save retried after a partial failure must no-op, not raise.
+
+    The first apply rewrites the sentence files; if a later step of the same save
+    fails, the front-end retries with the SAME specs. The sentence now carries
+    ``new_speaker_id``, which must count as matched (idempotent) rather than as
+    transcript drift.
+    """
+    project_dir = _make_project(tmp_path)
+    _write_sentences(project_dir, _sentences_payload())
+    spec = SentenceReassignmentSpec(
+        sentence_id=2,
+        begin_time_ms=2000,
+        end_time_ms=2500,
+        new_speaker_id=0,
+        original_speaker_id=1,
+    )
+
+    first = apply_project_sentence_reassignments(project_dir, [spec], rematch=False)
+    assert first.sentence_files  # the first apply rewrote the transcript
+
+    retry = apply_project_sentence_reassignments(project_dir, [spec], rematch=False)
+
+    # Matched (no raise) but nothing changed, so no file was rewritten.
+    assert retry.sentence_files == ()
+    raw = json.loads(
+        (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8")
+    )
+    assert raw["sentences"][1]["speaker_id"] == 0
+
+
+def test_drifted_speaker_outside_original_and_new_still_raises(
+    tmp_path: Path,
+) -> None:
+    """A sentence whose speaker is neither the reviewed original nor the target is drift."""
+    project_dir = _make_project(tmp_path)
+    payload = _sentences_payload()
+    payload["sentences"][1]["speaker_id"] = 5  # drifted since the review was loaded
+    _write_sentences(project_dir, payload)
+
+    with pytest.raises(ValueError, match="no longer matches"):
+        apply_project_sentence_reassignments(
+            project_dir,
+            [
+                SentenceReassignmentSpec(
+                    sentence_id=2,
+                    begin_time_ms=2000,
+                    end_time_ms=2500,
+                    new_speaker_id=0,
+                    original_speaker_id=1,
+                )
+            ],
+            rematch=False,
+        )
+
+    raw = json.loads(
+        (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8")
+    )
+    assert raw["sentences"][1]["speaker_id"] == 5  # untouched
+
+
 def test_apply_runs_rematch_when_requested(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

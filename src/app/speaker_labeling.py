@@ -362,12 +362,27 @@ def _match_reassignment_index(
 
 
 def _speaker_matches_original(sentence: dict, spec: SentenceReassignmentSpec) -> bool:
-    """Return whether the sentence still carries the speaker seen during review."""
-    current = sentence.get("speaker_id")
+    """Return whether the sentence may be rewritten by this reassignment.
+
+    ``original_speaker_id is None`` is a legacy spec that never captured the speaker
+    seen during review; sentence identity (id or timing) alone is authoritative for it,
+    matching the pre-drift-guard semantics. When the original speaker IS recorded, the
+    sentence must still carry it -- or already carry ``new_speaker_id``: a save that
+    rewrote the sentence files but failed in a later step (speaker-map write, sample
+    invalidation) is retried with the same specs, and the retry must be an idempotent
+    no-op instead of a "no longer matches" failure. Any other current speaker means the
+    transcript drifted since the review was loaded, so the match is refused.
+    """
     if spec.original_speaker_id is None:
-        return current is None
+        return True
+    current = sentence.get("speaker_id")
+    if current is None:
+        return False
     try:
-        return int(current) == int(spec.original_speaker_id)
+        return int(current) in (
+            int(spec.original_speaker_id),
+            int(spec.new_speaker_id),
+        )
     except TypeError, ValueError:
         return False
 
