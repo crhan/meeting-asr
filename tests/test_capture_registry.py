@@ -242,6 +242,118 @@ def test_persisted_transaction_restores_after_registry_recreation(
     assert not backup_dir.exists()
 
 
+def _build_real_transaction(
+    tmp_path: Path,
+) -> tuple["svc.VoiceprintReviewTransaction", Path, Path]:
+    """Build a real on-disk transaction (backup tree + live files) under tmp_path."""
+    backup_dir = tmp_path / "meeting-asr-voiceprint-review-abc"
+    backup_dir.mkdir()
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    db_path = tmp_path / "store" / "voiceprints.sqlite"
+    db_path.parent.mkdir()
+    db_path.write_text("after", encoding="utf-8")
+    (backup_dir / "voiceprints.sqlite").write_text("before", encoding="utf-8")
+    manifest_path = project_dir / "project.json"
+    manifest_path.write_text('{"status":"after"}', encoding="utf-8")
+    (backup_dir / "project.json").write_text('{"status":"before"}', encoding="utf-8")
+    match_path = project_dir / "speakers" / "speaker_matches.json"
+    match_path.parent.mkdir()
+    match_path.write_text('{"after":true}', encoding="utf-8")
+    (backup_dir / "speaker_matches.json").write_text(
+        '{"before":true}', encoding="utf-8"
+    )
+    txn = svc.VoiceprintReviewTransaction(
+        backup_dir=backup_dir,
+        db_path=db_path,
+        db_backup_path=backup_dir / "voiceprints.sqlite",
+        db_existed=True,
+        project_manifest_path=manifest_path,
+        project_manifest_backup_path=backup_dir / "project.json",
+        project_manifest_existed=True,
+        match_path=match_path,
+        match_backup_path=backup_dir / "speaker_matches.json",
+        match_existed=True,
+        clip_backups=(),
+    )
+    return txn, project_dir, db_path
+
+
+def _run_real_transaction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[
+    svc.CaptureTransactionRegistry, str, "svc.VoiceprintReviewTransaction", Path
+]:
+    """Register a real persisted transaction and neuter rmtree to simulate cleanup failure.
+
+    ``shutil.rmtree(..., ignore_errors=True)`` swallows real failures (e.g. EACCES leaves
+    the whole tree -- including transaction.json -- intact); a no-op stub reproduces exactly
+    that observable outcome.
+    """
+    monkeypatch.setattr(svc.tempfile, "gettempdir", lambda: str(tmp_path))
+    txn, project_dir, db_path = _build_real_transaction(tmp_path)
+    monkeypatch.setattr(
+        svc, "run_voiceprint_review_workflow", lambda **_: _FakeSummary(txn)
+    )
+    reg = svc.CaptureTransactionRegistry()
+    txn_id, _ = reg.run(
+        project_dir=project_dir,
+        planned=None,
+        selected_clip_rel_paths=frozenset(),
+        store_dir=None,
+    )
+    assert (txn.backup_dir / "transaction.json").is_file()
+    monkeypatch.setattr(svc.shutil, "rmtree", lambda *_a, **_k: None)
+    return reg, txn_id, txn, db_path
+
+
+def test_accept_with_failed_cleanup_is_not_resurrected_after_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An accepted capture whose backup cleanup silently failed must stay accepted.
+
+    Without disarming transaction.json on accept, the next restart would reload the
+    already-accepted transaction as pending, and rolling that zombie back would restore a
+    stale snapshot over every store write made since -- silent data loss.
+    """
+    reg, txn_id, txn, db_path = _run_real_transaction(monkeypatch, tmp_path)
+
+    reg.accept(txn_id)
+
+    assert txn.backup_dir.exists()  # the cleanup really did nothing...
+    assert not (
+        txn.backup_dir / "transaction.json"
+    ).exists()  # ...but recovery is disarmed
+    assert (
+        db_path.read_text(encoding="utf-8") == "after"
+    )  # accept never touches the store
+    restored = svc.CaptureTransactionRegistry(load_persisted=True)
+    assert restored.pending_transaction() is None
+    assert not restored.has_pending()
+
+
+def test_rollback_with_failed_cleanup_is_not_resurrected_after_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A rolled-back capture whose backup cleanup silently failed must stay resolved.
+
+    Resurrecting it would let a second rollback restore the same pre-capture snapshot over
+    everything written after the first rollback.
+    """
+    reg, txn_id, txn, db_path = _run_real_transaction(monkeypatch, tmp_path)
+
+    reg.rollback(txn_id)
+
+    assert db_path.read_text(encoding="utf-8") == "before"  # the restore happened
+    assert txn.backup_dir.exists()  # the cleanup really did nothing...
+    assert not (
+        txn.backup_dir / "transaction.json"
+    ).exists()  # ...but recovery is disarmed
+    restored = svc.CaptureTransactionRegistry(load_persisted=True)
+    assert restored.pending_transaction() is None
+    assert not restored.has_pending()
+
+
 def test_pending_transaction_exposes_id_and_project(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

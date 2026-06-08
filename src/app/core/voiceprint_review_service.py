@@ -197,8 +197,19 @@ class CaptureTransactionRegistry:
         Accept only removes the backup directory; it never touches the live store, so it
         needs no store-write lock. The registry entry is removed only after accept succeeds,
         otherwise the user has no handle to retry a failed cleanup.
+
+        The persisted metadata is unlinked FIRST: ``transaction.accept`` removes the backup
+        tree with ``ignore_errors`` and can fail silently (e.g. EACCES leaves the whole tree
+        intact). If ``transaction.json`` survived such a failure, the next process start
+        would resurrect this already-accepted transaction as pending -- and rolling that
+        zombie back would restore a stale snapshot over every store write made since.
+        Disarming the metadata before cleanup makes any leftover directory a metadata-less
+        orphan that ``cleanup_orphan_backups`` reaps by age. A failed unlink raises, keeping
+        the registry handle for retry.
         """
-        self._get(txn_id).accept()
+        txn = self._get(txn_id)
+        _disarm_transaction_metadata(txn)
+        txn.accept()
         self._discard(txn_id)
 
     def rollback(self, txn_id: str) -> None:
@@ -209,9 +220,18 @@ class CaptureTransactionRegistry:
         slip in after the transaction is popped (so ``run_store_write`` no longer sees it as
         pending) and race the snapshot restore, losing or corrupting that write -- exactly
         the data-loss class the guard exists to prevent.
+
+        The persisted metadata is unlinked AFTER the restore succeeds (not before: a crash
+        mid-restore must keep the metadata so the handle survives a restart and the restore
+        stays retryable). ``transaction.rollback`` removes the backup tree with
+        ``ignore_errors``; if that cleanup silently failed and left ``transaction.json``
+        behind, a later restart would resurrect this already-resolved transaction and a
+        second rollback would restore the same stale snapshot over everything written since.
         """
         with self._store_write_lock:
-            self._get(txn_id).rollback()
+            txn = self._get(txn_id)
+            txn.rollback()
+            _disarm_transaction_metadata(txn)
             self._discard(txn_id)
 
     def _get(self, txn_id: str) -> VoiceprintReviewTransaction:
@@ -321,6 +341,20 @@ def _persist_transaction_metadata(
         json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+
+
+def _disarm_transaction_metadata(transaction: object) -> None:
+    """Delete a transaction's persisted recovery metadata, if any.
+
+    Once a transaction is decided (accepted, or its rollback restore completed), the
+    metadata must not survive: ``_load_persisted`` would resurrect it as pending after a
+    restart, and resolving that zombie a second time restores a stale snapshot -- silent
+    data loss. ``missing_ok`` covers the normal case where the backup-tree cleanup already
+    removed it; any other unlink failure raises so the caller keeps the retry handle.
+    """
+    backup_dir = getattr(transaction, "backup_dir", None)
+    if isinstance(backup_dir, Path):
+        (backup_dir / _METADATA_FILE).unlink(missing_ok=True)
 
 
 def _load_transaction_metadata(
