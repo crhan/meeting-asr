@@ -45,6 +45,38 @@ def test_full_subscriber_queue_still_receives_end_sentinel() -> None:
     assert queue.get_nowait() is _SENTINEL
 
 
+def test_full_subscriber_queue_still_receives_terminal_status() -> None:
+    """Back-pressure must not drop the terminal done/error status frame.
+
+    A non-reconnecting SSE consumer would otherwise see the stream end while still
+    believing the job is running -- and the error frame carries the failure message.
+    """
+    manager = JobManager(LockRegistry())
+    job = Job(id="j", kind="test", project_id=None)
+    queue = asyncio.Queue(maxsize=1)
+    queue.put_nowait({"type": "progress", "completed": 1})
+    job.subscribers.add(queue)
+
+    terminal: dict[str, object] = {"type": "status", "status": "error", "error": "boom"}
+    manager._publish(job, terminal)
+
+    assert queue.get_nowait() == terminal
+
+
+def test_full_subscriber_queue_still_drops_ordinary_progress() -> None:
+    """Ordinary progress events stay droppable under back-pressure (history replays them)."""
+    manager = JobManager(LockRegistry())
+    job = Job(id="j", kind="test", project_id=None)
+    queue = asyncio.Queue(maxsize=1)
+    first = {"type": "progress", "completed": 1}
+    queue.put_nowait(first)
+    job.subscribers.add(queue)
+
+    manager._publish(job, {"type": "progress", "completed": 2})
+
+    assert queue.get_nowait() == first  # the queued event was not evicted
+
+
 def test_finished_jobs_are_pruned_to_bound_memory() -> None:
     """Old terminal jobs are pruned when the registry exceeds its cap."""
     manager = JobManager(LockRegistry())

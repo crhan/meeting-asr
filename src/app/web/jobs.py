@@ -76,6 +76,10 @@ class JobManager:
         self._jobs_lock = threading.Lock()
         self._locks = locks
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Strong references to in-flight job tasks: the event loop only keeps weak refs to
+        # tasks, so a fire-and-forget ensure_future could be garbage-collected mid-run,
+        # silently orphaning the job in "queued"/"running". Touched only on the loop thread.
+        self._tasks: set[asyncio.Future[None]] = set()
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Capture the running event loop at startup.
@@ -125,9 +129,15 @@ class JobManager:
                     "Too many active jobs; wait for current jobs to finish."
                 )
         keys = tuple(store_locks)
-        loop.call_soon_threadsafe(
-            lambda: asyncio.ensure_future(self._run(job, fn, keys))
-        )
+
+        def _spawn() -> None:
+            # Runs on the loop thread. Keep a strong reference until the task finishes --
+            # the loop alone holds only weak refs and could let the task be GC'd mid-run.
+            task = asyncio.ensure_future(self._run(job, fn, keys))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+
+        loop.call_soon_threadsafe(_spawn)
         return job
 
     async def _run(self, job: Job, fn: JobFn, store_locks: tuple[str, ...]) -> None:
@@ -170,11 +180,17 @@ class JobManager:
         job.events.append(payload)
         if len(job.events) > _MAX_EVENTS_PER_JOB:
             del job.events[: len(job.events) - _MAX_EVENTS_PER_JOB]
+        # A slow consumer may overflow its queue; ordinary progress events can be dropped
+        # (history replay on reconnect recovers them), but the end sentinel and status
+        # transitions must survive: dropping the terminal done/error frame leaves a
+        # non-reconnecting client believing the job is still running -- and the error
+        # frame carries the failure message.
+        must_deliver = payload is _SENTINEL or payload.get("type") == "status"
         for queue in tuple(job.subscribers):
             try:
                 queue.put_nowait(payload)
             except asyncio.QueueFull:
-                if payload is _SENTINEL:
+                if must_deliver:
                     try:
                         queue.get_nowait()
                     except asyncio.QueueEmpty:
