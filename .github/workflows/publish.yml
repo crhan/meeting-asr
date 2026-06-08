@@ -26,17 +26,37 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Set up Node
+        # The wheel force-includes the React SPA; the hatch build hook runs `npm ci &&
+        # npm run build`, so node/npm must be present and pinned for a deterministic build.
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        # --all-extras installs the optional `web` extra so the web API tests can run.
+        run: uv sync --all-groups --all-extras
 
       - name: Run tests
         run: uv run pytest
 
       - name: Build distributions
+        # The published wheel MUST ship the React SPA; this flag makes the hook build it
+        # (and fail loudly if npm is missing) rather than silently producing a base wheel.
+        env:
+          MEETING_ASR_BUILD_WEB: "1"
         run: uv build
+
+      - name: Assert wheel ships the SPA
+        # Last gate before PyPI: the hook raises when static is missing from the source
+        # tree, but only inspecting the artifact proves the assets landed inside the wheel
+        # at the path the server serves from (app/web/static).
+        run: unzip -l dist/*.whl | grep -q app/web/static/index.html
 
       - name: Upload distributions
         uses: actions/upload-artifact@v7

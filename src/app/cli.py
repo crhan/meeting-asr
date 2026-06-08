@@ -22,6 +22,7 @@ from app.commands import (
     paths,
     project,
     voiceprint,
+    web,
 )
 from app.completion_helpers import complete_cli_language
 from app.presentation.cli.help import render_help
@@ -209,6 +210,7 @@ app.add_typer(
     help="Generate or install shell completion scripts.",
     context_settings=HELP_CONTEXT,
 )
+app.command("web", context_settings=HELP_CONTEXT)(web.command)
 app.command("paths", context_settings=HELP_CONTEXT)(paths.command)
 
 

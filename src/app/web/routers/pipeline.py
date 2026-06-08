@@ -1,0 +1,310 @@
+"""Ingestion pipeline over the web: full run, summarize, and merge.
+
+These reuse the exact CLI orchestration so the web is a true "control console":
+
+* ``run`` calls ``_run_project_workflow`` (the same orchestrator behind ``project run``)
+  as a background job, streaming its multi-step progress over SSE.
+* ``summarize`` calls ``summarize_project``.
+* ``merge`` calls ``merge_projects`` / ``write_merge_outputs``.
+
+Inputs are server-side file paths (this is a local single-user tool; the media lives on
+the same machine). Long, external-service-calling runs (DashScope ASR + LLM) run in the
+executor under the job manager.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+
+from fastapi import APIRouter, Depends
+
+from app.commands.project import _run_project_workflow  # reuse the run orchestrator
+from app.core.project_models import ProjectTranscribeOptions
+from app.core.project_refs import _projects_parent_dir
+from app.core.voiceprint_review_service import REGISTRY, CaptureConflictError
+from app.lexicon_store import get_lexicon_db_path
+from app.project_manager import (
+    resolve_project_dir_for_run,
+    summarize_project,
+)
+from app.transcript_merge import merge_projects, write_merge_outputs
+from app.voiceprint_people import get_voiceprint_person
+from app.voiceprint_store import get_voiceprint_db_path
+from app.web.deps import (
+    get_jobs,
+    get_settings,
+    require_auth,
+    resolve_web_project_ref,
+)
+from app.web.jobs import JobManager
+from app.web.locks import store_lock_key
+from app.web.schemas import (
+    JobRef,
+    MergeApplyIn,
+    MergePreviewIn,
+    RunPipelineIn,
+    SummarizeIn,
+)
+from app.web.settings import WebSettings
+
+router = APIRouter(
+    prefix="/api/pipeline", tags=["pipeline"], dependencies=[Depends(require_auth)]
+)
+
+
+def _require_file(path_str: str) -> Path:
+    path = Path(path_str).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(f"Input file does not exist: {path}")
+    return path.resolve()
+
+
+def _resolve_merge_out_dir(path_str: str, settings: WebSettings) -> Path:
+    """Resolve a merge output directory without letting web write arbitrary paths."""
+    # Mirror the read paths (list/show/clip): with no configured projects_dir, fall back to
+    # the default XDG projects dir instead of refusing -- otherwise merge-apply is broken in
+    # the default `meeting-asr web` invocation while merge-preview (a read) still works. The
+    # under-root containment check below is unchanged, so output still cannot escape the root.
+    root = _projects_parent_dir(settings.projects_dir)
+    raw = Path(path_str).expanduser()
+    out_dir = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
+    try:
+        out_dir.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"merge output directory must stay under projects_dir: {root}"
+        ) from exc
+    return out_dir
+
+
+@router.post("/run", response_model=JobRef)
+async def run_pipeline(
+    payload: RunPipelineIn,
+    settings: WebSettings = Depends(get_settings),
+    jobs: JobManager = Depends(get_jobs),
+) -> JobRef:
+    """Run the full project pipeline as a background job (create -> ASR -> summarize)."""
+    input_path = _require_file(payload.input_path)
+    extra_inputs = [_require_file(p) for p in payload.extra_inputs]
+    options = ProjectTranscribeOptions(
+        speaker_count=payload.speaker_count,
+        language=payload.language,
+        model=payload.model,
+        oss_upload=payload.oss_upload,
+        file_url=None,
+        generate_srt=True,
+        timestamp_alignment=True,
+        disfluency_removal=False,
+        audio_format=payload.audio_format,
+        asr_hotwords=payload.asr_hotwords,
+    )
+    lexicon_db = get_lexicon_db_path(settings.store_dir)
+    loop = asyncio.get_running_loop()
+
+    # A run mutates the global voiceprint store (speaker stabilization deletes overlapping
+    # samples), so a pending capture transaction would be data-corrupting: its rollback
+    # snapshot predates these deletions and would silently undo them. Refuse before any
+    # heavy work; REGISTRY.run_store_write below re-checks under the store-write lock so the
+    # check->run window cannot race.
+    if REGISTRY.has_pending():
+        raise CaptureConflictError(
+            "A voiceprint capture is awaiting accept/rollback; resolve it before "
+            "running the pipeline."
+        )
+
+    # Resolve the run's destination directory READ-ONLY (no create, no manifest write) so
+    # the job can be keyed by the project's ACTUAL directory -- which, for a project made
+    # with --project-dir, may differ from the content-addressed identity path. The job then
+    # acquires project_lock_key(project_dir) and its own create_or_reuse_project performs the
+    # actual create + title/manifest update under THAT lock, the same key inline
+    # speaker/correction saves take. Doing the create out here under the identity lock would
+    # mutate a reused non-canonical manifest under a different lock than inline saves hold,
+    # racing them. Two concurrent first-time runs both resolve the same canonical path, so
+    # their jobs share a key and serialise on the per-project lock -- no double-create.
+    project_dir = await loop.run_in_executor(
+        None,
+        lambda: resolve_project_dir_for_run(
+            input_path,
+            extra_inputs=extra_inputs,
+            projects_dir=settings.projects_dir,
+            variant=payload.variant,
+        ),
+    )
+
+    def work(reporter) -> dict[str, object]:
+        # The workflow learns auto-accepted corrections into the shared lexicon and deletes
+        # global voiceprint samples during stabilization. Run it inside the same store-write
+        # critical section voiceprint CRUD/capture use, so a concurrent capture rollback
+        # cannot drop its deletions; the store_locks below add the cross-request mutual
+        # exclusion the lexicon/voiceprint routes also rely on.
+        summary = REGISTRY.run_store_write(
+            lambda: _run_project_workflow(
+                input_path,
+                extra_inputs=extra_inputs,
+                title=payload.title,
+                projects_dir=settings.projects_dir,
+                project_dir=project_dir,
+                meeting_time=payload.meeting_time,
+                variant=payload.variant,
+                options=options,
+                store_dir=settings.voiceprint_store_dir,
+                lexicon_db=lexicon_db,
+                voiceprint_model=None,
+                match_threshold=payload.match_threshold,
+                summarize=payload.summarize,
+                summary_model=None,
+                polish=payload.polish,
+                local_correction=payload.local_correction,
+                correction_model=None,
+                polish_concurrency=None,
+                progress=reporter,
+            )
+        )
+        return {
+            "project_id": summary.project.manifest.project_id,
+            "project_dir": str(summary.project.project_dir),
+            "detected_speaker_count": summary.transcription.detected_speaker_count,
+            "sentence_count": summary.transcription.sentence_count,
+            "applied_speaker_count": len(summary.applied_mapping),
+            "has_summary": summary.meeting_summary is not None,
+            "polished": summary.correction_summary is not None,
+        }
+
+    job = jobs.submit(
+        "pipeline-run",
+        work,
+        project_id=str(project_dir),
+        store_locks=(store_lock_key("lexicon"), store_lock_key("voiceprints")),
+    )
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status)
+
+
+@router.post("/summarize/{project_ref}", response_model=JobRef)
+def summarize(
+    project_ref: str,
+    payload: SummarizeIn,
+    settings: WebSettings = Depends(get_settings),
+    jobs: JobManager = Depends(get_jobs),
+) -> JobRef:
+    """Generate meeting memory-index artifacts for a project (background job)."""
+    project_dir = resolve_web_project_ref(project_ref, settings)
+
+    # summarize_project rewrites project.json (summary record + title + stage). A pending
+    # capture's rollback restores the pre-capture project.json, so it would silently drop
+    # this. Fail fast for a clean 409; the in-job re-check below closes the race for a
+    # capture that registers after this check.
+    if REGISTRY.has_pending():
+        raise CaptureConflictError(
+            "A voiceprint capture is awaiting accept/rollback; resolve it before "
+            "summarizing the project."
+        )
+
+    def work(reporter) -> dict[str, object]:
+        # Re-check under the job's per-project lock -- the same lock the capture job holds
+        # when it registers its txn -- so the check cannot race the registration. Without
+        # this, a capture that registers between the fail-fast above and this job running
+        # would let summarize_project's project.json write be clobbered by a later rollback.
+        if REGISTRY.has_pending():
+            raise CaptureConflictError(
+                "A voiceprint capture is awaiting accept/rollback; resolve it before "
+                "summarizing the project."
+            )
+        result = summarize_project(
+            project_dir,
+            model=payload.model,
+            update_title=payload.update_title,
+            progress=reporter,
+        )
+        return {"project_dir": str(result.project_dir)}
+
+    job = jobs.submit("pipeline-summarize", work, project_id=str(project_dir))
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status)
+
+
+def _merge_result_payload(result) -> dict[str, object]:
+    merged = result.merged_corrected or result.merged_raw
+    return {
+        "order_source": result.order_source,
+        "use_corrected": result.use_corrected,
+        "identity_count": len(result.identities),
+        "speaker_count": len(result.mapping),
+        "sentence_count": len(merged.sentences),
+        "names": sorted(set(result.mapping.values())),
+        "warnings": list(result.warnings),
+    }
+
+
+def _name_resolver(store_dir: Path | None):
+    """Resolve a voiceprint person's authoritative name by vpp public id."""
+    db_path = get_voiceprint_db_path(store_dir)
+
+    def resolve(vpp: str) -> str | None:
+        person = get_voiceprint_person(vpp, db_path)
+        return person.name if person else None
+
+    return resolve
+
+
+@router.post("/merge-preview")
+async def merge_preview(
+    payload: MergePreviewIn,
+    settings: WebSettings = Depends(get_settings),
+) -> dict[str, object]:
+    """Merge several projects into one transcript (preview only, no write)."""
+    dirs = [resolve_web_project_ref(r, settings) for r in payload.project_refs]
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: merge_projects(
+            dirs,
+            use_corrected=payload.use_corrected,
+            name_to_vpp=payload.name_to_vpp,
+            include_low_information=payload.include_low_information,
+            keep_order=payload.keep_order,
+            store_dir=settings.voiceprint_store_dir,
+            title=payload.title,
+            vpp_name_resolver=_name_resolver(settings.voiceprint_store_dir),
+        ),
+    )
+    return _merge_result_payload(result)
+
+
+@router.post("/merge")
+async def merge_apply(
+    payload: MergeApplyIn,
+    settings: WebSettings = Depends(get_settings),
+) -> dict[str, object]:
+    """Merge several projects and write the output bundle to ``out_dir``."""
+    dirs = [resolve_web_project_ref(r, settings) for r in payload.project_refs]
+    out_dir = _resolve_merge_out_dir(payload.out_dir, settings)
+    loop = asyncio.get_running_loop()
+
+    def work() -> dict[str, object]:
+        result = merge_projects(
+            dirs,
+            use_corrected=payload.use_corrected,
+            name_to_vpp=payload.name_to_vpp,
+            include_low_information=payload.include_low_information,
+            keep_order=payload.keep_order,
+            store_dir=settings.voiceprint_store_dir,
+            title=payload.title,
+            vpp_name_resolver=_name_resolver(settings.voiceprint_store_dir),
+        )
+        outputs = write_merge_outputs(result, out_dir, force=payload.force)
+        payload_out = _merge_result_payload(result)
+        payload_out["out_dir"] = str(outputs.out_dir)
+        payload_out["written"] = [
+            str(p)
+            for p in (
+                outputs.transcript,
+                outputs.transcript_corrected,
+                outputs.subtitle,
+                outputs.subtitle_corrected,
+                outputs.manifest,
+            )
+            if p is not None
+        ]
+        return payload_out
+
+    return await loop.run_in_executor(None, work)

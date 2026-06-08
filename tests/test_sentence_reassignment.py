@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from app.sentence_reassignment import (
 from app.speaker_labeling import SentenceReassignmentSpec
 from app.voiceprint_models import StoredVoiceprintSample
 from app.voiceprint_store import (
+    delete_voiceprint_sample,
     delete_voiceprint_samples_by_ids,
     get_voiceprint_db_path,
     list_voiceprint_samples_for_project,
@@ -24,9 +26,7 @@ from app.voiceprint_store import (
 
 
 @pytest.fixture(autouse=True)
-def _isolate_xdg_data_home(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _isolate_xdg_data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep default voiceprint lookups inside the test sandbox."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
 
@@ -145,6 +145,115 @@ def test_apply_invalidates_only_overlapping_voiceprint_samples(tmp_path: Path) -
     assert remaining_clips == {"clip_other.wav", "clip_other_time.wav"}
 
 
+def test_stale_reassignment_raises_before_writes_or_sample_deletes(
+    tmp_path: Path,
+) -> None:
+    """A stale reassignment spec must fail atomically before downstream invalidation."""
+    project_dir = _make_project(tmp_path)
+    _write_sentences(project_dir, _sentences_payload())
+    store_dir = tmp_path / "voiceprints"
+    project_id = _project_id(project_dir)
+    sample = _stored_sample(
+        store_dir,
+        project_dir / "source" / "meeting.mp4",
+        speaker_name="speaker-1-overlap",
+        project_id=project_id,
+        project_speaker_id=1,
+        source_begin_time_ms=2000,
+        source_end_time_ms=2400,
+        clip_filename="clip_overlap.wav",
+    )
+    store_voiceprint_samples([sample], get_voiceprint_db_path(store_dir))
+
+    with pytest.raises(ValueError, match="no longer matches"):
+        apply_project_sentence_reassignments(
+            project_dir,
+            [
+                SentenceReassignmentSpec(
+                    sentence_id=2,
+                    begin_time_ms=2000,
+                    end_time_ms=2500,
+                    new_speaker_id=0,
+                    original_speaker_id=9,
+                )
+            ],
+            store_dir=store_dir,
+            rematch=False,
+        )
+
+    raw = json.loads(
+        (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8")
+    )
+    assert raw["sentences"][1]["speaker_id"] == 1
+    remaining = list_voiceprint_samples_for_project(
+        project_id, get_voiceprint_db_path(store_dir)
+    )
+    assert {row.clip_path.name for row in remaining} == {"clip_overlap.wav"}
+
+
+def test_retry_of_already_applied_reassignment_is_a_clean_noop(
+    tmp_path: Path,
+) -> None:
+    """A save retried after a partial failure must no-op, not raise.
+
+    The first apply rewrites the sentence files; if a later step of the same save
+    fails, the front-end retries with the SAME specs. The sentence now carries
+    ``new_speaker_id``, which must count as matched (idempotent) rather than as
+    transcript drift.
+    """
+    project_dir = _make_project(tmp_path)
+    _write_sentences(project_dir, _sentences_payload())
+    spec = SentenceReassignmentSpec(
+        sentence_id=2,
+        begin_time_ms=2000,
+        end_time_ms=2500,
+        new_speaker_id=0,
+        original_speaker_id=1,
+    )
+
+    first = apply_project_sentence_reassignments(project_dir, [spec], rematch=False)
+    assert first.sentence_files  # the first apply rewrote the transcript
+
+    retry = apply_project_sentence_reassignments(project_dir, [spec], rematch=False)
+
+    # Matched (no raise) but nothing changed, so no file was rewritten.
+    assert retry.sentence_files == ()
+    raw = json.loads(
+        (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8")
+    )
+    assert raw["sentences"][1]["speaker_id"] == 0
+
+
+def test_drifted_speaker_outside_original_and_new_still_raises(
+    tmp_path: Path,
+) -> None:
+    """A sentence whose speaker is neither the reviewed original nor the target is drift."""
+    project_dir = _make_project(tmp_path)
+    payload = _sentences_payload()
+    payload["sentences"][1]["speaker_id"] = 5  # drifted since the review was loaded
+    _write_sentences(project_dir, payload)
+
+    with pytest.raises(ValueError, match="no longer matches"):
+        apply_project_sentence_reassignments(
+            project_dir,
+            [
+                SentenceReassignmentSpec(
+                    sentence_id=2,
+                    begin_time_ms=2000,
+                    end_time_ms=2500,
+                    new_speaker_id=0,
+                    original_speaker_id=1,
+                )
+            ],
+            rematch=False,
+        )
+
+    raw = json.loads(
+        (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8")
+    )
+    assert raw["sentences"][1]["speaker_id"] == 5  # untouched
+
+
 def test_apply_runs_rematch_when_requested(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -258,6 +367,57 @@ def test_delete_voiceprint_samples_by_ids_removes_rows_and_clips(
     assert not target_clip.exists()
     remaining = list_voiceprint_samples_for_project("proj-1", db_path)
     assert {row.clip_path.name for row in remaining} == {"two.wav"}
+
+
+def test_delete_via_copied_store_does_not_unlink_original_clip(
+    tmp_path: Path,
+) -> None:
+    """Deleting through a COPIED store (``--store-dir`` isolation, the documented safe-copy
+    validation workflow) must not unlink the clip in the ORIGINAL store.
+
+    The copied DB rows keep the original store's absolute ``clip_path``; deletion must rebase
+    onto the configured (copied) store via ``clip_rel_path`` and never touch a file outside
+    it, so the real library's clip survives a validation run."""
+    orig_store = tmp_path / "orig_store"
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    source = project_dir / "source.mp4"
+    source.write_bytes(b"fake")
+    sample = _stored_sample(
+        orig_store,
+        source,
+        speaker_name="speaker",
+        project_id="proj-1",
+        project_speaker_id=0,
+        source_begin_time_ms=0,
+        source_end_time_ms=1000,
+        clip_filename="one.wav",
+    )
+    orig_db = store_voiceprint_samples([sample], get_voiceprint_db_path(orig_store))
+    orig_clip = sample.clip_path
+    assert orig_clip.exists()
+
+    # Copy ONLY the sqlite into an isolated store (clips deliberately not copied) -- the copy's
+    # rows still carry the original store's absolute clip_path.
+    copy_store = tmp_path / "copy_store"
+    copy_store.mkdir()
+    copy_db = get_voiceprint_db_path(copy_store)
+    shutil.copy2(orig_db, copy_db)
+
+    rows = list_voiceprint_samples_for_project("proj-1", copy_db)
+    assert len(rows) == 1
+
+    deleted = delete_voiceprint_sample("speaker", 1, db_path=copy_db)
+
+    # The DB row is gone from the copy, but the original store's clip is untouched.
+    assert deleted.clip_deleted is False
+    assert orig_clip.exists()
+    assert list_voiceprint_samples_for_project("proj-1", copy_db) == []
+    # Sanity: the original DB still references the (still-present) clip.
+    assert {
+        row.clip_path.name
+        for row in list_voiceprint_samples_for_project("proj-1", orig_db)
+    } == {"one.wav"}
 
 
 def _make_project(tmp_path: Path) -> Path:

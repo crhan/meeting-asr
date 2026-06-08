@@ -340,6 +340,87 @@ def create_or_reuse_project(
     return ProjectCreateSummary(project_root, manifest, True)
 
 
+def resolve_run_project_dir(
+    input_path: Path,
+    *,
+    extra_inputs: Sequence[Path] = (),
+    projects_dir: Path | None = None,
+    variant: str | None = None,
+) -> Path:
+    """Compute the content-addressed project dir a default run would use (no side effects).
+
+    This mirrors the new-project identity of :func:`create_or_reuse_project` (single SHA for
+    one input, combined SHA for ordered multi-input) using the same helpers, so it cannot
+    diverge. It hashes the sources read-only and creates nothing -- callers use it to take a
+    per-project lock on a project's *identity* before creating it, so two concurrent
+    first-time runs of the same media cannot both create the same directory and clobber it.
+    """
+    sources = [input_path, *extra_inputs]
+    per_file_shas = [_sha256_file(source.expanduser().resolve()) for source in sources]
+    combined_sha = _combined_identity_sha(per_file_shas)
+    project_id = _build_project_id(combined_sha, _normalize_project_variant(variant))
+    return (_projects_parent_dir(projects_dir) / project_id).resolve()
+
+
+def resolve_project_dir_for_run(
+    input_path: Path,
+    *,
+    extra_inputs: Sequence[Path] = (),
+    projects_dir: Path | None = None,
+    variant: str | None = None,
+) -> Path:
+    """Resolve the project dir a run will land on, creating and mutating nothing.
+
+    This mirrors :func:`create_or_reuse_project`'s *destination* exactly -- an existing
+    project for this source (which may live in a non-canonical directory created with
+    ``--project-dir``) is reused at its real on-disk path; otherwise a new project's
+    content-addressed identity path is returned. It performs no manifest write.
+
+    The web run route keys its background job by this path and lets the job's own
+    ``create_or_reuse_project`` perform the actual create + title/manifest update under that
+    project's lock. Resolving read-only first is what lets the manifest mutation happen
+    under the *returned* project's lock (the same key inline speaker/correction saves take)
+    instead of under the content-addressed identity lock, which can differ from the reused
+    directory and would otherwise let a concurrent inline save clobber the manifest.
+    """
+    resolved_variant = _normalize_project_variant(variant)
+    if extra_inputs:
+        # Multi-input identity is purely content-addressed (never find_project_by_source),
+        # so the destination is always the canonical combined-identity root -- matching
+        # _create_or_reuse_multi_source_project.
+        sources = [input_path, *extra_inputs]
+        per_file_shas = [_sha256_file(s.expanduser().resolve()) for s in sources]
+        combined_sha = _combined_identity_sha(per_file_shas)
+        return _resolve_project_root(
+            sources[0].expanduser().resolve(),
+            projects_dir,
+            None,
+            combined_sha,
+            resolved_variant,
+        )
+    # Single input: mirror create_or_reuse_project's two-pass reuse lookup (by original
+    # path, then by content hash) before falling back to the canonical identity path.
+    source = input_path.expanduser().resolve()
+    existing = _find_existing_project_for_create(
+        input_path, projects_dir, None, source_sha256=None, variant=resolved_variant
+    )
+    if existing is not None:
+        return existing
+    source_sha256 = _sha256_file(source)
+    existing = _find_existing_project_for_create(
+        input_path,
+        projects_dir,
+        None,
+        source_sha256=source_sha256,
+        variant=resolved_variant,
+    )
+    if existing is not None:
+        return existing
+    return _resolve_project_root(
+        source, projects_dir, None, source_sha256, resolved_variant
+    )
+
+
 def _combined_identity_sha(per_file_shas: Sequence[str]) -> str:
     """Build a stable content identity for an ordered set of source files.
 
@@ -390,9 +471,7 @@ def _create_or_reuse_multi_source_project(
         same_variant = (manifest.source.variant or None) == (variant or None)
         if same_content and same_variant:
             emit_progress(progress, "Using existing project", total=1, completed=1)
-            return ProjectCreateSummary(
-                root, _load_reused_manifest(root, title), False
-            )
+            return ProjectCreateSummary(root, _load_reused_manifest(root, title), False)
         raise FileExistsError(
             f"Project directory already holds a different project: {root}"
         )
@@ -933,7 +1012,9 @@ def prepare_project_audio_multi(
     segments = [dict(segment) for segment in (manifest.audio.get("segments") or [])]
     if not segments:
         raise ValueError("Project has no recorded segments to concatenate.")
-    segment_sources = [_resolve_segment_source(paths.root, segment) for segment in segments]
+    segment_sources = [
+        _resolve_segment_source(paths.root, segment) for segment in segments
+    ]
     audio_path = paths.audio_dir / f"audio.{normalized_format}"
     emit_progress(
         progress, f"Concatenating {len(segments)} segments into 16 kHz mono audio"
@@ -997,6 +1078,7 @@ def transcribe_project(
     *,
     step_offset: int = 0,
     step_total: int | None = None,
+    lexicon_db: Path | None = None,
 ) -> ProjectTranscribeSummary:
     """
     Run DashScope transcription for a project.
@@ -1007,6 +1089,9 @@ def transcribe_project(
         progress: Optional progress reporter.
         step_offset: Number of workflow steps before transcription.
         step_total: Optional total workflow step count.
+        lexicon_db: Optional lexicon database for ASR hotword resolution/snapshot. Defaults to
+            the XDG lexicon; pass the configured store's lexicon so an isolated ``--store-dir``
+            run never reads/syncs hotwords from the wrong (default) lexicon.
 
     Returns:
         Transcription summary.
@@ -1099,7 +1184,7 @@ def transcribe_project(
         step_total=transcribe_steps,
         reset_total=True,
     )
-    hotwords = _resolve_project_asr_hotwords(settings, options)
+    hotwords = _resolve_project_asr_hotwords(settings, options, lexicon_db=lexicon_db)
     task_response = _submit_project_task(settings, file_url, options, hotwords)
     task_id = _extract_task_id(task_response)
     record_project_stage(
@@ -2250,11 +2335,14 @@ def _submit_project_task(
 
 
 def _resolve_project_asr_hotwords(
-    settings, options: ProjectTranscribeOptions
+    settings, options: ProjectTranscribeOptions, *, lexicon_db: Path | None = None
 ) -> AsrHotwordResolution:
     """Resolve ASR hotwords for one project transcription."""
     return resolve_asr_hotwords(
-        mode=options.asr_hotwords, settings=settings, target_model=options.model
+        mode=options.asr_hotwords,
+        settings=settings,
+        target_model=options.model,
+        db_path=lexicon_db,
     )
 
 

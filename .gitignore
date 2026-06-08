@@ -16,3 +16,14 @@ evals/private/
 
 # Agent runtime worktrees
 .claude/
+
+# Web UI (React/Vite) build artifacts; the SPA bundle is regenerated at wheel-build
+# time (P4 packaging) and the server serves a hint when it is absent.
+web/node_modules/
+web/dist/
+src/app/web/static/
+
+# Local build/verification scratch. Hatchling's sdist includes everything that is not
+# VCS-ignored, so untracked junk here would otherwise get packed into locally built sdists.
+.uv-cache/
+dist-test/

@@ -30,6 +30,7 @@ from app.project_manager import (
     _invalidate_downstream_artifacts,
     _parse_project_oss_upload,
     apply_project_speakers,
+    create_or_reuse_project,
     create_project,
     find_project_by_source,
     init_project_git,
@@ -38,7 +39,9 @@ from app.project_manager import (
     ProjectTranscribeSummary,
     project_paths,
     resolve_project_audio_path,
+    resolve_project_dir_for_run,
     resolve_project_source_path,
+    resolve_run_project_dir,
     save_manifest,
     summarize_project,
 )
@@ -833,7 +836,7 @@ def test_asr_polling_heartbeat_redacts_signed_url_query_token(
     monkeypatch.setattr(
         project_manager,
         "_resolve_project_asr_hotwords",
-        lambda settings, options: AsrHotwordResolution(None, "disabled"),
+        lambda settings, options, **_kw: AsrHotwordResolution(None, "disabled"),
     )
     monkeypatch.setattr(project_manager, "record_dashscope_wait", lambda **_: None)
 
@@ -985,6 +988,7 @@ def test_project_run_generates_default_transcript_polish_proposal(
         polish_concurrency=None,
         polish_legacy=False,
         progress=None,
+        lexicon_db=None,
     ):
         calls["model"] = correction_model
         calls["polish_concurrency"] = polish_concurrency
@@ -1102,6 +1106,7 @@ def test_project_run_auto_accepts_polish_when_configured(
         polish_concurrency=None,
         polish_legacy=False,
         progress=None,
+        lexicon_db=None,
     ):
         proposal_dir = project_dir / "tmp" / "corrections"
         proposal_dir.mkdir(parents=True, exist_ok=True)
@@ -3826,3 +3831,110 @@ def test_parse_mapping_item_rejects_comma_in_value() -> None:
     """Defense in depth: a comma inside a single name is rejected at the item layer."""
     with pytest.raises(typer.BadParameter):
         project_manager._parse_mapping_item("0=武,一")
+
+
+def test_resolve_run_project_dir_is_pure_and_matches_create(tmp_path: Path) -> None:
+    """The identity resolver must create nothing and match create_or_reuse's project dir."""
+    source = tmp_path / "a.wav"
+    source.write_bytes(b"audio-bytes")
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+
+    resolved = resolve_run_project_dir(source, projects_dir=projects_dir)
+
+    # Pure: it hashes read-only and creates nothing.
+    assert not resolved.exists()
+    assert list(projects_dir.iterdir()) == []
+
+    # And it equals the directory create_or_reuse_project actually uses (no divergence).
+    created = create_or_reuse_project(
+        source,
+        title=None,
+        projects_dir=projects_dir,
+        project_dir=None,
+        meeting_time=None,
+        hash_source=True,
+    )
+    assert created.project_dir == resolved
+
+
+def test_resolve_project_dir_for_run_reuses_noncanonical_without_mutation(
+    tmp_path: Path,
+) -> None:
+    """The run-destination resolver must reuse a project's REAL (non-canonical) directory
+    and never mutate its manifest -- so the web run keys its job by the same dir inline
+    saves take and defers the manifest write into the job's lock, not a divergent one."""
+    source = tmp_path / "a.wav"
+    source.write_bytes(b"audio-bytes")
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    # A project made with --project-dir lives under projects_dir but NOT at the
+    # content-addressed identity path -- the divergence the lock bug relied on.
+    custom_dir = projects_dir / "my-custom-name"
+    created = create_or_reuse_project(
+        source,
+        title="Original Title",
+        projects_dir=projects_dir,
+        project_dir=custom_dir,
+        meeting_time=None,
+        hash_source=True,
+    )
+    assert created.project_dir == custom_dir
+
+    canonical = resolve_run_project_dir(source, projects_dir=projects_dir)
+    assert canonical != custom_dir  # identity path differs from the real reused dir
+    assert not canonical.exists()
+
+    manifest_path = custom_dir / "project.json"
+    before = manifest_path.read_text(encoding="utf-8")
+    mtime_before = manifest_path.stat().st_mtime_ns
+
+    resolved = resolve_project_dir_for_run(source, projects_dir=projects_dir)
+
+    # Reuse-aware: resolves to the project's real non-canonical directory.
+    assert resolved == custom_dir
+    # Read-only: the reused manifest is byte-for-byte untouched (no title write under a
+    # different lock than inline saves hold).
+    assert manifest_path.read_text(encoding="utf-8") == before
+    assert manifest_path.stat().st_mtime_ns == mtime_before
+
+
+def test_resolve_project_asr_hotwords_threads_lexicon_db(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ASR hotword resolution must use the configured lexicon db. Otherwise an isolated web run
+    started with --store-dir would read/sync hotwords from the default XDG lexicon, not its
+    own store -- the same store-isolation hazard the project guards everywhere else."""
+    import app.project_manager as pm
+    from app.core.project_models import ProjectTranscribeOptions
+
+    captured: dict = {}
+
+    def fake_resolve(*, mode, settings, target_model, db_path=None):
+        captured["mode"] = mode
+        captured["db_path"] = db_path
+        return SimpleNamespace(vocabulary_id=None, source="off", hotwords=())
+
+    monkeypatch.setattr(pm, "resolve_asr_hotwords", fake_resolve)
+
+    options = ProjectTranscribeOptions(
+        speaker_count=None,
+        language=None,
+        model="paraformer",
+        oss_upload=False,
+        file_url=None,
+        generate_srt=True,
+        timestamp_alignment=True,
+        disfluency_removal=False,
+        audio_format="wav",
+        asr_hotwords="auto",
+    )
+
+    lex = tmp_path / "store" / "lexicon" / "lexicon.sqlite"
+    pm._resolve_project_asr_hotwords(SimpleNamespace(), options, lexicon_db=lex)
+    assert captured["db_path"] == lex
+    assert captured["mode"] == "auto"
+
+    # No override -> default XDG lexicon (db_path None), preserving CLI behavior.
+    pm._resolve_project_asr_hotwords(SimpleNamespace(), options)
+    assert captured["db_path"] is None

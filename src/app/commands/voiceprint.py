@@ -761,6 +761,11 @@ def delete_speaker_command(
             speaker, db_path=db_path, delete_clips=not keep_clips
         )
     )
+    # An empty speaker (created but never captured) deletes cleanly but returns no samples,
+    # so there is no deleted[0] to name it by -- fall back to the requested ref.
+    if not deleted:
+        typer.echo(f"Deleted speaker: {speaker} (no stored samples)")
+        return
     typer.echo(
         f"Deleted speaker: {deleted[0].speaker_name} (id {deleted[0].speaker_public_id})"
     )

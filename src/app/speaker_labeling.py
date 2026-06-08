@@ -217,6 +217,16 @@ class SentenceReassignmentSpec:
     original_speaker_id: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _RewritePlan:
+    """In-memory rewrite result for one ASR sentence file."""
+
+    path: Path
+    payload: dict
+    matched_indices: frozenset[int]
+    changed: bool
+
+
 def apply_sentence_reassignments(
     asr_dir: Path,
     reassignments: Iterable[SentenceReassignmentSpec],
@@ -242,78 +252,148 @@ def apply_sentence_reassignments(
     if not specs:
         return ()
     candidate_paths = (asr_dir / "sentences.json", asr_dir / "sentences_corrected.json")
-    written: list[Path] = []
+    plans: list[_RewritePlan] = []
+    matched_indices: set[int] = set()
     for path in candidate_paths:
         if not path.exists():
             continue
-        if _rewrite_sentences_with_reassignments(path, specs):
-            written.append(path)
-    if not written:
+        plan = _plan_sentence_rewrite(path, specs)
+        if plan is None:
+            continue
+        plans.append(plan)
+        matched_indices.update(plan.matched_indices)
+    if not plans:
         raise ValueError(f"No transcript file under {asr_dir} accepted reassignments.")
+    expected_indices = set(range(len(specs)))
+    missing = sorted(expected_indices - matched_indices)
+    if missing:
+        missing_text = ", ".join(
+            _format_reassignment(specs[index]) for index in missing
+        )
+        raise ValueError(
+            "Reassignment no longer matches the current transcript: " + missing_text
+        )
+    written: list[Path] = []
+    for plan in plans:
+        if plan.changed:
+            safe_write_json(plan.path, plan.payload)
+            written.append(plan.path)
     return tuple(written)
 
 
-def _rewrite_sentences_with_reassignments(
+def _plan_sentence_rewrite(
     path: Path,
     reassignments: Sequence[SentenceReassignmentSpec],
-) -> bool:
-    """Rewrite one sentence file with the given reassignments.
+) -> _RewritePlan | None:
+    """Prepare one sentence-file rewrite without touching disk.
 
     Args:
         path: Sentence file (raw or corrected) to update.
         reassignments: Reassignments to apply.
 
     Returns:
-        ``True`` when the file was rewritten, ``False`` when the payload was
-        missing the ``sentences`` key (treated as a no-op).
+        Rewrite plan, or ``None`` when the payload is not a sentence file.
     """
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        return False
+        return None
     sentences = payload.get("sentences")
     if not isinstance(sentences, list):
-        return False
-    by_sentence_id: dict[int, SentenceReassignmentSpec] = {}
-    by_timing: dict[tuple[int, int], SentenceReassignmentSpec] = {}
-    for spec in reassignments:
+        return None
+    by_sentence_id: dict[int, list[int]] = {}
+    by_timing: dict[tuple[int, int], list[int]] = {}
+    for index, spec in enumerate(reassignments):
         if spec.sentence_id is not None:
-            by_sentence_id[int(spec.sentence_id)] = spec
-        by_timing[(int(spec.begin_time_ms), int(spec.end_time_ms))] = spec
-    matched_any = False
+            by_sentence_id.setdefault(int(spec.sentence_id), []).append(index)
+        by_timing.setdefault(
+            (int(spec.begin_time_ms), int(spec.end_time_ms)), []
+        ).append(index)
+    matched_indices: set[int] = set()
+    changed = False
     for sentence in sentences:
         if not isinstance(sentence, dict):
             continue
-        spec = _match_reassignment(sentence, by_sentence_id, by_timing)
-        if spec is None:
+        index = _match_reassignment_index(
+            sentence, by_sentence_id, by_timing, reassignments
+        )
+        if index is None:
             continue
-        sentence["speaker_id"] = int(spec.new_speaker_id)
-        matched_any = True
-    if matched_any:
+        spec = reassignments[index]
+        matched_indices.add(index)
+        next_speaker_id = int(spec.new_speaker_id)
+        if sentence.get("speaker_id") != next_speaker_id:
+            sentence["speaker_id"] = next_speaker_id
+            changed = True
+    if changed:
         payload["detected_speakers"] = _recompute_detected_speakers(sentences)
-    safe_write_json(path, payload)
-    return True
+    return _RewritePlan(
+        path=path,
+        payload=payload,
+        matched_indices=frozenset(matched_indices),
+        changed=changed,
+    )
 
 
-def _match_reassignment(
+def _match_reassignment_index(
     sentence: dict,
-    by_sentence_id: dict[int, SentenceReassignmentSpec],
-    by_timing: dict[tuple[int, int], SentenceReassignmentSpec],
-) -> SentenceReassignmentSpec | None:
-    """Return the reassignment matching one sentence payload."""
+    by_sentence_id: dict[int, list[int]],
+    by_timing: dict[tuple[int, int], list[int]],
+    reassignments: Sequence[SentenceReassignmentSpec],
+) -> int | None:
+    """Return the reassignment index matching one sentence payload."""
     sentence_id = sentence.get("sentence_id")
     if sentence_id is not None:
         try:
-            spec = by_sentence_id.get(int(sentence_id))
+            candidates = by_sentence_id.get(int(sentence_id), [])
         except TypeError, ValueError:
-            spec = None
-        if spec is not None:
-            return spec
+            candidates = []
+        for index in candidates:
+            if _speaker_matches_original(sentence, reassignments[index]):
+                return index
     try:
         begin = int(sentence.get("begin_time_ms", 0))
         end = int(sentence.get("end_time_ms", 0))
     except TypeError, ValueError:
         return None
-    return by_timing.get((begin, end))
+    for index in by_timing.get((begin, end), []):
+        if _speaker_matches_original(sentence, reassignments[index]):
+            return index
+    return None
+
+
+def _speaker_matches_original(sentence: dict, spec: SentenceReassignmentSpec) -> bool:
+    """Return whether the sentence may be rewritten by this reassignment.
+
+    ``original_speaker_id is None`` is a legacy spec that never captured the speaker
+    seen during review; sentence identity (id or timing) alone is authoritative for it,
+    matching the pre-drift-guard semantics. When the original speaker IS recorded, the
+    sentence must still carry it -- or already carry ``new_speaker_id``: a save that
+    rewrote the sentence files but failed in a later step (speaker-map write, sample
+    invalidation) is retried with the same specs, and the retry must be an idempotent
+    no-op instead of a "no longer matches" failure. Any other current speaker means the
+    transcript drifted since the review was loaded, so the match is refused.
+    """
+    if spec.original_speaker_id is None:
+        return True
+    current = sentence.get("speaker_id")
+    if current is None:
+        return False
+    try:
+        return int(current) in (
+            int(spec.original_speaker_id),
+            int(spec.new_speaker_id),
+        )
+    except TypeError, ValueError:
+        return False
+
+
+def _format_reassignment(spec: SentenceReassignmentSpec) -> str:
+    """Return a compact reassignment identity for error messages."""
+    if spec.sentence_id is not None:
+        identity = f"sentence_id={spec.sentence_id}"
+    else:
+        identity = f"time={spec.begin_time_ms}-{spec.end_time_ms}"
+    return f"{identity}, original_speaker_id={spec.original_speaker_id}"
 
 
 def _recompute_detected_speakers(sentences: list) -> list[int]:

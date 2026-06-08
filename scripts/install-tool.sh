@@ -12,6 +12,8 @@ Options:
   --editable             Install this checkout in editable mode. Default for local development.
   --wheel                Install a built wheel. Use for release/user-install verification.
   --force                Overwrite executable conflicts. Not needed for normal refreshes.
+  --web                  Install the web UI ([web] extra) and build the SPA. Default.
+  --no-web               Skip the web UI extra and SPA build.
   --no-local-voiceprint  Deprecated no-op. Local SpeechBrain is now a standard dependency.
   --print-only           Print the install plan without executing it.
   --check                Inspect the current meeting-asr executable and exit.
@@ -55,6 +57,7 @@ inspect_environment() {
 
 inspect_install() {
   local source_dir="${1:-$(repo_root)}"
+  local expect_web="${2:-1}"
   local executable
   executable="$(command -v meeting-asr || true)"
   if [[ -z "$executable" ]]; then
@@ -72,9 +75,9 @@ inspect_install() {
   echo "Meeting-ASR install status"
   echo "Executable: $executable"
   echo "Python: $python_path"
-  "$python_path" - "$source_dir" <<'PY'
+  "$python_path" - "$source_dir" "$expect_web" <<'PY'
 import hashlib
-from importlib.metadata import distribution
+from importlib.metadata import PackageNotFoundError, distribution
 import json
 from pathlib import Path
 import sys
@@ -96,6 +99,7 @@ def tree_hash(root: Path) -> str:
 
 
 source_package = Path(sys.argv[1]) / "src" / "app"
+expect_web = sys.argv[2] == "1"
 installed_package = Path(app.__file__).resolve().parent
 dist = distribution("meeting-asr")
 direct_url = dist.read_text("direct_url.json")
@@ -107,12 +111,42 @@ print("Package:", dist.locate_file(""))
 print("Source:", source_url)
 print("Installed app:", installed_package)
 print("Code match:", "yes" if source_hash == installed_hash else "no")
+web_dependencies = ("fastapi", "uvicorn", "sse-starlette", "python-multipart")
+missing_web = []
+for dependency in web_dependencies:
+    try:
+        distribution(dependency)
+    except PackageNotFoundError:
+        missing_web.append(dependency)
+print(
+    "Web UI dependencies:",
+    "yes" if not missing_web else "missing " + ", ".join(missing_web),
+)
+# Dependencies alone do not prove the UI works: the SPA bundle is a separate artifact
+# (checkout static for editable installs, force-included static for wheel installs), and a
+# stale uv-cached wheel can carry deps but no bundle.
+web_assets = installed_package / "web" / "static" / "index.html"
+print("Web UI assets:", "yes" if web_assets.is_file() else "missing " + str(web_assets))
 if source_hash != installed_hash:
     print("Checkout hash:", source_hash)
     print("Installed hash:", installed_hash)
     raise SystemExit(
         "Installed package code does not match this checkout. "
         "Run `scripts/install-tool.sh`; if it still mismatches, rerun with `UV_NO_CACHE=1`."
+    )
+if expect_web and missing_web:
+    raise SystemExit(
+        "Web UI dependencies are missing from this global tool. "
+        "Run `scripts/install-tool.sh`; it installs the web extra by default. "
+        "Use `--no-web` only when deliberately keeping a CLI-only tool."
+    )
+if expect_web and not web_assets.is_file():
+    raise SystemExit(
+        "Web UI assets (app/web/static/index.html) are missing from this install. "
+        "For an editable install, build the SPA in the checkout: "
+        "`npm --prefix web ci && npm --prefix web run build` (or rerun `scripts/install-tool.sh`). "
+        "For a wheel install, rerun `scripts/install-tool.sh --wheel`; if it still misses, "
+        "a stale cached wheel is being reused -- rerun with `UV_NO_CACHE=1`."
     )
 PY
 }
@@ -136,6 +170,7 @@ force=0
 local_voiceprint=1
 print_only=0
 check_only=0
+web=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -163,6 +198,14 @@ while [[ $# -gt 0 ]]; do
       local_voiceprint=0
       shift
       ;;
+    --web)
+      web=1
+      shift
+      ;;
+    --no-web)
+      web=0
+      shift
+      ;;
     --print-only)
       print_only=1
       shift
@@ -187,7 +230,7 @@ if [[ "$check_only" -eq 1 ]]; then
   source_dir="$(repo_root)"
   inspect_environment
   echo
-  inspect_install "$source_dir"
+  inspect_install "$source_dir" "$web"
   warn_path_pollution
   exit 0
 fi
@@ -200,19 +243,43 @@ fi
 source_dir="$(repo_root)"
 package="."
 
-command=(uv tool install --python "$python_value")
+if [[ "$web" -eq 1 ]]; then
+  package=".[web]"
+  # Build the React SPA so the installed tool serves the web UI. Editable installs read
+  # static straight from the checkout; wheel installs let the hatch hook rebuild and assert
+  # the SPA via MEETING_ASR_BUILD_WEB=1.
+  # Skip for a dry-run: --print-only must only print the plan, never npm ci + vite build,
+  # which hit the network and rewrite web/node_modules and src/app/web/static.
+  if [[ "$editable" -eq 1 && "$print_only" -eq 0 && -f "$source_dir/web/package.json" ]]; then
+    if command -v npm >/dev/null 2>&1; then
+      echo "Building web UI assets..."
+      (cd "$source_dir/web" && npm ci && npm run build)
+    elif [[ ! -f "$source_dir/src/app/web/static/index.html" ]]; then
+      echo "npm not found and web assets are not built; install with --no-web or build the SPA first." >&2
+      exit 1
+    fi
+  fi
+fi
+
+install_command=(uv tool install --python "$python_value")
 if [[ "$force" -eq 1 ]]; then
-  command+=(--force)
+  install_command+=(--force)
 fi
 if [[ "$editable" -eq 1 ]]; then
-  command+=(--editable)
+  install_command+=(--editable)
 fi
-command+=("$package")
+install_command+=("$package")
+
+command=("${install_command[@]}")
+if [[ "$web" -eq 1 && "$editable" -eq 0 ]]; then
+  command=(env MEETING_ASR_BUILD_WEB=1 "${install_command[@]}")
+fi
 
 echo "Meeting-ASR install plan"
 echo "Source: $source_dir"
 echo "Mode: $([[ "$editable" -eq 1 ]] && echo editable || echo wheel)"
 echo "Force: $([[ "$force" -eq 1 ]] && echo yes || echo no)"
+echo "Web UI: $([[ "$web" -eq 1 ]] && echo 'yes ([web] extra, default)' || echo 'no (--no-web)')"
 if [[ "$local_voiceprint" -eq 0 ]]; then
   echo "Local voiceprint: standard dependency (--no-local-voiceprint is ignored)"
 else
@@ -231,5 +298,5 @@ fi
   cd "$source_dir"
   "${command[@]}"
 )
-inspect_install "$source_dir"
+inspect_install "$source_dir" "$web"
 warn_path_pollution
