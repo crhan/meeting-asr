@@ -5,13 +5,19 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
-## [Unreleased]
+## [0.12.0] - 2026-06-08
 
 ### 新增
 
-- 新增 **Web UI（`meeting-asr web`）**：把原本的 Textual TUI 全部功能搬上浏览器。`meeting-asr web` 启动一个本地 FastAPI 服务（默认 `127.0.0.1:8765`，单用户、loopback 免鉴权，非 loopback 强制 bearer token），前端是 React + TypeScript + Vite SPA（构建产物 force-include 进 wheel，发布时 hatch 钩子自动构建，安装无需 node）。覆盖：项目列表与完整 ASR 摄入管线控制台（运行管线 / summarize / merge，经后台任务 + SSE 实时进度）、**speaker review**（双栏、逐句音频播放、改名 / 接受声纹匹配 / 忽略 / 重指派 / 疑点过滤 / 保存）、**声纹采集**（候选 clip 勾选 → 采集+嵌入 → 本项目与历史项目逐发言人分数变化对比 → 接受/回滚）、**声纹库**（浏览 / 质量离群改判 / 人物 CRUD）、**文字纠错**（polish 提案逐条勾选应用）、**纠错词库**（词条/消歧/热词）、**设置**（配置凭证、环境诊断）。架构上**零业务逻辑重写**：危险落盘路径（speaker_map 合并、会删全局声纹样本的重指派 + rematch、声纹采集事务）抽进 `core/speaker_review_service.py` / `core/voiceprint_review_service.py`，CLI 与 web 共用同一条路径；长任务进度复用现有 `emit_progress`，经 `call_soon_threadsafe` 推 SSE；音频经带 HTTP Range 的端点给浏览器 `<audio>`；并发用单 worker + per-project/per-store 异步锁 + 任务串行（不引入 Redis/Celery）。用法与架构见 `docs/web-ui.md`。
+- 新增 **Web UI（`meeting-asr web`）**：把原本的 Textual TUI 全部功能搬上浏览器。`meeting-asr web` 启动一个本地 FastAPI 服务（默认 `127.0.0.1:8765`，单用户、loopback 免鉴权，非 loopback 强制 bearer token），前端是 React + TypeScript + Vite SPA（构建产物 force-include 进 wheel，发布时 hatch 钩子自动构建，安装无需 node）。覆盖：项目列表与完整 ASR 摄入管线控制台（运行管线 / summarize / merge，经后台任务 + SSE 实时进度）、**speaker review**（双栏、逐句音频播放、改名 / 接受声纹匹配 / 忽略 / 重指派 / 疑点过滤 / 保存）、**声纹采集**（候选 clip 勾选 → 采集+嵌入 → 本项目与历史项目逐发言人分数变化对比 → 接受/回滚）、**声纹库**（浏览 / 质量离群改判 / 人物 CRUD）、**文字纠错**（polish 提案逐条勾选应用）、**纠错词库**（词条/消歧/热词）、**设置**（配置凭证、环境诊断）。架构上**零业务逻辑重写**：危险落盘路径（speaker_map 合并、会删全局声纹样本的重指派 + rematch、声纹采集事务）抽进 `core/speaker_review_service.py` / `core/voiceprint_review_service.py`，CLI 与 web 共用同一条路径；长任务进度复用现有 `emit_progress`，经 `call_soon_threadsafe` 推 SSE；音频经带 HTTP Range 的端点给浏览器 `<audio>`；并发用单 worker + per-project/per-store 异步锁 + 任务串行（不引入 Redis/Celery）。绑定到非 loopback 时除强制 bearer token 外还内置一组部署安全默认：校验 `Host` 头防 DNS rebinding、联网 500 响应体脱敏、clip 路径按库内相对路径隔离防穿越。用法与架构见 `docs/web-ui.md`。
 - Web UI **token 模式完整可用**（修复 PR #24 review）：`require_auth` 现在同时接受 `Authorization: Bearer` 头与 `?token=` query 参数（常数时间比较），因为 `EventSource`（SSE 进度）和 `<audio>`（clip 播放）这类浏览器托管请求无法设置请求头，否则在 token 保护的绑定下会全 401。启动时打印并自动打开带 `?token=` 的 URL，SPA 首屏读取后存入 localStorage 并抹掉地址栏；裸 URL / token 失效时弹输入框兜底（探针 `/api/auth/check`）。
 - Web UI **声纹采集事务对全局库独占**（修复 PR #24 review）：一次采集会对全局声纹库留一份回滚快照直到 accept/rollback；在它待决期间任何会改库的写（人物增删改/合并、样本状态、再发起采集）都会被拒（HTTP 409），避免一次 rollback 把这期间的编辑静默还原。
+
+### 修复
+
+- 修复 ASR 热词不遵循配置词库的 **store 隔离**漏洞：`project run` / `project transcribe` 指定非默认词库（`--lexicon-db`，以及 web 的 `--store-dir`）时，热词此前仍从默认 XDG 词库读取并快照、忽略用户指定的库，与 local_correction / polish 早已遵守的隔离口径不一致；现在热词与纠错 / polish 走同一个配置词库（CLI 不带 override 时仍回退 XDG），识别偏置与 `corrections/asr_hotwords.json` 记录才真正反映指定库。
+- 修复 TUI **Project Review 保存失败时弹窗只显示空白 / 晦涩错误**：共享保存路径会把异常转成 `typer.Exit` 并打到已被 TUI 接管的 console，导致用户看不到失败原因；现在 TUI 弹窗能拿到真实异常消息，CLI 调用边界仍保留本地化错误面板。
+- 修复**声纹删除会误删真实库文件**的数据安全问题：删除声纹样本 / 说话人此前按数据库里记录的绝对 `clip_path` 删文件，当 `--store-dir` 指向拷贝库（文档推荐的安全验证流程）时会越界删掉真实库的 clip、破坏隔离；现在删除按配置库的库内相对路径重定位并拒绝越界路径，默认库行为逐字节不变，拷贝库验证场景改为安全结果。
 
 ## [0.11.0] - 2026-06-05
 
@@ -202,7 +208,12 @@
 - 首个公开版本，提供基于 project 的 Meeting-ASR CLI。
 - 新增项目创建、会议转写、转写导出、speaker review、声纹匹配、词汇纠错 review，以及 GitHub Actions 发布基础能力。
 
-[未发布]: https://github.com/crhan/meeting-asr/compare/v0.7.0...HEAD
+[未发布]: https://github.com/crhan/meeting-asr/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/crhan/meeting-asr/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/crhan/meeting-asr/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/crhan/meeting-asr/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/crhan/meeting-asr/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/crhan/meeting-asr/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/crhan/meeting-asr/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/crhan/meeting-asr/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/crhan/meeting-asr/compare/v0.6.0...v0.6.1
