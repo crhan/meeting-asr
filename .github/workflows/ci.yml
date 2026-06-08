@@ -32,7 +32,9 @@ jobs:
         # npm run build`, so node/npm must be present and pinned for a deterministic build.
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install ffmpeg and mpv
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg mpv
@@ -51,3 +53,9 @@ jobs:
         env:
           MEETING_ASR_BUILD_WEB: "1"
         run: uv build
+
+      - name: Assert wheel ships the SPA
+        # Defense in depth: the hook raises when static is missing from the source tree, but
+        # only inspecting the artifact proves the assets landed inside the wheel at the path
+        # the server serves from (app/web/static).
+        run: unzip -l dist/*.whl | grep -q app/web/static/index.html

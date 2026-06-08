@@ -77,3 +77,29 @@ def test_install_script_verifies_installed_source_fingerprint() -> None:
     assert "it installs the web extra by default" in script
     assert "Installed package code does not match this checkout" in script
     assert "UV_NO_CACHE=1" in script
+
+
+def test_install_script_verifies_web_assets_not_just_deps() -> None:
+    """A web install must prove the SPA bundle is present: deps can be installed while a
+    stale cached wheel (or an unbuilt editable checkout) carries no static assets."""
+    script = Path("scripts/install-tool.sh").read_text(encoding="utf-8")
+
+    assert "Web UI assets:" in script
+    assert 'web" / "static" / "index.html' in script
+    assert "are missing from this install" in script
+
+
+def test_pyproject_busts_uv_cache_on_web_source_changes() -> None:
+    """uv decides wheel-cache reuse before the build hook runs, so the SPA *sources* and the
+    build flag must be cache keys -- the static build output alone only changes when the hook
+    already ran, which a cache hit prevents."""
+    payload = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    cache_keys = payload["tool"]["uv"]["cache-keys"]
+
+    assert {"file": "web/src/**/*"} in cache_keys
+    assert {"file": "web/package.json"} in cache_keys
+    assert {"file": "web/package-lock.json"} in cache_keys
+    assert {"file": "web/index.html"} in cache_keys
+    assert {"file": "web/vite.config.ts"} in cache_keys
+    assert {"file": "web/tsconfig.json"} in cache_keys
+    assert {"env": "MEETING_ASR_BUILD_WEB"} in cache_keys

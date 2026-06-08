@@ -122,6 +122,11 @@ print(
     "Web UI dependencies:",
     "yes" if not missing_web else "missing " + ", ".join(missing_web),
 )
+# Dependencies alone do not prove the UI works: the SPA bundle is a separate artifact
+# (checkout static for editable installs, force-included static for wheel installs), and a
+# stale uv-cached wheel can carry deps but no bundle.
+web_assets = installed_package / "web" / "static" / "index.html"
+print("Web UI assets:", "yes" if web_assets.is_file() else "missing " + str(web_assets))
 if source_hash != installed_hash:
     print("Checkout hash:", source_hash)
     print("Installed hash:", installed_hash)
@@ -134,6 +139,14 @@ if expect_web and missing_web:
         "Web UI dependencies are missing from this global tool. "
         "Run `scripts/install-tool.sh`; it installs the web extra by default. "
         "Use `--no-web` only when deliberately keeping a CLI-only tool."
+    )
+if expect_web and not web_assets.is_file():
+    raise SystemExit(
+        "Web UI assets (app/web/static/index.html) are missing from this install. "
+        "For an editable install, build the SPA in the checkout: "
+        "`npm --prefix web ci && npm --prefix web run build` (or rerun `scripts/install-tool.sh`). "
+        "For a wheel install, rerun `scripts/install-tool.sh --wheel`; if it still misses, "
+        "a stale cached wheel is being reused -- rerun with `UV_NO_CACHE=1`."
     )
 PY
 }

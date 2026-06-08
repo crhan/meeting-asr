@@ -58,8 +58,19 @@ cache-keys = [
   # The wheel also force-includes the built React SPA and is shaped by the build hook, so a
   # web-only change (or a fresh `npm run build`) must bust uv's cached local-package wheel --
   # otherwise `uv tool install .[web]` / install-tool.sh --wheel reuses a stale or SPA-less wheel.
+  # Watching the static build *output* alone is not enough: uv decides cache reuse BEFORE the
+  # build hook runs, and on a --wheel install the hook is what would refresh static. The SPA
+  # *sources* (web/) and the build flag itself must therefore be part of the key, or an
+  # edit-web-src -> install-tool.sh --wheel cycle keeps serving the previously cached wheel.
   { file = "hatch_build.py" },
   { file = "src/app/web/static/**/*" },
+  { file = "web/src/**/*" },
+  { file = "web/index.html" },
+  { file = "web/package.json" },
+  { file = "web/package-lock.json" },
+  { file = "web/vite.config.ts" },
+  { file = "web/tsconfig.json" },
+  { env = "MEETING_ASR_BUILD_WEB" },
 ]
 
 [dependency-groups]

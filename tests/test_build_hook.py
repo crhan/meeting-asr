@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -24,6 +25,22 @@ _spec.loader.exec_module(hatch_build)
 def _web_sources(root: Path) -> None:
     (root / "web").mkdir()
     (root / "web" / "package.json").write_text("{}")
+
+
+def _make_hook(root: Path, target_name: str = "wheel") -> Any:
+    """Build a CustomBuildHook without touching the base-class constructor.
+
+    With hatchling installed, ``BuildHookInterface.__init__`` takes required build-state
+    arguments and ``root``/``target_name`` are read-only properties; without it the module
+    falls back to ``object``. Shadowing both names with subclass attributes and skipping
+    ``__init__`` via ``__new__`` keeps these tests independent of which base is active.
+    """
+    cls = type(
+        "TestableBuildHook",
+        (hatch_build.CustomBuildHook,),
+        {"root": str(root), "target_name": target_name},
+    )
+    return cls.__new__(cls)
 
 
 def test_build_spa_rebuilds_even_when_static_already_exists(tmp_path: Path) -> None:
@@ -87,11 +104,46 @@ def test_build_hook_refuses_web_wheel_when_spa_missing(
 ) -> None:
     """If BUILD_WEB=1 did not leave index.html in static, the wheel must fail."""
     _web_sources(tmp_path)
-    hook = hatch_build.CustomBuildHook()
-    hook.target_name = "wheel"
-    hook.root = str(tmp_path)
+    hook = _make_hook(tmp_path)
     monkeypatch.setenv("MEETING_ASR_BUILD_WEB", "1")
     monkeypatch.setattr(hatch_build, "build_spa", lambda *_a, **_k: None)
 
     with pytest.raises(RuntimeError, match="static/index.html"):
         hook.initialize("0.0.0", {})
+
+
+def test_build_hook_force_includes_existing_spa_at_served_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Happy path: built static assets are force-included at exactly ``app/web/static``.
+
+    The server resolves the SPA from ``app/web/static`` next to its own module; a wrong
+    destination here would ship the assets somewhere FastAPI never looks, and nothing else
+    (the hook's own raise, CI's build step) would notice.
+    """
+    static = tmp_path / "src" / "app" / "web" / "static"
+    static.mkdir(parents=True)
+    (static / "index.html").write_text("BUILT")
+    monkeypatch.delenv("MEETING_ASR_BUILD_WEB", raising=False)
+    hook = _make_hook(tmp_path)
+
+    build_data: dict = {}
+    hook.initialize("0.0.0", build_data)
+
+    assert build_data["force_include"] == {str(static): "app/web/static"}
+
+
+def test_build_hook_skips_non_wheel_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sdist carries web/ sources, never the built SPA; the hook must not touch it."""
+    static = tmp_path / "src" / "app" / "web" / "static"
+    static.mkdir(parents=True)
+    (static / "index.html").write_text("BUILT")
+    monkeypatch.setenv("MEETING_ASR_BUILD_WEB", "1")
+    hook = _make_hook(tmp_path, target_name="sdist")
+
+    build_data: dict = {}
+    hook.initialize("0.0.0", build_data)
+
+    assert build_data == {}

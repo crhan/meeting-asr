@@ -73,6 +73,9 @@ uv run meeting-asr web --port 8765
 单用户本地工具：loopback 绑定免鉴权。`--host` 指向非 loopback 时强制 token（自动生成或
 `--token` 指定）。
 
+注意：「loopback 免鉴权」的边界是**主机**而不是用户——在多用户共享主机（跳板机、共用开发机）上，
+同机的其他本地用户也能访问 `127.0.0.1`，等于能读你的项目与配置。这种环境请显式加 `--token`。
+
 **Token 交接**：启动时控制台会打印一条带 `?token=` 的 URL（浏览器也会自动用它打开）。SPA 首屏
 读取 `?token=`、存入 localStorage、并从地址栏抹掉。之后：
 
@@ -95,4 +98,7 @@ cd web && npm install && npm run dev   # http://localhost:5173
 cd web && npm run build
 ```
 
-发布时 `hatch_build.py` 会在 wheel 构建阶段自动构建 SPA（若 `src/app/web/static` 缺失且有 npm）。
+发布 / 显式 web 安装时由 `MEETING_ASR_BUILD_WEB=1` 触发（CI、`install-tool.sh --wheel` 都会设置）：
+`hatch_build.py` 在 wheel 构建阶段**无条件重建** SPA（绝不信任可能过期的旧 `static/`），缺 npm 或
+构建后仍无产物会直接报错，不会静默发出没有 UI 的 wheel。不设该变量则是 base CLI 构建路径：
+不碰 npm，有现成 `static/` 就带上，没有就发一个无 Web UI 的合法 wheel。
