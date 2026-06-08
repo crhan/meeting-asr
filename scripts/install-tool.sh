@@ -57,6 +57,7 @@ inspect_environment() {
 
 inspect_install() {
   local source_dir="${1:-$(repo_root)}"
+  local expect_web="${2:-1}"
   local executable
   executable="$(command -v meeting-asr || true)"
   if [[ -z "$executable" ]]; then
@@ -74,9 +75,9 @@ inspect_install() {
   echo "Meeting-ASR install status"
   echo "Executable: $executable"
   echo "Python: $python_path"
-  "$python_path" - "$source_dir" <<'PY'
+  "$python_path" - "$source_dir" "$expect_web" <<'PY'
 import hashlib
-from importlib.metadata import distribution
+from importlib.metadata import PackageNotFoundError, distribution
 import json
 from pathlib import Path
 import sys
@@ -98,6 +99,7 @@ def tree_hash(root: Path) -> str:
 
 
 source_package = Path(sys.argv[1]) / "src" / "app"
+expect_web = sys.argv[2] == "1"
 installed_package = Path(app.__file__).resolve().parent
 dist = distribution("meeting-asr")
 direct_url = dist.read_text("direct_url.json")
@@ -109,12 +111,29 @@ print("Package:", dist.locate_file(""))
 print("Source:", source_url)
 print("Installed app:", installed_package)
 print("Code match:", "yes" if source_hash == installed_hash else "no")
+web_dependencies = ("fastapi", "uvicorn", "sse-starlette", "python-multipart")
+missing_web = []
+for dependency in web_dependencies:
+    try:
+        distribution(dependency)
+    except PackageNotFoundError:
+        missing_web.append(dependency)
+print(
+    "Web UI dependencies:",
+    "yes" if not missing_web else "missing " + ", ".join(missing_web),
+)
 if source_hash != installed_hash:
     print("Checkout hash:", source_hash)
     print("Installed hash:", installed_hash)
     raise SystemExit(
         "Installed package code does not match this checkout. "
         "Run `scripts/install-tool.sh`; if it still mismatches, rerun with `UV_NO_CACHE=1`."
+    )
+if expect_web and missing_web:
+    raise SystemExit(
+        "Web UI dependencies are missing from this global tool. "
+        "Run `scripts/install-tool.sh`; it installs the web extra by default. "
+        "Use `--no-web` only when deliberately keeping a CLI-only tool."
     )
 PY
 }
@@ -198,7 +217,7 @@ if [[ "$check_only" -eq 1 ]]; then
   source_dir="$(repo_root)"
   inspect_environment
   echo
-  inspect_install "$source_dir"
+  inspect_install "$source_dir" "$web"
   warn_path_pollution
   exit 0
 fi
@@ -247,6 +266,7 @@ echo "Meeting-ASR install plan"
 echo "Source: $source_dir"
 echo "Mode: $([[ "$editable" -eq 1 ]] && echo editable || echo wheel)"
 echo "Force: $([[ "$force" -eq 1 ]] && echo yes || echo no)"
+echo "Web UI: $([[ "$web" -eq 1 ]] && echo 'yes ([web] extra, default)' || echo 'no (--no-web)')"
 if [[ "$local_voiceprint" -eq 0 ]]; then
   echo "Local voiceprint: standard dependency (--no-local-voiceprint is ignored)"
 else
@@ -265,5 +285,5 @@ fi
   cd "$source_dir"
   "${command[@]}"
 )
-inspect_install "$source_dir"
+inspect_install "$source_dir" "$web"
 warn_path_pollution

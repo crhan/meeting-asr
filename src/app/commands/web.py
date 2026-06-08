@@ -15,10 +15,12 @@ import typer
 
 _INSTALL_HINT = (
     "Web UI dependencies are not installed.\n"
-    "Install them with:\n"
-    "  uv tool install --force 'meeting-asr[web]'\n"
-    "or, from a checkout:\n"
-    "  uv sync --extra web"
+    "From a checkout, refresh the global editable tool (web is installed by default):\n"
+    "  scripts/install-tool.sh\n"
+    "Then verify it with:\n"
+    "  scripts/install-tool.sh --check\n"
+    "For a published tool install, include the web extra explicitly:\n"
+    "  uv tool install --python 3.14 --force 'meeting-asr[web]'"
 )
 
 

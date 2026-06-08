@@ -28,6 +28,8 @@ def test_install_script_print_only_uses_stable_uv_tool_command() -> None:
     assert "--refresh" not in result.stdout
     assert "--reinstall" not in result.stdout
     assert "--editable" in result.stdout
+    assert "Web UI: yes ([web] extra, default)" in result.stdout
+    assert ".\\[web\\]" in result.stdout
     assert "Local voiceprint: standard dependency" in result.stdout
     assert "local-voiceprint" not in result.stdout
 
@@ -71,5 +73,7 @@ def test_install_script_verifies_installed_source_fingerprint() -> None:
     script = Path("scripts/install-tool.sh").read_text(encoding="utf-8")
 
     assert "Code match:" in script
+    assert "Web UI dependencies:" in script
+    assert "it installs the web extra by default" in script
     assert "Installed package code does not match this checkout" in script
     assert "UV_NO_CACHE=1" in script

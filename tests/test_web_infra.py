@@ -43,6 +43,8 @@ def test_web_command_missing_uvicorn_shows_install_hint(
     assert exc.value.exit_code == 1
     combined = "".join(capsys.readouterr())
     assert "Web UI dependencies are not installed" in combined
+    assert "scripts/install-tool.sh" in combined
+    assert "web is installed by default" in combined
     # The URL must never be printed on the dependency-failure path.
     assert "serving at" not in combined
 
