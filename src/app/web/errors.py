@@ -79,8 +79,14 @@ def install_exception_handlers(app: FastAPI) -> None:
         return _problem(400, str(exc), kind="bad_request")
 
     @app.exception_handler(Exception)
-    async def _fallback(_: Request, exc: Exception) -> JSONResponse:
+    async def _fallback(request: Request, exc: Exception) -> JSONResponse:
         if _looks_like_usage_error(exc):
             return _problem(400, _usage_error_message(exc), kind="bad_request")
         traceback.print_exc()
+        # Exception text can carry filesystem paths / config detail. On a networked bind,
+        # do not leak it to a remote client -- the full traceback is already logged
+        # server-side. Loopback binds keep the detail for zero-friction local debugging.
+        settings = getattr(request.app.state, "settings", None)
+        if settings is not None and not settings.is_local:
+            return _problem(500, "Internal server error.", kind="internal")
         return _problem(500, str(exc) or exc.__class__.__name__, kind="internal")

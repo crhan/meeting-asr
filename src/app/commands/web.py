@@ -123,4 +123,13 @@ def command(
             f"  {authenticated_url(settings)}\n"
             f"Token (for API clients / manual entry): {resolved_token}"
         )
+    elif settings.is_local:
+        # Loopback is shared by every local user on a multi-user host, and tokenless
+        # loopback skips auth (reveal + mutating routes included). Nudge shared-host users
+        # toward --token; single-user laptops can ignore it.
+        typer.echo(
+            "Warning: this loopback bind has no token; other local users on this host "
+            "can reach it. On a shared machine, pass --token to require authentication.",
+            err=True,
+        )
     run_server(settings)
