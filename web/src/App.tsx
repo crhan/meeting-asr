@@ -1,6 +1,8 @@
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { getLang, setLang, tr, type Lang } from "./lib/i18n";
+import { subscribeGlobalError } from "./lib/globalError";
+import { hasUnsavedEdits } from "./lib/unsavedGuard";
 import { AuthGate } from "./components/AuthGate";
 import { PendingCaptureBanner } from "./components/PendingCaptureBanner";
 import { CapturePage } from "./pages/CapturePage";
@@ -14,6 +16,17 @@ import { VoiceprintPage } from "./pages/VoiceprintPage";
 function LangToggle() {
   const [lang, setLangState] = useState<Lang>(getLang());
   const toggle = () => {
+    // The reload below would silently destroy unsaved speaker-review edits.
+    if (
+      hasUnsavedEdits() &&
+      !window.confirm(
+        tr(
+          "Discard unsaved speaker review edits and reload?",
+          "放弃未保存的 speaker review 改动并刷新？",
+        ),
+      )
+    )
+      return;
     const next: Lang = lang === "zh" ? "en" : "zh";
     setLang(next);
     setLangState(next);
@@ -24,6 +37,23 @@ function LangToggle() {
     <button className="lang-toggle" onClick={toggle}>
       {lang === "zh" ? "中文 / EN" : "EN / 中文"}
     </button>
+  );
+}
+
+/** App-wide error toast fed by the QueryClient's default mutation onError (main.tsx). */
+function GlobalErrorToast() {
+  const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => subscribeGlobalError(setMessage), []);
+  useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => setMessage(null), 8000);
+    return () => clearTimeout(timer);
+  }, [message]);
+  if (!message) return null;
+  return (
+    <div className="toast error" onClick={() => setMessage(null)}>
+      {message}
+    </div>
   );
 }
 
@@ -60,6 +90,7 @@ export function App() {
           </Routes>
         </AuthGate>
       </main>
+      <GlobalErrorToast />
     </div>
   );
 }

@@ -27,6 +27,9 @@ function RunDialog({ onClose }: { onClose: () => void }) {
       setJobError(null);
       setJobId(r.job_id);
     },
+    // This dialog renders runMut.error inline below the form; an explicit onError
+    // replaces the QueryClient's default global-toast handler so it isn't shown twice.
+    onError: () => {},
   });
 
   return (

@@ -810,6 +810,11 @@ tr.clickable {
   cursor: pointer;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
+.toast.error {
+  border-color: var(--red);
+  color: var(--red);
+  max-width: min(640px, 92vw);
+}
 
 /* ---- Auth gate (token-protected binds) ---------------------------------- */
 .auth-gate {

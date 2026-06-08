@@ -38,8 +38,12 @@ export async function api<T>(
     let kind = "error";
     try {
       const body = await res.json();
-      detail = body.detail ?? detail;
-      kind = body.error ?? kind;
+      // FastAPI validation errors (422) carry `detail` as an array of objects; coercing
+      // that to a string via template/`String()` yields "[object Object]". Stringify
+      // non-string details so error surfaces always show something readable.
+      if (typeof body.detail === "string") detail = body.detail;
+      else if (body.detail != null) detail = JSON.stringify(body.detail);
+      if (typeof body.error === "string") kind = body.error;
     } catch {
       // non-JSON error body; keep statusText
     }

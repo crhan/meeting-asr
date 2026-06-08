@@ -103,7 +103,21 @@ export function CorrectionPage() {
         <div style={{ marginBottom: 14 }}>
           <JobProgress
             jobId={jobId}
-            onDone={async () => {
+            onDone={async (result) => {
+              // The polish backend catches model failures (missing key, network, LLM error)
+              // into `model_error` and still ends the job "done" -- the CLI prints it as
+              // "Model fallback: ...". Without surfacing it here, an LLM failure looks like
+              // "No pending proposal" with zero explanation.
+              const summary = (result ?? {}) as {
+                proposed_change_count?: number;
+                model?: string;
+                model_error?: string | null;
+              };
+              if (summary.model_error) {
+                setJobError(
+                  tr("Polish model failed: ", "润色模型失败：") + summary.model_error,
+                );
+              }
               // Refetch the regenerated proposal BEFORE clearing jobId. Clearing first would
               // re-enable Accept against the stale proposal during the refetch window; keeping
               // jobId set holds the job panel (and the disabled Accept) until fresh data lands.

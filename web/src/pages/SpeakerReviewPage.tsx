@@ -12,6 +12,7 @@ import {
   type SpeakerSegment,
 } from "../api/client";
 import { tr } from "../lib/i18n";
+import { setUnsavedEdits } from "../lib/unsavedGuard";
 import { IdentityPicker, type IdentitySelection } from "../components/IdentityPicker";
 import { SpeakerPicker } from "../components/SpeakerPicker";
 
@@ -56,6 +57,12 @@ const STATUS_LABEL: Record<string, [string, string]> = {
   matched: ["Matched", "已匹配"],
   confirmed: ["Confirmed", "已确认"],
 };
+
+/** Language-aware status label (the sidebar/badge previously hardcoded en vs zh). */
+function statusLabel(status: string): string {
+  const pair = STATUS_LABEL[status];
+  return pair ? tr(pair[0], pair[1]) : status;
+}
 
 export function SpeakerReviewPage() {
   const { ref = "" } = useParams();
@@ -114,6 +121,23 @@ export function SpeakerReviewPage() {
   }, [data, reassign]);
 
   const dirty = edits.size > 0 || reassign.size > 0;
+
+  // Unsaved edits live only in this component's state; losing the page loses them.
+  // Publish the dirty flag for app chrome (LangToggle's reload confirm) and warn on
+  // reload/close via beforeunload. In-app NavLink switches remain unguarded: useBlocker
+  // needs a data router and we stay on plain <BrowserRouter> (see lib/unsavedGuard.ts).
+  useEffect(() => {
+    setUnsavedEdits(dirty);
+    return () => setUnsavedEdits(false);
+  }, [dirty]);
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty]);
 
   const saveMutation = useMutation({
     mutationFn: (body: SaveSpeakerReviewBody) => saveSpeakerReview(ref, body),
@@ -426,7 +450,7 @@ function SpeakerSidebar(props: {
       {speakers.map((s) => {
         const segs = segmentsBySpeaker.get(s.speaker_id) ?? [];
         const dur = segs.reduce((acc, seg) => acc + (seg.end_time_ms - seg.begin_time_ms), 0);
-        const label = STATUS_LABEL[s.status]?.[0] ?? s.status;
+        const label = statusLabel(s.status);
         return (
           <button
             key={s.speaker_id}
@@ -482,7 +506,8 @@ function TranscriptPane(props: {
       return;
     }
     el.src = clipUrl(projectRef, seg.begin_time_ms, seg.end_time_ms);
-    el.play();
+    // A failed load (404/401 clip) never fires onended; reset so the button isn't stuck on ⏸.
+    el.play().catch(() => setPlayingKey((prev) => (prev === key ? null : prev)));
     setPlayingKey(key);
     setProgress(0);
   };
@@ -504,7 +529,7 @@ function TranscriptPane(props: {
         <div className="row gap center">
           <span className={`status-dot status-${selected.status}`} />
           <h2>{selected.current_name || selected.label}</h2>
-          <span className="badge">{STATUS_LABEL[selected.status]?.[1] ?? selected.status}</span>
+          <span className="badge">{statusLabel(selected.status)}</span>
           {selected.crosstalk && <span className="badge crosstalk">{tr("crosstalk", "串场")}</span>}
         </div>
         <div className="row gap">

@@ -252,6 +252,9 @@ export function CapturePage() {
             // capture plan is stale too -- drop it so a later return here re-plans against the
             // new library state instead of re-offering already-captured clips.
             await queryClient.invalidateQueries({ queryKey: ["capture-plan", ref] });
+            // Refresh the app-wide pending-capture banner immediately; on its own 5s poll it
+            // could keep offering accept/rollback for this already-resolved transaction.
+            await queryClient.invalidateQueries({ queryKey: ["pending-capture"] });
             navigate(`/projects/${ref}/speakers`);
           }}
           onRollback={async () => {
@@ -265,6 +268,8 @@ export function CapturePage() {
             }
             pendingTxnRef.current = null;
             setResult(null);
+            // Same as accept: refresh the banner so it can't offer the resolved transaction.
+            await queryClient.invalidateQueries({ queryKey: ["pending-capture"] });
           }}
         />
       )}
