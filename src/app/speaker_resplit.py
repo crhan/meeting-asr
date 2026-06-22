@@ -142,6 +142,7 @@ class CandidatePerson:
     name: str
     centroid_score: float
     assigned_score: float
+    source_score: float
     lead: float
     total_seconds: float
     existing_speaker_id: int | None
@@ -291,6 +292,7 @@ def analyze_project_resplit(
     for speaker_id in suspects:
         clips = clips_by_speaker[speaker_id]
         assigned = _resolve_known(person_map.get(speaker_id), known, known_by_public)
+        source_vector = assigned.vector if assigned else _track_centroid(clips)
         track_candidates, residual_clips = _candidate_persons(
             speaker_id,
             clips,
@@ -309,6 +311,7 @@ def analyze_project_resplit(
                 speaker_ref,
                 params,
                 track_clip_count=len(clips),
+                source_vector=source_vector,
             )
         )
     return TrackResplitPlan(
@@ -349,6 +352,7 @@ def _candidate_persons(
     any candidate group (the residual pool fed to residue detection).
     """
     assigned_public = assigned.person_public_id if assigned else None
+    source_vector = assigned.vector if assigned else _track_centroid(clips)
     by_person: dict[int, list[SpeakerClusterClip]] = defaultdict(list)
     claimed: set[int] = set()
     for clip_index, clip in enumerate(clips):
@@ -369,7 +373,8 @@ def _candidate_persons(
         centroid = _normalize(_mean_vector([clip.vector for clip in group]))
         centroid_score = _cosine(centroid, person.vector)
         assigned_score = _cosine(centroid, assigned.vector) if assigned else 0.0
-        lead = centroid_score - assigned_score
+        source_score = _cosine(centroid, source_vector) if source_vector else assigned_score
+        lead = centroid_score - source_score
         total_seconds = sum(_clip_duration_ms(clip) for clip in group) / 1000
         is_dominant = _is_dominant_group(len(group), len(clips), params)
         decision = _promotion_decision(
@@ -383,6 +388,7 @@ def _candidate_persons(
                 person.name,
                 centroid_score,
                 assigned_score,
+                source_score,
                 lead,
                 total_seconds,
                 existing_speaker_for_person.get(person.person_public_id),
@@ -436,6 +442,13 @@ def _promotion_decision(
     return "promote"
 
 
+def _track_centroid(clips: list[SpeakerClusterClip]) -> list[float] | None:
+    """Return the track's own representative vector when no library identity exists."""
+    if not clips:
+        return None
+    return _normalize(_mean_vector([clip.vector for clip in clips]))
+
+
 def _clip_is_promoted(
     clip: SpeakerClusterClip, candidates: list[CandidatePerson]
 ) -> bool:
@@ -458,6 +471,7 @@ def _residue_clusters(
     speaker_ref: dict[int, list[float]],
     params: ResplitParams,
     track_clip_count: int,
+    source_vector: list[float] | None = None,
 ) -> list[ResidueCluster]:
     """Find coherent out-of-library clusters among residual clips.
 
@@ -495,6 +509,12 @@ def _residue_clusters(
         best_name, best_score = _best_library_match(centroid, known)
         if best_score is not None and best_score >= params.residue_match_floor:
             # The denoised centroid actually matches a library person; not residue.
+            continue
+        source_score = _cosine(centroid, source_vector) if source_vector else None
+        if source_score is not None and source_score >= params.merge_threshold:
+            # For an unassigned track, the track centroid is the only source-identity
+            # evidence we have. A residual cluster that still fits that centroid is
+            # the source speaker in weak audio, not a new anonymous participant.
             continue
         merge_id, merge_score = _nearest_other_speaker(centroid, speaker_id, speaker_ref)
         if merge_id is not None and merge_score >= params.merge_threshold:
@@ -638,6 +658,7 @@ def _candidate_payload(candidate: CandidatePerson) -> dict[str, object]:
         "name": candidate.name,
         "centroid_score": candidate.centroid_score,
         "assigned_score": candidate.assigned_score,
+        "source_score": candidate.source_score,
         "lead": candidate.lead,
         "total_seconds": candidate.total_seconds,
         "existing_speaker_id": candidate.existing_speaker_id,

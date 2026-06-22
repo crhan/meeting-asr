@@ -227,6 +227,38 @@ def test_candidate_persons_keeps_dominant_group_when_unassigned() -> None:
     assert len(residual) == 8
 
 
+def test_candidate_persons_keeps_unassigned_source_like_splinters() -> None:
+    """An unassigned coherent track must not be shredded by noisy library near-neighbors.
+
+    The minority group is somewhat closer to person 2 than to person 1, but it is still
+    very close to the track's own centroid. That shape is an over-split false positive,
+    not an under-split rescue target.
+    """
+    near_b = _unit([0.8, 0.6, 0.0, 0.0])
+    known = {1: _person(1, A, "vpp-a"), 2: _KnownSpeakerVector(2, "person-2", near_b, "vpp-b")}
+    main = [_clip(A, sid=i, begin=i * 9000, end=i * 9000 + 9000) for i in range(6)]
+    splinter = [
+        _clip(near_b, sid=100 + i, begin=i * 9000, end=i * 9000 + 9000)
+        for i in range(3)
+    ]
+    params = ResplitParams(min_group_sentences=2, min_group_seconds=6.0)
+
+    candidates, residual = _candidate_persons(
+        speaker_id=1,
+        clips=main + splinter,
+        assigned=None,
+        known=known,
+        existing_speaker_for_person={},
+        params=params,
+    )
+
+    by_person = {c.person_id: c for c in candidates}
+    assert by_person[1].decision == "dominant"
+    assert by_person[2].decision == "below-lead"
+    assert by_person[2].source_score > 0.90
+    assert len(residual) == 9
+
+
 def test_candidate_persons_noop_on_coherent_track() -> None:
     """A track whose sentences all match its own identity yields nothing to move."""
     known = {1: _person(1, A, "vpp-a"), 2: _person(2, B, "vpp-b")}
@@ -261,6 +293,7 @@ def test_residue_clusters_buckets_out_of_library_group() -> None:
         speaker_ref={1: known[1].vector},  # only the source track exists
         params=params,
         track_clip_count=10,  # these 2 are a minority of the track
+        source_vector=known[1].vector,
     )
 
     assert len(clusters) == 1
@@ -290,6 +323,7 @@ def test_residue_clusters_skips_dominant_cluster() -> None:
         speaker_ref={},
         params=params,
         track_clip_count=3,  # the 3-clip cluster IS the whole track => skip
+        source_vector=_unit(C),
     )
 
     assert clusters == []
@@ -335,6 +369,32 @@ def test_residue_clusters_empty_library_is_noop() -> None:
         speaker_ref={},
         params=params,
         track_clip_count=3,
+        source_vector=_unit(C),
+    )
+
+    assert clusters == []
+
+
+def test_residue_clusters_keeps_unassigned_source_like_cluster() -> None:
+    """A cluster that still fits an unassigned source track is not a new unknown."""
+    known = {1: _person(1, A, "vpp-a")}
+    clips = [_clip(C, sid=i, begin=i * 7000, end=i * 7000 + 7000) for i in range(2)]
+    params = ResplitParams(
+        residue_match_floor=0.40,
+        residue_cluster_threshold=0.62,
+        min_group_sentences=2,
+        min_group_seconds=6.0,
+    )
+
+    clusters = _residue_clusters(
+        speaker_id=1,
+        clips=clips,
+        assigned=None,
+        known=known,
+        speaker_ref={},
+        params=params,
+        track_clip_count=10,
+        source_vector=_unit(C),
     )
 
     assert clusters == []
@@ -415,6 +475,7 @@ def _candidate(
         name=name,
         centroid_score=0.8,
         assigned_score=0.4,
+        source_score=0.4,
         lead=0.4,
         total_seconds=15.0,
         existing_speaker_id=existing,
