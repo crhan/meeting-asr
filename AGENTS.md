@@ -109,6 +109,7 @@
 - **血泪坑（验证时差点踩）**：`apply_project_sentence_reassignments` → `_invalidate_overlapping_voiceprint_samples` 会按 `project_id` + 原 speaker + 时间重叠**删全局声纹库的样本**。project_id 是内容寻址的，所以**拷贝项目做端到端验证 + `--apply` 时，若 store 指向全局库，会误删真实库样本**。务必把 voiceprints.sqlite 也拷一份，并用 `resplit --apply --store-dir <拷贝>` 隔离（匹配只读库 BLOB，不需要 clips/normalized 目录）。dry-run（不加 `--apply`）只读不删，安全。
 - 预览/手动应用：`meeting-asr project speakers resplit <proj>` 默认 dry-run（打印 promotions / unknown 桶 / near-miss + 证据分数，零写盘），`--apply` 调 `apply_project_resplit` 直接修一个已处理完的项目（不必重跑 `project run`）；拷贝项目上务必配 `--store-dir` 隔离声纹库。**空声纹库 / 选错 model 导致库为空时整个分析 no-op**（否则"谁都不像"会把正常 track 误塞进桶）。
 - **dry-run「零写盘」靠 `analyze_project_resplit(read_only=True)` 兑现，别把它当默认行为删掉**：嵌入本身要落 probe clip（embed 必须读音频文件）+ persist `tmp/speaker_cluster/clip_embeddings.json`，默认会写进项目 tmp/。read_only 路径把**暖缓存仍从真实项目读**进内存复用，但把 clip 抽取 + cache persist 整体重定向到一次性 `TemporaryDirectory`（`_ClusterContext.project_root` 换成 scratch，`source` 仍指真实音频；clip 持有的是向量不是文件路径，嵌完即弃）。CLI dry-run 传 `read_only=True`，`project run` / `--apply` 不传（那两条**该**写 cache 暖后续嵌入）。谁要把 read_only 去掉或让 dry-run 也 persist，就破坏了预览契约（实测参考项目 dry-run 后 635 个 tmp/speakers/exports 文件 mtime 零变化）。
+- **排查 resplit 误拆时先回到 raw speaker 入口**：`asr/sentences.json` 可能已经被 resplit / stabilization 改写，不能拿它当 ASR 原始 speaker 数。用 `asr/raw_result.json` 的原始 `speaker_id` 还原临时项目再跑 `analyze_project_resplit(read_only=True)`，否则会把后处理污染当成 ASR 检出问题。未命名 track 的 promotion / residue 判断必须拿候选簇跟 source track centroid 比；只跟 0/None 比会把同一真人的弱声纹片段拆成蜀江/景琦/奕阁这类假 speaker。
 
 ## Crosstalk Tier Notes（会后串场/噪音放行档）
 
