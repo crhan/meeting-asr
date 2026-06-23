@@ -120,6 +120,7 @@ SAMPLE_FILTER_ALL = "all"
 SAMPLE_FILTER_REVIEW = "review"
 SAMPLE_FILTER_LOW = "low"
 SAMPLE_FILTER_MODES = (SAMPLE_FILTER_ALL, SAMPLE_FILTER_REVIEW, SAMPLE_FILTER_LOW)
+DIAGNOSTIC_MOVE_STATUSES = frozenset({"conflict", "critical"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +236,7 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("f", "toggle_sample_filter", "Filter samples"),
         Binding("t", "toggle_view", "Toggle view"),
         Binding("r", "reassign_speaker", "Reassign sentence"),
+        Binding("d", "accept_diagnostic_move", "Diagnostic move"),
         Binding("p", "switch_project", "Switch project"),
         Binding("v", "voiceprint_review", "Voiceprint"),
         Binding("m", "rematch_speakers", "Rematch"),
@@ -692,6 +694,39 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             lambda choice: self._handle_speaker_reassignment(
                 segment, source.speaker_id, choice
             ),
+        )
+
+    def action_accept_diagnostic_move(self) -> None:
+        """Move the selected sentence to the concrete wrong-bucket target."""
+        segment = self._reassignment_segment()
+        if segment is None:
+            self._set_status(tr("No sentences to reassign.", "没有可改的句子。"))
+            return
+        source = self._speaker_for_segment(segment)
+        score = self._cluster_sample_score(source, segment)
+        target_speaker_id = _diagnostic_move_target(
+            score, current_speaker_id=source.speaker_id
+        )
+        if target_speaker_id is None:
+            self._set_status(
+                tr(
+                    "No concrete wrong-bucket diagnostic target for this sentence; use r to choose manually.",
+                    "当前句子没有明确的疑似错桶目标；需要手动选择时按 r。",
+                )
+            )
+            return
+        target = speaker_by_id(self.session.speakers, target_speaker_id)
+        if target is None:
+            label = speaker_id_to_label(target_speaker_id)
+            self._set_status(
+                tr(
+                    f"Diagnostic target {label} is not available in this review.",
+                    f"诊断目标 {label} 不在当前 review 里。",
+                )
+            )
+            return
+        self._handle_speaker_reassignment(
+            segment, source.speaker_id, target.speaker_id
         )
 
     def action_quit_review(self) -> None:
@@ -1939,6 +1974,21 @@ def _sample_matches_filter(
             or identity_status == "identity-weak"
         )
     return True
+
+
+def _diagnostic_move_target(
+    score: SpeakerClusterSampleScore | None,
+    *,
+    current_speaker_id: int,
+) -> int | None:
+    """Return the suggested target speaker for a concrete wrong-bucket sample."""
+    if score is None or score.nearest_speaker_id is None:
+        return None
+    if score.status not in DIAGNOSTIC_MOVE_STATUSES:
+        return None
+    if score.nearest_speaker_id == current_speaker_id:
+        return None
+    return score.nearest_speaker_id
 
 
 def _cluster_status_style(status: str) -> str:

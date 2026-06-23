@@ -14,12 +14,12 @@ def browse_status() -> str:
         (
             "Browse: h/l or left/right choose column | j/k or up/down move | "
             "PgUp/PgDn page samples | Space play/stop | y/Cmd+C copy | p project | / name | e edit text | "
-            "f filter | r reassign | t timeline | v capture | m refresh diagnostics | b embed | ? help | s save"
+            "f filter | r reassign | d diagnostic move | t timeline | v capture | m refresh diagnostics | b embed | ? help | s save"
         ),
         (
             "浏览：h/l 或 ←/→ 切列 | j/k 或 ↑/↓ 移动 | PgUp/PgDn 翻页 | "
             "Space 播放/停止 | y/Cmd+C 复制 | p 切项目 | / 改人名 | e 改文字 | "
-            "f 筛选 | r 改归属 | t 时间轴视图 | v 声纹采样 | m 刷新诊断 | b 生成 embedding | ? 帮助 | s 保存"
+            "f 筛选 | r 改归属 | d 接受错桶诊断 | t 时间轴视图 | v 声纹采样 | m 刷新诊断 | b 生成 embedding | ? 帮助 | s 保存"
         ),
     )
 
@@ -29,11 +29,11 @@ def timeline_status() -> str:
     return tr(
         (
             "Timeline: j/k or up/down move | PgUp/PgDn page | Space play/stop | "
-            "y/Cmd+C copy | r reassign sentence | e edit text | t back to speakers | ? help | s save | q quit"
+            "y/Cmd+C copy | r reassign sentence | d diagnostic move | e edit text | t back to speakers | ? help | s save | q quit"
         ),
         (
             "时间轴：j/k 或 ↑/↓ 移动 | PgUp/PgDn 翻页 | Space 播放/停止 | "
-            "y/Cmd+C 复制 | r 改 speaker | e 改文字 | t 切回分组视图 | ? 帮助 | s 保存 | q 退出"
+            "y/Cmd+C 复制 | r 改 speaker | d 接受错桶诊断 | e 改文字 | t 切回分组视图 | ? 帮助 | s 保存 | q 退出"
         ),
     )
 
@@ -79,6 +79,7 @@ e                    Edit selected transcript text inside this TUI
 c                    Same as e
 t                    Toggle between Speakers (grouped) and Timeline (chronological) view
 r                    Reassign the selected sentence to another or new speaker
+d                    Accept concrete wrong-bucket diagnostic move to the suggested speaker
 v                    Open voiceprint review: project candidates and global library
 m                    Rematch speakers against the current global voiceprint library
 b                    Embed captured voiceprint samples
@@ -130,6 +131,7 @@ e                    在 TUI 内编辑当前转写句子
 c                    等同于 e
 t                    在「分组视图」与「时间轴视图」之间切换
 r                    把当前句子改给另一个或新的 speaker
+d                    接受明确的“疑似错桶”诊断，直接移动到建议 speaker
 v                    打开声纹 Review：项目候选样本和全局声纹库
 m                    刷新声纹匹配、分桶分数和逐句身份分数
 b                    为已采集声纹样本生成 embedding

@@ -2275,6 +2275,39 @@ def _cluster_diagnostics() -> dict[int, SpeakerClusterDiagnostic]:
     }
 
 
+def _diagnostic_move_session() -> SpeakerReviewSession:
+    """Build a review session where one sample has a concrete move target."""
+    speaker_a_segments = [
+        SentenceSegment(
+            begin_time_ms=0,
+            end_time_ms=1000,
+            text="第一句",
+            speaker_id=0,
+            sentence_id=1,
+        ),
+        SentenceSegment(
+            begin_time_ms=2000,
+            end_time_ms=2500,
+            text="第二句",
+            speaker_id=0,
+            sentence_id=2,
+        ),
+    ]
+    speakers = [
+        ReviewSpeaker(0, "Speaker A", speaker_a_segments, "Speaker A", None),
+        ReviewSpeaker(1, "Speaker B", [], "Speaker B", None),
+    ]
+    return SpeakerReviewSession(
+        project_dir=Path("."),
+        source_media=Path("source.mp4"),
+        overview=_overview(with_status=False),
+        speakers=speakers,
+        people_names=[],
+        page_size=8,
+        cluster_diagnostics=_cluster_diagnostics(),
+    )
+
+
 def _sample_identity_scores() -> dict[
     int, dict[tuple[int | None, int, int], SpeakerSampleIdentityScore]
 ]:
@@ -2655,6 +2688,82 @@ def test_timeline_view_toggle_renders_chronological_order() -> None:
             assert pilot.app.view_mode == "speakers"
             assert pilot.app.query_one("#main").display is True
             assert pilot.app.query_one("#timeline-main").display is False
+
+    asyncio.run(scenario())
+
+
+def test_speaker_view_accepts_diagnostic_move() -> None:
+    """The d shortcut should apply a concrete wrong-bucket suggestion."""
+
+    app = SpeakerReviewApp(_diagnostic_move_session())
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("right")
+            await pilot.press("down")
+            await pilot.press("d")
+            await pilot.pause()
+
+            speaker_a, speaker_b = pilot.app.session.speakers
+            assert all(seg.sentence_id != 2 for seg in speaker_a.segments)
+            assert any(seg.sentence_id == 2 for seg in speaker_b.segments)
+            moved = next(seg for seg in speaker_b.segments if seg.sentence_id == 2)
+            assert moved.speaker_id == 1
+            assert pilot.app.selected_speaker_index == 1
+
+            decision = pilot.app._decision()
+            assert len(decision.sentence_reassignments) == 1
+            change = decision.sentence_reassignments[0]
+            assert change.sentence_id == 2
+            assert change.original_speaker_id == 0
+            assert change.new_speaker_id == 1
+            assert "Speaker B" in str(pilot.app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
+
+
+def test_speaker_view_diagnostic_move_requires_wrong_bucket_target() -> None:
+    """The d shortcut should not move rows without a concrete target."""
+
+    app = SpeakerReviewApp(_diagnostic_move_session())
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("right")
+            await pilot.press("d")
+            await pilot.pause()
+
+            speaker_a, speaker_b = pilot.app.session.speakers
+            assert [seg.sentence_id for seg in speaker_a.segments] == [1, 2]
+            assert speaker_b.segments == []
+            assert pilot.app._decision().sentence_reassignments == ()
+            assert "No concrete wrong-bucket" in str(
+                pilot.app.query_one("#status", Static).render()
+            )
+
+    asyncio.run(scenario())
+
+
+def test_timeline_accepts_diagnostic_move() -> None:
+    """Timeline mode should share the same concrete diagnostic move shortcut."""
+
+    app = SpeakerReviewApp(_diagnostic_move_session())
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("t")
+            await pilot.press("j")
+            await pilot.press("d")
+            await pilot.pause()
+
+            speaker_a, speaker_b = pilot.app.session.speakers
+            assert all(seg.sentence_id != 2 for seg in speaker_a.segments)
+            assert [seg.sentence_id for seg in speaker_b.segments] == [2]
+            assert pilot.app.view_mode == "timeline"
+
+            timeline_text = pilot.app.query_one("#timeline", Static).render().plain
+            assert "Speaker B Speaker B" in timeline_text
+            assert "reassigned" in timeline_text
 
     asyncio.run(scenario())
 
