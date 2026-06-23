@@ -38,6 +38,7 @@ from app.project_manager import (
     ProjectMeetingSummary,
     ProjectTranscribeSummary,
     project_paths,
+    reset_project_speakers_from_raw,
     resolve_project_audio_path,
     resolve_project_dir_for_run,
     resolve_project_source_path,
@@ -2583,6 +2584,154 @@ def test_apply_project_speakers_writes_project_outputs(tmp_path: Path) -> None:
     assert "欧丁" in transcript_path.read_text(encoding="utf-8")
 
 
+def test_reset_project_speakers_from_raw_restores_raw_ids_and_clears_state(
+    tmp_path: Path,
+) -> None:
+    """Speaker-only reruns should start from raw ASR without losing corrected text."""
+    project_dir = _sample_project(tmp_path)
+    raw_sentences = [
+        {
+            "begin_time": 0,
+            "end_time": 1000,
+            "text": "大家好。",
+            "speaker_id": 0,
+            "sentence_id": 1,
+        },
+        {
+            "begin_time": 1200,
+            "end_time": 1800,
+            "text": "收到。",
+            "speaker_id": 1,
+            "sentence_id": 2,
+        },
+        {
+            "begin_time": 1900,
+            "end_time": 2500,
+            "text": "再补一句。",
+            "speaker_id": 0,
+            "sentence_id": 3,
+        },
+    ]
+    (project_dir / "asr" / "raw_result.json").write_text(
+        json.dumps({"sentences": raw_sentences}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    _write_sentences(
+        project_dir / "asr" / "sentences.json",
+        [
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 1000,
+                "text": "大家好。",
+                "speaker_id": 5,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 1200,
+                "end_time_ms": 1800,
+                "text": "收到。",
+                "speaker_id": 6,
+                "sentence_id": 2,
+            },
+            {
+                "begin_time_ms": 1900,
+                "end_time_ms": 2500,
+                "text": "再补一句。",
+                "speaker_id": 5,
+                "sentence_id": 3,
+            },
+        ],
+    )
+    corrected = json.loads(
+        (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8")
+    )
+    corrected["sentences"][0]["text"] = "修正后的大家好。"
+    corrected["full_text"] = "修正后的大家好。收到。再补一句。"
+    (project_dir / "asr" / "sentences_corrected.json").write_text(
+        json.dumps(corrected, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    stale_paths = [
+        project_dir / "speakers" / "speaker_map.json",
+        project_dir / "speakers" / "speaker_person_map.json",
+        project_dir / "speakers" / "speaker_ignore.json",
+        project_dir / "speakers" / "speaker_matches.json",
+        project_dir / "speakers" / "speaker_sample_matches.json",
+        project_dir / "speakers" / "speaker_cluster_quality.json",
+        project_dir / "speakers" / "speaker_resplit.json",
+        project_dir / "exports" / "transcript_named.txt",
+        project_dir / "exports" / "subtitle_named.srt",
+        project_dir / "exports" / "transcript_named_corrected.txt",
+        project_dir / "exports" / "subtitle_named_corrected.srt",
+    ]
+    for path in stale_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("stale", encoding="utf-8")
+    manifest = load_manifest(project_dir)
+    manifest.status = "named"
+    manifest.outputs.update(
+        {
+            "named_transcript": "exports/transcript_named.txt",
+            "named_subtitle": "exports/subtitle_named.srt",
+            "corrected_named_transcript": "exports/transcript_named_corrected.txt",
+            "corrected_named_subtitle": "exports/subtitle_named_corrected.srt",
+            "subtitle": "exports/subtitle.srt",
+        }
+    )
+    manifest.speakers.update(
+        {
+            "detected_ids": [5, 6],
+            "mapped": {"5": "旧名字"},
+            "person_map": {"5": 1},
+            "matches": "speakers/speaker_matches.json",
+            "sample_matches": "speakers/speaker_sample_matches.json",
+            "ignored": [6],
+            "voiceprints": "stale",
+        }
+    )
+    save_manifest(project_dir, manifest)
+
+    summary = reset_project_speakers_from_raw(project_dir)
+
+    sentences = json.loads(
+        (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8")
+    )
+    corrected_sentences = json.loads(
+        (project_dir / "asr" / "sentences_corrected.json").read_text(encoding="utf-8")
+    )
+    reloaded = load_manifest(project_dir)
+    assert summary.speaker_ids == (0, 1)
+    assert summary.sentence_count == 3
+    assert summary.corrected_sentence_count == 3
+    assert [item["speaker_id"] for item in sentences["sentences"]] == [0, 1, 0]
+    assert [item["speaker_id"] for item in corrected_sentences["sentences"]] == [
+        0,
+        1,
+        0,
+    ]
+    assert corrected_sentences["sentences"][0]["text"] == "修正后的大家好。"
+    assert "修正后的大家好" in (
+        project_dir / "exports" / "transcript_speakers_corrected.txt"
+    ).read_text(encoding="utf-8")
+    assert "Speaker A" in (
+        project_dir / "exports" / "transcript_speakers.txt"
+    ).read_text(encoding="utf-8")
+    assert (project_dir / "exports" / "subtitle.srt").exists()
+    assert all(not path.exists() for path in stale_paths)
+    assert reloaded.status == "corrected"
+    assert reloaded.outputs["raw_result"] == "asr/raw_result.json"
+    assert reloaded.outputs["sentences"] == "asr/sentences.json"
+    assert reloaded.outputs["anonymous_transcript"] == "exports/transcript_speakers.txt"
+    assert "named_transcript" not in reloaded.outputs
+    assert "corrected_named_transcript" not in reloaded.outputs
+    assert reloaded.speakers["detected_ids"] == [0, 1]
+    assert "mapped" not in reloaded.speakers
+    assert "person_map" not in reloaded.speakers
+    assert "matches" not in reloaded.speakers
+    assert "sample_matches" not in reloaded.speakers
+    assert "ignored" not in reloaded.speakers
+
+
 def test_apply_project_speakers_refreshes_corrected_named_outputs(
     tmp_path: Path,
 ) -> None:
@@ -2777,6 +2926,118 @@ def test_apply_project_speakers_persists_explicit_ignored_speakers(
     assert ignored == {"ignored_speakers": [1]}
     assert manifest.speakers["mapped"] == {"0": "欧丁"}
     assert manifest.speakers["ignored"] == [1]
+
+
+def test_project_speakers_rerun_resets_matches_applies_and_stabilizes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Speaker rerun should provide a single entrypoint for the full speaker flow."""
+    project_dir = _sample_project(tmp_path)
+    calls: list[tuple[str, object, object | None]] = []
+
+    def fake_reset_project_speakers_from_raw(project_dir: Path):
+        calls.append(("reset", project_dir, None))
+        return SimpleNamespace(
+            project_dir=project_dir,
+            speaker_ids=(0, 1),
+            sentence_count=3,
+            corrected_sentence_count=None,
+        )
+
+    def fake_match_project_speakers(project_dir: Path, **kwargs):
+        calls.append(("match", project_dir, kwargs))
+        return SpeakerMatchSummary(
+            project_dir / "speakers" / "speaker_matches.json",
+            "fake-provider",
+            "fake-model",
+            0.75,
+            [
+                SpeakerMatch(
+                    0,
+                    "Speaker A",
+                    "欧丁",
+                    0.91,
+                    True,
+                    2,
+                    accepted_person_id=1,
+                    accepted_person_public_id="vpp-0000000000000001",
+                )
+            ],
+        )
+
+    def fake_apply_project_speakers(project_dir: Path, mappings: dict[int, str], **kwargs):
+        calls.append(("apply", mappings, kwargs))
+        return (
+            project_dir / "speakers" / "speaker_map.json",
+            project_dir / "exports" / "transcript_named.txt",
+            project_dir / "exports" / "subtitle_named.srt",
+        )
+
+    def fake_stabilize_project_speakers(project_dir: Path, **kwargs):
+        calls.append(("stabilize", project_dir, kwargs))
+        return SimpleNamespace(
+            minted_speaker_count=1,
+            reassignment_count=2,
+            final_match_summary=None,
+        )
+
+    monkeypatch.setattr(
+        project_commands,
+        "reset_project_speakers_from_raw",
+        fake_reset_project_speakers_from_raw,
+    )
+    monkeypatch.setattr(
+        project_commands, "match_project_speakers", fake_match_project_speakers
+    )
+    monkeypatch.setattr(
+        project_commands, "apply_project_speakers", fake_apply_project_speakers
+    )
+    monkeypatch.setattr(
+        project_commands, "stabilize_project_speakers", fake_stabilize_project_speakers
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "speakers",
+            "rerun",
+            str(project_dir),
+            "--no-progress",
+            "--sample-count",
+            "3",
+            "--speaker-sample-workers",
+            "7",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert [call[0] for call in calls] == [
+        "reset",
+        "match",
+        "apply",
+        "stabilize",
+        "apply",
+    ]
+    assert calls[1][2]["sample_count"] == 3
+    assert calls[3][2] == {
+        "store_dir": None,
+        "model": None,
+        "iterations": 2,
+        "sample_workers": 7,
+        "resplit": True,
+        "progress": None,
+    }
+    assert calls[2][1] == {0: "欧丁"}
+    assert calls[2][2]["person_mapping"] == {0: 1}
+    assert calls[2][2]["person_public_mapping"] == {
+        0: "vpp-0000000000000001"
+    }
+    assert calls[4][1] == {}
+    assert "Reset speakers from raw ASR: 2 speaker(s), 3 sentence(s)." in result.output
+    assert "Matched speakers: 1/1 accepted." in result.output
+    assert "minted 1 speaker(s), reassigned 2 sentence(s)" in result.output
 
 
 def test_project_speakers_inspect_shows_mapped_names(tmp_path: Path) -> None:

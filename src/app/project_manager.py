@@ -11,6 +11,7 @@ import subprocess
 import time
 from collections.abc import Callable, Collection, Sequence
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -76,8 +77,9 @@ from app.meeting_summary import (
     generate_meeting_summary,
     render_meeting_summary_markdown,
 )
-from app.models import TranscriptResult
+from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import (
+    detect_speaker_ids,
     merge_adjacent_sentences,
     parse_transcription_result,
     render_plain_text,
@@ -150,6 +152,47 @@ DOWNSTREAM_ARTIFACT_PATHS = (
     "speakers/speaker_matches.json",
 )
 DOWNSTREAM_SPEAKER_KEYS = ("mapped", "person_map", "matches", "voiceprints")
+
+SPEAKER_RERUN_OUTPUT_KEYS = (
+    "named_transcript",
+    "named_subtitle",
+    "corrected_named_transcript",
+    "corrected_named_subtitle",
+)
+
+SPEAKER_RERUN_ARTIFACT_PATHS = (
+    "speakers/speaker_map.json",
+    "speakers/speaker_person_map.json",
+    "speakers/speaker_ignore.json",
+    "speakers/speaker_matches.json",
+    "speakers/speaker_sample_matches.json",
+    "speakers/speaker_cluster_quality.json",
+    "speakers/speaker_resplit.json",
+    "exports/transcript_named.txt",
+    "exports/subtitle_named.srt",
+    "exports/transcript_named_corrected.txt",
+    "exports/subtitle_named_corrected.srt",
+)
+
+SPEAKER_RERUN_SPEAKER_KEYS = (
+    "mapped",
+    "person_map",
+    "matches",
+    "sample_matches",
+    "ignored",
+    "voiceprints",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectSpeakerResetSummary:
+    """Result of resetting speaker state back to raw ASR diarization."""
+
+    project_dir: Path
+    speaker_ids: tuple[int, ...]
+    sentence_count: int
+    corrected_sentence_count: int | None
+
 
 LOGGER = logging.getLogger(__name__)
 _TITLE_TIME_PREFIX_RE = re.compile(
@@ -2379,6 +2422,94 @@ def _write_project_asr_outputs(
         safe_write_text(
             paths.exports_dir / "subtitle.srt", build_srt(parsed_result.sentences)
         )
+
+
+def reset_project_speakers_from_raw(project_dir: Path) -> ProjectSpeakerResetSummary:
+    """Reset speaker assignments to the original ASR raw_result without rerunning ASR.
+
+    This is intentionally narrower than ``project rerun``: it preserves transcription
+    text and correction artifacts, but discards speaker naming/matching diagnostics and
+    restores ``speaker_id`` values from ``asr/raw_result.json``.
+    """
+    paths = ensure_project_dirs(project_dir)
+    raw_path = paths.asr_dir / "raw_result.json"
+    if not raw_path.exists():
+        raise FileNotFoundError(f"Raw ASR result not found: {raw_path}")
+    raw_result = json.loads(raw_path.read_text(encoding="utf-8"))
+    parsed_result = parse_transcription_result(raw_result)
+    if not parsed_result.sentences:
+        raise ValueError(f"Raw ASR result contains no sentence payloads: {raw_path}")
+
+    generate_srt = "subtitle" in load_manifest(paths.root).outputs or (
+        paths.exports_dir / "subtitle.srt"
+    ).exists()
+    _write_project_asr_outputs(paths, raw_result, parsed_result, generate_srt)
+    corrected_count = _reset_corrected_speaker_ids(paths, parsed_result)
+    _clear_project_speaker_artifacts(paths)
+
+    manifest = load_manifest(paths.root)
+    manifest.outputs.update(_default_output_paths())
+    for key in SPEAKER_RERUN_OUTPUT_KEYS:
+        manifest.outputs.pop(key, None)
+    manifest.speakers["detected_ids"] = parsed_result.detected_speakers
+    for key in SPEAKER_RERUN_SPEAKER_KEYS:
+        manifest.speakers.pop(key, None)
+    manifest.status = "corrected" if corrected_count is not None else "transcribed"
+    save_manifest(paths.root, manifest)
+    return ProjectSpeakerResetSummary(
+        paths.root,
+        tuple(parsed_result.detected_speakers),
+        len(parsed_result.sentences),
+        corrected_count,
+    )
+
+
+def _reset_corrected_speaker_ids(
+    paths: ProjectPaths, parsed_result: TranscriptResult
+) -> int | None:
+    """Apply raw ASR speaker ids to corrected sentences while preserving corrected text."""
+    corrected_path = paths.asr_dir / "sentences_corrected.json"
+    if not corrected_path.exists():
+        return None
+    raw_speaker_by_sentence = {
+        sentence.sentence_id: sentence.speaker_id
+        for sentence in parsed_result.sentences
+        if sentence.sentence_id is not None
+    }
+    payload = json.loads(corrected_path.read_text(encoding="utf-8"))
+    corrected_sentences = payload.get("sentences", [])
+    if not isinstance(corrected_sentences, list):
+        return None
+    for item in corrected_sentences:
+        if not isinstance(item, dict):
+            continue
+        sentence_id = item.get("sentence_id")
+        if sentence_id in raw_speaker_by_sentence:
+            item["speaker_id"] = raw_speaker_by_sentence[sentence_id]
+    payload["detected_speakers"] = detect_speaker_ids(
+        TranscriptResult(
+            str(payload.get("full_text") or ""),
+            [
+                SentenceSegment(**item)
+                for item in corrected_sentences
+                if isinstance(item, dict)
+            ],
+            [],
+        )
+    )
+    safe_write_json(corrected_path, payload)
+    corrected_result = load_transcript_result(corrected_path)
+    safe_write_text(
+        paths.exports_dir / "transcript_speakers_corrected.txt",
+        render_speaker_text(corrected_result),
+    )
+    return len(corrected_sentences)
+
+
+def _clear_project_speaker_artifacts(paths: ProjectPaths) -> None:
+    """Delete project-local speaker artifacts made stale by a raw-speaker reset."""
+    for relative_path in SPEAKER_RERUN_ARTIFACT_PATHS:
+        _unlink_project_file(paths.root, relative_path)
 
 
 def _invalidate_downstream_artifacts(

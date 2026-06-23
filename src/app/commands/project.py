@@ -76,6 +76,7 @@ from app.transcript_merge import (
     write_merge_outputs,
 )
 from app.project_manager import (
+    ProjectSpeakerResetSummary,
     apply_project_speakers,
     create_or_reuse_project,
     delete_project,
@@ -85,6 +86,7 @@ from app.project_manager import (
     prepare_project_audio,
     project_paths,
     record_project_stage,
+    reset_project_speakers_from_raw,
     resolve_project_audio_path,
     resolve_project_source_path,
     save_manifest,
@@ -2259,6 +2261,144 @@ def _resolve_review_project(
     if selected is None:
         typer.echo("Project review exited without selecting a project.")
     return selected
+
+
+@speakers_app.command("rerun")
+def speakers_rerun(
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    store_dir: Optional[Path] = typer.Option(
+        None,
+        "--store-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Voiceprint store directory. This command can reassign sentences; use an "
+        "isolated copy when validating on a duplicated project.",
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
+    threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
+    sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
+    max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
+    padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
+    crosstalk: bool = typer.Option(
+        True,
+        "--crosstalk/--no-crosstalk",
+        help="Flag low-confidence crosstalk/noise speakers (kept anonymous, "
+        "non-blocking).",
+    ),
+    crosstalk_max_samples: int = typer.Option(
+        DEFAULT_CROSSTALK_MAX_SAMPLES, "--crosstalk-max-samples", min=1
+    ),
+    crosstalk_score_floor: float = typer.Option(
+        DEFAULT_CROSSTALK_SCORE_FLOOR, "--crosstalk-score-floor", min=0.0, max=1.0
+    ),
+    speaker_stabilization: bool = typer.Option(
+        True,
+        "--speaker-stabilization/--no-speaker-stabilization",
+        help="After speaker matching, run sentence-level reassignment stabilization.",
+    ),
+    speaker_resplit: bool = typer.Option(
+        True,
+        "--speaker-resplit/--no-speaker-resplit",
+        help="Rescue under-split tracks during stabilization.",
+    ),
+    speaker_stabilization_iterations: int = typer.Option(
+        DEFAULT_STABILIZATION_ITERATIONS,
+        "--speaker-stabilization-iterations",
+        min=0,
+    ),
+    speaker_sample_workers: int = typer.Option(
+        DEFAULT_STABILIZATION_SAMPLE_WORKERS, "--speaker-sample-workers", min=1
+    ),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
+) -> None:
+    """Rebuild speaker outputs from raw ASR without rerunning ASR."""
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
+    crosstalk_params = _build_crosstalk_params(
+        enabled=crosstalk,
+        max_samples=crosstalk_max_samples,
+        score_floor=crosstalk_score_floor,
+    )
+
+    def operation(
+        reporter: CliProgressReporter | None,
+    ) -> tuple[
+        ProjectSpeakerResetSummary,
+        SpeakerMatchSummary,
+        SpeakerStabilizationSummary | None,
+    ]:
+        emit_progress(reporter, "Resetting speakers from raw ASR result")
+        reset_summary = reset_project_speakers_from_raw(resolved_project_dir)
+        emit_progress(reporter, "Matching speakers with voiceprints")
+        matches = match_project_speakers(
+            resolved_project_dir,
+            store_dir=store_dir,
+            provider=None,
+            model=model,
+            threshold=threshold,
+            sample_count=sample_count,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+            crosstalk_params=crosstalk_params,
+            progress=reporter,
+        )
+        if matches.accepted_mapping:
+            emit_progress(reporter, "Applying accepted speaker matches")
+            apply_project_speakers(
+                resolved_project_dir,
+                matches.accepted_mapping,
+                person_mapping=matches.accepted_person_mapping,
+                person_public_mapping=matches.accepted_person_public_mapping,
+            )
+        stabilization_summary = None
+        should_iterate = _should_stabilize_run_speakers(matches)
+        if speaker_stabilization and (should_iterate or speaker_resplit):
+            emit_progress(reporter, "Stabilizing sentence speaker assignments")
+            stabilization_summary = stabilize_project_speakers(
+                resolved_project_dir,
+                store_dir=store_dir,
+                model=model,
+                iterations=speaker_stabilization_iterations if should_iterate else 0,
+                sample_workers=speaker_sample_workers,
+                resplit=speaker_resplit,
+                progress=reporter,
+            )
+            if stabilization_summary.final_match_summary is not None:
+                matches = stabilization_summary.final_match_summary
+        apply_project_speakers(resolved_project_dir, {})
+        return reset_summary, matches, stabilization_summary
+
+    reset_summary, matches, stabilization_summary = run_with_progress(
+        operation,
+        description="Rerunning project speakers",
+        enabled=progress,
+    )
+    typer.echo(
+        f"Reset speakers from raw ASR: {len(reset_summary.speaker_ids)} speaker(s), "
+        f"{reset_summary.sentence_count} sentence(s)."
+    )
+    typer.echo(
+        f"Matched speakers: {len(matches.accepted_mapping)}/{len(matches.matches)} accepted."
+    )
+    if stabilization_summary is not None:
+        typer.echo(
+            "Stabilization: "
+            f"minted {stabilization_summary.minted_speaker_count} speaker(s), "
+            f"reassigned {stabilization_summary.reassignment_count} sentence(s)."
+        )
+    typer.echo("Speaker outputs rebuilt from raw ASR.")
 
 
 @speakers_app.command("match")
