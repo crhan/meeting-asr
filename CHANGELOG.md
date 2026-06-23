@@ -5,6 +5,18 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [0.13.0] - 2026-06-23
+
+### 新增
+
+- 新增 `meeting-asr project speakers rerun <project>`：从项目内 `asr/raw_result.json` 重建 speaker 产物，不重新提交 ASR。它会先把 speaker 切分恢复到原始 ASR 输出，再重新跑声纹匹配、可选 crosstalk 标记、speaker stabilization 和 under-split rescue，最后重渲染命名 transcript / SRT。用于声纹库、speaker 稳定化或分桶逻辑更新后，对既有项目做 speaker-only 复算；命令保留 `--store-dir`，方便在项目拷贝和隔离声纹库上验证，避免误动真实库。
+- Project Review TUI 新增复制快捷键：`y`、`Ctrl+C`、macOS 终端可传入时的 `Cmd+C` 都会复制当前选区；没有选区时复制当前高亮 sample / 时间轴行，包含时间戳、speaker 标签、当前名称和句子文本。复制优先走 Textual 内置剪贴板，再兜底系统剪贴板命令，便于从 TUI 里直接摘取待核对片段。
+- Project Review TUI 新增 `d` 快捷键接受明确的错桶诊断：当前高亮句子若分桶诊断给出 `疑似错桶` 且带有具体 `更像=Speaker X` 目标，可一键移动到建议 speaker，并复用现有 reassignment 保存链路；边界近、身份接近或没有具体目标的样本不会自动移动，仍需按 `r` 手动选择。
+
+### 修复
+
+- 修复 under-split rescue 在未绑定身份的 speaker track 上可能过度抽离的问题：当候选片段虽然略像库内某人、但仍高度贴近当前 track 自身质心时，不再把它 promotion 或塞入 unknown bucket，避免把一个一致的源 speaker 拆碎成伪新 speaker。resplit 审计 payload 现在记录 `source_score`，便于解释这类拒绝原因。
+
 ## [0.12.0] - 2026-06-08
 
 ### 新增
