@@ -28,6 +28,7 @@ from app.presentation.tui.project import (
     ProjectPickerScreen,
     load_project_picker_session,
 )
+from app.presentation.tui.clipboard import copy_to_system_clipboard
 from app.presentation.tui.speaker_correction import (
     CorrectionQueuedScreen,
     SentenceCorrectionEdit,
@@ -219,6 +220,13 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
         Binding("]", "next_sample_page", "Next page", show=False),
         Binding("[", "previous_sample_page", "Previous page", show=False),
         Binding("space", "play_sample", "Play/stop sample"),
+        Binding(
+            "y,ctrl+c,super+c",
+            "copy_active_text",
+            "Copy",
+            key_display="y/Cmd+C",
+            priority=True,
+        ),
         Binding("/", "edit_name", "Edit name"),
         Binding("a", "accept_match", "Accept match"),
         Binding("i", "ignore_speaker", "Ignore"),
@@ -370,6 +378,37 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             self._play_sample(self._active_segment())
         except Exception as exc:  # noqa: BLE001
             self._set_status(tr(f"Preview failed: {exc}", f"预览失败：{exc}"))
+
+    def action_copy_active_text(self) -> None:
+        """Copy the current text selection, or the highlighted transcript row."""
+        selected = self.screen.get_selected_text()
+        text = selected if selected and selected.strip() else self._copyable_active_text()
+        if not text.strip():
+            self._set_status(tr("Nothing to copy.", "没有可复制内容。"))
+            return
+        # Textual's OSC52 clipboard works in many terminals; pbcopy/wl-copy/xclip covers
+        # terminals that do not honor OSC52, especially macOS Terminal.
+        self.copy_to_clipboard(text)
+        result = copy_to_system_clipboard(text)
+        label = (
+            tr("selected text", "选中文本")
+            if selected and selected.strip()
+            else tr("highlighted row", "高亮行")
+        )
+        if result.copied:
+            self._set_status(
+                tr(
+                    f"Copied {label} via {result.method}.",
+                    f"已复制{label}（{result.method}）。",
+                )
+            )
+            return
+        self._set_status(
+            tr(
+                f"Copied {label} via terminal clipboard protocol; if paste fails, {result.message}.",
+                f"已通过终端剪贴板协议复制{label}；如果粘贴失败：{result.message}。",
+            )
+        )
 
     def action_edit_name(self) -> None:
         """Open the explicit known-person selection modal."""
@@ -1014,6 +1053,23 @@ class SpeakerReviewApp(App[SpeakerReviewDecision]):
             )
             return rows[self.timeline_selected_index].segment
         return self._selected_sample()
+
+    def _copyable_active_text(self) -> str:
+        """Return a plain-text line for the highlighted transcript row."""
+        if self.view_mode == VIEW_MODE_TIMELINE:
+            rows = self._timeline_rows()
+            if not rows:
+                return ""
+            self.timeline_selected_index = max(
+                0, min(self.timeline_selected_index, len(rows) - 1)
+            )
+            row = rows[self.timeline_selected_index]
+            return _copyable_segment_line(row.segment, label=row.label, name=row.name)
+        segment = self._selected_sample()
+        speaker = self._speaker_for_segment(segment)
+        return _copyable_segment_line(
+            segment, label=speaker.label, name=speaker.current_name
+        )
 
     def _reassignment_segment(self) -> SentenceSegment | None:
         """Return the sentence currently targeted for speaker reassignment."""
@@ -1740,6 +1796,14 @@ def _segment_time_range(segment: SentenceSegment) -> str:
     start = format_ms_timestamp(segment.begin_time_ms)
     end = format_ms_timestamp(segment.end_time_ms)
     return f"{start}-{end}"
+
+
+def _copyable_segment_line(segment: SentenceSegment, *, label: str, name: str) -> str:
+    """Format the selected transcript row for the system clipboard."""
+    speaker_name = name.strip() or label
+    speaker = label if speaker_name == label else f"{label} {speaker_name}"
+    text = segment.text.strip().replace("\n", " ")
+    return f"{_segment_time_range(segment)} {speaker}: {text}"
 
 
 def _cluster_badge(diagnostic: SpeakerClusterDiagnostic | None) -> str:

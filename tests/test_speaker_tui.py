@@ -48,6 +48,7 @@ from app.presentation.tui.speaker_save import (
     speaker_ignore_changes,
     speaker_name_changes,
 )
+from app.presentation.tui.clipboard import ClipboardCopyResult
 from app.presentation.tui.voiceprint_capture import (
     load_voiceprint_capture_review_session,
 )
@@ -293,6 +294,112 @@ def test_speaker_review_tui_highlights_focused_pane() -> None:
             assert "FOCUS" in pilot.app._sample_pane()
 
     asyncio.run(scenario())
+
+
+def test_speaker_review_tui_copies_highlighted_sample(monkeypatch) -> None:
+    """Copy should put the highlighted sample row on the system clipboard."""
+    copied: list[str] = []
+    app = SpeakerReviewApp(_session())
+
+    def fake_copy(text: str) -> ClipboardCopyResult:
+        copied.append(text)
+        return ClipboardCopyResult(True, method="test-clipboard")
+
+    monkeypatch.setattr(speaker_tui, "copy_to_system_clipboard", fake_copy)
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("right")
+            await pilot.press("y")
+            await pilot.pause()
+
+            expected = "00:00:00.000-00:00:01.000 Speaker A: 第一句"
+            assert copied == [expected]
+            assert app._clipboard == expected
+            assert "test-clipboard" in str(app.query_one("#status", Static).render())
+
+    asyncio.run(scenario())
+
+
+def test_speaker_review_tui_ctrl_c_copies_highlighted_sample(monkeypatch) -> None:
+    """Ctrl+C should copy in review mode instead of exiting the TUI."""
+    copied: list[str] = []
+    app = SpeakerReviewApp(_session())
+
+    def fake_copy(text: str) -> ClipboardCopyResult:
+        copied.append(text)
+        return ClipboardCopyResult(True, method="test-clipboard")
+
+    monkeypatch.setattr(speaker_tui, "copy_to_system_clipboard", fake_copy)
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+
+            expected = "00:00:00.000-00:00:01.000 Speaker A: 第一句"
+            assert copied == [expected]
+            assert app.return_value is None
+
+    asyncio.run(scenario())
+
+
+def test_speaker_review_tui_super_c_copies_highlighted_sample(monkeypatch) -> None:
+    """Textual's Command-key name should copy the highlighted row."""
+    copied: list[str] = []
+    app = SpeakerReviewApp(_session())
+
+    def fake_copy(text: str) -> ClipboardCopyResult:
+        copied.append(text)
+        return ClipboardCopyResult(True, method="test-clipboard")
+
+    monkeypatch.setattr(speaker_tui, "copy_to_system_clipboard", fake_copy)
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("super+c")
+            await pilot.pause()
+
+            assert copied == ["00:00:00.000-00:00:01.000 Speaker A: 第一句"]
+            assert app.return_value is None
+
+    asyncio.run(scenario())
+
+
+def test_speaker_review_tui_copies_timeline_row(monkeypatch) -> None:
+    """Timeline copy should preserve chronological row speaker context."""
+    copied: list[str] = []
+    app = SpeakerReviewApp(_timeline_session())
+
+    def fake_copy(text: str) -> ClipboardCopyResult:
+        copied.append(text)
+        return ClipboardCopyResult(True, method="test-clipboard")
+
+    monkeypatch.setattr(speaker_tui, "copy_to_system_clipboard", fake_copy)
+
+    async def scenario() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("t")
+            await pilot.press("j")
+            await pilot.press("y")
+            await pilot.pause()
+
+            assert copied == [
+                "00:00:02.000-00:00:02.500 Speaker B 欧丁: 第二句其实是欧丁讲的"
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_speaker_review_tui_copy_binding_includes_command_c() -> None:
+    """The TUI should bind Textual's macOS command-key name for copy."""
+    copy_bindings = [
+        binding.key
+        for binding in SpeakerReviewApp.BINDINGS
+        if binding.action == "copy_active_text"
+    ]
+
+    assert copy_bindings == ["y,ctrl+c,super+c"]
 
 
 def test_speaker_review_tui_accepts_match_updates_status_and_saves() -> None:
