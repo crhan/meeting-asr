@@ -119,10 +119,12 @@ export function SpeakerReviewPage() {
   // Working edits layered over the loaded baseline.
   const [edits, setEdits] = useState<Map<number, SpeakerEdit>>(new Map());
   const [reassign, setReassign] = useState<Map<string, number>>(new Map());
+  const [deletedSpeakerIds, setDeletedSpeakerIds] = useState<Set<number>>(new Set());
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [filter, setFilter] = useState<"all" | "review" | "low">("all");
   const [picking, setPicking] = useState<ReviewSpeaker | null>(null);
   const [reassigning, setReassigning] = useState<SpeakerSegment | null>(null);
+  const [merging, setMerging] = useState<ReviewSpeaker | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   // Reset working state whenever a fresh session loads.
@@ -130,7 +132,9 @@ export function SpeakerReviewPage() {
     if (data) {
       setEdits(new Map());
       setReassign(new Map());
+      setDeletedSpeakerIds(new Set());
       setSelectedId((prev) => prev ?? data.speakers[0]?.speaker_id ?? null);
+      setMerging(null);
     }
   }, [data]);
 
@@ -163,7 +167,7 @@ export function SpeakerReviewPage() {
     return map;
   }, [data, reassign]);
 
-  const dirty = edits.size > 0 || reassign.size > 0;
+  const dirty = edits.size > 0 || reassign.size > 0 || deletedSpeakerIds.size > 0;
 
   // Unsaved edits live only in this component's state; losing the page loses them.
   // Publish the dirty flag for app chrome (LangToggle's reload confirm) and warn on
@@ -206,7 +210,9 @@ export function SpeakerReviewPage() {
       if (!data) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      const ids = data.speakers.map((s) => s.speaker_id);
+      const ids = data.speakers
+        .map((s) => s.speaker_id)
+        .filter((id) => !deletedSpeakerIds.has(id));
       const idx = selectedId == null ? -1 : ids.indexOf(selectedId);
       if (e.key === "j") {
         setSelectedId(ids[Math.min(ids.length - 1, idx + 1)] ?? ids[0]);
@@ -219,12 +225,15 @@ export function SpeakerReviewPage() {
         toggleIgnore(selectedId);
       } else if (e.key === "a" && selectedId != null) {
         acceptMatch(selectedId);
+      } else if (e.key === "m" && selectedId != null) {
+        const base = data.speakers.find((s) => s.speaker_id === selectedId);
+        if (base) setMerging(base);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, selectedId, edits]);
+  }, [data, selectedId, edits, deletedSpeakerIds]);
 
   if (isLoading) return <div className="placeholder">{tr("Loading…", "加载中…")}</div>;
   if (error)
@@ -236,7 +245,9 @@ export function SpeakerReviewPage() {
     );
   if (!data) return null;
 
-  const speakers = data.speakers.map(effective);
+  const speakers = data.speakers
+    .map(effective)
+    .filter((s) => !deletedSpeakerIds.has(s.speaker_id));
   const selected =
     selectedId != null
       ? (speakers.find((s) => s.speaker_id === selectedId) ?? null)
@@ -313,6 +324,67 @@ export function SpeakerReviewPage() {
     setReassigning(null);
   }
 
+  function canDeleteSpeaker(speakerId: number): boolean {
+    const segs = segmentsBySpeaker.get(speakerId) ?? [];
+    return segs.every((seg) => !seg.text.trim());
+  }
+
+  function doMergeSpeaker(sourceSpeakerId: number, targetSpeakerId: number) {
+    if (sourceSpeakerId === targetSpeakerId) {
+      setMerging(null);
+      return;
+    }
+    const source = speakers.find((s) => s.speaker_id === sourceSpeakerId);
+    const target = speakers.find((s) => s.speaker_id === targetSpeakerId);
+    const sourceSegments = segmentsBySpeaker.get(sourceSpeakerId) ?? [];
+    setReassign((prev) => {
+      const next = new Map(prev);
+      for (const seg of sourceSegments) {
+        if (targetSpeakerId === seg.speaker_id) next.delete(segKey(seg));
+        else next.set(segKey(seg), targetSpeakerId);
+      }
+      return next;
+    });
+    setDeletedSpeakerIds((prev) => {
+      const next = new Set(prev);
+      next.add(sourceSpeakerId);
+      next.delete(targetSpeakerId);
+      return next;
+    });
+    setSelectedId(targetSpeakerId);
+    setMerging(null);
+    setToast(
+      tr(
+        `Queued merge and source delete: ${source?.current_name ?? sourceSpeakerId} -> ${target?.current_name ?? targetSpeakerId}. Save to apply.`,
+        `已准备合并并删除源 speaker：${source?.current_name ?? sourceSpeakerId} -> ${target?.current_name ?? targetSpeakerId}。保存后生效。`,
+      ),
+    );
+  }
+
+  function doDeleteSpeaker(speakerId: number) {
+    const s = speakers.find((item) => item.speaker_id === speakerId);
+    if (!canDeleteSpeaker(speakerId)) {
+      setToast(
+        tr(
+          "This speaker still has non-empty sentences. Merge/reassign or clear them before deleting.",
+          "这个 speaker 还有非空句子。先合并、重指派或清空后才能删除。",
+        ),
+      );
+      return;
+    }
+    setDeletedSpeakerIds((prev) => new Set(prev).add(speakerId));
+    setSelectedId((prev) => {
+      if (prev !== speakerId) return prev;
+      return speakers.find((item) => item.speaker_id !== speakerId)?.speaker_id ?? null;
+    });
+    setToast(
+      tr(
+        `Queued delete: ${s?.current_name ?? speakerId}. Save to apply.`,
+        `已准备删除：${s?.current_name ?? speakerId}。保存后生效。`,
+      ),
+    );
+  }
+
   function buildSaveBody(): SaveSpeakerReviewBody {
     const mapping: Record<string, string> = {};
     const person_mapping: Record<string, number> = {};
@@ -348,12 +420,14 @@ export function SpeakerReviewPage() {
       person_public_mapping,
       ignored_speaker_ids,
       reassignments,
+      deleted_speaker_ids: [...deletedSpeakerIds],
     };
   }
 
   const unresolved = speakers.filter(
     (s) => s.status === "review" || s.status === "conflict" || s.status === "mismatch",
   ).length;
+  const mergingSpeaker = merging ? effective(merging) : null;
 
   return (
     <div className="review">
@@ -367,6 +441,8 @@ export function SpeakerReviewPage() {
         onDiscard={() => {
           setEdits(new Map());
           setReassign(new Map());
+          setDeletedSpeakerIds(new Set());
+          setMerging(null);
         }}
         onCapture={() => navigate(`/projects/${ref}/capture`)}
         onCorrect={() => navigate(`/projects/${ref}/corrections`)}
@@ -386,9 +462,22 @@ export function SpeakerReviewPage() {
           filter={filter}
           reassignKeys={reassign}
           onFilter={setFilter}
-          onIdentify={() => selected && setPicking(data.speakers.find((s) => s.speaker_id === selected.speaker_id) ?? null)}
+          onIdentify={() =>
+            selected &&
+            setPicking(
+              data.speakers.find((s) => s.speaker_id === selected.speaker_id) ?? null,
+            )
+          }
           onAccept={() => selected && acceptMatch(selected.speaker_id)}
           onIgnore={() => selected && toggleIgnore(selected.speaker_id)}
+          onMerge={() =>
+            selected &&
+            setMerging(
+              data.speakers.find((s) => s.speaker_id === selected.speaker_id) ?? null,
+            )
+          }
+          onDelete={() => selected && doDeleteSpeaker(selected.speaker_id)}
+          canDelete={selected ? canDeleteSpeaker(selected.speaker_id) : false}
           onReassign={(seg) => setReassigning(seg)}
         />
       </div>
@@ -408,6 +497,19 @@ export function SpeakerReviewPage() {
           sentencePreview={reassigning.text}
           onPick={(target) => doReassign(reassigning, target)}
           onClose={() => setReassigning(null)}
+        />
+      )}
+      {merging && mergingSpeaker && (
+        <SpeakerPicker
+          title={tr("Merge speaker into…", "合并 speaker 到…")}
+          speakers={speakers}
+          currentSpeakerId={merging.speaker_id}
+          sentencePreview={tr(
+            `Move all current sentences from ${mergingSpeaker.current_name || mergingSpeaker.label} to the selected speaker.`,
+            `把 ${mergingSpeaker.current_name || mergingSpeaker.label} 当前所有句子移动到选中的 speaker。`,
+          )}
+          onPick={(target) => doMergeSpeaker(merging.speaker_id, target)}
+          onClose={() => setMerging(null)}
         />
       )}
       {toast && (
@@ -542,6 +644,9 @@ function TranscriptPane(props: {
   onIdentify: () => void;
   onAccept: () => void;
   onIgnore: () => void;
+  onMerge: () => void;
+  onDelete: () => void;
+  canDelete: boolean;
   onReassign: (seg: SpeakerSegment) => void;
 }) {
   const { projectRef, selected, segments, filter, reassignKeys } = props;
@@ -594,6 +699,24 @@ function TranscriptPane(props: {
               {tr("Accept match", "接受匹配")} <span className="kbd">A</span>
             </button>
           )}
+          <button className="btn ghost" onClick={props.onMerge}>
+            {tr("Merge into", "合并到")} <span className="kbd">M</span>
+          </button>
+          <button
+            className="btn ghost danger"
+            onClick={props.onDelete}
+            disabled={!props.canDelete}
+            title={
+              props.canDelete
+                ? tr("Delete this empty speaker.", "删除这个空 speaker。")
+                : tr(
+                    "Only speakers with no non-empty sentences can be deleted.",
+                    "只有没有非空句子的 speaker 才能删除。",
+                  )
+            }
+          >
+            {tr("Delete", "删除")}
+          </button>
           <button className={`btn ghost ${selected.ignored ? "on" : ""}`} onClick={props.onIgnore}>
             {selected.ignored ? tr("Ignored", "已忽略") : tr("Ignore", "忽略")}{" "}
             <span className="kbd">I</span>

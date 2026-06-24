@@ -9,6 +9,7 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from textual.widgets import Input, Static, TextArea
 
 from app import speaker_tui
@@ -70,6 +71,7 @@ from app.voiceprint_quality import analyze_voiceprint_quality
 from app.speaker_labeling import (
     SentenceReassignmentSpec,
     apply_sentence_reassignments,
+    delete_empty_speaker_segments,
 )
 from app.speaker_matching import SpeakerMatch, SpeakerMatchSummary
 from app.presentation.tui.speaker_timeline import (
@@ -2953,6 +2955,101 @@ def test_apply_sentence_reassignments_falls_back_to_timing_match(
 
     after = json.loads((asr_dir / "sentences.json").read_text(encoding="utf-8"))
     assert after["sentences"][0]["speaker_id"] == 2
+
+
+def test_delete_empty_speaker_segments_removes_from_raw_and_corrected(
+    tmp_path: Path,
+) -> None:
+    """Deleting an empty reviewed speaker removes that speaker from persisted files."""
+    asr_dir = tmp_path / "asr"
+    asr_dir.mkdir()
+    raw = {
+        "full_text": "保留原文噪音",
+        "detected_speakers": [0, 1],
+        "sentences": [
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 1000,
+                "text": "保留",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 1200,
+                "end_time_ms": 1500,
+                "text": "原文噪音",
+                "speaker_id": 1,
+                "sentence_id": 2,
+            },
+        ],
+    }
+    corrected = {
+        "full_text": "保留",
+        "detected_speakers": [0, 1],
+        "sentences": [
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 1000,
+                "text": "保留",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 1200,
+                "end_time_ms": 1500,
+                "text": "   ",
+                "speaker_id": 1,
+                "sentence_id": 2,
+            },
+        ],
+    }
+    (asr_dir / "sentences.json").write_text(
+        json.dumps(raw, ensure_ascii=False), encoding="utf-8"
+    )
+    (asr_dir / "sentences_corrected.json").write_text(
+        json.dumps(corrected, ensure_ascii=False), encoding="utf-8"
+    )
+
+    result = delete_empty_speaker_segments(asr_dir, [1])
+
+    assert result.deleted_sentence_count == 1
+    assert {path.name for path in result.sentence_files} == {
+        "sentences.json",
+        "sentences_corrected.json",
+    }
+    raw_after = json.loads((asr_dir / "sentences.json").read_text(encoding="utf-8"))
+    corrected_after = json.loads(
+        (asr_dir / "sentences_corrected.json").read_text(encoding="utf-8")
+    )
+    assert [item["speaker_id"] for item in raw_after["sentences"]] == [0]
+    assert [item["speaker_id"] for item in corrected_after["sentences"]] == [0]
+    assert raw_after["detected_speakers"] == [0]
+    assert corrected_after["detected_speakers"] == [0]
+
+
+def test_delete_empty_speaker_segments_refuses_non_empty_text(
+    tmp_path: Path,
+) -> None:
+    """A speaker cannot be deleted while the reviewed transcript still has text."""
+    asr_dir = tmp_path / "asr"
+    asr_dir.mkdir()
+    payload = {
+        "sentences": [
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 1000,
+                "text": "不能删",
+                "speaker_id": 1,
+                "sentence_id": 1,
+            }
+        ]
+    }
+    (asr_dir / "sentences.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="non-empty transcript text"):
+        delete_empty_speaker_segments(asr_dir, [1])
 
 
 def test_sentence_reassignment_changes_uses_speaker_names() -> None:

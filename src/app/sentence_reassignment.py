@@ -33,8 +33,10 @@ from app.project_manager import (
     save_manifest,
 )
 from app.speaker_labeling import (
+    EmptySpeakerDeletionResult,
     SentenceReassignmentSpec,
     apply_sentence_reassignments,
+    delete_empty_speaker_segments,
     load_transcript_result,
 )
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
@@ -63,6 +65,15 @@ class SentenceReassignmentApplyResult:
     deleted_samples: tuple[DeletedVoiceprintSample, ...]
     match_summary: SpeakerMatchSummary | None
     rematch_skipped_reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class EmptySpeakerDeletionApplyResult:
+    """Outcome of deleting empty speaker tracks and rebuilding transcript artifacts."""
+
+    sentence_files: tuple[Path, ...]
+    anonymous_transcript_path: Path | None
+    deleted_sentence_count: int
 
 
 def apply_project_sentence_reassignments(
@@ -121,6 +132,33 @@ def apply_project_sentence_reassignments(
         deleted_samples=tuple(deleted_samples),
         match_summary=match_summary,
         rematch_skipped_reason=rematch_skipped_reason,
+    )
+
+
+def apply_project_empty_speaker_deletions(
+    project_dir: Path,
+    speaker_ids: Sequence[int],
+) -> EmptySpeakerDeletionApplyResult:
+    """Delete empty speaker tracks and refresh anonymous transcript output."""
+    if not speaker_ids:
+        return EmptySpeakerDeletionApplyResult(
+            sentence_files=(),
+            anonymous_transcript_path=None,
+            deleted_sentence_count=0,
+        )
+    paths = project_paths(project_dir)
+    result: EmptySpeakerDeletionResult = delete_empty_speaker_segments(
+        paths.asr_dir, speaker_ids
+    )
+    transcript_path = (
+        _refresh_anonymous_speaker_outputs(paths.asr_dir, paths.exports_dir)
+        if result.sentence_files
+        else None
+    )
+    return EmptySpeakerDeletionApplyResult(
+        sentence_files=result.sentence_files,
+        anonymous_transcript_path=transcript_path,
+        deleted_sentence_count=result.deleted_sentence_count,
     )
 
 

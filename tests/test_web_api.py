@@ -597,6 +597,7 @@ def test_speaker_save_marshals_decision(
         transcript_path = tmp_path / "t.txt"
         srt_path = tmp_path / "t.srt"
         reassignment = None
+        deletion = None
 
     def fake_save(project_dir, **kwargs):
         captured["project_dir"] = project_dir
@@ -616,6 +617,7 @@ def test_speaker_save_marshals_decision(
             "person_mapping": {"0": 7},
             "person_public_mapping": {"0": person["public_id"]},
             "ignored_speaker_ids": [2],
+            "deleted_speaker_ids": [3],
             "reassignments": [
                 {
                     "sentence_id": 5,
@@ -634,11 +636,13 @@ def test_speaker_save_marshals_decision(
     assert captured["person_mapping"] == {0: 7}
     assert captured["person_public_mapping"] == {0: person["public_id"]}
     assert list(captured["ignored_speaker_ids"]) == [2]
+    assert list(captured["deleted_speaker_ids"]) == [3]
     spec = captured["reassignments"][0]
     assert spec.sentence_id == 5
     assert spec.new_speaker_id == 0
     assert spec.original_speaker_id == 1
     assert resp.json()["reassigned_count"] == 1
+    assert resp.json()["deleted_speaker_count"] == 1
 
 
 def test_speaker_save_refuses_stale_review_revision(
@@ -713,6 +717,7 @@ def _save_body(*, with_reassignment: bool) -> dict:
         "person_public_mapping": {},
         "ignored_speaker_ids": [],
         "reassignments": [],
+        "deleted_speaker_ids": [],
     }
     if with_reassignment:
         body["reassignments"] = [

@@ -23,7 +23,9 @@ from pathlib import Path
 
 from app.project_manager import apply_project_speakers
 from app.sentence_reassignment import (
+    EmptySpeakerDeletionApplyResult,
     SentenceReassignmentApplyResult,
+    apply_project_empty_speaker_deletions,
     apply_project_sentence_reassignments,
 )
 from app.speaker_labeling import SentenceReassignmentSpec
@@ -37,6 +39,7 @@ class SpeakerReviewSaveResult:
     transcript_path: Path
     srt_path: Path
     reassignment: SentenceReassignmentApplyResult | None
+    deletion: EmptySpeakerDeletionApplyResult | None
 
 
 def save_speaker_review(
@@ -47,6 +50,7 @@ def save_speaker_review(
     person_public_mapping: dict[int, str] | None = None,
     ignored_speaker_ids: Collection[int] = (),
     reassignments: Sequence[SentenceReassignmentSpec] = (),
+    deleted_speaker_ids: Collection[int] = (),
     store_dir: Path | None = None,
     rematch: bool = True,
 ) -> SpeakerReviewSaveResult:
@@ -63,6 +67,8 @@ def save_speaker_review(
         person_public_mapping: ``{speaker_id: voiceprint person public id}`` bindings.
         ignored_speaker_ids: Speaker ids deliberately kept anonymous.
         reassignments: Sentence reassignment specs to apply before naming.
+        deleted_speaker_ids: Speaker ids to remove after every visible sentence is empty
+            or reassigned away.
         store_dir: Voiceprint store directory; ``None`` resolves to the default.
         rematch: Whether to rerun voiceprint matching after reassignment invalidation.
 
@@ -77,6 +83,33 @@ def save_speaker_review(
             store_dir=store_dir,
             rematch=rematch,
         )
+    deletion_result: EmptySpeakerDeletionApplyResult | None = None
+    deleted_ids = {int(speaker_id) for speaker_id in deleted_speaker_ids}
+    if deleted_ids:
+        deletion_result = apply_project_empty_speaker_deletions(
+            project_dir, sorted(deleted_ids)
+        )
+    if deleted_ids:
+        mapping = {
+            speaker_id: name
+            for speaker_id, name in mapping.items()
+            if int(speaker_id) not in deleted_ids
+        }
+        person_mapping = {
+            speaker_id: person_id
+            for speaker_id, person_id in (person_mapping or {}).items()
+            if int(speaker_id) not in deleted_ids
+        }
+        person_public_mapping = {
+            speaker_id: person_public_id
+            for speaker_id, person_public_id in (person_public_mapping or {}).items()
+            if int(speaker_id) not in deleted_ids
+        }
+        ignored_speaker_ids = [
+            speaker_id
+            for speaker_id in ignored_speaker_ids
+            if int(speaker_id) not in deleted_ids
+        ]
     mapping_path, transcript_path, srt_path = apply_project_speakers(
         project_dir,
         mapping,
@@ -94,4 +127,5 @@ def save_speaker_review(
         transcript_path=transcript_path,
         srt_path=srt_path,
         reassignment=reassignment_result,
+        deletion=deletion_result,
     )

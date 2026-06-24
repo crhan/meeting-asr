@@ -6,6 +6,7 @@ interface Props {
   speakers: ReviewSpeaker[];
   currentSpeakerId: number;
   sentencePreview: string;
+  title?: string;
   onPick: (speakerId: number) => void;
   onClose: () => void;
 }
@@ -15,11 +16,12 @@ export function SpeakerPicker({
   speakers,
   currentSpeakerId,
   sentencePreview,
+  title,
   onPick,
   onClose,
 }: Props) {
   return (
-    <Modal title={tr("Reassign sentence to…", "把这句重新指派给…")} onClose={onClose}>
+    <Modal title={title ?? tr("Reassign sentence to…", "把这句重新指派给…")} onClose={onClose}>
       <div className="sentence-preview">{sentencePreview}</div>
       <div className="people-list">
         {speakers.map((s) => (

@@ -256,6 +256,9 @@ async def save_review(
         )
         for item in payload.reassignments
     ]
+    deleted_speaker_ids = sorted(
+        {int(speaker_id) for speaker_id in payload.deleted_speaker_ids}
+    )
 
     # Reassignments touch the global voiceprint store (sample invalidation + rematch);
     # naming-only saves stay project-local, so only take the store lock when needed.
@@ -271,6 +274,7 @@ async def save_review(
             person_public_mapping=person_public_mapping,
             ignored_speaker_ids=payload.ignored_speaker_ids,
             reassignments=specs,
+            deleted_speaker_ids=deleted_speaker_ids,
             store_dir=settings.voiceprint_store_dir,
         )
 
@@ -299,11 +303,14 @@ async def save_review(
         result = await loop.run_in_executor(None, runner)
 
     reassignment = result.reassignment
+    deletion = result.deletion
     return SaveSpeakerReviewOut(
         mapping_path=str(result.mapping_path),
         transcript_path=str(result.transcript_path),
         srt_path=str(result.srt_path),
         reassigned_count=len(specs),
+        deleted_speaker_count=len(deleted_speaker_ids),
+        deleted_sentence_count=(deletion.deleted_sentence_count if deletion else 0),
         deleted_sample_count=(len(reassignment.deleted_samples) if reassignment else 0),
         rematch_skipped_reason=(
             reassignment.rematch_skipped_reason if reassignment else None

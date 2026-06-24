@@ -46,3 +46,37 @@ def test_nonempty_ignored_set_passes_through_unchanged(
     svc.save_speaker_review(tmp_path, mapping={}, ignored_speaker_ids={3, 5})
 
     assert set(captured["ignored_speaker_ids"]) == {3, 5}
+
+
+def test_deleted_speakers_are_stripped_before_mapping_apply(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Deleted speakers must not leave stale names, person bindings, or ignore flags."""
+    captured = _patch_apply(monkeypatch)
+    deleted_calls: list[tuple[Path, list[int]]] = []
+
+    def fake_delete(project_dir, speaker_ids):
+        deleted_calls.append((project_dir, list(speaker_ids)))
+        return svc.EmptySpeakerDeletionApplyResult(
+            sentence_files=(),
+            anonymous_transcript_path=None,
+            deleted_sentence_count=0,
+        )
+
+    monkeypatch.setattr(svc, "apply_project_empty_speaker_deletions", fake_delete)
+
+    result = svc.save_speaker_review(
+        tmp_path,
+        mapping={1: "Alice", 2: "Delete Me"},
+        person_mapping={1: 11, 2: 22},
+        person_public_mapping={1: "vpp-0000000000000001", 2: "vpp-0000000000000002"},
+        ignored_speaker_ids=[2],
+        deleted_speaker_ids=[2],
+    )
+
+    assert deleted_calls == [(tmp_path, [2])]
+    assert captured["mapping"] == {1: "Alice"}
+    assert captured["person_mapping"] == {1: 11}
+    assert captured["person_public_mapping"] == {1: "vpp-0000000000000001"}
+    assert list(captured["ignored_speaker_ids"]) == []
+    assert result.deletion is not None

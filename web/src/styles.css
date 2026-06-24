@@ -213,6 +213,13 @@ tr.clickable {
   border-color: var(--yellow);
   color: var(--yellow);
 }
+.btn.danger {
+  border-color: rgba(255, 93, 93, 0.45);
+  color: var(--red);
+}
+.btn.danger:hover {
+  border-color: var(--red);
+}
 .icon-btn {
   background: transparent;
   border: none;

@@ -227,6 +227,24 @@ class _RewritePlan:
     changed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class EmptySpeakerDeletionResult:
+    """Sentence-file rewrite result after deleting empty speaker tracks."""
+
+    sentence_files: tuple[Path, ...]
+    deleted_sentence_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _DeletePlan:
+    """In-memory deletion result for one ASR sentence file."""
+
+    path: Path
+    payload: dict
+    changed: bool
+    deleted_count: int
+
+
 def apply_sentence_reassignments(
     asr_dir: Path,
     reassignments: Iterable[SentenceReassignmentSpec],
@@ -279,6 +297,46 @@ def apply_sentence_reassignments(
             safe_write_json(plan.path, plan.payload)
             written.append(plan.path)
     return tuple(written)
+
+
+def delete_empty_speaker_segments(
+    asr_dir: Path,
+    speaker_ids: Iterable[int],
+) -> EmptySpeakerDeletionResult:
+    """Delete speakers only after the reviewed transcript has no non-empty text for them.
+
+    When a corrected transcript exists it is the reviewed source of truth; deleting a
+    speaker then removes the same speaker id from both raw and corrected sentence files.
+    Without a corrected transcript, the raw transcript itself must already be empty for
+    the requested speakers.
+    """
+    ids = {int(speaker_id) for speaker_id in speaker_ids}
+    if not ids:
+        return EmptySpeakerDeletionResult(sentence_files=(), deleted_sentence_count=0)
+
+    raw_path = asr_dir / "sentences.json"
+    corrected_path = asr_dir / "sentences_corrected.json"
+    review_path = corrected_path if corrected_path.exists() else raw_path
+    if not review_path.exists():
+        raise ValueError(f"No transcript file under {asr_dir} can delete speakers.")
+
+    _assert_speakers_empty(review_path, ids)
+
+    written: list[Path] = []
+    review_deleted_count = 0
+    for path in (raw_path, corrected_path):
+        if not path.exists():
+            continue
+        plan = _plan_empty_speaker_delete(path, ids)
+        if path == review_path:
+            review_deleted_count = plan.deleted_count
+        if plan.changed:
+            safe_write_json(plan.path, plan.payload)
+            written.append(plan.path)
+    return EmptySpeakerDeletionResult(
+        sentence_files=tuple(written),
+        deleted_sentence_count=review_deleted_count,
+    )
 
 
 def _plan_sentence_rewrite(
@@ -334,6 +392,65 @@ def _plan_sentence_rewrite(
     )
 
 
+def _assert_speakers_empty(path: Path, speaker_ids: set[int]) -> None:
+    """Raise when any requested speaker still has reviewed non-empty transcript text."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    sentences = payload.get("sentences") if isinstance(payload, dict) else None
+    if not isinstance(sentences, list):
+        raise ValueError(f"Transcript file cannot delete speakers: {path}")
+    offenders: dict[int, str] = {}
+    for sentence in sentences:
+        if not isinstance(sentence, dict):
+            continue
+        speaker_id = _sentence_speaker_id(sentence)
+        if speaker_id not in speaker_ids:
+            continue
+        text = str(sentence.get("text") or "")
+        if text.strip() and speaker_id not in offenders:
+            offenders[speaker_id] = text.strip()
+    if offenders:
+        details = ", ".join(
+            f"speaker {speaker_id}: {text[:30]}"
+            for speaker_id, text in sorted(offenders.items())
+        )
+        raise ValueError(
+            "Cannot delete speaker with non-empty transcript text. "
+            f"Clear or reassign every sentence first: {details}"
+        )
+
+
+def _plan_empty_speaker_delete(path: Path, speaker_ids: set[int]) -> _DeletePlan:
+    """Prepare one sentence-file deletion without touching disk."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return _DeletePlan(path=path, payload={}, changed=False, deleted_count=0)
+    sentences = payload.get("sentences")
+    if not isinstance(sentences, list):
+        return _DeletePlan(path=path, payload=payload, changed=False, deleted_count=0)
+    kept: list = []
+    deleted_count = 0
+    for sentence in sentences:
+        if isinstance(sentence, dict) and _sentence_speaker_id(sentence) in speaker_ids:
+            deleted_count += 1
+            continue
+        kept.append(sentence)
+    if deleted_count == 0:
+        return _DeletePlan(path=path, payload=payload, changed=False, deleted_count=0)
+    payload["sentences"] = kept
+    payload["detected_speakers"] = _recompute_detected_speakers(kept)
+    payload["full_text"] = "".join(
+        str(sentence.get("text") or "")
+        for sentence in kept
+        if isinstance(sentence, dict)
+    )
+    return _DeletePlan(
+        path=path,
+        payload=payload,
+        changed=True,
+        deleted_count=deleted_count,
+    )
+
+
 def _match_reassignment_index(
     sentence: dict,
     by_sentence_id: dict[int, list[int]],
@@ -385,6 +502,17 @@ def _speaker_matches_original(sentence: dict, spec: SentenceReassignmentSpec) ->
         )
     except TypeError, ValueError:
         return False
+
+
+def _sentence_speaker_id(sentence: dict) -> int | None:
+    """Return a sentence speaker id when it is integer-like."""
+    value = sentence.get("speaker_id")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except TypeError, ValueError:
+        return None
 
 
 def _format_reassignment(spec: SentenceReassignmentSpec) -> str:
