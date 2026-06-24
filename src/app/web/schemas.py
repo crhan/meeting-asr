@@ -150,6 +150,7 @@ class CorrectionChangeOut(BaseModel):
 
     index: int
     sentence_id: int | None
+    sentence_ref: str | None = None
     begin_time_ms: int | None = None
     end_time_ms: int | None = None
     speaker_name: str
@@ -311,6 +312,7 @@ class SpeakerSegmentOut(BaseModel):
     """One transcript sentence belonging to a speaker."""
 
     sentence_id: int | None
+    sentence_ref: str | None = None
     begin_time_ms: int
     end_time_ms: int
     text: str

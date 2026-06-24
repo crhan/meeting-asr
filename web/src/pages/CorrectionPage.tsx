@@ -19,6 +19,10 @@ function fmtMs(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function projectFromSentenceRef(sentenceRef: string): string {
+  return sentenceRef.split("#", 1)[0];
+}
+
 export function CorrectionPage() {
   const { ref = "" } = useParams();
   const navigate = useNavigate();
@@ -202,6 +206,19 @@ export function CorrectionPage() {
                   )}
                   <div className="change-card-body">
                     <div className="change-card-meta subtle mono">
+                      {c.sentence_ref && (
+                        <button
+                          className="sentence-id sentence-id-button"
+                          onClick={() =>
+                            navigate(
+                              `/projects/${encodeURIComponent(projectFromSentenceRef(c.sentence_ref!))}/speakers?sentence=${encodeURIComponent(c.sentence_ref!)}`,
+                            )
+                          }
+                          title={tr("Locate in speaker review", "在 speaker review 中定位")}
+                        >
+                          {c.sentence_ref}
+                        </button>
+                      )}
                       {hasAudio && <span>{fmtMs(c.begin_time_ms!)}</span>}
                       {c.speaker_name}
                       {c.change_type && <span className="badge">{c.change_type}</span>}

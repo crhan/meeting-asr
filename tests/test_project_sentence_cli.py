@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from app.cli import app
-from app.project_manager import create_project
+from app.project_manager import create_project, load_manifest
 
 
 runner = CliRunner()
@@ -34,10 +34,50 @@ def test_sentence_command_locates_corrected_sentence_text(tmp_path: Path) -> Non
     )
 
     assert result.exit_code == 0, result.output
-    assert "Sentence: #2" in result.output
+    manifest = load_manifest(project_dir)
+    assert f"Sentence: {manifest.project_id}#2" in result.output
     assert "Speaker: 1 (Speaker B)" in result.output
-    assert "/speakers?sentence=2" in result.output
+    assert f"/speakers?sentence={manifest.project_id}%232" in result.output
     assert "第二句修正" in result.output
+
+
+def test_sentence_command_accepts_full_locator_as_single_argument(
+    tmp_path: Path,
+) -> None:
+    """A project#sentence locator should resolve the project and locate the sentence."""
+    project_dir = _make_project(tmp_path)
+    manifest = load_manifest(project_dir)
+    _write_sentences(project_dir / "asr" / "sentences.json", _sentences_payload())
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "speakers",
+            "sentence",
+            f"{manifest.project_id}#2",
+            "--projects-dir",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert f"Sentence: {manifest.project_id}#2" in result.output
+    assert "第二句" in result.output
+
+
+def test_sentence_command_rejects_mismatched_full_locator(tmp_path: Path) -> None:
+    """A locator with a different project id must not silently target the wrong project."""
+    project_dir = _make_project(tmp_path)
+    _write_sentences(project_dir / "asr" / "sentences.json", _sentences_payload())
+
+    result = runner.invoke(
+        app,
+        ["project", "speakers", "sentence", str(project_dir), "p-other#2"],
+    )
+
+    assert result.exit_code != 0
+    assert "project mismatch" in result.output
 
 
 def test_sentence_command_reassigns_by_id_and_rebuilds_named_outputs(

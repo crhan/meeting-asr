@@ -24,6 +24,7 @@ from app.core.voiceprint_review_service import REGISTRY, CaptureConflictError
 from app.correction_proposals import load_correction_proposal
 from app.lexicon_store import get_lexicon_db_path
 from app.project_manager import load_manifest, project_paths
+from app.sentence_locator import format_sentence_ref
 from app.transcript_corrections import CorrectionEditOptions
 from app.web.deps import (
     get_jobs,
@@ -114,7 +115,7 @@ def _audio_window(change) -> tuple[int | None, int | None]:
     try:
         begin = int(getattr(change, "begin_time_ms", None))
         end = int(getattr(change, "end_time_ms", None))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None, None
     if end <= begin:
         return None, None
@@ -138,6 +139,7 @@ def get_proposal(
         if "No correction proposal found" not in str(exc):
             raise
         raise FileNotFoundError(str(exc)) from exc
+    manifest = load_manifest(paths.root)
     changes = []
     for index, change in enumerate(proposal.proposed_changes):
         begin_time_ms, end_time_ms = _audio_window(change)
@@ -145,6 +147,9 @@ def get_proposal(
             CorrectionChangeOut(
                 index=index,
                 sentence_id=change.sentence_id,
+                sentence_ref=format_sentence_ref(
+                    manifest.project_id, change.sentence_id
+                ),
                 begin_time_ms=begin_time_ms,
                 end_time_ms=end_time_ms,
                 speaker_name=change.speaker_name,

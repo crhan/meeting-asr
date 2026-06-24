@@ -54,11 +54,26 @@ function fmtDur(ms: number): string {
   return `${s}s`;
 }
 
-function parseSentenceId(value: string | null): number | null {
+interface ParsedSentenceLocator {
+  projectId: string | null;
+  sentenceId: number;
+}
+
+function parseSentenceLocator(value: string | null): ParsedSentenceLocator | null {
   if (!value?.trim()) return null;
-  const parsed = Number(value.trim());
+  const raw = value.trim();
+  const hashIndex = raw.indexOf("#");
+  const projectRaw = hashIndex >= 0 ? raw.slice(0, hashIndex) : null;
+  const sentenceRaw = hashIndex >= 0 ? raw.slice(hashIndex + 1) : raw;
+  const projectId = projectRaw?.trim() || null;
+  if (hashIndex >= 0 && !projectId) return null;
+  const parsed = Number(sentenceRaw.trim());
   if (!Number.isInteger(parsed) || parsed < 0) return null;
-  return parsed;
+  return { projectId, sentenceId: parsed };
+}
+
+function formatSentenceLocator(projectId: string, sentenceId: number | null): string | null {
+  return sentenceId == null ? null : `${projectId}#${sentenceId}`;
 }
 
 function findSentence(review: SpeakerReview, sentenceId: number) {
@@ -137,10 +152,20 @@ export function SpeakerReviewPage() {
     queryFn: () => getSpeakerReview(ref),
   });
   const qualityQuery = useQuery({ queryKey: ["vp-quality"], queryFn: getQuality });
-  const focusedSentenceId = useMemo(
-    () => parseSentenceId(searchParams.get("sentence") ?? searchParams.get("sid")),
+  const focusedSentenceLocator = useMemo(
+    () => parseSentenceLocator(searchParams.get("sentence") ?? searchParams.get("sid")),
     [searchParams],
   );
+  const focusedSentenceId = focusedSentenceLocator?.sentenceId ?? null;
+
+  useEffect(() => {
+    if (!focusedSentenceLocator?.projectId || !data) return;
+    if (focusedSentenceLocator.projectId === data.project_id) return;
+    navigate(
+      `/projects/${encodeURIComponent(focusedSentenceLocator.projectId)}/speakers?sentence=${encodeURIComponent(`${focusedSentenceLocator.projectId}#${focusedSentenceLocator.sentenceId}`)}`,
+      { replace: true },
+    );
+  }, [data, focusedSentenceLocator, navigate]);
 
   // Working edits layered over the loaded baseline.
   const [edits, setEdits] = useState<Map<number, SpeakerEdit>>(new Map());
@@ -173,7 +198,8 @@ export function SpeakerReviewPage() {
     if (!data || focusedSentenceId == null) return;
     const focused = findSentence(data, focusedSentenceId);
     if (!focused) {
-      setToast(tr(`Sentence #${focusedSentenceId} not found.`, `未找到句子 #${focusedSentenceId}。`));
+      const display = formatSentenceLocator(data.project_id, focusedSentenceId);
+      setToast(tr(`Sentence ${display} not found.`, `未找到句子 ${display}。`));
       return;
     }
     setSelectedId(focused.speaker.speaker_id);
@@ -466,20 +492,27 @@ export function SpeakerReviewPage() {
 
   function locateSentence(rawValue: string) {
     if (!data) return;
-    const sentenceId = parseSentenceId(rawValue);
-    if (sentenceId == null) {
-      setToast(tr("Invalid sentence id.", "句子 ID 无效。"));
+    const locator = parseSentenceLocator(rawValue);
+    if (locator == null) {
+      setToast(tr("Invalid sentence locator.", "句子定位符无效。"));
       return;
     }
-    const focused = findSentence(data, sentenceId);
+    if (locator.projectId && locator.projectId !== data.project_id) {
+      navigate(
+        `/projects/${encodeURIComponent(locator.projectId)}/speakers?sentence=${encodeURIComponent(`${locator.projectId}#${locator.sentenceId}`)}`,
+      );
+      return;
+    }
+    const focused = findSentence(data, locator.sentenceId);
     if (!focused) {
-      setToast(tr(`Sentence #${sentenceId} not found.`, `未找到句子 #${sentenceId}。`));
+      const display = formatSentenceLocator(data.project_id, locator.sentenceId);
+      setToast(tr(`Sentence ${display} not found.`, `未找到句子 ${display}。`));
       return;
     }
     setSelectedId(focused.speaker.speaker_id);
     setFilter("all");
     const next = new URLSearchParams(searchParams);
-    next.set("sentence", String(sentenceId));
+    next.set("sentence", formatSentenceLocator(data.project_id, locator.sentenceId) ?? "");
     next.delete("sid");
     setSearchParams(next);
   }
@@ -563,6 +596,7 @@ export function SpeakerReviewPage() {
         />
         <TranscriptPane
           projectRef={ref}
+          projectId={data.project_id}
           selected={selected}
           segments={selected ? (segmentsBySpeaker.get(selected.speaker_id) ?? []) : []}
           filter={filter}
@@ -747,6 +781,7 @@ function SpeakerSidebar(props: {
 
 function TranscriptPane(props: {
   projectRef: string;
+  projectId: string;
   selected: ReviewSpeaker | null;
   segments: SpeakerSegment[];
   filter: "all" | "review" | "low";
@@ -765,7 +800,16 @@ function TranscriptPane(props: {
   repairing: boolean;
   onRepairLibrary: (personRef: string) => void;
 }) {
-  const { projectRef, selected, segments, filter, reassignKeys, focusSentenceId, quality } = props;
+  const {
+    projectRef,
+    projectId,
+    selected,
+    segments,
+    filter,
+    reassignKeys,
+    focusSentenceId,
+    quality,
+  } = props;
   const audioRef = useRef<HTMLAudioElement>(null);
   const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [playingKey, setPlayingKey] = useState<string | null>(null);
@@ -773,8 +817,10 @@ function TranscriptPane(props: {
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
-    if (focusSentenceId != null) setJumpValue(String(focusSentenceId));
-  }, [focusSentenceId]);
+    if (focusSentenceId != null) {
+      setJumpValue(formatSentenceLocator(projectId, focusSentenceId) ?? "");
+    }
+  }, [focusSentenceId, projectId]);
 
   const play = (seg: SpeakerSegment) => {
     const el = audioRef.current;
@@ -873,8 +919,7 @@ function TranscriptPane(props: {
           <input
             value={jumpValue}
             onChange={(e) => setJumpValue(e.currentTarget.value)}
-            inputMode="numeric"
-            placeholder={tr("Sentence ID", "句子 ID")}
+            placeholder={tr("project#sentence", "项目#句子")}
           />
           <button className="chip" type="submit">
             {tr("Go", "定位")}
@@ -920,6 +965,8 @@ function TranscriptPane(props: {
           const focused = focusSentenceId != null && seg.sentence_id === focusSentenceId;
           const scoreTitle = seg.score != null ? identityScoreTitle(seg) : undefined;
           const scoreReason = identityScoreReason(seg);
+          const sentenceRef =
+            seg.sentence_ref ?? formatSentenceLocator(projectId, seg.sentence_id);
           return (
             <div
               key={key}
@@ -935,9 +982,9 @@ function TranscriptPane(props: {
               </button>
               <div className="segment-body">
                 <div className="segment-meta subtle mono">
-                  {seg.sentence_id != null && (
-                    <span className="sentence-id" title={tr("Sentence id", "句子 ID")}>
-                      #{seg.sentence_id}
+                  {sentenceRef != null && (
+                    <span className="sentence-id" title={tr("Sentence locator", "句子定位符")}>
+                      {sentenceRef}
                     </span>
                   )}
                   {fmtMs(seg.begin_time_ms)}

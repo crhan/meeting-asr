@@ -27,6 +27,7 @@ from app.presentation.tui.speaker_models import (
 from app.presentation.tui.speaker_session import load_speaker_review_session
 from app.presentation.tui.speaker_status import speaker_status
 from app.speaker_labeling import SentenceReassignmentSpec
+from app.sentence_locator import format_sentence_ref
 from app.speaker_match_status import MATCH_STATUS_CROSSTALK
 from app.speaker_matching import match_project_speakers
 from app.voiceprint_ids import valid_person_public_id
@@ -146,6 +147,7 @@ def _serialize_match(match: SpeakerMatchCandidate | None) -> SpeakerMatchOut | N
 def _serialize_speaker(
     speaker: ReviewSpeaker,
     identity_scores: dict[SegmentScoreKey, SpeakerSampleIdentityScore],
+    project_id: str,
 ) -> ReviewSpeakerOut:
     duration_ms = sum(seg.end_time_ms - seg.begin_time_ms for seg in speaker.segments)
     segments: list[SpeakerSegmentOut] = []
@@ -156,6 +158,7 @@ def _serialize_speaker(
         segments.append(
             SpeakerSegmentOut(
                 sentence_id=seg.sentence_id,
+                sentence_ref=format_sentence_ref(project_id, seg.sentence_id),
                 begin_time_ms=seg.begin_time_ms,
                 end_time_ms=seg.end_time_ms,
                 text=seg.text,
@@ -188,7 +191,9 @@ def _serialize_session(
     overview = session.overview
     speakers = [
         _serialize_speaker(
-            speaker, session.sample_identity_scores.get(speaker.speaker_id, {})
+            speaker,
+            session.sample_identity_scores.get(speaker.speaker_id, {}),
+            overview.project_id,
         )
         for speaker in session.speakers
     ]

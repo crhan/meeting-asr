@@ -168,7 +168,9 @@ def test_correction_accept_records_into_store_dir_lexicon(
     monkeypatch.setattr(
         corrections, "project_paths", lambda root: SimpleNamespace(root=root)
     )
-    monkeypatch.setattr(corrections, "load_manifest", lambda root: object())
+    monkeypatch.setattr(
+        corrections, "load_manifest", lambda root: SimpleNamespace(project_id="p-x")
+    )
     monkeypatch.setattr(
         corrections, "load_speaker_mapping_for_correction", lambda root: {}
     )
@@ -229,7 +231,9 @@ def test_correction_accept_refuses_stale_proposal_id(
     monkeypatch.setattr(
         corrections, "project_paths", lambda root: SimpleNamespace(root=root)
     )
-    monkeypatch.setattr(corrections, "load_manifest", lambda root: object())
+    monkeypatch.setattr(
+        corrections, "load_manifest", lambda root: SimpleNamespace(project_id="p-x")
+    )
     monkeypatch.setattr(
         corrections, "load_speaker_mapping_for_correction", lambda root: {}
     )
@@ -290,7 +294,9 @@ def test_correction_accept_holds_lexicon_store_lock(
     monkeypatch.setattr(
         corrections, "project_paths", lambda root: SimpleNamespace(root=root)
     )
-    monkeypatch.setattr(corrections, "load_manifest", lambda root: object())
+    monkeypatch.setattr(
+        corrections, "load_manifest", lambda root: SimpleNamespace(project_id="p-x")
+    )
     monkeypatch.setattr(
         corrections, "load_speaker_mapping_for_correction", lambda root: {}
     )
@@ -993,6 +999,9 @@ def test_get_proposal_includes_audio_window(
         corrections, "project_paths", lambda root: SimpleNamespace(root=root)
     )
     monkeypatch.setattr(
+        corrections, "load_manifest", lambda root: SimpleNamespace(project_id="p-x")
+    )
+    monkeypatch.setattr(
         corrections, "load_correction_proposal", lambda paths, proposal_path: proposal
     )
 
@@ -1000,10 +1009,59 @@ def test_get_proposal_includes_audio_window(
 
     assert resp.status_code == 200
     rows = resp.json()["changes"]
+    assert rows[0]["sentence_ref"] == "p-x#7"
     assert rows[0]["begin_time_ms"] == 4210
     assert rows[0]["end_time_ms"] == 5800
+    assert rows[1]["sentence_ref"] == "p-x#8"
     assert rows[1]["begin_time_ms"] is None
     assert rows[1]["end_time_ms"] is None
+
+
+def test_speaker_review_segments_include_sentence_ref() -> None:
+    """Speaker-review API payloads expose copyable project#sentence locators."""
+    from types import SimpleNamespace
+
+    import app.web.routers.speakers as speakers
+
+    overview = SimpleNamespace(
+        project_id="p-demo",
+        title="Demo",
+        project_status="corrected",
+        source_name="demo.mp4",
+        duration_ms=2500,
+        match_file_exists=False,
+    )
+    speaker = SimpleNamespace(
+        speaker_id=1,
+        label="Speaker B",
+        current_name="Speaker B",
+        ignored=False,
+        person_id=None,
+        person_public_id=None,
+        match=None,
+        segment_count=1,
+        segments=[
+            SimpleNamespace(
+                sentence_id=2,
+                begin_time_ms=2000,
+                end_time_ms=2500,
+                text="第二句",
+                speaker_id=1,
+            )
+        ],
+    )
+    session = SimpleNamespace(
+        overview=overview,
+        project_dir=Path("/tmp/p-demo"),
+        speakers=[speaker],
+        people=[],
+        allow_correction=False,
+        sample_identity_scores={},
+    )
+
+    payload = speakers._serialize_session(session, review_revision="rev")
+
+    assert payload.speakers[0].segments[0].sentence_ref == "p-demo#2"
 
 
 def test_merge_apply_refuses_nonempty_dir_without_force(

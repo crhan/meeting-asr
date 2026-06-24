@@ -380,7 +380,8 @@ tr.clickable {
   margin-right: 6px;
 }
 .sentence-jump input {
-  width: 116px;
+  width: 220px;
+  max-width: 42vw;
   height: 26px;
   padding: 0 8px;
   background: var(--surface-2);
@@ -470,6 +471,16 @@ tr.clickable {
 .sentence-id {
   color: var(--accent);
   font-weight: 700;
+}
+.sentence-id-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.sentence-id-button:hover {
+  text-decoration: underline;
 }
 .segment-text {
   line-height: 1.55;

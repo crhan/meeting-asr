@@ -110,6 +110,11 @@ from app.speaker_labeling import (
     load_project_ignored_speakers,
     load_transcript_result,
 )
+from app.sentence_locator import (
+    format_sentence_ref,
+    parse_sentence_ref,
+    sentence_review_web_path,
+)
 from app.speaker_cluster_quality import (
     SpeakerClusterQualitySummary,
     analyze_project_speaker_clusters,
@@ -1883,10 +1888,12 @@ def speakers_apply(
 
 @speakers_app.command("sentence")
 def speakers_sentence(
-    project_dir: Path = typer.Argument(
-        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    project_ref: str = typer.Argument(
+        ".", metavar="PROJECT_OR_SENTENCE_REF", help="Project ref or project#sentence."
     ),
-    sentence_id: int = typer.Argument(..., metavar="SENTENCE_ID", min=0),
+    sentence_ref: Optional[str] = typer.Argument(
+        None, metavar="SENTENCE_ID_OR_REF", help="Sentence id or project#sentence."
+    ),
     projects_dir: Optional[Path] = typer.Option(
         None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
     ),
@@ -1923,11 +1930,19 @@ def speakers_sentence(
     """Locate one transcript sentence by id, optionally reassigning its speaker."""
     if to_speaker is None and (name is not None or person_ref is not None):
         raise typer.BadParameter("--name and --person require --to-speaker.")
+    locator = run_with_cli_errors(
+        lambda: _parse_speaker_sentence_locator(project_ref, sentence_ref)
+    )
     resolved_project_dir = run_with_cli_errors(
-        lambda: resolve_project_ref(project_dir, projects_dir)
+        lambda: resolve_project_ref(locator.project_ref, projects_dir)
+    )
+    run_with_cli_errors(
+        lambda: _validate_sentence_locator_project(
+            resolved_project_dir, locator.expected_project_id
+        )
     )
     payload = run_with_cli_errors(
-        lambda: _speaker_sentence_payload(resolved_project_dir, sentence_id)
+        lambda: _speaker_sentence_payload(resolved_project_dir, locator.sentence_id)
     )
     if to_speaker is None:
         if as_json:
@@ -1948,7 +1963,7 @@ def speakers_sentence(
         )
     )
     updated_payload = run_with_cli_errors(
-        lambda: _speaker_sentence_payload(resolved_project_dir, sentence_id)
+        lambda: _speaker_sentence_payload(resolved_project_dir, locator.sentence_id)
     )
     if as_json:
         emit_json(
@@ -2150,6 +2165,52 @@ def _echo_reassignment_result(result: SentenceReassignmentApplyResult | None) ->
         typer.echo(f"Voiceprint rematch skipped: {result.rematch_skipped_reason}")
 
 
+@dataclass(frozen=True)
+class _SpeakerSentenceLocator:
+    """Resolved CLI locator arguments before project-ref resolution."""
+
+    project_ref: str
+    sentence_id: int
+    expected_project_id: str | None = None
+
+
+def _parse_speaker_sentence_locator(
+    project_ref: str, sentence_ref: str | None
+) -> _SpeakerSentenceLocator:
+    """Normalize legacy PROJECT ID args and the new project#sentence locator."""
+    if sentence_ref is None:
+        parsed = parse_sentence_ref(project_ref)
+        if parsed.project_id is None:
+            raise ValueError(
+                "SENTENCE_ID is required unless PROJECT is a project#sentence locator."
+            )
+        return _SpeakerSentenceLocator(
+            project_ref=parsed.project_id,
+            sentence_id=parsed.sentence_id,
+            expected_project_id=parsed.project_id,
+        )
+    parsed = parse_sentence_ref(sentence_ref)
+    return _SpeakerSentenceLocator(
+        project_ref=project_ref,
+        sentence_id=parsed.sentence_id,
+        expected_project_id=parsed.project_id,
+    )
+
+
+def _validate_sentence_locator_project(
+    project_dir: Path, expected_project_id: str | None
+) -> None:
+    """Refuse a project#sentence locator when it points at another project."""
+    if expected_project_id is None:
+        return
+    manifest = load_manifest(project_dir)
+    if manifest.project_id != expected_project_id:
+        raise ValueError(
+            "Sentence locator project mismatch: "
+            f"{expected_project_id} does not match {manifest.project_id}."
+        )
+
+
 def _speaker_sentence_payload(project_dir: Path, sentence_id: int) -> dict[str, object]:
     """Build a CLI/API-safe payload for one sentence locator."""
     paths = project_paths(project_dir)
@@ -2158,11 +2219,13 @@ def _speaker_sentence_payload(project_dir: Path, sentence_id: int) -> dict[str, 
     sentence = _sentence_by_id(result, sentence_id)
     speaker_id = sentence.speaker_id
     mapping = _load_existing_speaker_mapping(paths.root)
+    sentence_ref = format_sentence_ref(manifest.project_id, sentence.sentence_id)
     return {
         "project_id": manifest.project_id,
         "project_dir": paths.root,
         "source": source_path,
         "sentence_id": sentence.sentence_id,
+        "sentence_ref": sentence_ref,
         "begin_time_ms": sentence.begin_time_ms,
         "end_time_ms": sentence.end_time_ms,
         "begin": format_ms_timestamp(sentence.begin_time_ms),
@@ -2171,7 +2234,7 @@ def _speaker_sentence_payload(project_dir: Path, sentence_id: int) -> dict[str, 
         "speaker_label": speaker_id_to_label(speaker_id),
         "speaker_name": mapping.get(speaker_id) if speaker_id is not None else None,
         "text": sentence.text,
-        "web_path": f"/projects/{manifest.project_id}/speakers?sentence={sentence_id}",
+        "web_path": sentence_review_web_path(manifest.project_id, sentence.sentence_id),
     }
 
 
@@ -2204,7 +2267,7 @@ def _echo_speaker_sentence(payload: dict[str, object]) -> None:
         f"{speaker_name} / {speaker_label}" if speaker_name else str(speaker_label)
     )
     typer.echo(f"Project: {payload['project_id']}")
-    typer.echo(f"Sentence: #{payload['sentence_id']}")
+    typer.echo(f"Sentence: {payload['sentence_ref']}")
     typer.echo(f"Time: {payload['begin']} - {payload['end']}")
     typer.echo(f"Speaker: {payload['speaker_id']} ({speaker_text})")
     typer.echo(f"Web: {payload['web_path']}")

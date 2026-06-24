@@ -93,6 +93,7 @@ export function getProject(ref: string): Promise<ProjectSummary> {
 
 export interface SpeakerSegment {
   sentence_id: number | null;
+  sentence_ref: string | null;
   begin_time_ms: number;
   end_time_ms: number;
   text: string;
@@ -569,6 +570,7 @@ export const mergeApply = (projectRefs: string[], outDir: string) =>
 export interface CorrectionChange {
   index: number;
   sentence_id: number | null;
+  sentence_ref: string | null;
   begin_time_ms: number | null;
   end_time_ms: number | null;
   speaker_name: string;
