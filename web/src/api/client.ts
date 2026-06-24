@@ -170,6 +170,7 @@ export interface SaveSpeakerReviewBody {
   mapping: Record<string, string>;
   person_mapping: Record<string, number>;
   person_public_mapping: Record<string, string>;
+  new_person_names: Record<string, string>;
   ignored_speaker_ids: number[];
   reassignments: Reassignment[];
   deleted_speaker_ids: number[];
@@ -180,6 +181,7 @@ export interface SaveSpeakerReviewResult {
   transcript_path: string;
   srt_path: string;
   reassigned_count: number;
+  created_person_count: number;
   deleted_speaker_count: number;
   deleted_sentence_count: number;
   deleted_sample_count: number;

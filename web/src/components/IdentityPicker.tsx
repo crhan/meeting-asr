@@ -8,6 +8,7 @@ export interface IdentitySelection {
   person_id: number | null;
   person_public_id: string | null;
   ignored: boolean;
+  create_person?: boolean;
 }
 
 interface Props {
@@ -20,15 +21,21 @@ interface Props {
 /** Bind a speaker to a known voiceprint person, rename freely, or keep anonymous. */
 export function IdentityPicker({ speaker, people, onSelect, onClose }: Props) {
   const [query, setQuery] = useState("");
+  const newName = query.trim();
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = newName.toLowerCase();
     if (!q) return people;
     return people.filter(
       (p) =>
         p.name.toLowerCase().includes(q) ||
         p.public_id.toLowerCase().includes(q),
     );
-  }, [people, query]);
+  }, [people, newName]);
+  const exactPerson = useMemo(() => {
+    const q = newName.toLowerCase();
+    if (!q) return null;
+    return people.find((p) => p.name.trim().toLowerCase() === q) ?? null;
+  }, [people, newName]);
 
   const match = speaker.match;
   const canAccept = !!match?.best_name && (match?.best_score ?? 0) > 0;
@@ -39,12 +46,22 @@ export function IdentityPicker({ speaker, people, onSelect, onClose }: Props) {
       person_id: p.person_id,
       person_public_id: p.public_id || null,
       ignored: false,
+      create_person: false,
     });
 
   const useFreeName = () => {
-    const name = query.trim();
-    if (!name) return;
-    onSelect({ name, person_id: null, person_public_id: null, ignored: false });
+    if (!newName) return;
+    if (exactPerson) {
+      pickPerson(exactPerson);
+      return;
+    }
+    onSelect({
+      name: newName,
+      person_id: null,
+      person_public_id: null,
+      ignored: false,
+      create_person: true,
+    });
   };
 
   return (
@@ -64,14 +81,17 @@ export function IdentityPicker({ speaker, people, onSelect, onClose }: Props) {
                 person_id: null,
                 person_public_id: null,
                 ignored: true,
+                create_person: false,
               })
             }
           >
             {tr("Keep anonymous (ignore)", "保持匿名（忽略）")}
           </button>
-          {query.trim() && (
+          {newName && (
             <button className="btn" onClick={useFreeName}>
-              {tr(`Use name "${query.trim()}"`, `用名字「${query.trim()}」`)}
+              {exactPerson
+                ? tr(`Use existing person "${newName}"`, `使用已有人物「${newName}」`)
+                : tr(`Create person "${newName}"`, `新建人物「${newName}」`)}
             </button>
           )}
         </div>
@@ -90,6 +110,7 @@ export function IdentityPicker({ speaker, people, onSelect, onClose }: Props) {
                 match!.candidates.find((c) => c.name === match!.best_name)
                   ?.person_public_id ?? null,
               ignored: false,
+              create_person: false,
             })
           }
         >

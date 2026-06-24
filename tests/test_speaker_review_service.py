@@ -80,3 +80,34 @@ def test_deleted_speakers_are_stripped_before_mapping_apply(
     assert captured["person_public_mapping"] == {1: "vpp-0000000000000001"}
     assert list(captured["ignored_speaker_ids"]) == []
     assert result.deletion is not None
+
+
+def test_new_person_names_create_and_bind_voiceprint_person(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A free-name identity save should create a stable person object and bind it."""
+    captured = _patch_apply(monkeypatch)
+    store_dir = tmp_path / "voiceprints"
+
+    result = svc.save_speaker_review(
+        tmp_path,
+        mapping={1: "Charlie"},
+        new_person_names={1: "Charlie"},
+        store_dir=store_dir,
+    )
+
+    public_id = captured["person_public_mapping"][1]
+    assert public_id.startswith("vpp-")
+    assert captured["mapping"] == {1: "Charlie"}
+    assert captured["person_mapping"] == {}
+    assert result.created_person_count == 1
+
+    second = svc.save_speaker_review(
+        tmp_path,
+        mapping={2: "Charlie"},
+        new_person_names={2: "Charlie"},
+        store_dir=store_dir,
+    )
+
+    assert captured["person_public_mapping"][2] == public_id
+    assert second.created_person_count == 0

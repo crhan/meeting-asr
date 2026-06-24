@@ -21,6 +21,7 @@ interface SpeakerEdit {
   person_id: number | null;
   person_public_id: string | null;
   ignored: boolean;
+  create_person?: boolean;
   // Identity stashed when ignoring, so un-ignoring restores the real name/binding instead
   // of the generic label (which buildSaveBody would persist, erasing a confirmed name).
   priorName?: string;
@@ -191,8 +192,8 @@ export function SpeakerReviewPage() {
     onSuccess: (res) => {
       setToast(
         tr(
-          `Saved. ${res.reassigned_count} reassigned, ${res.deleted_sample_count} samples invalidated.`,
-          `已保存。重指派 ${res.reassigned_count} 句，失效声纹样本 ${res.deleted_sample_count} 个。`,
+          `Saved. ${res.reassigned_count} reassigned, ${res.created_person_count} people created, ${res.deleted_sample_count} samples invalidated.`,
+          `已保存。重指派 ${res.reassigned_count} 句，新建人物 ${res.created_person_count} 个，失效声纹样本 ${res.deleted_sample_count} 个。`,
         ),
       );
       queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
@@ -200,6 +201,10 @@ export function SpeakerReviewPage() {
       // staleTime: Infinity, so a rename/ignore/reassign here would otherwise leave the capture
       // page showing a plan that no longer matches what /capture/run recomputes server-side.
       queryClient.invalidateQueries({ queryKey: ["capture-plan", ref] });
+      if (res.created_person_count > 0) {
+        queryClient.invalidateQueries({ queryKey: ["vp-library"] });
+        queryClient.invalidateQueries({ queryKey: ["vp-quality"] });
+      }
     },
     onError: (e) => setToast(tr("Save failed: ", "保存失败：") + (e as Error).message),
   });
@@ -261,6 +266,7 @@ export function SpeakerReviewPage() {
         person_id: sel.person_id,
         person_public_id: sel.person_public_id,
         ignored: sel.ignored,
+        create_person: sel.create_person,
       });
       return next;
     });
@@ -277,6 +283,7 @@ export function SpeakerReviewPage() {
       person_id: cand?.person_id ?? null,
       person_public_id: cand?.person_public_id ?? null,
       ignored: false,
+      create_person: false,
     });
   }
 
@@ -295,6 +302,7 @@ export function SpeakerReviewPage() {
           person_id: prior?.priorPersonId ?? base.person_id,
           person_public_id: prior?.priorPersonPublicId ?? base.person_public_id,
           ignored: false,
+          create_person: false,
         });
       } else {
         // Ignore: the label is sent as the name because buildSaveBody marks a speaker ignored
@@ -304,6 +312,7 @@ export function SpeakerReviewPage() {
           person_id: null,
           person_public_id: null,
           ignored: true,
+          create_person: false,
           priorName: s.current_name,
           priorPersonId: s.person_id,
           priorPersonPublicId: s.person_public_id,
@@ -389,12 +398,18 @@ export function SpeakerReviewPage() {
     const mapping: Record<string, string> = {};
     const person_mapping: Record<string, number> = {};
     const person_public_mapping: Record<string, string> = {};
+    const new_person_names: Record<string, string> = {};
     const ignored_speaker_ids: number[] = [];
     for (const s of speakers) {
       const name = s.current_name.trim() || s.label;
+      const edit = edits.get(s.speaker_id);
       mapping[s.speaker_id] = name;
-      if (s.person_id != null && !s.ignored) person_mapping[s.speaker_id] = s.person_id;
-      if (s.person_public_id && !s.ignored)
+      if (edit?.create_person && !s.ignored) {
+        new_person_names[s.speaker_id] = name;
+      } else if (s.person_id != null && !s.ignored) {
+        person_mapping[s.speaker_id] = s.person_id;
+      }
+      if (!edit?.create_person && s.person_public_id && !s.ignored)
         person_public_mapping[s.speaker_id] = s.person_public_id;
       if (s.ignored && name === s.label) ignored_speaker_ids.push(s.speaker_id);
     }
@@ -418,6 +433,7 @@ export function SpeakerReviewPage() {
       mapping,
       person_mapping,
       person_public_mapping,
+      new_person_names,
       ignored_speaker_ids,
       reassignments,
       deleted_speaker_ids: [...deletedSpeakerIds],

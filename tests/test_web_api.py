@@ -598,6 +598,7 @@ def test_speaker_save_marshals_decision(
         srt_path = tmp_path / "t.srt"
         reassignment = None
         deletion = None
+        created_person_count = 1
 
     def fake_save(project_dir, **kwargs):
         captured["project_dir"] = project_dir
@@ -616,6 +617,7 @@ def test_speaker_save_marshals_decision(
             "mapping": {"0": "Alice", "1": "Bob"},
             "person_mapping": {"0": 7},
             "person_public_mapping": {"0": person["public_id"]},
+            "new_person_names": {"4": "Charlie"},
             "ignored_speaker_ids": [2],
             "deleted_speaker_ids": [3],
             "reassignments": [
@@ -635,6 +637,7 @@ def test_speaker_save_marshals_decision(
     assert captured["mapping"] == {0: "Alice", 1: "Bob"}
     assert captured["person_mapping"] == {0: 7}
     assert captured["person_public_mapping"] == {0: person["public_id"]}
+    assert captured["new_person_names"] == {4: "Charlie"}
     assert list(captured["ignored_speaker_ids"]) == [2]
     assert list(captured["deleted_speaker_ids"]) == [3]
     spec = captured["reassignments"][0]
@@ -642,6 +645,7 @@ def test_speaker_save_marshals_decision(
     assert spec.new_speaker_id == 0
     assert spec.original_speaker_id == 1
     assert resp.json()["reassigned_count"] == 1
+    assert resp.json()["created_person_count"] == 1
     assert resp.json()["deleted_speaker_count"] == 1
 
 
@@ -715,6 +719,7 @@ def _save_body(*, with_reassignment: bool) -> dict:
         "mapping": {"0": "Alice"},
         "person_mapping": {},
         "person_public_mapping": {},
+        "new_person_names": {},
         "ignored_speaker_ids": [],
         "reassignments": [],
         "deleted_speaker_ids": [],
@@ -756,6 +761,31 @@ def test_speaker_reassignment_blocked_when_capture_pending(
     assert resp.json()["error"] == "conflict"
 
 
+def test_speaker_new_person_save_enters_store_section(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Creating a person during speaker save mutates the voiceprint store, so it must lock."""
+    import app.web.routers.speakers as speakers
+    from app.core.voiceprint_review_service import CaptureConflictError
+
+    monkeypatch.setattr(
+        speakers, "resolve_web_project_ref", lambda ref, _settings: tmp_path
+    )
+    monkeypatch.setattr(speakers, "_require_current_revision", lambda *_a, **_k: None)
+
+    def boom(_fn):
+        raise CaptureConflictError("pending capture")
+
+    monkeypatch.setattr(speakers.REGISTRY, "run_store_write", boom)
+    body = _save_body(with_reassignment=False)
+    body["new_person_names"] = {"0": "Charlie"}
+
+    resp = client.post("/api/speakers/p-x/save", json=body)
+
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "conflict"
+
+
 def test_speaker_naming_only_save_bypasses_store_section(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -767,6 +797,8 @@ def test_speaker_naming_only_save_bypasses_store_section(
         transcript_path = tmp_path / "t.txt"
         srt_path = tmp_path / "t.srt"
         reassignment = None
+        deletion = None
+        created_person_count = 0
 
     monkeypatch.setattr(
         speakers, "resolve_web_project_ref", lambda ref, _settings: tmp_path

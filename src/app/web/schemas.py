@@ -406,6 +406,7 @@ class SaveSpeakerReviewIn(BaseModel):
     mapping: dict[str, str] = {}
     person_mapping: dict[str, int] = {}
     person_public_mapping: dict[str, str] = {}
+    new_person_names: dict[str, str] = {}
     ignored_speaker_ids: list[int] = []
     reassignments: list[ReassignmentIn] = []
     deleted_speaker_ids: list[int] = []
@@ -418,6 +419,7 @@ class SaveSpeakerReviewOut(BaseModel):
     transcript_path: str
     srt_path: str
     reassigned_count: int
+    created_person_count: int = 0
     deleted_speaker_count: int = 0
     deleted_sentence_count: int = 0
     deleted_sample_count: int

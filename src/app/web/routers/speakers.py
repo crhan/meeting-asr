@@ -246,6 +246,7 @@ async def save_review(
     person_public_mapping = {
         int(k): v for k, v in payload.person_public_mapping.items()
     }
+    new_person_names = {int(k): v for k, v in payload.new_person_names.items()}
     specs = [
         SentenceReassignmentSpec(
             sentence_id=item.sentence_id,
@@ -263,7 +264,7 @@ async def save_review(
     # Reassignments touch the global voiceprint store (sample invalidation + rematch);
     # naming-only saves stay project-local, so only take the store lock when needed.
     keys = [project_lock_key(str(project_dir))]
-    if specs or person_public_mapping:
+    if specs or person_public_mapping or new_person_names:
         keys.append(store_lock_key("voiceprints"))
 
     def do_save():
@@ -272,6 +273,7 @@ async def save_review(
             mapping=mapping,
             person_mapping=person_mapping,
             person_public_mapping=person_public_mapping,
+            new_person_names=new_person_names,
             ignored_speaker_ids=payload.ignored_speaker_ids,
             reassignments=specs,
             deleted_speaker_ids=deleted_speaker_ids,
@@ -282,7 +284,11 @@ async def save_review(
     # CRUD and capture runs (and be refused while a capture is pending), otherwise a later
     # capture rollback could silently undo the sample invalidation. Naming-only saves never
     # touch the global store, so they skip it.
-    runner = (lambda: REGISTRY.run_store_write(do_save)) if specs else do_save
+    runner = (
+        (lambda: REGISTRY.run_store_write(do_save))
+        if specs or new_person_names
+        else do_save
+    )
 
     loop = asyncio.get_running_loop()
     async with locks.acquire(*keys):
@@ -309,6 +315,7 @@ async def save_review(
         transcript_path=str(result.transcript_path),
         srt_path=str(result.srt_path),
         reassigned_count=len(specs),
+        created_person_count=result.created_person_count,
         deleted_speaker_count=len(deleted_speaker_ids),
         deleted_sentence_count=(deletion.deleted_sentence_count if deletion else 0),
         deleted_sample_count=(len(reassignment.deleted_samples) if reassignment else 0),
