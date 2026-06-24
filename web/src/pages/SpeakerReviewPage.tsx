@@ -1101,12 +1101,20 @@ function TranscriptPane(props: {
                 </div>
                 <div className="segment-text">{seg.text}</div>
                 {(scoreEvidence || scoreSuggestion) && (
-                  <div className={`identity-detail ${identityScoreClass(seg.score ?? 1, seg.score_status)}`}>
-                    <div>{scoreEvidence}</div>
+                  <div
+                    className={`identity-detail ${identityScoreClass(seg.score ?? 1, seg.score_status)}`}
+                    tabIndex={scoreSuggestion ? 0 : undefined}
+                  >
+                    {scoreEvidence && <div>{scoreEvidence}</div>}
                     {scoreSuggestion && (
                       <div className="identity-suggestion">
-                        {tr("Suggestion: ", "建议：")}
-                        {scoreSuggestion}
+                        <span className="identity-suggestion-label">
+                          {tr("Suggestion", "建议")}
+                        </span>
+                        <span className="identity-suggestion-text">
+                          {tr(": ", "：")}
+                          {scoreSuggestion}
+                        </span>
                       </div>
                     )}
                   </div>

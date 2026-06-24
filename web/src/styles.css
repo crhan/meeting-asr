@@ -509,6 +509,7 @@ tr.clickable {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+  outline: none;
 }
 .identity-detail.mid {
   border-color: var(--yellow);
@@ -522,6 +523,18 @@ tr.clickable {
 .identity-suggestion {
   margin-top: 4px;
   color: var(--text);
+}
+.identity-suggestion-label {
+  color: var(--accent);
+  font-weight: 700;
+}
+.identity-suggestion-text {
+  display: none;
+}
+.identity-detail:hover .identity-suggestion-text,
+.identity-detail:focus .identity-suggestion-text,
+.identity-detail:focus-within .identity-suggestion-text {
+  display: inline;
 }
 .seg-progress {
   height: 3px;
