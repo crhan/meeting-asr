@@ -5,6 +5,13 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [0.13.1] - 2026-06-24
+
+### 变更
+
+- Web UI 的 Python 服务依赖现在进入默认安装面：`fastapi`、`uvicorn[standard]`、`sse-starlette`、`python-multipart` 不再挂在 `web` extra 下。正式用户执行 `uv tool install meeting-asr --python 3.14` 后即可运行 `meeting-asr web`，不需要再安装 `meeting-asr[web]`。
+- `scripts/install-tool.sh` 不再生成 `.[web]` 安装目标；`--web/--no-web` 仅控制本地 SPA 静态资源是否构建，Python 依赖始终来自默认包依赖。相关文档和缺依赖提示同步改为“重装默认包”，避免继续引导用户使用额外 extra。
+
 ## [0.13.0] - 2026-06-23
 
 ### 新增
