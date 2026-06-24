@@ -100,6 +100,11 @@ export interface SpeakerSegment {
   speaker_id: number | null;
   score: number | null;
   score_status: string | null;
+  score_best_name: string | null;
+  score_best_score: number | null;
+  score_best_other_name: string | null;
+  score_best_other_score: number | null;
+  score_margin: number | null;
 }
 
 export interface MatchPerson {

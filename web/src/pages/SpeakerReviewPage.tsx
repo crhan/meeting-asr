@@ -132,13 +132,104 @@ function identityScoreReason(seg: SpeakerSegment): string | null {
   return null;
 }
 
+function fmtScore(value: number | null): string {
+  return value == null ? "—" : value.toFixed(2);
+}
+
+function identityDiagnosticEvidence(seg: SpeakerSegment): string | null {
+  const assigned = fmtScore(seg.score);
+  const bestName = seg.score_best_name ?? seg.score_best_other_name;
+  const bestScore = seg.score_best_score ?? seg.score_best_other_score;
+  const margin = fmtScore(seg.score_margin);
+  if (seg.score_status === "identity-conflict" && bestName) {
+    return tr(
+      `Current identity score ${assigned}; better match ${bestName} ${fmtScore(bestScore)}; margin ${margin}.`,
+      `当前身份分 ${assigned}；更像 ${bestName} ${fmtScore(bestScore)}；差值 ${margin}。`,
+    );
+  }
+  if (seg.score_status === "identity-ambiguous") {
+    const candidate = bestName ? tr(` Candidate ${bestName} ${fmtScore(bestScore)}.`, ` 候选 ${bestName} ${fmtScore(bestScore)}。`) : "";
+    return tr(
+      `Current identity score ${assigned}; scores are close; margin ${margin}.${candidate}`,
+      `当前身份分 ${assigned}；候选分数接近；差值 ${margin}。${candidate}`,
+    );
+  }
+  if (seg.score_status === "identity-weak") {
+    return tr(
+      `Current identity score ${assigned}; voiceprint evidence is weak.`,
+      `当前身份分 ${assigned}；声纹证据偏弱。`,
+    );
+  }
+  if (seg.score_status === "low-info") {
+    return tr(
+      "This sentence is too short or low-information for a reliable voiceprint call.",
+      "这句话太短或信息量低，不能单独作为可靠声纹判断。",
+    );
+  }
+  if (seg.score_status === "no-assignment") {
+    return tr(
+      "This speaker has no assigned identity, so the sentence cannot be checked against a confirmed person.",
+      "这个 speaker 还没有绑定身份，所以这句话无法和确认身份比对。",
+    );
+  }
+  if (seg.score != null && seg.score < 0.6) {
+    return tr(
+      `Current identity score ${assigned}; below the normal review threshold.`,
+      `当前身份分 ${assigned}；低于正常复核阈值。`,
+    );
+  }
+  return null;
+}
+
+function identityDiagnosticSuggestion(seg: SpeakerSegment): string | null {
+  if (seg.score_status === "identity-conflict") {
+    return tr(
+      "Listen to the original audio. If the speaker is the better match, move this sentence or merge the affected speaker; if the library is noisy, exclude bad samples and rematch.",
+      "先听原音频。若确实是更像的那个人，把这句改派或合并相关 speaker；若是声纹库污染，先排除坏样本再重跑匹配。",
+    );
+  }
+  if (seg.score_status === "identity-ambiguous") {
+    return tr(
+      "Do not move it from this score alone. Check neighboring sentences; move only when several adjacent sentences point to the same person.",
+      "不要只凭这一句改派。先看相邻句，只有连续多句都指向同一个人时再移动。",
+    );
+  }
+  if (seg.score_status === "identity-weak") {
+    return tr(
+      "Treat as weak evidence. Prefer a longer nearby sample or add better voiceprint samples before changing ownership.",
+      "按弱证据处理。优先找附近更长的句子，或补更干净的声纹样本后再判断归属。",
+    );
+  }
+  if (seg.score_status === "low-info") {
+    return tr(
+      "Ignore this as a standalone signal; use context before and after it.",
+      "不要单独采信这句；结合前后上下文判断。",
+    );
+  }
+  if (seg.score_status === "no-assignment") {
+    return tr(
+      "Identify this speaker or accept a reliable project match first.",
+      "先给这个 speaker 指认身份，或接受一个可靠的项目匹配。",
+    );
+  }
+  if (seg.score != null && seg.score < 0.6) {
+    return tr(
+      "Review the audio and compare with nearby turns before changing ownership.",
+      "听原音频，并和附近轮次一起比较后再决定是否改归属。",
+    );
+  }
+  return null;
+}
+
 function identityScoreTitle(seg: SpeakerSegment): string {
   const value = seg.score?.toFixed(2) ?? "—";
   const status = identityStatusLabel(seg.score_status);
   const reason = identityScoreReason(seg) ?? tr("none", "无");
+  const evidence = identityDiagnosticEvidence(seg) ?? "";
+  const suggestion = identityDiagnosticSuggestion(seg) ?? "";
   return tr(
-    `Per-sentence voiceprint identity score: similarity between this sentence and the speaker's assigned identity. Score ${value}; status ${status}; review reason ${reason}. Low, yellow, or red scores need review.`,
-    `逐句声纹身份分数：这句话与当前 speaker 已绑定身份的相似度。分数 ${value}；状态 ${status}；疑点原因 ${reason}。低分、黄色或红色需要复核。`,
+    `Per-sentence voiceprint identity score: similarity between this sentence and the speaker's assigned identity. Score ${value}; status ${status}; review reason ${reason}. ${evidence} ${suggestion}`,
+    `逐句声纹身份分数：这句话与当前 speaker 已绑定身份的相似度。分数 ${value}；状态 ${status}；疑点原因 ${reason}。${evidence} ${suggestion}`,
   );
 }
 
@@ -840,9 +931,15 @@ function TranscriptPane(props: {
 
   const filtered = segments.filter((seg) => {
     if (filter === "all") return true;
-    if (seg.score == null) return false;
-    if (filter === "review") return seg.score_status !== "ok" || seg.score < 0.6;
-    return seg.score < 0.45;
+    if (filter === "review") {
+      return (
+        (seg.score_status != null && seg.score_status !== "identity-ok") ||
+        (seg.score != null && seg.score < 0.6)
+      );
+    }
+    return (
+      (seg.score != null && seg.score < 0.45) || seg.score_status === "identity-weak"
+    );
   });
   const focusedKey =
     focusSentenceId == null
@@ -965,6 +1062,8 @@ function TranscriptPane(props: {
           const focused = focusSentenceId != null && seg.sentence_id === focusSentenceId;
           const scoreTitle = seg.score != null ? identityScoreTitle(seg) : undefined;
           const scoreReason = identityScoreReason(seg);
+          const scoreEvidence = identityDiagnosticEvidence(seg);
+          const scoreSuggestion = identityDiagnosticSuggestion(seg);
           const sentenceRef =
             seg.sentence_ref ?? formatSentenceLocator(projectId, seg.sentence_id);
           return (
@@ -1001,6 +1100,17 @@ function TranscriptPane(props: {
                   {reassigned && <span className="badge reassigned-badge">{tr("reassigned", "已重指派")}</span>}
                 </div>
                 <div className="segment-text">{seg.text}</div>
+                {(scoreEvidence || scoreSuggestion) && (
+                  <div className={`identity-detail ${identityScoreClass(seg.score ?? 1, seg.score_status)}`}>
+                    <div>{scoreEvidence}</div>
+                    {scoreSuggestion && (
+                      <div className="identity-suggestion">
+                        {tr("Suggestion: ", "建议：")}
+                        {scoreSuggestion}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {playing && (
                   <div className="seg-progress">
                     <div className="seg-progress-bar" style={{ width: `${progress * 100}%` }} />

@@ -500,6 +500,29 @@ tr.clickable {
 .score-badge.low {
   color: var(--red);
 }
+.identity-detail {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.identity-detail.mid {
+  border-color: var(--yellow);
+}
+.identity-detail.low {
+  border-color: var(--red);
+}
+.identity-detail.ok {
+  border-color: var(--green);
+}
+.identity-suggestion {
+  margin-top: 4px;
+  color: var(--text);
+}
 .seg-progress {
   height: 3px;
   background: var(--border);

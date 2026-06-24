@@ -165,6 +165,11 @@ def _serialize_speaker(
                 speaker_id=seg.speaker_id,
                 score=score.assigned_score if score else None,
                 score_status=score.status if score else None,
+                score_best_name=score.best_name if score else None,
+                score_best_score=score.best_score if score else None,
+                score_best_other_name=score.best_other_name if score else None,
+                score_best_other_score=score.best_other_score if score else None,
+                score_margin=score.margin_score if score else None,
             )
         )
     return ReviewSpeakerOut(

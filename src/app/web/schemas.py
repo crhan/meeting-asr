@@ -320,6 +320,11 @@ class SpeakerSegmentOut(BaseModel):
     # Optional per-sample voiceprint identity diagnostics (for the review/low filter).
     score: float | None = None
     score_status: str | None = None
+    score_best_name: str | None = None
+    score_best_score: float | None = None
+    score_best_other_name: str | None = None
+    score_best_other_score: float | None = None
+    score_margin: float | None = None
 
 
 class MatchPersonOut(BaseModel):

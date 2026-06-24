@@ -1056,12 +1056,30 @@ def test_speaker_review_segments_include_sentence_ref() -> None:
         speakers=[speaker],
         people=[],
         allow_correction=False,
-        sample_identity_scores={},
+        sample_identity_scores={
+            1: {
+                (2, 2000, 2500): SimpleNamespace(
+                    assigned_score=0.50,
+                    status="identity-conflict",
+                    best_name="Alice",
+                    best_score=0.62,
+                    best_other_name="Alice",
+                    best_other_score=0.62,
+                    margin_score=-0.12,
+                )
+            }
+        },
     )
 
     payload = speakers._serialize_session(session, review_revision="rev")
 
-    assert payload.speakers[0].segments[0].sentence_ref == "p-demo#2"
+    segment = payload.speakers[0].segments[0]
+    assert segment.sentence_ref == "p-demo#2"
+    assert segment.score == 0.50
+    assert segment.score_status == "identity-conflict"
+    assert segment.score_best_name == "Alice"
+    assert segment.score_best_score == 0.62
+    assert segment.score_margin == -0.12
 
 
 def test_merge_apply_refuses_nonempty_dir_without_force(
