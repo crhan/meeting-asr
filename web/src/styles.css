@@ -370,6 +370,22 @@ tr.clickable {
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
+.sentence-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 6px;
+}
+.sentence-jump input {
+  width: 116px;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+}
 .chip {
   background: transparent;
   border: 1px solid var(--border);
@@ -402,6 +418,10 @@ tr.clickable {
 }
 .segment.reassigned {
   background: rgba(224, 179, 65, 0.07);
+}
+.segment.focused {
+  background: rgba(91, 140, 255, 0.14);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .play-btn,
 .reassign-btn {
@@ -439,6 +459,10 @@ tr.clickable {
   gap: 8px;
   font-size: 11.5px;
   margin-bottom: 2px;
+}
+.sentence-id {
+  color: var(--accent);
+  font-weight: 700;
 }
 .segment-text {
   line-height: 1.55;

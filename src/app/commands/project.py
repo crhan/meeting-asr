@@ -1881,6 +1881,109 @@ def speakers_apply(
     typer.echo(f"  open {_shell_quote_path(transcript_path)}")
 
 
+@speakers_app.command("sentence")
+def speakers_sentence(
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    sentence_id: int = typer.Argument(..., metavar="SENTENCE_ID", min=0),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    to_speaker: Optional[int] = typer.Option(
+        None,
+        "--to-speaker",
+        min=0,
+        help="Reassign this sentence to a project speaker id.",
+    ),
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        help="Display name to persist for --to-speaker, useful when minting a new speaker.",
+    ),
+    person_ref: Optional[str] = typer.Option(
+        None,
+        "--person",
+        help="Bind --to-speaker to an existing voiceprint person by name/id/@vpp-id.",
+    ),
+    store_dir: Optional[Path] = typer.Option(
+        None,
+        "--store-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Voiceprint store dir for resolving --person and rematching.",
+    ),
+    rematch: bool = typer.Option(
+        True,
+        "--rematch/--no-rematch",
+        help="Refresh voiceprint matching after reassignment.",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Locate one transcript sentence by id, optionally reassigning its speaker."""
+    if to_speaker is None and (name is not None or person_ref is not None):
+        raise typer.BadParameter("--name and --person require --to-speaker.")
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
+    payload = run_with_cli_errors(
+        lambda: _speaker_sentence_payload(resolved_project_dir, sentence_id)
+    )
+    if to_speaker is None:
+        if as_json:
+            emit_json(payload)
+            return
+        _echo_speaker_sentence(payload)
+        return
+
+    result = run_with_cli_errors(
+        lambda: _apply_speaker_sentence_reassignment(
+            resolved_project_dir,
+            payload,
+            to_speaker=to_speaker,
+            name=name,
+            person_ref=person_ref,
+            store_dir=store_dir,
+            rematch=rematch,
+        )
+    )
+    updated_payload = run_with_cli_errors(
+        lambda: _speaker_sentence_payload(resolved_project_dir, sentence_id)
+    )
+    if as_json:
+        emit_json(
+            {
+                "sentence": updated_payload,
+                "reassignment": {
+                    "to_speaker": to_speaker,
+                    "mapping_path": result.mapping_path,
+                    "transcript_path": result.transcript_path,
+                    "srt_path": result.srt_path,
+                    "sentence_files": (
+                        list(result.reassignment.sentence_files)
+                        if result.reassignment
+                        else []
+                    ),
+                    "deleted_sample_count": (
+                        len(result.reassignment.deleted_samples)
+                        if result.reassignment
+                        else 0
+                    ),
+                    "rematch_skipped_reason": (
+                        result.reassignment.rematch_skipped_reason
+                        if result.reassignment
+                        else None
+                    ),
+                },
+            }
+        )
+        return
+    _echo_speaker_sentence(updated_payload)
+    _echo_reassignment_result(result.reassignment)
+    typer.echo(f"Named transcript written to: {result.transcript_path}")
+    typer.echo(f"Named subtitle written to: {result.srt_path}")
+
+
 @speakers_app.command("review")
 def speakers_review(
     project_dir: Path = typer.Argument(
@@ -2045,6 +2148,131 @@ def _echo_reassignment_result(result: SentenceReassignmentApplyResult | None) ->
         typer.echo(f"Voiceprint matches refreshed: {result.match_summary.match_path}")
     elif result.rematch_skipped_reason is not None:
         typer.echo(f"Voiceprint rematch skipped: {result.rematch_skipped_reason}")
+
+
+def _speaker_sentence_payload(project_dir: Path, sentence_id: int) -> dict[str, object]:
+    """Build a CLI/API-safe payload for one sentence locator."""
+    paths = project_paths(project_dir)
+    manifest = load_manifest(paths.root)
+    result, source_path = _load_review_sentence_result(paths.asr_dir)
+    sentence = _sentence_by_id(result, sentence_id)
+    speaker_id = sentence.speaker_id
+    mapping = _load_existing_speaker_mapping(paths.root)
+    return {
+        "project_id": manifest.project_id,
+        "project_dir": paths.root,
+        "source": source_path,
+        "sentence_id": sentence.sentence_id,
+        "begin_time_ms": sentence.begin_time_ms,
+        "end_time_ms": sentence.end_time_ms,
+        "begin": format_ms_timestamp(sentence.begin_time_ms),
+        "end": format_ms_timestamp(sentence.end_time_ms),
+        "speaker_id": speaker_id,
+        "speaker_label": speaker_id_to_label(speaker_id),
+        "speaker_name": mapping.get(speaker_id) if speaker_id is not None else None,
+        "text": sentence.text,
+        "web_path": f"/projects/{manifest.project_id}/speakers?sentence={sentence_id}",
+    }
+
+
+def _load_review_sentence_result(asr_dir: Path) -> tuple[TranscriptResult, Path]:
+    """Load the sentence file humans are currently reviewing."""
+    corrected = asr_dir / "sentences_corrected.json"
+    path = corrected if corrected.exists() else asr_dir / "sentences.json"
+    if not path.exists():
+        raise FileNotFoundError(f"Transcript sentence file does not exist: {path}")
+    return load_transcript_result(path, include_low_information=True), path
+
+
+def _sentence_by_id(result: TranscriptResult, sentence_id: int) -> SentenceSegment:
+    """Return exactly one sentence matching the stable locator id."""
+    matches = [item for item in result.sentences if item.sentence_id == sentence_id]
+    if not matches:
+        raise ValueError(f"No transcript sentence has sentence_id={sentence_id}.")
+    if len(matches) > 1:
+        raise ValueError(
+            f"Duplicate transcript sentence_id={sentence_id}; cannot locate safely."
+        )
+    return matches[0]
+
+
+def _echo_speaker_sentence(payload: dict[str, object]) -> None:
+    """Print one sentence locator in a compact human-readable form."""
+    speaker_name = payload.get("speaker_name")
+    speaker_label = payload["speaker_label"]
+    speaker_text = (
+        f"{speaker_name} / {speaker_label}" if speaker_name else str(speaker_label)
+    )
+    typer.echo(f"Project: {payload['project_id']}")
+    typer.echo(f"Sentence: #{payload['sentence_id']}")
+    typer.echo(f"Time: {payload['begin']} - {payload['end']}")
+    typer.echo(f"Speaker: {payload['speaker_id']} ({speaker_text})")
+    typer.echo(f"Web: {payload['web_path']}")
+    typer.echo("")
+    typer.echo(str(payload["text"]))
+
+
+def _apply_speaker_sentence_reassignment(
+    project_dir: Path,
+    sentence_payload: dict[str, object],
+    *,
+    to_speaker: int,
+    name: str | None,
+    person_ref: str | None,
+    store_dir: Path | None,
+    rematch: bool,
+) -> SpeakerReviewSaveResult:
+    """Apply a sentence-level speaker change through the shared review save service."""
+    mapping: dict[int, str] = {}
+    person_public_mapping: dict[int, str] = {}
+    target_name = name.strip() if name is not None else ""
+    if name is not None and not target_name:
+        raise ValueError("--name cannot be empty.")
+    if person_ref:
+        person = _resolve_sentence_target_person(person_ref, store_dir)
+        person_public_mapping[to_speaker] = person.public_id
+        target_name = target_name or person.name
+    if target_name:
+        mapping[to_speaker] = target_name
+
+    current_speaker = sentence_payload.get("speaker_id")
+    reassignments: list[SentenceReassignmentSpec] = []
+    if current_speaker != to_speaker:
+        reassignments.append(
+            SentenceReassignmentSpec(
+                sentence_id=int(sentence_payload["sentence_id"]),
+                begin_time_ms=int(sentence_payload["begin_time_ms"]),
+                end_time_ms=int(sentence_payload["end_time_ms"]),
+                new_speaker_id=to_speaker,
+                original_speaker_id=(
+                    int(current_speaker) if current_speaker is not None else None
+                ),
+            )
+        )
+    if not reassignments and not mapping and not person_public_mapping:
+        raise ValueError("No change requested; sentence is already on that speaker.")
+    return save_speaker_review(
+        project_dir,
+        mapping=mapping,
+        person_public_mapping=person_public_mapping,
+        reassignments=reassignments,
+        store_dir=store_dir,
+        rematch=rematch,
+    )
+
+
+def _resolve_sentence_target_person(person_ref: str, store_dir: Path | None):
+    """Resolve a CLI person ref for sentence reassignment."""
+    ref = person_ref.strip()
+    if ref.startswith("@"):
+        ref = ref[1:]
+    if not ref:
+        raise ValueError("--person cannot be empty.")
+    db_path = get_voiceprint_db_path(store_dir) if store_dir is not None else None
+    person = get_voiceprint_person(ref, db_path)
+    if person is None:
+        raise ValueError(f"No voiceprint person found for --person {person_ref!r}.")
+    return person
 
 
 def _save_review_from_tui(

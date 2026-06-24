@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   clipUrl,
@@ -48,6 +48,21 @@ function fmtDur(ms: number): string {
   if (h > 0) return `${h}h${m}m`;
   if (m > 0) return `${m}m${s}s`;
   return `${s}s`;
+}
+
+function parseSentenceId(value: string | null): number | null {
+  if (!value?.trim()) return null;
+  const parsed = Number(value.trim());
+  if (!Number.isInteger(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+function findSentence(review: SpeakerReview, sentenceId: number) {
+  for (const speaker of review.speakers) {
+    const segment = speaker.segments.find((seg) => seg.sentence_id === sentenceId);
+    if (segment) return { speaker, segment };
+  }
+  return null;
 }
 
 const STATUS_LABEL: Record<string, [string, string]> = {
@@ -111,11 +126,16 @@ function identityScoreTitle(seg: SpeakerSegment): string {
 export function SpeakerReviewPage() {
   const { ref = "" } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({
     queryKey: ["speakers", ref],
     queryFn: () => getSpeakerReview(ref),
   });
+  const focusedSentenceId = useMemo(
+    () => parseSentenceId(searchParams.get("sentence") ?? searchParams.get("sid")),
+    [searchParams],
+  );
 
   // Working edits layered over the loaded baseline.
   const [edits, setEdits] = useState<Map<number, SpeakerEdit>>(new Map());
@@ -134,10 +154,26 @@ export function SpeakerReviewPage() {
       setEdits(new Map());
       setReassign(new Map());
       setDeletedSpeakerIds(new Set());
-      setSelectedId((prev) => prev ?? data.speakers[0]?.speaker_id ?? null);
+      const focused = focusedSentenceId == null ? null : findSentence(data, focusedSentenceId);
+      setSelectedId(focused?.speaker.speaker_id ?? data.speakers[0]?.speaker_id ?? null);
+      if (focused) setFilter("all");
       setMerging(null);
     }
+    // focusedSentenceId is handled by the locator effect below; a query-param change must not
+    // reset unsaved review edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
+
+  useEffect(() => {
+    if (!data || focusedSentenceId == null) return;
+    const focused = findSentence(data, focusedSentenceId);
+    if (!focused) {
+      setToast(tr(`Sentence #${focusedSentenceId} not found.`, `未找到句子 #${focusedSentenceId}。`));
+      return;
+    }
+    setSelectedId(focused.speaker.speaker_id);
+    setFilter("all");
+  }, [data, focusedSentenceId]);
 
   const effective = (s: ReviewSpeaker): ReviewSpeaker => {
     const e = edits.get(s.speaker_id);
@@ -394,6 +430,26 @@ export function SpeakerReviewPage() {
     );
   }
 
+  function locateSentence(rawValue: string) {
+    if (!data) return;
+    const sentenceId = parseSentenceId(rawValue);
+    if (sentenceId == null) {
+      setToast(tr("Invalid sentence id.", "句子 ID 无效。"));
+      return;
+    }
+    const focused = findSentence(data, sentenceId);
+    if (!focused) {
+      setToast(tr(`Sentence #${sentenceId} not found.`, `未找到句子 #${sentenceId}。`));
+      return;
+    }
+    setSelectedId(focused.speaker.speaker_id);
+    setFilter("all");
+    const next = new URLSearchParams(searchParams);
+    next.set("sentence", String(sentenceId));
+    next.delete("sid");
+    setSearchParams(next);
+  }
+
   function buildSaveBody(): SaveSpeakerReviewBody {
     const mapping: Record<string, string> = {};
     const person_mapping: Record<string, number> = {};
@@ -477,7 +533,9 @@ export function SpeakerReviewPage() {
           segments={selected ? (segmentsBySpeaker.get(selected.speaker_id) ?? []) : []}
           filter={filter}
           reassignKeys={reassign}
+          focusSentenceId={focusedSentenceId}
           onFilter={setFilter}
+          onLocateSentence={locateSentence}
           onIdentify={() =>
             selected &&
             setPicking(
@@ -656,7 +714,9 @@ function TranscriptPane(props: {
   segments: SpeakerSegment[];
   filter: "all" | "review" | "low";
   reassignKeys: Map<string, number>;
+  focusSentenceId: number | null;
   onFilter: (f: "all" | "review" | "low") => void;
+  onLocateSentence: (value: string) => void;
   onIdentify: () => void;
   onAccept: () => void;
   onIgnore: () => void;
@@ -665,10 +725,16 @@ function TranscriptPane(props: {
   canDelete: boolean;
   onReassign: (seg: SpeakerSegment) => void;
 }) {
-  const { projectRef, selected, segments, filter, reassignKeys } = props;
+  const { projectRef, selected, segments, filter, reassignKeys, focusSentenceId } = props;
   const audioRef = useRef<HTMLAudioElement>(null);
+  const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [playingKey, setPlayingKey] = useState<string | null>(null);
+  const [jumpValue, setJumpValue] = useState("");
   const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    if (focusSentenceId != null) setJumpValue(String(focusSentenceId));
+  }, [focusSentenceId]);
 
   const play = (seg: SpeakerSegment) => {
     const el = audioRef.current;
@@ -692,6 +758,22 @@ function TranscriptPane(props: {
     if (filter === "review") return seg.score_status !== "ok" || seg.score < 0.6;
     return seg.score < 0.45;
   });
+  const focusedKey =
+    focusSentenceId == null
+      ? null
+      : (filtered.find((seg) => seg.sentence_id === focusSentenceId) ?? null);
+  const focusedSegKey = focusedKey ? segKey(focusedKey) : null;
+
+  useEffect(() => {
+    if (!focusedSegKey) return;
+    const frame = window.requestAnimationFrame(() => {
+      segmentRefs.current.get(focusedSegKey)?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusedSegKey]);
 
   if (!selected) return <div className="placeholder">{tr("Select a speaker.", "选择一位发言人。")}</div>;
 
@@ -741,6 +823,23 @@ function TranscriptPane(props: {
       </div>
 
       <div className="filter-bar">
+        <form
+          className="sentence-jump"
+          onSubmit={(e) => {
+            e.preventDefault();
+            props.onLocateSentence(jumpValue);
+          }}
+        >
+          <input
+            value={jumpValue}
+            onChange={(e) => setJumpValue(e.currentTarget.value)}
+            inputMode="numeric"
+            placeholder={tr("Sentence ID", "句子 ID")}
+          />
+          <button className="chip" type="submit">
+            {tr("Go", "定位")}
+          </button>
+        </form>
         {(["all", "review", "low"] as const).map((f) => (
           <button
             key={f}
@@ -769,15 +868,29 @@ function TranscriptPane(props: {
           const key = segKey(seg);
           const reassigned = reassignKeys.has(key);
           const playing = playingKey === key;
+          const focused = focusSentenceId != null && seg.sentence_id === focusSentenceId;
           const scoreTitle = seg.score != null ? identityScoreTitle(seg) : undefined;
           const scoreReason = identityScoreReason(seg);
           return (
-            <div key={key} className={`segment ${playing ? "playing" : ""} ${reassigned ? "reassigned" : ""}`}>
+            <div
+              key={key}
+              ref={(node) => {
+                if (node) segmentRefs.current.set(key, node);
+                else segmentRefs.current.delete(key);
+              }}
+              className={`segment ${playing ? "playing" : ""} ${reassigned ? "reassigned" : ""} ${focused ? "focused" : ""}`}
+              data-sentence-id={seg.sentence_id ?? undefined}
+            >
               <button className="play-btn" onClick={() => play(seg)} aria-label="play">
                 {playing ? "⏸" : "▶"}
               </button>
               <div className="segment-body">
                 <div className="segment-meta subtle mono">
+                  {seg.sentence_id != null && (
+                    <span className="sentence-id" title={tr("Sentence id", "句子 ID")}>
+                      #{seg.sentence_id}
+                    </span>
+                  )}
                   {fmtMs(seg.begin_time_ms)}
                   {seg.score != null && (
                     <span
