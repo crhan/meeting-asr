@@ -3,9 +3,13 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   clipUrl,
+  excludeQualitySamples,
+  getQuality,
   getSpeakerReview,
+  rematchSpeakerReview,
   saveSpeakerReview,
   type Person,
+  type QualityPerson,
   type ReviewSpeaker,
   type SaveSpeakerReviewBody,
   type SpeakerReview,
@@ -132,6 +136,7 @@ export function SpeakerReviewPage() {
     queryKey: ["speakers", ref],
     queryFn: () => getSpeakerReview(ref),
   });
+  const qualityQuery = useQuery({ queryKey: ["vp-quality"], queryFn: getQuality });
   const focusedSentenceId = useMemo(
     () => parseSentenceId(searchParams.get("sentence") ?? searchParams.get("sid")),
     [searchParams],
@@ -245,6 +250,26 @@ export function SpeakerReviewPage() {
     onError: (e) => setToast(tr("Save failed: ", "保存失败：") + (e as Error).message),
   });
 
+  const repairLibraryMutation = useMutation({
+    mutationFn: async ({ personRef }: { personRef: string }) => {
+      const excluded = await excludeQualitySamples(personRef);
+      const rematched = await rematchSpeakerReview(ref);
+      return { excluded, rematched };
+    },
+    onSuccess: ({ excluded, rematched }) => {
+      setToast(
+        tr(
+          `Excluded ${excluded.updated_count} low-quality sample(s); refreshed ${rematched.total_count} speaker matches.`,
+          `已排除 ${excluded.updated_count} 条低质样本；已刷新 ${rematched.total_count} 个 speaker 匹配。`,
+        ),
+      );
+      queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
+      queryClient.invalidateQueries({ queryKey: ["vp-library"] });
+      queryClient.invalidateQueries({ queryKey: ["vp-quality"] });
+    },
+    onError: (e) => setToast(tr("Repair failed: ", "修库失败：") + (e as Error).message),
+  });
+
   // ---- keyboard shortcuts (when not typing) -------------------------------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -293,6 +318,15 @@ export function SpeakerReviewPage() {
     selectedId != null
       ? (speakers.find((s) => s.speaker_id === selectedId) ?? null)
       : null;
+  const qualityByPerson = new Map(
+    (qualityQuery.data?.people ?? []).map((person) => [person.public_id, person]),
+  );
+  const selectedQualityRef =
+    selected?.person_public_id ??
+    selected?.match?.candidates.find((candidate) => candidate.name === selected.match?.best_name)
+      ?.person_public_id ??
+    null;
+  const selectedQuality = selectedQualityRef ? qualityByPerson.get(selectedQualityRef) : undefined;
 
   function applySelection(speakerId: number, sel: IdentitySelection) {
     setEdits((prev) => {
@@ -553,6 +587,9 @@ export function SpeakerReviewPage() {
           onDelete={() => selected && doDeleteSpeaker(selected.speaker_id)}
           canDelete={selected ? canDeleteSpeaker(selected.speaker_id) : false}
           onReassign={(seg) => setReassigning(seg)}
+          quality={selectedQuality}
+          repairing={repairLibraryMutation.isPending}
+          onRepairLibrary={(personRef) => repairLibraryMutation.mutate({ personRef })}
         />
       </div>
 
@@ -724,8 +761,11 @@ function TranscriptPane(props: {
   onDelete: () => void;
   canDelete: boolean;
   onReassign: (seg: SpeakerSegment) => void;
+  quality: QualityPerson | undefined;
+  repairing: boolean;
+  onRepairLibrary: (personRef: string) => void;
 }) {
-  const { projectRef, selected, segments, filter, reassignKeys, focusSentenceId } = props;
+  const { projectRef, selected, segments, filter, reassignKeys, focusSentenceId, quality } = props;
   const audioRef = useRef<HTMLAudioElement>(null);
   const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [playingKey, setPlayingKey] = useState<string | null>(null);
@@ -854,6 +894,15 @@ function TranscriptPane(props: {
         </span>
       </div>
 
+      {quality && (
+        <SpeakerQualityRepairPanel
+          quality={quality}
+          matchScore={selected.match?.best_score ?? null}
+          repairing={props.repairing}
+          onRepair={() => props.onRepairLibrary(quality.public_id)}
+        />
+      )}
+
       <audio
         ref={audioRef}
         onTimeUpdate={(e) => {
@@ -925,6 +974,63 @@ function TranscriptPane(props: {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function SpeakerQualityRepairPanel(props: {
+  quality: QualityPerson;
+  matchScore: number | null;
+  repairing: boolean;
+  onRepair: () => void;
+}) {
+  const { quality, matchScore, repairing } = props;
+  const riskyProjects = quality.projects.filter((project) => project.suspicious_count > 0);
+  const hasRisk = quality.suspicious_count > 0 || quality.critical_count > 0;
+  const nearThreshold = matchScore != null && matchScore < 0.82;
+  if (!hasRisk && !nearThreshold) return null;
+  return (
+    <div className={`speaker-quality-panel ${hasRisk ? "risk" : ""}`}>
+      <div className="speaker-quality-main">
+        <div className="speaker-quality-title">
+          {tr("Voiceprint library diagnosis", "声纹库诊断")} · {quality.name}
+        </div>
+        <div className="speaker-quality-line subtle">
+          {tr("matching", "参与匹配")} {quality.active_sample_count}/{quality.sample_count} ·{" "}
+          {tr("mean", "均值")} {quality.mean_score?.toFixed(2) ?? "—"} ·{" "}
+          <span className={quality.critical_count > 0 ? "danger-text" : hasRisk ? "warn" : ""}>
+            {quality.suspicious_count} {tr("issues", "疑点")} / {quality.critical_count}{" "}
+            {tr("critical", "严重")}
+          </span>
+        </div>
+        {riskyProjects.length > 0 && (
+          <div className="speaker-quality-line">
+            {riskyProjects.slice(0, 3).map((project) => (
+              <span key={project.project_id} className="badge vp-project-risk">
+                {project.project_id} · {project.suspicious_count} {tr("issues", "疑点")} ·{" "}
+                {project.min_score?.toFixed(2) ?? "—"}
+              </span>
+            ))}
+          </div>
+        )}
+        {quality.closest_people.length > 0 && (
+          <div className="speaker-quality-line subtle">
+            {tr("Closest others", "相近人物")}：
+            {quality.closest_people.map((person) => (
+              <span key={person.public_id} className="mono">
+                {person.name} {person.score.toFixed(2)}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      {hasRisk && (
+        <button className="btn ghost danger" disabled={repairing} onClick={props.onRepair}>
+          {repairing
+            ? tr("Repairing…", "修复中…")
+            : tr("Exclude issues + rematch", "排除疑点并重跑匹配")}
+        </button>
+      )}
     </div>
   );
 }

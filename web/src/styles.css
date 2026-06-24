@@ -182,6 +182,9 @@ tr.clickable {
 .warn {
   color: var(--yellow);
 }
+.danger-text {
+  color: var(--red);
+}
 .btn {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -398,6 +401,10 @@ tr.clickable {
 .chip.on {
   border-color: var(--accent);
   color: var(--accent);
+}
+.chip.danger {
+  border-color: rgba(255, 93, 93, 0.45);
+  color: var(--red);
 }
 .segments {
   overflow-y: auto;
@@ -616,6 +623,35 @@ tr.clickable {
   max-height: 120px;
   overflow-y: auto;
 }
+.speaker-quality-panel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.015);
+}
+.speaker-quality-panel.risk {
+  background: rgba(255, 195, 77, 0.06);
+}
+.speaker-quality-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.speaker-quality-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.speaker-quality-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
 
 /* ---- voiceprint page --------------------------------------------------- */
 .vp-head {
@@ -713,6 +749,7 @@ tr.clickable {
   border-color: var(--green);
 }
 .status-pill.quarantined,
+.status-pill.verified-quarantined,
 .status-pill.rejected {
   color: var(--red);
   border-color: var(--red);
@@ -720,6 +757,39 @@ tr.clickable {
 .status-pill.verified-active {
   color: var(--accent);
   border-color: var(--accent);
+}
+.vp-health {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.015);
+}
+.vp-health.risk {
+  background: rgba(255, 195, 77, 0.06);
+}
+.vp-health-main {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+.vp-health-metrics,
+.vp-health-line,
+.vp-health-projects {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.vp-health-metrics {
+  font-size: 13px;
+}
+.vp-project-risk {
+  color: var(--yellow);
+  border-color: rgba(255, 195, 77, 0.45);
 }
 .vp-sample-actions {
   display: flex;

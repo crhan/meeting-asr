@@ -455,6 +455,8 @@ class VoiceprintSampleOut(BaseModel):
     end_time_ms: int
     transcript_text: str
     status: str
+    identity_confirmed: bool
+    matching_enabled: bool
     clip_rel_path: str
 
 
@@ -481,9 +483,32 @@ class QualitySampleOut(BaseModel):
     end_time_ms: int
     transcript_text: str
     status: str
+    identity_confirmed: bool
+    matching_enabled: bool
     score: float | None
     label: str
     reason: str
+
+
+class QualityProjectOut(BaseModel):
+    """Quality diagnostics for one source project."""
+
+    project_id: str
+    sample_count: int
+    matching_sample_count: int
+    suspicious_count: int
+    critical_count: int
+    mean_score: float | None
+    min_score: float | None
+
+
+class QualityNeighborOut(BaseModel):
+    """Closest other voiceprint person."""
+
+    speaker_id: int
+    public_id: str
+    name: str
+    score: float
 
 
 class QualityPersonOut(BaseModel):
@@ -498,6 +523,8 @@ class QualityPersonOut(BaseModel):
     stdev_score: float | None
     suspicious_count: int
     critical_count: int
+    projects: list[QualityProjectOut]
+    closest_people: list[QualityNeighborOut]
     samples: list[QualitySampleOut]
 
 
@@ -534,6 +561,28 @@ class SampleStatusIn(BaseModel):
     """Update one sample's lifecycle status."""
 
     status: str
+
+
+class ExcludeQualitySamplesIn(BaseModel):
+    """Bulk-exclude low-quality samples for one person."""
+
+    sample_public_ids: list[str] | None = None
+    include_warnings: bool = True
+
+
+class ExcludeQualitySamplesOut(BaseModel):
+    """Result of a bulk low-quality exclusion."""
+
+    updated_count: int
+    sample_public_ids: list[str]
+
+
+class SpeakerRematchOut(BaseModel):
+    """Result of refreshing project speaker voiceprint matches."""
+
+    matched_count: int
+    below_threshold_count: int
+    total_count: int
 
 
 # ---- Voiceprint capture workflow -------------------------------------------
@@ -638,6 +687,10 @@ class CaptureResultOut(BaseModel):
     captured_count: int
     embedded_count: int
     skipped_count: int
+    quality_gate_reviewed_count: int
+    quality_gate_excluded_count: int
+    quality_gate_warning_count: int
+    quality_gate_critical_count: int
     current_project_id: str
     current_changes: list[ScoreChangeOut]
     current_improved: int

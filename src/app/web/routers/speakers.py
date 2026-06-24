@@ -28,6 +28,7 @@ from app.presentation.tui.speaker_session import load_speaker_review_session
 from app.presentation.tui.speaker_status import speaker_status
 from app.speaker_labeling import SentenceReassignmentSpec
 from app.speaker_match_status import MATCH_STATUS_CROSSTALK
+from app.speaker_matching import match_project_speakers
 from app.voiceprint_ids import valid_person_public_id
 from app.voiceprint_people import get_voiceprint_person
 from app.voiceprint_store import get_voiceprint_db_path
@@ -45,6 +46,7 @@ from app.web.schemas import (
     ReviewSpeakerOut,
     SaveSpeakerReviewIn,
     SaveSpeakerReviewOut,
+    SpeakerRematchOut,
     SpeakerMatchOut,
     SpeakerReviewOut,
     SpeakerSegmentOut,
@@ -322,4 +324,48 @@ async def save_review(
         rematch_skipped_reason=(
             reassignment.rematch_skipped_reason if reassignment else None
         ),
+    )
+
+
+@router.post("/{project_ref}/rematch", response_model=SpeakerRematchOut)
+async def rematch_review(
+    project_ref: str,
+    settings: WebSettings = Depends(get_settings),
+    locks: LockRegistry = Depends(get_locks),
+) -> SpeakerRematchOut:
+    """Refresh project speaker matches against the current voiceprint library."""
+    project_dir = resolve_web_project_ref(project_ref, settings)
+
+    def do_rematch():
+        return match_project_speakers(
+            project_dir,
+            store_dir=settings.voiceprint_store_dir,
+            provider=None,
+            model=None,
+            threshold=0.75,
+            sample_count=2,
+            max_seconds=12.0,
+            padding_seconds=0.5,
+            crosstalk_params=None,
+            progress=None,
+        )
+
+    loop = asyncio.get_running_loop()
+    async with locks.acquire(
+        project_lock_key(str(project_dir)), store_lock_key("voiceprints")
+    ):
+        if REGISTRY.has_pending():
+            raise CaptureConflictError(
+                "A voiceprint capture is awaiting accept/rollback; resolve it before "
+                "refreshing speaker matches."
+            )
+        summary = await loop.run_in_executor(
+            None, lambda: REGISTRY.run_store_write(do_rematch)
+        )
+    below = sum(1 for item in summary.matches if not item.accepted)
+    matched = len(summary.matches) - below
+    return SpeakerRematchOut(
+        matched_count=matched,
+        below_threshold_count=below,
+        total_count=len(summary.matches),
     )

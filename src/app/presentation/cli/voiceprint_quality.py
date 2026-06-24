@@ -94,6 +94,27 @@ def _person_payload(person: VoiceprintQualityPerson) -> dict[str, object]:
         "stdev_score": person.stdev_score,
         "suspicious_count": person.suspicious_count,
         "critical_count": person.critical_count,
+        "projects": [
+            {
+                "project_id": project.project_id,
+                "sample_count": project.sample_count,
+                "matching_sample_count": project.matching_sample_count,
+                "suspicious_count": project.suspicious_count,
+                "critical_count": project.critical_count,
+                "mean_score": project.mean_score,
+                "min_score": project.min_score,
+            }
+            for project in person.projects
+        ],
+        "closest_people": [
+            {
+                "speaker_id": neighbor.speaker_id,
+                "speaker_public_id": neighbor.speaker_public_id,
+                "speaker_name": neighbor.speaker_name,
+                "score": neighbor.score,
+            }
+            for neighbor in person.closest_people
+        ],
         "samples": [_sample_payload(sample) for sample in person.samples],
     }
 

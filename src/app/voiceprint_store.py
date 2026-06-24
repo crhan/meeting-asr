@@ -414,7 +414,13 @@ def update_voiceprint_sample_status(
     Returns:
         Updated sample row.
     """
-    if status not in {"active", "verified-active", "quarantined", "rejected"}:
+    if status not in {
+        "active",
+        "verified-active",
+        "quarantined",
+        "verified-quarantined",
+        "rejected",
+    }:
         raise ValueError(f"Unsupported voiceprint sample status: {status}")
     database_path = _resolve_db_path(db_path)
     with sqlite3.connect(database_path) as connection:
@@ -1154,7 +1160,9 @@ def _deleted_sample(
     )
 
 
-def resolve_in_store_clip_path(row: VoiceprintSampleRow, store_dir: Path) -> Path | None:
+def resolve_in_store_clip_path(
+    row: VoiceprintSampleRow, store_dir: Path
+) -> Path | None:
     """Resolve a row's clip *within the configured store*, or None if it escapes it.
 
     The stored ``clip_path`` is the absolute path of the store the clip was first written

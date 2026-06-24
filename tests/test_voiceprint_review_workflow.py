@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.presentation.tui import voiceprint_review_workflow
 from app.voiceprint_embedding import VoiceprintEmbedSummary
@@ -12,6 +13,67 @@ from app.voiceprint_evaluation import (
     VoiceprintScoreChange,
 )
 from app.voiceprints import VoiceprintCaptureSummary, VoiceprintClip, VoiceprintSpeaker
+
+
+def test_capture_quality_gate_confirms_then_excludes_low_quality_samples(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Reviewed capture samples keep identity confirmation even when excluded."""
+    store_dir = tmp_path / "voiceprints"
+    db_path = store_dir / "voiceprints.sqlite"
+    clip = VoiceprintClip(
+        path=store_dir / "clips" / "p1" / "speaker_0" / "clip_001.wav",
+        rel_path="p1/speaker_0/clip_001.wav",
+        source_begin_time_ms=0,
+        source_end_time_ms=1000,
+        clip_begin_time_ms=0,
+        clip_end_time_ms=1000,
+        text="hello",
+    )
+    capture = VoiceprintCaptureSummary(
+        store_dir,
+        db_path,
+        store_dir / "clips",
+        [VoiceprintSpeaker(0, "Alice", None, None, [clip])],
+        False,
+    )
+    monkeypatch.setattr(
+        voiceprint_review_workflow,
+        "list_voiceprint_samples",
+        lambda _ref, _db: [
+            SimpleNamespace(public_id="s1", clip_rel_path="p1/speaker_0/clip_001.wav")
+        ],
+    )
+    monkeypatch.setattr(
+        voiceprint_review_workflow,
+        "analyze_voiceprint_quality",
+        lambda **_kwargs: SimpleNamespace(
+            people=[
+                SimpleNamespace(
+                    samples=[
+                        SimpleNamespace(
+                            sample_public_id="s1",
+                            label="warning",
+                        )
+                    ]
+                )
+            ]
+        ),
+    )
+    updates: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        voiceprint_review_workflow,
+        "update_voiceprint_sample_status",
+        lambda sample_id, status, _db: updates.append((sample_id, status)),
+    )
+
+    summary = voiceprint_review_workflow._apply_capture_quality_gate(
+        capture, store_dir=store_dir, model="test-model"
+    )
+
+    assert summary.reviewed_sample_count == 1
+    assert summary.excluded_sample_count == 1
+    assert updates == [("s1", "verified-active"), ("s1", "verified-quarantined")]
 
 
 def test_voiceprint_review_workflow_can_roll_back_pending_files(
@@ -44,6 +106,13 @@ def test_voiceprint_review_workflow_can_roll_back_pending_files(
     )
     monkeypatch.setattr(
         voiceprint_review_workflow, "embed_voiceprint_samples", _fake_embed
+    )
+    monkeypatch.setattr(
+        voiceprint_review_workflow,
+        "_apply_capture_quality_gate",
+        lambda *_args, **_kwargs: (
+            voiceprint_review_workflow.VoiceprintQualityGateSummary()
+        ),
     )
     monkeypatch.setattr(
         voiceprint_review_workflow, "evaluate_voiceprint_embedding", _fake_evaluation

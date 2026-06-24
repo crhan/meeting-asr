@@ -1687,5 +1687,58 @@ def test_set_sample_status_returns_valid_delete_index(
     body = resp.json()
     assert body["public_id"] == "s2"
     assert body["status"] == "quarantined"
+    assert body["identity_confirmed"] is False
+    assert body["matching_enabled"] is False
     # The bug returned 0 here; a 1-based delete key is never 0.
     assert body["index"] == 2
+
+
+def test_exclude_quality_samples_preserves_confirmed_identity(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bulk quality exclusion keeps identity confirmation while disabling matching."""
+    from types import SimpleNamespace
+
+    import app.web.routers.voiceprints as vp
+
+    monkeypatch.setattr(vp, "get_voiceprint_db_path", lambda _s: tmp_path / "vp.sqlite")
+    report = SimpleNamespace(
+        people=[
+            SimpleNamespace(
+                samples=[
+                    SimpleNamespace(
+                        sample_public_id="ok",
+                        status="active",
+                        label="ok",
+                    ),
+                    SimpleNamespace(
+                        sample_public_id="bad-active",
+                        status="active",
+                        label="critical",
+                    ),
+                    SimpleNamespace(
+                        sample_public_id="bad-verified",
+                        status="verified-active",
+                        label="warning",
+                    ),
+                ]
+            )
+        ]
+    )
+    monkeypatch.setattr(vp, "analyze_voiceprint_quality", lambda **_kwargs: report)
+    updates: dict[str, str] = {}
+
+    def fake_update(sample_public_id: str, status: str, _db):
+        updates[sample_public_id] = status
+        return _vp_sample_row(sample_public_id, "p1", status)
+
+    monkeypatch.setattr(vp, "update_voiceprint_sample_status", fake_update)
+
+    resp = client.post("/api/voiceprints/people/p1/quality/exclude", json={})
+
+    assert resp.status_code == 200
+    assert resp.json()["sample_public_ids"] == ["bad-active", "bad-verified"]
+    assert updates == {
+        "bad-active": "quarantined",
+        "bad-verified": "verified-quarantined",
+    }

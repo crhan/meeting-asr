@@ -233,6 +233,8 @@ export interface VoiceprintSample {
   end_time_ms: number;
   transcript_text: string;
   status: string;
+  identity_confirmed: boolean;
+  matching_enabled: boolean;
   clip_rel_path: string;
 }
 
@@ -253,9 +255,28 @@ export interface QualitySample {
   end_time_ms: number;
   transcript_text: string;
   status: string;
+  identity_confirmed: boolean;
+  matching_enabled: boolean;
   score: number | null;
   label: string;
   reason: string;
+}
+
+export interface QualityProject {
+  project_id: string;
+  sample_count: number;
+  matching_sample_count: number;
+  suspicious_count: number;
+  critical_count: number;
+  mean_score: number | null;
+  min_score: number | null;
+}
+
+export interface QualityNeighbor {
+  speaker_id: number;
+  public_id: string;
+  name: string;
+  score: number;
 }
 
 export interface QualityPerson {
@@ -268,6 +289,8 @@ export interface QualityPerson {
   stdev_score: number | null;
   suspicious_count: number;
   critical_count: number;
+  projects: QualityProject[];
+  closest_people: QualityNeighbor[];
   samples: QualitySample[];
 }
 
@@ -295,6 +318,22 @@ export const setSampleStatus = (samplePublicId: string, status: string) =>
   api<VoiceprintSample>(
     `/api/voiceprints/samples/${encodeURIComponent(samplePublicId)}/status`,
     { method: "PATCH", body: JSON.stringify({ status }) },
+  );
+
+export const excludeQualitySamples = (
+  ref: string,
+  samplePublicIds?: string[],
+  includeWarnings = true,
+) =>
+  api<{ updated_count: number; sample_public_ids: string[] }>(
+    `/api/voiceprints/people/${encodeURIComponent(ref)}/quality/exclude`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        sample_public_ids: samplePublicIds ?? null,
+        include_warnings: includeWarnings,
+      }),
+    },
   );
 
 // Delete by stable public id, not list position: a stale library pane could otherwise resolve
@@ -388,6 +427,10 @@ export interface CaptureResult {
   captured_count: number;
   embedded_count: number;
   skipped_count: number;
+  quality_gate_reviewed_count: number;
+  quality_gate_excluded_count: number;
+  quality_gate_warning_count: number;
+  quality_gate_critical_count: number;
   current_project_id: string;
   current_changes: ScoreChange[];
   current_improved: number;
@@ -400,6 +443,17 @@ export interface CaptureResult {
   historical_critical_count: number;
   historical_projects: HistoricalProject[];
 }
+
+export interface SpeakerRematch {
+  matched_count: number;
+  below_threshold_count: number;
+  total_count: number;
+}
+
+export const rematchSpeakerReview = (ref: string) =>
+  api<SpeakerRematch>(`/api/speakers/${encodeURIComponent(ref)}/rematch`, {
+    method: "POST",
+  });
 
 export interface JobStatus {
   id: string;

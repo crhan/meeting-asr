@@ -77,8 +77,10 @@ def test_voiceprint_quality_tui_save_refreshes_scores_in_place(tmp_path: Path) -
     asyncio.run(scenario())
 
 
-def test_voiceprint_quality_tui_marks_verified_active(tmp_path: Path) -> None:
-    """The quality TUI should mark human-confirmed outliers without excluding them."""
+def test_voiceprint_quality_tui_marks_verified_active_without_hiding_risk(
+    tmp_path: Path,
+) -> None:
+    """Identity confirmation should not hide a low-quality matching sample."""
     store_dir = _quality_store(tmp_path)
     report = analyze_voiceprint_quality(store_dir=store_dir, speaker="Alice")
 
@@ -95,7 +97,7 @@ def test_voiceprint_quality_tui_marks_verified_active(tmp_path: Path) -> None:
             await pilot.press("s")
             await pilot.pause()
 
-            assert app.report.suspicious_count == 0
+            assert app.report.suspicious_count == 1
             assert (
                 len(
                     list_voiceprint_embeddings(

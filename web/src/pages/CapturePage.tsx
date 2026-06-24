@@ -447,6 +447,13 @@ function CaptureResultModal(props: {
           {result.skipped_count > 0 && (
             <span className="subtle"> ({result.skipped_count} {tr("skipped", "跳过")})</span>
           )}
+          {result.quality_gate_excluded_count > 0 && (
+            <span className="subtle">
+              {" "}
+              · {tr("quality gate excluded", "质量闸门已排除")}{" "}
+              <strong>{result.quality_gate_excluded_count}</strong>
+            </span>
+          )}
         </div>
 
         <div className="result-section">

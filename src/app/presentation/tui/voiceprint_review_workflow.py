@@ -15,6 +15,15 @@ from textual.widgets import Static
 
 from app.presentation.tui.i18n import tr
 from app.voiceprint_embedding import VoiceprintEmbedSummary, embed_voiceprint_samples
+from app.voiceprint_quality import (
+    VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
+    analyze_voiceprint_quality,
+)
+from app.voiceprint_store import (
+    get_voiceprint_db_path,
+    list_voiceprint_samples,
+    update_voiceprint_sample_status,
+)
 from app.voiceprint_evaluation import (
     VoiceprintEvaluationSummary,
     evaluate_voiceprint_embedding,
@@ -72,6 +81,17 @@ class VoiceprintReviewWorkflowSummary:
     embedding: VoiceprintEmbedSummary
     evaluation: VoiceprintEvaluationSummary
     transaction: VoiceprintReviewTransaction
+    quality_gate: VoiceprintQualityGateSummary
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceprintQualityGateSummary:
+    """Automatic post-capture sample quality gate result."""
+
+    reviewed_sample_count: int = 0
+    excluded_sample_count: int = 0
+    warning_sample_count: int = 0
+    critical_sample_count: int = 0
 
 
 class VoiceprintReviewProcessingScreen(ModalScreen[None]):
@@ -191,6 +211,9 @@ def run_voiceprint_review_workflow(
             model=None,
             rebuild=False,
         )
+        quality_gate = _apply_capture_quality_gate(
+            capture, store_dir=store_dir or capture.store_dir, model=embedding.model
+        )
         evaluation = evaluate_voiceprint_embedding(
             project_dir,
             store_dir=store_dir or capture.store_dir,
@@ -200,7 +223,9 @@ def run_voiceprint_review_workflow(
     except Exception:
         transaction.rollback()
         raise
-    return VoiceprintReviewWorkflowSummary(capture, embedding, evaluation, transaction)
+    return VoiceprintReviewWorkflowSummary(
+        capture, embedding, evaluation, transaction, quality_gate
+    )
 
 
 def compact_workflow_line(summary: VoiceprintReviewWorkflowSummary) -> str:
@@ -208,10 +233,12 @@ def compact_workflow_line(summary: VoiceprintReviewWorkflowSummary) -> str:
     return tr(
         (
             f"[b]Result[/b]   captured {summary.capture.sample_count}, embedded {summary.embedding.embedded_count}, "
+            f"excluded {summary.quality_gate.excluded_sample_count}, "
             f"historical risks {summary.evaluation.historical_risk_count}"
         ),
         (
             f"[b]结果[/b]     采集 {summary.capture.sample_count}，embedding 新增 {summary.embedding.embedded_count}，"
+            f"自动排除 {summary.quality_gate.excluded_sample_count}，"
             f"历史风险 {summary.evaluation.historical_risk_count}"
         ),
     )
@@ -229,6 +256,65 @@ def compact_evaluation_line(summary: VoiceprintEvaluationSummary) -> str:
             f"历史风险 {summary.historical_risk_count}"
         ),
     )
+
+
+def _apply_capture_quality_gate(
+    capture: VoiceprintCaptureSummary, *, store_dir: Path, model: str
+) -> VoiceprintQualityGateSummary:
+    """Mark reviewed capture samples and exclude low-quality ones from matching."""
+    db_path = get_voiceprint_db_path(store_dir)
+    captured_ids = _captured_sample_public_ids(capture, db_path)
+    if not captured_ids:
+        return VoiceprintQualityGateSummary()
+
+    for sample_id in captured_ids:
+        update_voiceprint_sample_status(
+            sample_id, VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE, db_path
+        )
+
+    report = analyze_voiceprint_quality(store_dir=store_dir, model=model)
+    warning_count = 0
+    critical_count = 0
+    excluded: set[str] = set()
+    for person in report.people:
+        for sample in person.samples:
+            if sample.sample_public_id not in captured_ids:
+                continue
+            if sample.label == "critical":
+                critical_count += 1
+            elif sample.label == "warning":
+                warning_count += 1
+            else:
+                continue
+            update_voiceprint_sample_status(
+                sample.sample_public_id, "verified-quarantined", db_path
+            )
+            excluded.add(sample.sample_public_id)
+
+    return VoiceprintQualityGateSummary(
+        reviewed_sample_count=len(captured_ids),
+        excluded_sample_count=len(excluded),
+        warning_sample_count=warning_count,
+        critical_sample_count=critical_count,
+    )
+
+
+def _captured_sample_public_ids(
+    capture: VoiceprintCaptureSummary, db_path: Path
+) -> set[str]:
+    """Resolve stable sample ids for the clips written by this capture run."""
+    captured: set[str] = set()
+    for speaker in capture.speakers:
+        rel_paths = {clip.rel_path for clip in speaker.clips}
+        if not rel_paths:
+            continue
+        rows = list_voiceprint_samples(
+            speaker.person_public_id or speaker.name, db_path
+        )
+        for row in rows:
+            if row.clip_rel_path in rel_paths:
+                captured.add(row.public_id)
+    return captured
 
 
 def _workflow_summary_text(summary: VoiceprintReviewWorkflowSummary) -> str:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import statistics
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
@@ -14,11 +14,13 @@ from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddi
 VOICEPRINT_SAMPLE_STATUS_ACTIVE = "active"
 VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE = "verified-active"
 VOICEPRINT_SAMPLE_STATUS_QUARANTINED = "quarantined"
+VOICEPRINT_SAMPLE_STATUS_VERIFIED_QUARANTINED = "verified-quarantined"
 VOICEPRINT_SAMPLE_STATUS_REJECTED = "rejected"
 VOICEPRINT_SAMPLE_STATUSES = (
     VOICEPRINT_SAMPLE_STATUS_ACTIVE,
     VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
     VOICEPRINT_SAMPLE_STATUS_QUARANTINED,
+    VOICEPRINT_SAMPLE_STATUS_VERIFIED_QUARANTINED,
     VOICEPRINT_SAMPLE_STATUS_REJECTED,
 )
 VOICEPRINT_MATCHING_SAMPLE_STATUSES = frozenset(
@@ -53,6 +55,29 @@ class VoiceprintQualitySample:
 
 
 @dataclass(frozen=True, slots=True)
+class VoiceprintQualityProject:
+    """Quality diagnostics grouped by source project."""
+
+    project_id: str
+    sample_count: int
+    matching_sample_count: int
+    suspicious_count: int
+    critical_count: int
+    mean_score: float | None
+    min_score: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceprintQualityNeighbor:
+    """Closest other person by voiceprint centroid."""
+
+    speaker_id: int
+    speaker_public_id: str
+    speaker_name: str
+    score: float
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceprintQualityPerson:
     """Quality diagnostics for one voiceprint person."""
 
@@ -64,6 +89,8 @@ class VoiceprintQualityPerson:
     mean_score: float | None
     stdev_score: float | None
     samples: tuple[VoiceprintQualitySample, ...]
+    projects: tuple[VoiceprintQualityProject, ...] = ()
+    closest_people: tuple[VoiceprintQualityNeighbor, ...] = ()
 
     @property
     def suspicious_count(self) -> int:
@@ -71,7 +98,7 @@ class VoiceprintQualityPerson:
         return sum(
             1
             for item in self.samples
-            if item.status == VOICEPRINT_SAMPLE_STATUS_ACTIVE
+            if item.status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
             and item.label in {"warning", "critical"}
         )
 
@@ -81,7 +108,7 @@ class VoiceprintQualityPerson:
         return sum(
             1
             for item in self.samples
-            if item.status == VOICEPRINT_SAMPLE_STATUS_ACTIVE
+            if item.status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
             and item.label == "critical"
         )
 
@@ -141,12 +168,21 @@ def analyze_voiceprint_quality(
     db_path = get_voiceprint_db_path(store_dir)
     rows = list_voiceprint_embeddings(resolved_model, db_path, include_inactive=True)
     grouped = _group_rows(rows, speaker)
+    centroids = {
+        speaker_id: _matching_centroid(rows, min_cluster_size=min_cluster_size)
+        for speaker_id, rows in grouped.items()
+    }
     people = tuple(
-        _person_quality(
-            rows,
-            critical_score=critical_score,
-            warning_score=warning_score,
-            min_cluster_size=min_cluster_size,
+        replace(
+            _person_quality(
+                rows,
+                critical_score=critical_score,
+                warning_score=warning_score,
+                min_cluster_size=min_cluster_size,
+            ),
+            closest_people=_closest_people(
+                rows[0].speaker_id, centroids=centroids, grouped=grouped
+            ),
         )
         for rows in grouped.values()
     )
@@ -178,14 +214,8 @@ def _person_quality(
 ) -> VoiceprintQualityPerson:
     """Build quality diagnostics for one person."""
     first = rows[0]
-    active_rows = [
-        row for row in rows if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
-    ]
-    centroid = (
-        _centroid([row.vector for row in active_rows])
-        if len(active_rows) >= min_cluster_size
-        else None
-    )
+    active_rows = _matching_rows(rows)
+    centroid = _matching_centroid(rows, min_cluster_size=min_cluster_size)
     scores = (
         [_cosine(_normalize(row.vector), centroid) for row in active_rows]
         if centroid is not None
@@ -213,6 +243,7 @@ def _person_quality(
         mean_score,
         stdev_score,
         tuple(sorted(samples, key=_sample_sort_key)),
+        _project_quality(samples),
     )
 
 
@@ -227,27 +258,50 @@ def _sample_quality(
 ) -> VoiceprintQualitySample:
     """Score one sample against the active cluster centroid."""
     if row.sample_status not in VOICEPRINT_MATCHING_SAMPLE_STATUSES:
+        if row.sample_status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_QUARANTINED:
+            return _quality_sample(
+                row,
+                None,
+                "verified-disabled",
+                "identity confirmed; excluded from matching",
+            )
         return _quality_sample(
             row, None, row.sample_status, f"status={row.sample_status}"
         )
     if centroid is None:
         if row.sample_status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
-            return _quality_sample(row, None, "verified", "human verified active")
+            return _quality_sample(
+                row,
+                None,
+                "unknown",
+                "identity confirmed; need at least 3 matching samples",
+            )
         return _quality_sample(row, None, "unknown", "need at least 3 active samples")
     score = _cosine(_normalize(row.vector), centroid)
-    if row.sample_status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
-        return _quality_sample(row, score, "verified", "human verified active")
     statistical_limit = (
         None
         if mean_score is None or stdev_score is None
         else mean_score - 2 * stdev_score
     )
     if score < critical_score:
-        return _quality_sample(row, score, "critical", f"score<{critical_score:.2f}")
+        reason = f"score<{critical_score:.2f}"
+        if row.sample_status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
+            reason = f"identity confirmed; {reason}"
+        return _quality_sample(row, score, "critical", reason)
     if statistical_limit is not None and score < statistical_limit:
-        return _quality_sample(row, score, "critical", "statistical outlier")
+        reason = "statistical outlier"
+        if row.sample_status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
+            reason = f"identity confirmed; {reason}"
+        return _quality_sample(row, score, "critical", reason)
     if score < warning_score:
-        return _quality_sample(row, score, "warning", f"score<{warning_score:.2f}")
+        reason = f"score<{warning_score:.2f}"
+        if row.sample_status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
+            reason = f"identity confirmed; {reason}"
+        return _quality_sample(row, score, "warning", reason)
+    if row.sample_status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
+        return _quality_sample(
+            row, score, "ok", "identity confirmed; cluster-consistent"
+        )
     return _quality_sample(row, score, "ok", "cluster-consistent")
 
 
@@ -276,6 +330,79 @@ def _quality_sample(
 def _centroid(vectors: list[list[float]]) -> list[float]:
     """Return normalized mean vector."""
     return _normalize([sum(values) / len(vectors) for values in zip(*vectors)])
+
+
+def _matching_rows(rows: list[object]) -> list[object]:
+    """Return samples that participate in voiceprint matching."""
+    return [
+        row for row in rows if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
+    ]
+
+
+def _matching_centroid(
+    rows: list[object], *, min_cluster_size: int
+) -> list[float] | None:
+    """Return a person's matching centroid when enough samples exist."""
+    active_rows = _matching_rows(rows)
+    if len(active_rows) < min_cluster_size:
+        return None
+    return _centroid([row.vector for row in active_rows])
+
+
+def _project_quality(
+    samples: tuple[VoiceprintQualitySample, ...],
+) -> tuple[VoiceprintQualityProject, ...]:
+    """Aggregate sample diagnostics by source project."""
+    grouped: dict[str, list[VoiceprintQualitySample]] = defaultdict(list)
+    for sample in samples:
+        grouped[sample.project_id].append(sample)
+    projects: list[VoiceprintQualityProject] = []
+    for project_id, rows in grouped.items():
+        matching = [
+            row for row in rows if row.status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
+        ]
+        scores = [row.score for row in matching if row.score is not None]
+        projects.append(
+            VoiceprintQualityProject(
+                project_id=project_id,
+                sample_count=len(rows),
+                matching_sample_count=len(matching),
+                suspicious_count=sum(
+                    1 for row in matching if row.label in {"warning", "critical"}
+                ),
+                critical_count=sum(1 for row in matching if row.label == "critical"),
+                mean_score=statistics.mean(scores) if scores else None,
+                min_score=min(scores) if scores else None,
+            )
+        )
+    return tuple(sorted(projects, key=_project_sort_key))
+
+
+def _closest_people(
+    speaker_id: int,
+    *,
+    centroids: dict[int, list[float] | None],
+    grouped: dict[int, list[object]],
+    limit: int = 3,
+) -> tuple[VoiceprintQualityNeighbor, ...]:
+    """Return closest other matching centroids."""
+    centroid = centroids.get(speaker_id)
+    if centroid is None:
+        return ()
+    scored: list[VoiceprintQualityNeighbor] = []
+    for other_id, other_centroid in centroids.items():
+        if other_id == speaker_id or other_centroid is None:
+            continue
+        first = grouped[other_id][0]
+        scored.append(
+            VoiceprintQualityNeighbor(
+                speaker_id=first.speaker_id,
+                speaker_public_id=first.speaker_public_id,
+                speaker_name=first.speaker_name,
+                score=_cosine(centroid, other_centroid),
+            )
+        )
+    return tuple(sorted(scored, key=lambda item: item.score, reverse=True)[:limit])
 
 
 def _normalize(vector: list[float]) -> list[float]:
@@ -307,3 +434,14 @@ def _sample_sort_key(sample: VoiceprintQualitySample) -> tuple[int, float, str]:
     )
     score = sample.score if sample.score is not None else 999.0
     return (severity, score, sample.sample_public_id)
+
+
+def _project_sort_key(project: VoiceprintQualityProject) -> tuple[int, int, float, str]:
+    """Sort projects by actionable quality risk."""
+    min_score = project.min_score if project.min_score is not None else 999.0
+    return (
+        -project.critical_count,
+        -project.suspicious_count,
+        min_score,
+        project.project_id,
+    )

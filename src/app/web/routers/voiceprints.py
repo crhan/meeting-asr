@@ -27,7 +27,11 @@ from app.voiceprint_people import (
     merge_voiceprint_people,
     rename_voiceprint_person,
 )
-from app.voiceprint_quality import analyze_voiceprint_quality
+from app.voiceprint_quality import (
+    VOICEPRINT_MATCHING_SAMPLE_STATUSES,
+    VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
+    analyze_voiceprint_quality,
+)
 from app.voiceprint_store import (
     delete_voiceprint_sample,
     delete_voiceprint_speaker,
@@ -53,12 +57,16 @@ from app.web.schemas import (
     CaptureRunIn,
     CaptureSpeakerOut,
     CreatePersonIn,
+    ExcludeQualitySamplesIn,
+    ExcludeQualitySamplesOut,
     HistoricalProjectOut,
     JobRef,
     PendingCaptureOut,
     ScoreChangeOut,
     MergePeopleIn,
     QualityPersonOut,
+    QualityNeighborOut,
+    QualityProjectOut,
     QualityReportOut,
     QualitySampleOut,
     RenamePersonIn,
@@ -105,8 +113,27 @@ def _sample_out(index: int, row: VoiceprintSampleRow) -> VoiceprintSampleOut:
         end_time_ms=row.source_end_time_ms,
         transcript_text=row.transcript_text,
         status=row.sample_status,
+        identity_confirmed=_identity_confirmed(row.sample_status),
+        matching_enabled=_matching_enabled(row.sample_status),
         clip_rel_path=row.clip_rel_path,
     )
+
+
+def _identity_confirmed(status: str) -> bool:
+    """Return whether a sample's speaker identity was explicitly confirmed."""
+    return status in {"verified-active", "verified-quarantined"}
+
+
+def _matching_enabled(status: str) -> bool:
+    """Return whether a sample participates in voiceprint matching."""
+    return status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
+
+
+def _excluded_status_for(status: str) -> str:
+    """Preserve identity confirmation while removing a sample from matching."""
+    if status == VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE:
+        return "verified-quarantined"
+    return "quarantined"
 
 
 async def _run(locks: LockRegistry, fn):
@@ -200,6 +227,27 @@ def get_quality(settings: WebSettings = Depends(get_settings)) -> QualityReportO
             stdev_score=p.stdev_score,
             suspicious_count=p.suspicious_count,
             critical_count=p.critical_count,
+            projects=[
+                QualityProjectOut(
+                    project_id=project.project_id,
+                    sample_count=project.sample_count,
+                    matching_sample_count=project.matching_sample_count,
+                    suspicious_count=project.suspicious_count,
+                    critical_count=project.critical_count,
+                    mean_score=project.mean_score,
+                    min_score=project.min_score,
+                )
+                for project in p.projects
+            ],
+            closest_people=[
+                QualityNeighborOut(
+                    speaker_id=neighbor.speaker_id,
+                    public_id=neighbor.speaker_public_id,
+                    name=neighbor.speaker_name,
+                    score=neighbor.score,
+                )
+                for neighbor in p.closest_people
+            ],
             samples=[
                 QualitySampleOut(
                     sample_public_id=s.sample_public_id,
@@ -208,6 +256,8 @@ def get_quality(settings: WebSettings = Depends(get_settings)) -> QualityReportO
                     end_time_ms=s.source_end_time_ms,
                     transcript_text=s.transcript_text,
                     status=s.status,
+                    identity_confirmed=_identity_confirmed(s.status),
+                    matching_enabled=_matching_enabled(s.status),
                     score=s.score,
                     label=s.label,
                     reason=s.reason,
@@ -256,6 +306,49 @@ async def set_sample_status(
 
     index, row = await _run(locks, _update_and_index)
     return _sample_out(index, row)
+
+
+@router.post(
+    "/people/{ref}/quality/exclude",
+    response_model=ExcludeQualitySamplesOut,
+)
+async def exclude_quality_samples(
+    ref: str,
+    payload: ExcludeQualitySamplesIn,
+    settings: WebSettings = Depends(get_settings),
+    locks: LockRegistry = Depends(get_locks),
+) -> ExcludeQualitySamplesOut:
+    """Bulk-exclude low-quality samples for one person from future matching."""
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
+
+    def _exclude() -> list[str]:
+        report = analyze_voiceprint_quality(
+            store_dir=settings.voiceprint_store_dir, speaker=ref
+        )
+        if not report.people:
+            raise FileNotFoundError(f"Voiceprint person not found: {ref}")
+        requested = set(payload.sample_public_ids or [])
+        labels = {"critical", "warning"} if payload.include_warnings else {"critical"}
+        updates: list[tuple[str, str]] = []
+        for person in report.people:
+            for sample in person.samples:
+                if requested and sample.sample_public_id not in requested:
+                    continue
+                if sample.status not in VOICEPRINT_MATCHING_SAMPLE_STATUSES:
+                    continue
+                if sample.label not in labels:
+                    continue
+                updates.append(
+                    (sample.sample_public_id, _excluded_status_for(sample.status))
+                )
+        for sample_public_id, status in updates:
+            update_voiceprint_sample_status(sample_public_id, status, db_path)
+        return [sample_public_id for sample_public_id, _status in updates]
+
+    sample_ids = await _run(locks, _exclude)
+    return ExcludeQualitySamplesOut(
+        updated_count=len(sample_ids), sample_public_ids=sample_ids
+    )
 
 
 @router.delete("/people/{ref}/samples/{sample_public_id}")
@@ -497,7 +590,9 @@ def capture_run(
         )
         # Guard against a plan that drifted between the browser's plan view and now: refuse
         # rather than embed the wrong audio under a stale index-based rel_path.
-        selected_rel_paths = _validate_capture_selection(planned, payload.selected_clips)
+        selected_rel_paths = _validate_capture_selection(
+            planned, payload.selected_clips
+        )
         txn_id, summary = REGISTRY.run(
             project_dir=project_dir,
             planned=planned,
@@ -511,6 +606,10 @@ def capture_run(
             captured_count=summary.capture.sample_count,
             embedded_count=summary.embedding.embedded_count,
             skipped_count=summary.embedding.skipped_count,
+            quality_gate_reviewed_count=summary.quality_gate.reviewed_sample_count,
+            quality_gate_excluded_count=summary.quality_gate.excluded_sample_count,
+            quality_gate_warning_count=summary.quality_gate.warning_sample_count,
+            quality_gate_critical_count=summary.quality_gate.critical_sample_count,
             current_project_id=current.project_id,
             current_changes=[_change_out(c) for c in current.changes],
             current_improved=current.improved_count,
