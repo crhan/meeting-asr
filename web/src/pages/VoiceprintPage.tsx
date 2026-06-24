@@ -250,6 +250,14 @@ function QualityTab() {
     mutationFn: ({ id, status }: { id: string; status: string }) => setSampleStatus(id, status),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vp-quality"] }),
   });
+  const deleteMut = useMutation({
+    mutationFn: ({ personRef, samplePublicId }: { personRef: string; samplePublicId: string }) =>
+      deleteSample(personRef, samplePublicId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vp-quality"] });
+      queryClient.invalidateQueries({ queryKey: ["vp-library"] });
+    },
+  });
 
   if (isLoading) return <div className="placeholder">{tr("Analyzing…", "分析中…")}</div>;
   if (error) return <div className="error-box">{(error as Error).message}</div>;
@@ -295,7 +303,12 @@ function QualityTab() {
         </div>
         <div className="vp-main">
           {sel ? (
-            <QualitySamples person={sel} audio={audio} onSetStatus={(id, status) => statusMut.mutate({ id, status })} />
+            <QualitySamples
+              person={sel}
+              audio={audio}
+              onSetStatus={(id, status) => statusMut.mutate({ id, status })}
+              onDelete={(id) => deleteMut.mutate({ personRef: sel.public_id, samplePublicId: id })}
+            />
           ) : (
             <div className="placeholder">{tr("No people.", "暂无人物。")}</div>
           )}
@@ -309,8 +322,9 @@ function QualitySamples(props: {
   person: QualityPerson;
   audio: ReturnType<typeof useClipAudio>;
   onSetStatus: (samplePublicId: string, status: string) => void;
+  onDelete: (samplePublicId: string) => void;
 }) {
-  const { person, audio, onSetStatus } = props;
+  const { person, audio, onSetStatus, onDelete } = props;
   return (
     <div>
       <div className="transcript-head">
@@ -349,6 +363,16 @@ function QualitySamples(props: {
                   </button>
                 </div>
               </div>
+              <button
+                className="reassign-btn"
+                title={tr("Delete sample", "删除样本")}
+                onClick={() => {
+                  if (window.confirm(tr("Delete this sample?", "删除这条样本？")))
+                    onDelete(s.sample_public_id);
+                }}
+              >
+                🗑
+              </button>
             </div>
           );
         })}
