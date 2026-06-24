@@ -402,21 +402,25 @@ tr.clickable {
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 6px;
-  width: 30px;
   height: 30px;
   cursor: pointer;
   flex: none;
   font-size: 12px;
+}
+.play-btn {
+  width: 30px;
 }
 .play-btn:hover,
 .reassign-btn:hover {
   border-color: var(--accent);
 }
 .reassign-btn {
-  opacity: 0;
-}
-.segment:hover .reassign-btn {
-  opacity: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 9px;
+  color: var(--text-muted);
 }
 .segment-body {
   flex: 1;

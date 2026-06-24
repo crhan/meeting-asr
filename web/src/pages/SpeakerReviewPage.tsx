@@ -64,6 +64,49 @@ function statusLabel(status: string): string {
   return pair ? tr(pair[0], pair[1]) : status;
 }
 
+const IDENTITY_SCORE_STATUS_LABEL: Record<string, [string, string]> = {
+  "identity-ok": ["ok", "正常"],
+  "identity-conflict": ["possible wrong identity", "疑似错人"],
+  "identity-ambiguous": ["ambiguous identity", "身份接近"],
+  "identity-weak": ["weak evidence", "弱证据"],
+  "low-info": ["too short", "过短"],
+  "no-assignment": ["not assigned", "未绑定"],
+};
+
+function identityStatusLabel(status: string | null): string {
+  if (!status) return tr("not available", "无状态");
+  const pair = IDENTITY_SCORE_STATUS_LABEL[status];
+  return pair ? tr(pair[0], pair[1]) : status;
+}
+
+function identityScoreClass(score: number, status: string | null = null): "ok" | "mid" | "low" {
+  if (status === "identity-conflict") return "low";
+  if (status && status !== "identity-ok") return "mid";
+  if (score < 0.45) return "low";
+  if (score < 0.6) return "mid";
+  return "ok";
+}
+
+function identityScoreReason(seg: SpeakerSegment): string | null {
+  if (seg.score == null) return null;
+  if (seg.score_status && seg.score_status !== "identity-ok") {
+    return identityStatusLabel(seg.score_status);
+  }
+  if (seg.score < 0.45) return tr("below 0.45", "低于0.45");
+  if (seg.score < 0.6) return tr("below 0.60", "低于0.60");
+  return null;
+}
+
+function identityScoreTitle(seg: SpeakerSegment): string {
+  const value = seg.score?.toFixed(2) ?? "—";
+  const status = identityStatusLabel(seg.score_status);
+  const reason = identityScoreReason(seg) ?? tr("none", "无");
+  return tr(
+    `Per-sentence voiceprint identity score: similarity between this sentence and the speaker's assigned identity. Score ${value}; status ${status}; review reason ${reason}. Low, yellow, or red scores need review.`,
+    `逐句声纹身份分数：这句话与当前 speaker 已绑定身份的相似度。分数 ${value}；状态 ${status}；疑点原因 ${reason}。低分、黄色或红色需要复核。`,
+  );
+}
+
 export function SpeakerReviewPage() {
   const { ref = "" } = useParams();
   const navigate = useNavigate();
@@ -467,9 +510,19 @@ function SpeakerSidebar(props: {
               {s.crosstalk && <span className="badge crosstalk">{tr("crosstalk", "串场")}</span>}
             </div>
             {s.match?.best_name && (
-              <div className="speaker-card-match subtle mono">
-                ~ {s.match.best_name}{" "}
-                {s.match.best_score != null && s.match.best_score.toFixed(2)}
+              <div
+                className="speaker-card-match subtle mono"
+                title={tr(
+                  "Aggregate voiceprint match for this speaker track.",
+                  "当前 speaker 整体声纹匹配分数。",
+                )}
+              >
+                {tr("match", "匹配")} {s.match.best_name}{" "}
+                {s.match.best_score != null && (
+                  <span className={`score-badge ${identityScoreClass(s.match.best_score)}`}>
+                    {s.match.best_score.toFixed(2)}
+                  </span>
+                )}
               </div>
             )}
           </button>
@@ -577,6 +630,8 @@ function TranscriptPane(props: {
           const key = segKey(seg);
           const reassigned = reassignKeys.has(key);
           const playing = playingKey === key;
+          const scoreTitle = seg.score != null ? identityScoreTitle(seg) : undefined;
+          const scoreReason = identityScoreReason(seg);
           return (
             <div key={key} className={`segment ${playing ? "playing" : ""} ${reassigned ? "reassigned" : ""}`}>
               <button className="play-btn" onClick={() => play(seg)} aria-label="play">
@@ -586,8 +641,13 @@ function TranscriptPane(props: {
                 <div className="segment-meta subtle mono">
                   {fmtMs(seg.begin_time_ms)}
                   {seg.score != null && (
-                    <span className={`score-badge ${seg.score < 0.45 ? "low" : seg.score < 0.6 ? "mid" : "ok"}`}>
-                      {seg.score.toFixed(2)}
+                    <span
+                      className={`score-badge ${identityScoreClass(seg.score, seg.score_status)}`}
+                      title={scoreTitle}
+                      aria-label={scoreTitle}
+                    >
+                      {tr("id", "身份")} {seg.score.toFixed(2)}
+                      {scoreReason ? ` ${scoreReason}` : ""}
                     </span>
                   )}
                   {reassigned && <span className="badge reassigned-badge">{tr("reassigned", "已重指派")}</span>}
@@ -599,8 +659,15 @@ function TranscriptPane(props: {
                   </div>
                 )}
               </div>
-              <button className="reassign-btn" onClick={() => props.onReassign(seg)} title={tr("Reassign", "重指派")}>
-                ⇄
+              <button
+                className="reassign-btn"
+                onClick={() => props.onReassign(seg)}
+                title={tr(
+                  "Change this sentence's speaker assignment.",
+                  "修改这句话的 speaker 归属。",
+                )}
+              >
+                ⇄ {tr("Owner", "归属")}
               </button>
             </div>
           );
