@@ -203,56 +203,66 @@ export function VoiceprintPage() {
       </div>
 
       <div className="vp-controls">
-        <input
-          className="search vp-search"
-          placeholder={tr("Search people…", "搜索人物…")}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <div className="vp-control-group">
-          {(["quality", "name", "samples"] as const).map((mode) => (
-            <button
-              key={mode}
-              className={`chip ${sortMode === mode ? "on" : ""}`}
-              onClick={() => setSortMode(mode)}
-            >
-              {mode === "quality"
-                ? tr("Quality first", "质量问题")
-                : mode === "name"
-                  ? tr("Name", "姓名")
-                  : tr("Samples", "样本数")}
-            </button>
-          ))}
+        <div className="vp-control-block vp-control-search">
+          <input
+            className="search vp-search"
+            placeholder={tr("Search people…", "搜索人物…")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
-        <div className="vp-control-group">
-          {(["all", "issues", "disabled", "trusted", "unembedded"] as const).map((filter) => (
-            <button
-              key={filter}
-              className={`chip ${sampleFilter === filter ? "on" : ""}`}
-              onClick={() => setSampleFilter(filter)}
-            >
-              {filter === "all"
-                ? tr("All", "全部")
-                : filter === "issues"
-                  ? tr("Issues", "有问题")
-                  : filter === "disabled"
-                    ? tr("Disabled", "已停用")
-                    : filter === "trusted"
-                      ? tr("Trusted", "可信")
-                      : tr("Unembedded", "未嵌入")}
-            </button>
-          ))}
+        <div className="vp-control-block">
+          <div className="vp-control-label">{tr("Sort", "排序")}</div>
+          <div className="vp-control-group">
+            {(["quality", "name", "samples"] as const).map((mode) => (
+              <button
+                key={mode}
+                className={`chip ${sortMode === mode ? "on" : ""}`}
+                onClick={() => setSortMode(mode)}
+              >
+                {mode === "quality"
+                  ? tr("Quality first", "质量问题")
+                  : mode === "name"
+                    ? tr("Name", "姓名")
+                    : tr("Samples", "样本数")}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="vp-control-block">
+          <div className="vp-control-label">{tr("Samples", "样本筛选")}</div>
+          <div className="vp-control-group">
+            {(["all", "issues", "disabled", "trusted", "unembedded"] as const).map((filter) => (
+              <button
+                key={filter}
+                className={`chip ${sampleFilter === filter ? "on" : ""}`}
+                onClick={() => setSampleFilter(filter)}
+              >
+                {filter === "all"
+                  ? tr("All", "全部")
+                  : filter === "issues"
+                    ? tr("Issues", "有问题")
+                    : filter === "disabled"
+                      ? tr("Disabled", "已停用")
+                      : filter === "trusted"
+                        ? tr("Trusted", "可信")
+                        : tr("Unembedded", "未嵌入")}
+              </button>
+            ))}
+          </div>
         </div>
         {editMode && (
-          <button
-            className="btn"
-            onClick={() => {
-              const name = window.prompt(tr("New person name:", "新人物姓名："));
-              if (name?.trim()) createMut.mutate(name.trim());
-            }}
-          >
-            + {tr("New person", "新建人物")}
-          </button>
+          <div className="vp-control-block vp-control-edit">
+            <button
+              className="btn"
+              onClick={() => {
+                const name = window.prompt(tr("New person name:", "新人物姓名："));
+                if (name?.trim()) createMut.mutate(name.trim());
+              }}
+            >
+              + {tr("New person", "新建人物")}
+            </button>
+          </div>
         )}
       </div>
 
