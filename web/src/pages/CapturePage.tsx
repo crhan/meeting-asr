@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -107,12 +107,36 @@ export function CapturePage() {
   }, [jobId]);
 
   const totalSelected = selected.size;
+  const allClipRefs = useMemo(
+    () => (data?.speakers ?? []).flatMap((sp) => sp.clips.map((c) => c.rel_path)),
+    [data],
+  );
+  const recommendedClipRefs = useMemo(
+    () =>
+      (data?.speakers ?? []).flatMap((sp) =>
+        sp.clips.filter((c) => c.recommended).map((c) => c.rel_path),
+      ),
+    [data],
+  );
 
   const toggle = (relPath: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(relPath)) next.delete(relPath);
       else next.add(relPath);
+      return next;
+    });
+
+  const selectOnlyRecommended = () => setSelected(new Set(recommendedClipRefs));
+  const selectAll = () => setSelected(new Set(allClipRefs));
+  const clearAll = () => setSelected(new Set());
+  const setSpeakerSelected = (relPaths: string[], include: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const rel of relPaths) {
+        if (include) next.add(rel);
+        else next.delete(rel);
+      }
       return next;
     });
 
@@ -165,7 +189,8 @@ export function CapturePage() {
           <h1>{tr("Capture voiceprints", "采集声纹")}</h1>
           <div className="subtle mono">
             {ref} · {data.speakers.length} {tr("speakers", "发言人")} ·{" "}
-            {totalSelected} {tr("clips selected", "已选片段")}
+            {totalSelected}/{data.sample_count} {tr("clips selected", "已选片段")} ·{" "}
+            {tr("target", "目标")} {data.target_sample_count}
           </div>
         </div>
         <div className="row gap">
@@ -182,52 +207,107 @@ export function CapturePage() {
 
       {runError && <div className="error-box" style={{ marginBottom: 12 }}>{runError}</div>}
 
-      {data.speakers.map((sp) => (
-        <div key={sp.speaker_id} className="capture-speaker">
-          <div className="capture-speaker-head">
-            <strong>{sp.name}</strong>
-            <span className="subtle">
-              {" "}
-              · {sp.clips.filter((c) => selected.has(c.rel_path)).length}/{sp.clips.length}{" "}
-              {tr("selected", "已选")}
-            </span>
-          </div>
-          <div className="capture-clips">
-            {sp.clips.map((c) => {
-              const key = `cap:${c.rel_path}`;
-              const playing = audio.playingKey === key;
-              const on = selected.has(c.rel_path);
-              return (
-                <div key={c.rel_path} className={`capture-clip ${on ? "on" : ""}`}>
-                  <input type="checkbox" checked={on} onChange={() => toggle(c.rel_path)} />
-                  <button
-                    className="play-btn"
-                    onClick={() =>
-                      audio.toggle(
-                        key,
-                        // Plan clips are extracted under the project; play via the project
-                        // clip endpoint by time range. clipUrl carries the auth token so
-                        // playback works on token-protected binds too.
-                        clipUrl(ref, c.begin_time_ms, c.end_time_ms),
-                      )
-                    }
-                  >
-                    {playing ? "⏸" : "▶"}
-                  </button>
-                  <div className="segment-body">
-                    <div className="segment-meta subtle mono">
-                      {fmtMs(c.begin_time_ms)} · {c.duration_seconds.toFixed(1)}s ·{" "}
-                      <span className="score-badge ok">sel {c.selection_score.toFixed(2)}</span>
-                      {!c.recommended && <span className="badge">{tr("not recommended", "不推荐")}</span>}
+      <div className="capture-toolbar">
+        <button className="chip" onClick={selectOnlyRecommended}>
+          {tr("Recommended only", "只选推荐")}
+        </button>
+        <button className="chip" onClick={selectAll}>
+          {tr("Select all", "全选")}
+        </button>
+        <button className="chip" onClick={clearAll}>
+          {tr("Clear", "清空")}
+        </button>
+        <span className="subtle mono">
+          {tr("Recommended", "推荐")} {recommendedClipRefs.length}/{allClipRefs.length}
+        </span>
+      </div>
+
+      {data.speakers.map((sp) => {
+        const speakerRefs = sp.clips.map((c) => c.rel_path);
+        const speakerSelected = sp.clips.filter((c) => selected.has(c.rel_path)).length;
+        const speakerAllSelected = speakerSelected === sp.clips.length && sp.clips.length > 0;
+        return (
+          <div key={sp.speaker_id} className="capture-speaker">
+            <div className="capture-speaker-head">
+              <div>
+                <strong>{sp.name}</strong>
+                <span className="subtle">
+                  {" "}
+                  · {speakerSelected}/{sp.clips.length} {tr("selected", "已选")}
+                </span>
+                {sp.person_public_id && (
+                  <span className="subtle mono"> · {sp.person_public_id}</span>
+                )}
+              </div>
+              <button
+                className="chip"
+                onClick={() => setSpeakerSelected(speakerRefs, !speakerAllSelected)}
+              >
+                {speakerAllSelected
+                  ? tr("Exclude speaker", "排除该 speaker")
+                  : tr("Include speaker", "选中该 speaker")}
+              </button>
+            </div>
+            <div className="capture-clips">
+              {sp.clips.map((c) => {
+                const key = `cap:${c.rel_path}`;
+                const playing = audio.playingKey === key;
+                const on = selected.has(c.rel_path);
+                const audioScore = c.audio_score == null ? null : c.audio_score.toFixed(2);
+                return (
+                  <div key={c.rel_path} className={`capture-clip ${on ? "on" : ""}`}>
+                    <input type="checkbox" checked={on} onChange={() => toggle(c.rel_path)} />
+                    <button
+                      className="play-btn"
+                      onClick={() =>
+                        audio.toggle(
+                          key,
+                          // Plan clips are extracted under the project; play via the project
+                          // clip endpoint by time range. clipUrl carries the auth token so
+                          // playback works on token-protected binds too.
+                          clipUrl(ref, c.begin_time_ms, c.end_time_ms),
+                        )
+                      }
+                    >
+                      {playing ? "⏸" : "▶"}
+                    </button>
+                    <div className="segment-body">
+                      <div className="segment-meta subtle mono">
+                        {fmtMs(c.begin_time_ms)}-{fmtMs(c.end_time_ms)} ·{" "}
+                        {c.duration_seconds.toFixed(1)}s ·{" "}
+                        <span className="score-badge ok" title={c.selection_reason}>
+                          {tr("selection", "选择")} {c.selection_score.toFixed(2)}
+                        </span>
+                        {audioScore && (
+                          <span className="score-badge mid" title={c.audio_reason}>
+                            {tr("audio", "音频")} {audioScore}
+                          </span>
+                        )}
+                        <span className={`badge ${c.recommended ? "status-pill active" : ""}`}>
+                          {c.recommended ? tr("recommended", "推荐") : tr("candidate", "候选")}
+                        </span>
+                      </div>
+                      <div className="segment-text">{c.text}</div>
+                      <div className="subtle capture-reason">
+                        {c.selection_reason}
+                        {c.audio_reason && c.audio_reason !== "-" ? ` · ${c.audio_reason}` : ""}
+                      </div>
+                      {playing && (
+                        <div className="seg-progress">
+                          <div
+                            className="seg-progress-bar"
+                            style={{ width: `${audio.progress * 100}%` }}
+                          />
+                        </div>
+                      )}
                     </div>
-                    <div className="segment-text">{c.text}</div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       {result && (
         <CaptureResultModal
