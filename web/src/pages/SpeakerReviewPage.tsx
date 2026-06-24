@@ -101,11 +101,11 @@ function statusLabel(status: string): string {
 
 const IDENTITY_SCORE_STATUS_LABEL: Record<string, [string, string]> = {
   "identity-ok": ["ok", "正常"],
-  "identity-conflict": ["possible wrong identity", "疑似错人"],
-  "identity-ambiguous": ["ambiguous identity", "身份接近"],
-  "identity-weak": ["weak evidence", "弱证据"],
+  "identity-conflict": ["closer to another person", "更像他人"],
+  "identity-ambiguous": ["close to another person", "候选接近"],
+  "identity-weak": ["weak voiceprint evidence", "声纹偏弱"],
   "low-info": ["too short", "过短"],
-  "no-assignment": ["not assigned", "未绑定"],
+  "no-assignment": ["identity not assigned", "未绑定身份"],
 };
 
 function identityStatusLabel(status: string | null): string {
@@ -143,21 +143,21 @@ function identityDiagnosticEvidence(seg: SpeakerSegment): string | null {
   const margin = fmtScore(seg.score_margin);
   if (seg.score_status === "identity-conflict" && bestName) {
     return tr(
-      `Current identity score ${assigned}; better match ${bestName} ${fmtScore(bestScore)}; margin ${margin}.`,
-      `当前身份分 ${assigned}；更像 ${bestName} ${fmtScore(bestScore)}；差值 ${margin}。`,
+      `Voiceprint similarity to current identity ${assigned}; closer to ${bestName} ${fmtScore(bestScore)}; margin ${margin}.`,
+      `与当前身份的声纹相似度 ${assigned}；更像 ${bestName} ${fmtScore(bestScore)}；差值 ${margin}。`,
     );
   }
   if (seg.score_status === "identity-ambiguous") {
     const candidate = bestName ? tr(` Candidate ${bestName} ${fmtScore(bestScore)}.`, ` 候选 ${bestName} ${fmtScore(bestScore)}。`) : "";
     return tr(
-      `Current identity score ${assigned}; scores are close; margin ${margin}.${candidate}`,
-      `当前身份分 ${assigned}；候选分数接近；差值 ${margin}。${candidate}`,
+      `Voiceprint similarity to current identity ${assigned}; candidate scores are close; margin ${margin}.${candidate}`,
+      `与当前身份的声纹相似度 ${assigned}；候选分数接近；差值 ${margin}。${candidate}`,
     );
   }
   if (seg.score_status === "identity-weak") {
     return tr(
-      `Current identity score ${assigned}; voiceprint evidence is weak.`,
-      `当前身份分 ${assigned}；声纹证据偏弱。`,
+      `Voiceprint similarity to current identity ${assigned}; evidence is weak.`,
+      `与当前身份的声纹相似度 ${assigned}；证据偏弱。`,
     );
   }
   if (seg.score_status === "low-info") {
@@ -174,8 +174,8 @@ function identityDiagnosticEvidence(seg: SpeakerSegment): string | null {
   }
   if (seg.score != null && seg.score < 0.6) {
     return tr(
-      `Current identity score ${assigned}; below the normal review threshold.`,
-      `当前身份分 ${assigned}；低于正常复核阈值。`,
+      `Voiceprint similarity to current identity ${assigned}; below the normal review threshold.`,
+      `与当前身份的声纹相似度 ${assigned}；低于正常复核阈值。`,
     );
   }
   return null;
@@ -228,8 +228,8 @@ function identityScoreTitle(seg: SpeakerSegment): string {
   const evidence = identityDiagnosticEvidence(seg) ?? "";
   const suggestion = identityDiagnosticSuggestion(seg) ?? "";
   return tr(
-    `Per-sentence voiceprint identity score: similarity between this sentence and the speaker's assigned identity. Score ${value}; status ${status}; review reason ${reason}. ${evidence} ${suggestion}`,
-    `逐句声纹身份分数：这句话与当前 speaker 已绑定身份的相似度。分数 ${value}；状态 ${status}；疑点原因 ${reason}。${evidence} ${suggestion}`,
+    `Voiceprint match score: cosine similarity between this sentence's audio and the current speaker's assigned person in the voiceprint library. It is not a probability; higher means more similar. Score ${value}; status ${status}; review reason ${reason}. ${evidence} ${suggestion}`,
+    `声纹匹配分：这句话的音频和当前 speaker 已绑定人物在声纹库里的相似度（cosine similarity）。它不是概率；越高表示越像。分数 ${value}；状态 ${status}；疑点原因 ${reason}。${evidence} ${suggestion}`,
   );
 }
 
@@ -1093,7 +1093,7 @@ function TranscriptPane(props: {
                       title={scoreTitle}
                       aria-label={scoreTitle}
                     >
-                      {tr("id", "身份")} {seg.score.toFixed(2)}
+                      {tr("voice", "声纹匹配")} {seg.score.toFixed(2)}
                       {scoreReason ? ` ${scoreReason}` : ""}
                     </span>
                   )}
