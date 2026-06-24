@@ -150,6 +150,8 @@ class CorrectionChangeOut(BaseModel):
 
     index: int
     sentence_id: int | None
+    begin_time_ms: int | None = None
+    end_time_ms: int | None = None
     speaker_name: str
     original_text: str
     corrected_text: str

@@ -510,6 +510,8 @@ export const mergeApply = (projectRefs: string[], outDir: string) =>
 export interface CorrectionChange {
   index: number;
   sentence_id: number | null;
+  begin_time_ms: number | null;
+  end_time_ms: number | null;
   speaker_name: string;
   original_text: string;
   corrected_text: string;

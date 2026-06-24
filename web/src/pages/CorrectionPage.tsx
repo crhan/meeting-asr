@@ -1,14 +1,29 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { acceptCorrection, getProposal, polishProject, ApiError } from "../api/client";
+import {
+  acceptCorrection,
+  getProposal,
+  polishProject,
+  ApiError,
+  clipUrl,
+} from "../api/client";
 import { tr } from "../lib/i18n";
 import { JobProgress } from "../components/JobProgress";
+import { useClipAudio } from "../lib/useClipAudio";
+
+function fmtMs(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
 
 export function CorrectionPage() {
   const { ref = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const audio = useClipAudio();
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -157,24 +172,59 @@ export function CorrectionPage() {
             {tr("proposed changes", "条建议")}
           </div>
           <div className="changes">
-            {proposalQuery.data.changes.map((c) => (
-              <div key={c.index} className={`change-card ${selected.has(c.index) ? "on" : ""}`}>
-                <input
-                  type="checkbox"
-                  checked={selected.has(c.index)}
-                  onChange={() => toggle(c.index)}
-                />
-                <div className="change-card-body">
-                  <div className="change-card-meta subtle mono">
-                    {c.speaker_name}
-                    {c.change_type && <span className="badge">{c.change_type}</span>}
+            {proposalQuery.data.changes.map((c) => {
+              const hasAudio = c.begin_time_ms != null && c.end_time_ms != null;
+              const audioKey = hasAudio
+                ? `correction:${c.index}:${c.begin_time_ms}:${c.end_time_ms}`
+                : "";
+              const playing = audio.playingKey === audioKey;
+              return (
+                <div key={c.index} className={`change-card ${selected.has(c.index) ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(c.index)}
+                    onChange={() => toggle(c.index)}
+                  />
+                  {hasAudio && (
+                    <button
+                      className="play-btn"
+                      onClick={() =>
+                        audio.toggle(
+                          audioKey,
+                          clipUrl(ref, c.begin_time_ms!, c.end_time_ms!),
+                        )
+                      }
+                      title={tr("Play original audio", "播放原音频")}
+                      aria-label={tr("Play original audio", "播放原音频")}
+                    >
+                      {playing ? "⏸" : "▶"}
+                    </button>
+                  )}
+                  <div className="change-card-body">
+                    <div className="change-card-meta subtle mono">
+                      {hasAudio && <span>{fmtMs(c.begin_time_ms!)}</span>}
+                      {c.speaker_name}
+                      {c.change_type && <span className="badge">{c.change_type}</span>}
+                    </div>
+                    <div className="diff-before">{c.original_text}</div>
+                    <div className="diff-after">{c.corrected_text}</div>
+                    {c.reason && (
+                      <div className="subtle" style={{ fontSize: 11.5 }}>
+                        {c.reason}
+                      </div>
+                    )}
+                    {playing && (
+                      <div className="seg-progress">
+                        <div
+                          className="seg-progress-bar"
+                          style={{ width: `${audio.progress * 100}%` }}
+                        />
+                      </div>
+                    )}
                   </div>
-                  <div className="diff-before">{c.original_text}</div>
-                  <div className="diff-after">{c.corrected_text}</div>
-                  {c.reason && <div className="subtle" style={{ fontSize: 11.5 }}>{c.reason}</div>}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

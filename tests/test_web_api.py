@@ -917,6 +917,58 @@ def test_get_proposal_returns_404_when_none_exists(
     assert resp.json()["error"] == "not_found"
 
 
+def test_get_proposal_includes_audio_window(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Correction review needs the sentence time window so the web page can play the source."""
+    from types import SimpleNamespace
+
+    import app.web.routers.corrections as corrections
+
+    changes = [
+        SimpleNamespace(
+            sentence_id=7,
+            speaker_name="Speaker A",
+            begin_time_ms=4210,
+            end_time_ms=5800,
+            original_text="before",
+            corrected_text="after",
+            change_type="polish",
+            reason="reason",
+        ),
+        SimpleNamespace(
+            sentence_id=8,
+            speaker_name="Speaker B",
+            begin_time_ms=0,
+            end_time_ms=0,
+            original_text="legacy",
+            corrected_text="legacy fixed",
+            change_type="",
+            reason="",
+        ),
+    ]
+    proposal = SimpleNamespace(model="m", proposed_changes=changes)
+
+    monkeypatch.setattr(
+        corrections, "resolve_web_project_ref", lambda ref, _s: tmp_path
+    )
+    monkeypatch.setattr(
+        corrections, "project_paths", lambda root: SimpleNamespace(root=root)
+    )
+    monkeypatch.setattr(
+        corrections, "load_correction_proposal", lambda paths, proposal_path: proposal
+    )
+
+    resp = client.get("/api/corrections/p-x/proposal")
+
+    assert resp.status_code == 200
+    rows = resp.json()["changes"]
+    assert rows[0]["begin_time_ms"] == 4210
+    assert rows[0]["end_time_ms"] == 5800
+    assert rows[1]["begin_time_ms"] is None
+    assert rows[1]["end_time_ms"] is None
+
+
 def test_merge_apply_refuses_nonempty_dir_without_force(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

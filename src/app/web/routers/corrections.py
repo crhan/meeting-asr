@@ -109,6 +109,18 @@ def _proposal_id(proposal) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
+def _audio_window(change) -> tuple[int | None, int | None]:
+    """Return a valid sentence audio window, or nulls for legacy/malformed proposals."""
+    try:
+        begin = int(getattr(change, "begin_time_ms", None))
+        end = int(getattr(change, "end_time_ms", None))
+    except (TypeError, ValueError):
+        return None, None
+    if end <= begin:
+        return None, None
+    return begin, end
+
+
 @router.get("/{project_ref}/proposal", response_model=ProposalOut)
 def get_proposal(
     project_ref: str, settings: WebSettings = Depends(get_settings)
@@ -126,18 +138,22 @@ def get_proposal(
         if "No correction proposal found" not in str(exc):
             raise
         raise FileNotFoundError(str(exc)) from exc
-    changes = [
-        CorrectionChangeOut(
-            index=index,
-            sentence_id=change.sentence_id,
-            speaker_name=change.speaker_name,
-            original_text=change.original_text,
-            corrected_text=change.corrected_text,
-            change_type=change.change_type,
-            reason=change.reason,
+    changes = []
+    for index, change in enumerate(proposal.proposed_changes):
+        begin_time_ms, end_time_ms = _audio_window(change)
+        changes.append(
+            CorrectionChangeOut(
+                index=index,
+                sentence_id=change.sentence_id,
+                begin_time_ms=begin_time_ms,
+                end_time_ms=end_time_ms,
+                speaker_name=change.speaker_name,
+                original_text=change.original_text,
+                corrected_text=change.corrected_text,
+                change_type=change.change_type,
+                reason=change.reason,
+            )
         )
-        for index, change in enumerate(proposal.proposed_changes)
-    ]
     return ProposalOut(
         model=proposal.model,
         change_count=len(changes),
