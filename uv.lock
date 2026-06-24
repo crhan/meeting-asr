@@ -703,23 +703,19 @@ version = "0.13.0"
 source = { editable = "." }
 dependencies = [
     { name = "dashscope" },
+    { name = "fastapi" },
     { name = "oss2" },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "python-multipart" },
     { name = "requests" },
     { name = "rich" },
     { name = "speechbrain" },
+    { name = "sse-starlette" },
     { name = "textual" },
     { name = "torch" },
     { name = "torchaudio" },
     { name = "typer" },
-]
-
-[package.optional-dependencies]
-web = [
-    { name = "fastapi" },
-    { name = "python-multipart" },
-    { name = "sse-starlette" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -733,22 +729,21 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "dashscope", specifier = ">=1.20.14" },
-    { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
+    { name = "fastapi", specifier = ">=0.115" },
     { name = "oss2", specifier = ">=2.19.1" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
-    { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.12" },
+    { name = "python-multipart", specifier = ">=0.0.12" },
     { name = "requests", specifier = ">=2.32.3" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "speechbrain", specifier = ">=1.0.3" },
-    { name = "sse-starlette", marker = "extra == 'web'", specifier = ">=2.1" },
+    { name = "sse-starlette", specifier = ">=2.1" },
     { name = "textual", specifier = ">=8.2.5" },
     { name = "torch", specifier = ">=2.9.0" },
     { name = "torchaudio", specifier = ">=2.9.0" },
     { name = "typer", specifier = ">=0.26" },
-    { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.34" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
 ]
-provides-extras = ["web"]
 
 [package.metadata.requires-dev]
 dev = [

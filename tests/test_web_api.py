@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-# The web extra (fastapi/uvicorn/sse-starlette) is optional; skip this whole module
-# cleanly when it is not installed instead of aborting collection for the entire suite.
+# FastAPI is a default dependency; keep importorskip so a broken local environment fails
+# cleanly at collection instead of aborting the entire suite.
 pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient  # noqa: E402

@@ -2,9 +2,8 @@
 
 Thin Typer adapter registered as a single root command (like ``doctor``/``paths``), so
 it picks up the standard bilingual help handling. The web package and its
-FastAPI/uvicorn dependencies are imported lazily so the rest of the CLI keeps working
-when the optional ``web`` extra is absent; a missing import surfaces an actionable
-install hint instead of a stack trace.
+FastAPI/uvicorn dependencies are imported lazily so a broken or stale install surfaces
+an actionable install hint instead of a stack trace.
 """
 
 from __future__ import annotations
@@ -15,12 +14,13 @@ import typer
 
 _INSTALL_HINT = (
     "Web UI dependencies are not installed.\n"
-    "From a checkout, refresh the global editable tool (web is installed by default):\n"
+    "Web server packages are default dependencies; this install is stale or incomplete.\n"
+    "From a checkout, refresh the global editable tool:\n"
     "  scripts/install-tool.sh\n"
     "Then verify it with:\n"
     "  scripts/install-tool.sh --check\n"
-    "For a published tool install, include the web extra explicitly:\n"
-    "  uv tool install --python 3.14 --force 'meeting-asr[web]'"
+    "For a published tool install, reinstall the default package:\n"
+    "  uv tool install meeting-asr --python 3.14 --reinstall --refresh"
 )
 
 
@@ -82,8 +82,8 @@ def command(
 ) -> None:
     """Start the web UI server and listen for connections."""
     try:
-        # uvicorn is part of the web extra but run_server imports it lazily, so probe it up
-        # front here too. Otherwise a partial install (fastapi present, uvicorn missing) would
+        # uvicorn is a default dependency but run_server imports it lazily, so probe it up
+        # front here too. Otherwise a partial install (FastAPI present, uvicorn missing) would
         # pass this block, print the serving URL, and only then crash with a raw
         # ModuleNotFoundError instead of this actionable install hint.
         import uvicorn  # noqa: F401
@@ -95,7 +95,7 @@ def command(
             run_server,
         )
         from app.web.settings import WebSettings
-    except ImportError as exc:  # web extra missing
+    except ImportError as exc:  # stale or incomplete install
         typer.echo(_INSTALL_HINT, err=True)
         raise typer.Exit(code=1) from exc
 

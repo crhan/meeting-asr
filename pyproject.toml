@@ -9,16 +9,20 @@ authors = [
 ]
 dependencies = [
   "dashscope>=1.20.14",
+  "fastapi>=0.115",
   "oss2>=2.19.1",
   "python-dotenv>=1.0.1",
+  "python-multipart>=0.0.12",
   "pydantic>=2.10",
   "requests>=2.32.3",
   "rich>=15.0.0",
   "speechbrain>=1.0.3",
+  "sse-starlette>=2.1",
   "textual>=8.2.5",
   "torch>=2.9.0",
   "torchaudio>=2.9.0",
   "typer>=0.26",
+  "uvicorn[standard]>=0.34",
 ]
 
 [project.scripts]
@@ -28,14 +32,6 @@ meeting-asr = "app.cli:main"
 Homepage = "https://github.com/crhan/meeting-asr"
 Repository = "https://github.com/crhan/meeting-asr"
 Issues = "https://github.com/crhan/meeting-asr/issues"
-
-[project.optional-dependencies]
-web = [
-    "fastapi>=0.115",
-    "python-multipart>=0.0.12",
-    "sse-starlette>=2.1",
-    "uvicorn[standard]>=0.34",
-]
 
 [build-system]
 requires = ["hatchling"]
@@ -57,7 +53,7 @@ cache-keys = [
   { file = "src/**/*.py" },
   # The wheel also force-includes the built React SPA and is shaped by the build hook, so a
   # web-only change (or a fresh `npm run build`) must bust uv's cached local-package wheel --
-  # otherwise `uv tool install .[web]` / install-tool.sh --wheel reuses a stale or SPA-less wheel.
+  # otherwise `uv tool install .` / install-tool.sh --wheel reuses a stale or SPA-less wheel.
   # Watching the static build *output* alone is not enough: uv decides cache reuse BEFORE the
   # build hook runs, and on a --wheel install the hook is what would refresh static. The SPA
   # *sources* (web/) and the build flag itself must therefore be part of the key, or an

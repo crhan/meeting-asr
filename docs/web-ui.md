@@ -6,7 +6,7 @@ speaker review、声纹库（采集 / 浏览 / 质量）、文字纠错、纠错
 ## 快速开始
 
 ```bash
-# 安装（默认带 web extra 并构建前端）
+# 安装（默认带 Web UI Python 依赖；脚本会构建前端）
 scripts/install-tool.sh
 # 或在 checkout 里直接跑
 uv run meeting-asr web --port 8765
@@ -98,7 +98,7 @@ cd web && npm install && npm run dev   # http://localhost:5173
 cd web && npm run build
 ```
 
-发布 / 显式 web 安装时由 `MEETING_ASR_BUILD_WEB=1` 触发（CI、`install-tool.sh --wheel` 都会设置）：
+发布 / wheel 安装验证时由 `MEETING_ASR_BUILD_WEB=1` 触发（CI、`install-tool.sh --wheel` 都会设置）：
 `hatch_build.py` 在 wheel 构建阶段**无条件重建** SPA（绝不信任可能过期的旧 `static/`），缺 npm 或
 构建后仍无产物会直接报错，不会静默发出没有 UI 的 wheel。不设该变量则是 base CLI 构建路径：
 不碰 npm，有现成 `static/` 就带上，没有就发一个无 Web UI 的合法 wheel。

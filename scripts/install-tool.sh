@@ -12,8 +12,8 @@ Options:
   --editable             Install this checkout in editable mode. Default for local development.
   --wheel                Install a built wheel. Use for release/user-install verification.
   --force                Overwrite executable conflicts. Not needed for normal refreshes.
-  --web                  Install the web UI ([web] extra) and build the SPA. Default.
-  --no-web               Skip the web UI extra and SPA build.
+  --web                  Build/install Web UI assets. Dependencies are default. Default.
+  --no-web               Skip SPA asset build. Web Python dependencies remain installed.
   --no-local-voiceprint  Deprecated no-op. Local SpeechBrain is now a standard dependency.
   --print-only           Print the install plan without executing it.
   --check                Inspect the current meeting-asr executable and exit.
@@ -137,8 +137,9 @@ if source_hash != installed_hash:
 if expect_web and missing_web:
     raise SystemExit(
         "Web UI dependencies are missing from this global tool. "
-        "Run `scripts/install-tool.sh`; it installs the web extra by default. "
-        "Use `--no-web` only when deliberately keeping a CLI-only tool."
+        "Reinstall meeting-asr; web server packages are default dependencies. "
+        "Run `scripts/install-tool.sh` for an editable checkout or "
+        "`uv tool install meeting-asr --python 3.14 --reinstall --refresh` for PyPI."
     )
 if expect_web and not web_assets.is_file():
     raise SystemExit(
@@ -244,10 +245,10 @@ source_dir="$(repo_root)"
 package="."
 
 if [[ "$web" -eq 1 ]]; then
-  package=".[web]"
-  # Build the React SPA so the installed tool serves the web UI. Editable installs read
-  # static straight from the checkout; wheel installs let the hatch hook rebuild and assert
-  # the SPA via MEETING_ASR_BUILD_WEB=1.
+  # Build the React SPA so the installed tool serves the web UI. The Python web server
+  # dependencies are standard package dependencies; this flag only controls static assets.
+  # Editable installs read static straight from the checkout; wheel installs let the hatch
+  # hook rebuild and assert the SPA via MEETING_ASR_BUILD_WEB=1.
   # Skip for a dry-run: --print-only must only print the plan, never npm ci + vite build,
   # which hit the network and rewrite web/node_modules and src/app/web/static.
   if [[ "$editable" -eq 1 && "$print_only" -eq 0 && -f "$source_dir/web/package.json" ]]; then
@@ -279,7 +280,7 @@ echo "Meeting-ASR install plan"
 echo "Source: $source_dir"
 echo "Mode: $([[ "$editable" -eq 1 ]] && echo editable || echo wheel)"
 echo "Force: $([[ "$force" -eq 1 ]] && echo yes || echo no)"
-echo "Web UI: $([[ "$web" -eq 1 ]] && echo 'yes ([web] extra, default)' || echo 'no (--no-web)')"
+echo "Web UI assets: $([[ "$web" -eq 1 ]] && echo 'yes (default)' || echo 'no (--no-web)')"
 if [[ "$local_voiceprint" -eq 0 ]]; then
   echo "Local voiceprint: standard dependency (--no-local-voiceprint is ignored)"
 else

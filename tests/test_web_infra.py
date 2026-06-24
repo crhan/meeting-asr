@@ -24,7 +24,7 @@ def test_port_available_ipv4_free_port() -> None:
 def test_web_command_missing_uvicorn_shows_install_hint(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A partial web install (fastapi present, uvicorn absent) must fail with the install hint
+    """A stale install (FastAPI present, uvicorn absent) must fail with the install hint
     before printing the serving URL -- not pass the import guard and crash later with a raw
     ModuleNotFoundError out of run_server's lazy `import uvicorn`."""
     # None in sys.modules makes `import uvicorn` raise ImportError even though fastapi/app.web
@@ -44,7 +44,8 @@ def test_web_command_missing_uvicorn_shows_install_hint(
     combined = "".join(capsys.readouterr())
     assert "Web UI dependencies are not installed" in combined
     assert "scripts/install-tool.sh" in combined
-    assert "web is installed by default" in combined
+    assert "default dependencies" in combined
+    assert "meeting-asr[web]" not in combined
     # The URL must never be printed on the dependency-failure path.
     assert "serving at" not in combined
 
