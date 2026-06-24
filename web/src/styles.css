@@ -587,6 +587,34 @@ tr.clickable {
 }
 
 /* ---- voiceprint page --------------------------------------------------- */
+.vp-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+.vp-summary {
+  display: flex;
+  gap: 14px;
+  margin-top: 4px;
+}
+.vp-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.vp-search {
+  width: min(320px, 100%);
+}
+.vp-control-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 .vp-layout {
   display: grid;
   grid-template-columns: 300px 1fr;
@@ -633,6 +661,13 @@ tr.clickable {
 .status-pill.verified-active {
   color: var(--accent);
   border-color: var(--accent);
+}
+.vp-sample-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
 }
 
 /* ---- capture page ------------------------------------------------------ */
