@@ -171,6 +171,15 @@ export interface Reassignment {
   new_speaker_id: number;
 }
 
+export interface InlineCorrectionEdit {
+  sentence_id: number | null;
+  speaker_id: number | null;
+  begin_time_ms: number;
+  end_time_ms: number;
+  original_text: string;
+  corrected_text: string;
+}
+
 export interface SaveSpeakerReviewBody {
   review_revision: string;
   mapping: Record<string, string>;
@@ -180,6 +189,7 @@ export interface SaveSpeakerReviewBody {
   ignored_speaker_ids: number[];
   reassignments: Reassignment[];
   deleted_speaker_ids: number[];
+  correction_edits: InlineCorrectionEdit[];
 }
 
 export interface SaveSpeakerReviewResult {
@@ -191,6 +201,8 @@ export interface SaveSpeakerReviewResult {
   deleted_speaker_count: number;
   deleted_sentence_count: number;
   deleted_sample_count: number;
+  corrected_count: number;
+  corrected_transcript_path: string | null;
   rematch_skipped_reason: string | null;
 }
 

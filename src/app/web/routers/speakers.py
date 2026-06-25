@@ -15,8 +15,16 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.commands.project_correct import (
+    accept_correction_for_review,
+    load_speaker_mapping_for_correction,
+    prepare_inline_corrections_for_review,
+)
 from app.core.speaker_review_service import save_speaker_review
 from app.core.voiceprint_review_service import REGISTRY, CaptureConflictError
+from app.correction_proposals import load_correction_proposal
+from app.correction_types import CorrectionEditSummary
+from app.lexicon_store import get_lexicon_db_path
 from app.presentation.tui.speaker_matches import SpeakerMatchCandidate
 from app.presentation.tui.speaker_models import (
     ReviewSpeaker,
@@ -30,6 +38,8 @@ from app.speaker_labeling import SentenceReassignmentSpec
 from app.sentence_locator import format_sentence_ref
 from app.speaker_match_status import MATCH_STATUS_CROSSTALK
 from app.speaker_matching import match_project_speakers
+from app.project_manager import load_manifest, project_paths
+from app.transcript_corrections import CorrectionEditOptions
 from app.voiceprint_ids import valid_person_public_id
 from app.voiceprint_people import get_voiceprint_person
 from app.voiceprint_store import get_voiceprint_db_path
@@ -44,6 +54,7 @@ from app.web.schemas import (
     MatchPersonOut,
     PersonOut,
     ReviewOverviewOut,
+    InlineCorrectionIn,
     ReviewSpeakerOut,
     SaveSpeakerReviewIn,
     SaveSpeakerReviewOut,
@@ -121,6 +132,63 @@ def _validate_person_public_mapping(
             )
         validated[speaker_id] = public_id
     return validated
+
+
+def _inline_correction_key(item: object) -> tuple[int | None, int | None, int, int]:
+    """Return the stable sentence identity used by TUI/Web inline correction."""
+    return (
+        getattr(item, "sentence_id"),
+        getattr(item, "speaker_id"),
+        int(getattr(item, "begin_time_ms")),
+        int(getattr(item, "end_time_ms")),
+    )
+
+
+def _accept_inline_corrections(
+    project_dir: Path,
+    correction_edits: list[InlineCorrectionIn],
+    *,
+    lexicon_db: Path,
+) -> CorrectionEditSummary | None:
+    """Accept only the concrete Web-edited sentences from an inline proposal."""
+    if not correction_edits:
+        return None
+    paths = project_paths(project_dir)
+    manifest = load_manifest(paths.root)
+    speaker_mapping = load_speaker_mapping_for_correction(paths.root)
+    options = CorrectionEditOptions(
+        open_editor=False,
+        open_proposal=False,
+        use_ai=False,
+        category="web-inline",
+        lexicon_db=lexicon_db,
+    )
+    summary = prepare_inline_corrections_for_review(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        correction_edits=correction_edits,
+        options=options,
+    )
+    if summary.proposal_json_path is None:
+        return summary
+    proposal = load_correction_proposal(paths, summary.proposal_json_path)
+    edited_keys = {_inline_correction_key(edit) for edit in correction_edits}
+    selected_indices = tuple(
+        index
+        for index, change in enumerate(proposal.proposed_changes)
+        if _inline_correction_key(change) in edited_keys
+    )
+    if not selected_indices:
+        raise RuntimeError("Inline correction proposal did not include edited sentences.")
+    return accept_correction_for_review(
+        paths=paths,
+        manifest=manifest,
+        speaker_mapping=speaker_mapping,
+        proposal_path=summary.proposal_json_path,
+        lexicon_db=lexicon_db,
+        selected_change_indices=selected_indices,
+    )
 
 
 def _serialize_match(match: SpeakerMatchCandidate | None) -> SpeakerMatchOut | None:
@@ -236,7 +304,9 @@ async def get_review(
         session = await loop.run_in_executor(
             None,
             lambda: load_speaker_review_session(
-                project_dir, store_dir=settings.voiceprint_store_dir
+                project_dir,
+                store_dir=settings.voiceprint_store_dir,
+                allow_correction=True,
             ),
         )
         return _serialize_session(
@@ -272,15 +342,19 @@ async def save_review(
     deleted_speaker_ids = sorted(
         {int(speaker_id) for speaker_id in payload.deleted_speaker_ids}
     )
+    correction_edits = list(payload.correction_edits)
+    lexicon_db = get_lexicon_db_path(settings.store_dir)
 
     # Reassignments touch the global voiceprint store (sample invalidation + rematch);
     # naming-only saves stay project-local, so only take the store lock when needed.
     keys = [project_lock_key(str(project_dir))]
     if specs or person_public_mapping or new_person_names:
         keys.append(store_lock_key("voiceprints"))
+    if correction_edits:
+        keys.append(store_lock_key("lexicon"))
 
     def do_save():
-        return save_speaker_review(
+        result = save_speaker_review(
             project_dir,
             mapping=mapping,
             person_mapping=person_mapping,
@@ -291,6 +365,12 @@ async def save_review(
             deleted_speaker_ids=deleted_speaker_ids,
             store_dir=settings.voiceprint_store_dir,
         )
+        correction_summary = _accept_inline_corrections(
+            project_dir,
+            correction_edits,
+            lexicon_db=lexicon_db,
+        )
+        return result, correction_summary
 
     # A reassignment write must join the same store-wide critical section as voiceprint
     # CRUD and capture runs (and be refused while a capture is pending), otherwise a later
@@ -318,7 +398,7 @@ async def save_review(
                 "A voiceprint capture is awaiting accept/rollback; resolve it before "
                 "saving the speaker review."
             )
-        result = await loop.run_in_executor(None, runner)
+        result, correction_summary = await loop.run_in_executor(None, runner)
 
     reassignment = result.reassignment
     deletion = result.deletion
@@ -331,6 +411,13 @@ async def save_review(
         deleted_speaker_count=len(deleted_speaker_ids),
         deleted_sentence_count=(deletion.deleted_sentence_count if deletion else 0),
         deleted_sample_count=(len(reassignment.deleted_samples) if reassignment else 0),
+        corrected_count=(correction_summary.change_count if correction_summary else 0),
+        corrected_transcript_path=(
+            str(correction_summary.corrected_named_transcript_path)
+            if correction_summary
+            and correction_summary.corrected_named_transcript_path is not None
+            else None
+        ),
         rematch_skipped_reason=(
             reassignment.rematch_skipped_reason if reassignment else None
         ),

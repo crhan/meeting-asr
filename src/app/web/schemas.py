@@ -405,6 +405,17 @@ class ReassignmentIn(BaseModel):
     new_speaker_id: int
 
 
+class InlineCorrectionIn(BaseModel):
+    """One sentence text correction staged from speaker review."""
+
+    sentence_id: int | None
+    speaker_id: int | None
+    begin_time_ms: int
+    end_time_ms: int
+    original_text: str
+    corrected_text: str
+
+
 class SaveSpeakerReviewIn(BaseModel):
     """Speaker-review save request (mirrors the TUI decision)."""
 
@@ -417,6 +428,7 @@ class SaveSpeakerReviewIn(BaseModel):
     ignored_speaker_ids: list[int] = []
     reassignments: list[ReassignmentIn] = []
     deleted_speaker_ids: list[int] = []
+    correction_edits: list[InlineCorrectionIn] = []
 
 
 class SaveSpeakerReviewOut(BaseModel):
@@ -430,6 +442,8 @@ class SaveSpeakerReviewOut(BaseModel):
     deleted_speaker_count: int = 0
     deleted_sentence_count: int = 0
     deleted_sample_count: int
+    corrected_count: int = 0
+    corrected_transcript_path: str | None = None
     rematch_skipped_reason: str | None = None
 
 

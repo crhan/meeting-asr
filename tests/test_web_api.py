@@ -191,6 +191,147 @@ def test_correction_accept_records_into_store_dir_lexicon(
     assert captured["lexicon_db"] == get_lexicon_db_path(tmp_path / "store")
 
 
+def test_speaker_save_accepts_inline_text_edits(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Speaker-review save should persist Web inline text edits through the correction path."""
+    from types import SimpleNamespace
+
+    import app.web.routers.speakers as speakers
+    from app.lexicon_store import get_lexicon_db_path
+
+    captured: dict = {}
+
+    class FakeSaveResult:
+        mapping_path = Path("speaker_map.json")
+        transcript_path = Path("transcript_named.txt")
+        srt_path = Path("subtitle_named.srt")
+        reassignment = None
+        deletion = None
+        created_person_count = 0
+
+    def fake_save(project_dir, **kwargs):
+        captured["project_dir"] = project_dir
+        captured["save"] = kwargs
+        return FakeSaveResult()
+
+    def fake_accept(project_dir, correction_edits, *, lexicon_db):
+        captured["correction"] = {
+            "project_dir": project_dir,
+            "correction_edits": correction_edits,
+            "lexicon_db": lexicon_db,
+        }
+        return SimpleNamespace(
+            change_count=1,
+            corrected_named_transcript_path=project_dir / "exports" / "named.txt",
+        )
+
+    monkeypatch.setattr(
+        speakers, "resolve_web_project_ref", lambda ref, _settings: tmp_path
+    )
+    monkeypatch.setattr(speakers, "_require_current_revision", lambda *a, **k: None)
+    monkeypatch.setattr(speakers, "save_speaker_review", fake_save)
+    monkeypatch.setattr(speakers, "_accept_inline_corrections", fake_accept)
+
+    resp = client.post(
+        "/api/speakers/p-x/save",
+        json={
+            "review_revision": "rev",
+            "mapping": {"1": "Alice"},
+            "correction_edits": [
+                {
+                    "sentence_id": 7,
+                    "speaker_id": 1,
+                    "begin_time_ms": 1000,
+                    "end_time_ms": 2000,
+                    "original_text": "hello",
+                    "corrected_text": "hello world",
+                }
+            ],
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["corrected_count"] == 1
+    assert captured["project_dir"] == tmp_path
+    assert captured["save"]["mapping"] == {1: "Alice"}
+    edit = captured["correction"]["correction_edits"][0]
+    assert edit.sentence_id == 7
+    assert edit.corrected_text == "hello world"
+    assert captured["correction"]["lexicon_db"] == get_lexicon_db_path(
+        tmp_path / "store"
+    )
+
+
+def test_speaker_inline_correction_accepts_only_edited_sentences(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Inline Web edits must not auto-accept extra proposal changes inferred from samples."""
+    from types import SimpleNamespace
+
+    import app.web.routers.speakers as speakers
+    from app.web.schemas import InlineCorrectionIn
+
+    selected: dict = {}
+    edit = InlineCorrectionIn(
+        sentence_id=1,
+        speaker_id=2,
+        begin_time_ms=1000,
+        end_time_ms=2000,
+        original_text="wrong",
+        corrected_text="right",
+    )
+    matching_change = SimpleNamespace(
+        sentence_id=1,
+        speaker_id=2,
+        begin_time_ms=1000,
+        end_time_ms=2000,
+    )
+    extra_change = SimpleNamespace(
+        sentence_id=2,
+        speaker_id=2,
+        begin_time_ms=3000,
+        end_time_ms=4000,
+    )
+
+    monkeypatch.setattr(
+        speakers,
+        "project_paths",
+        lambda root: SimpleNamespace(root=root),
+    )
+    monkeypatch.setattr(
+        speakers, "load_manifest", lambda root: SimpleNamespace(project_id="p-x")
+    )
+    monkeypatch.setattr(
+        speakers, "load_speaker_mapping_for_correction", lambda root: {}
+    )
+    monkeypatch.setattr(
+        speakers,
+        "prepare_inline_corrections_for_review",
+        lambda **kwargs: SimpleNamespace(proposal_json_path=Path("proposal.json")),
+    )
+    monkeypatch.setattr(
+        speakers,
+        "load_correction_proposal",
+        lambda paths, proposal_path: SimpleNamespace(
+            proposed_changes=[extra_change, matching_change]
+        ),
+    )
+
+    def fake_accept(**kwargs):
+        selected["indices"] = kwargs["selected_change_indices"]
+        return SimpleNamespace(change_count=len(selected["indices"]))
+
+    monkeypatch.setattr(speakers, "accept_correction_for_review", fake_accept)
+
+    summary = speakers._accept_inline_corrections(
+        tmp_path, [edit], lexicon_db=tmp_path / "lexicon.sqlite"
+    )
+
+    assert selected["indices"] == (1,)
+    assert summary.change_count == 1
+
+
 def test_correction_accept_requires_proposal_id(client: TestClient) -> None:
     """Accept must be bound to the proposal the user reviewed."""
     resp = client.post("/api/corrections/p-x/accept", json={"selected_indices": [0]})

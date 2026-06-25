@@ -444,7 +444,7 @@ tr.clickable {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 .play-btn,
-.reassign-btn {
+.segment-action-btn {
   background: var(--surface-2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -462,22 +462,25 @@ tr.clickable {
   height: 26px;
 }
 .play-btn:hover,
-.reassign-btn:hover {
+.segment-action-btn:hover {
   border-color: var(--accent);
 }
-.reassign-btn {
+.segment-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.segment-action-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 0 9px;
+  width: 30px;
+  height: 26px;
+  padding: 0;
   color: var(--text-muted);
 }
 .transcript-pane .reassign-btn {
-  width: 30px;
-  height: 26px;
-  min-width: 30px;
-  padding: 0;
   position: relative;
   overflow: hidden;
   color: transparent;
@@ -550,7 +553,7 @@ tr.clickable {
   z-index: 20;
   top: calc(100% - 2px);
   left: 48px;
-  right: 52px;
+  right: 88px;
   margin-top: 0;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
 }
@@ -605,6 +608,29 @@ tr.clickable {
 .reassigned-badge {
   color: var(--yellow);
   border-color: var(--yellow);
+}
+.text-edited-badge {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.segment-editor-meta {
+  margin-bottom: 8px;
+}
+.text-edit-area {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+  line-height: 1.5;
+}
+.text-edit-area:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 /* ---- modals ------------------------------------------------------------ */

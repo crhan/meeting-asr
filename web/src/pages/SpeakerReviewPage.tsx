@@ -10,6 +10,7 @@ import {
   saveSpeakerReview,
   type Person,
   type QualityPerson,
+  type InlineCorrectionEdit,
   type ReviewSpeaker,
   type SaveSpeakerReviewBody,
   type SpeakerReview,
@@ -18,6 +19,7 @@ import {
 import { tr } from "../lib/i18n";
 import { setUnsavedEdits } from "../lib/unsavedGuard";
 import { IdentityPicker, type IdentitySelection } from "../components/IdentityPicker";
+import { Modal } from "../components/Modal";
 import { SpeakerPicker } from "../components/SpeakerPicker";
 
 interface SpeakerEdit {
@@ -261,11 +263,13 @@ export function SpeakerReviewPage() {
   // Working edits layered over the loaded baseline.
   const [edits, setEdits] = useState<Map<number, SpeakerEdit>>(new Map());
   const [reassign, setReassign] = useState<Map<string, number>>(new Map());
+  const [textEdits, setTextEdits] = useState<Map<string, InlineCorrectionEdit>>(new Map());
   const [deletedSpeakerIds, setDeletedSpeakerIds] = useState<Set<number>>(new Set());
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [filter, setFilter] = useState<"all" | "review" | "low">("all");
   const [picking, setPicking] = useState<ReviewSpeaker | null>(null);
   const [reassigning, setReassigning] = useState<SpeakerSegment | null>(null);
+  const [editingText, setEditingText] = useState<SpeakerSegment | null>(null);
   const [merging, setMerging] = useState<ReviewSpeaker | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -274,6 +278,7 @@ export function SpeakerReviewPage() {
     if (data) {
       setEdits(new Map());
       setReassign(new Map());
+      setTextEdits(new Map());
       setDeletedSpeakerIds(new Set());
       const focused = focusedSentenceId == null ? null : findSentence(data, focusedSentenceId);
       setSelectedId(focused?.speaker.speaker_id ?? data.speakers[0]?.speaker_id ?? null);
@@ -326,7 +331,11 @@ export function SpeakerReviewPage() {
     return map;
   }, [data, reassign]);
 
-  const dirty = edits.size > 0 || reassign.size > 0 || deletedSpeakerIds.size > 0;
+  const dirty =
+    edits.size > 0 ||
+    reassign.size > 0 ||
+    textEdits.size > 0 ||
+    deletedSpeakerIds.size > 0;
 
   // Unsaved edits live only in this component's state; losing the page loses them.
   // Publish the dirty flag for app chrome (LangToggle's reload confirm) and warn on
@@ -350,8 +359,8 @@ export function SpeakerReviewPage() {
     onSuccess: (res) => {
       setToast(
         tr(
-          `Saved. ${res.reassigned_count} reassigned, ${res.created_person_count} people created, ${res.deleted_sample_count} samples invalidated.`,
-          `已保存。重指派 ${res.reassigned_count} 句，新建人物 ${res.created_person_count} 个，失效声纹样本 ${res.deleted_sample_count} 个。`,
+          `Saved. ${res.reassigned_count} reassigned, ${res.corrected_count} text corrected, ${res.created_person_count} people created, ${res.deleted_sample_count} samples invalidated.`,
+          `已保存。重指派 ${res.reassigned_count} 句，文字修正 ${res.corrected_count} 句，新建人物 ${res.created_person_count} 个，失效声纹样本 ${res.deleted_sample_count} 个。`,
         ),
       );
       queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
@@ -520,6 +529,33 @@ export function SpeakerReviewPage() {
     setReassigning(null);
   }
 
+  function stageTextEdit(seg: SpeakerSegment, correctedText: string) {
+    const corrected = correctedText.trim();
+    if (!corrected) {
+      setToast(tr("Corrected text cannot be empty.", "修正后的文本不能为空。"));
+      return;
+    }
+    const key = segKey(seg);
+    setTextEdits((prev) => {
+      const next = new Map(prev);
+      const existing = prev.get(key);
+      const original = existing?.original_text ?? seg.text.trim();
+      if (corrected === original) next.delete(key);
+      else {
+        next.set(key, {
+          sentence_id: seg.sentence_id,
+          speaker_id: seg.speaker_id,
+          begin_time_ms: seg.begin_time_ms,
+          end_time_ms: seg.end_time_ms,
+          original_text: original,
+          corrected_text: corrected,
+        });
+      }
+      return next;
+    });
+    setEditingText(null);
+  }
+
   function canDeleteSpeaker(speakerId: number): boolean {
     const segs = segmentsBySpeaker.get(speakerId) ?? [];
     return segs.every((seg) => !seg.text.trim());
@@ -651,6 +687,10 @@ export function SpeakerReviewPage() {
       ignored_speaker_ids,
       reassignments,
       deleted_speaker_ids: [...deletedSpeakerIds],
+      correction_edits: [...textEdits.entries()].map(([key, edit]) => ({
+        ...edit,
+        speaker_id: reassign.get(key) ?? edit.speaker_id,
+      })),
     };
   }
 
@@ -671,6 +711,7 @@ export function SpeakerReviewPage() {
         onDiscard={() => {
           setEdits(new Map());
           setReassign(new Map());
+          setTextEdits(new Map());
           setDeletedSpeakerIds(new Set());
           setMerging(null);
         }}
@@ -692,6 +733,7 @@ export function SpeakerReviewPage() {
           segments={selected ? (segmentsBySpeaker.get(selected.speaker_id) ?? []) : []}
           filter={filter}
           reassignKeys={reassign}
+          textEdits={textEdits}
           focusSentenceId={focusedSentenceId}
           onFilter={setFilter}
           onLocateSentence={locateSentence}
@@ -712,6 +754,8 @@ export function SpeakerReviewPage() {
           onDelete={() => selected && doDeleteSpeaker(selected.speaker_id)}
           canDelete={selected ? canDeleteSpeaker(selected.speaker_id) : false}
           onReassign={(seg) => setReassigning(seg)}
+          onEditText={(seg) => setEditingText(seg)}
+          canEditText={data.allow_correction}
           quality={selectedQuality}
           repairing={repairLibraryMutation.isPending}
           onRepairLibrary={(personRef) => repairLibraryMutation.mutate({ personRef })}
@@ -730,9 +774,19 @@ export function SpeakerReviewPage() {
         <SpeakerPicker
           speakers={speakers}
           currentSpeakerId={reassign.get(segKey(reassigning)) ?? reassigning.speaker_id ?? -1}
-          sentencePreview={reassigning.text}
+          sentencePreview={
+            textEdits.get(segKey(reassigning))?.corrected_text ?? reassigning.text
+          }
           onPick={(target) => doReassign(reassigning, target)}
           onClose={() => setReassigning(null)}
+        />
+      )}
+      {editingText && (
+        <SentenceTextEditor
+          segment={editingText}
+          edit={textEdits.get(segKey(editingText)) ?? null}
+          onApply={(value) => stageTextEdit(editingText, value)}
+          onClose={() => setEditingText(null)}
         />
       )}
       {merging && mergingSpeaker && (
@@ -877,6 +931,7 @@ function TranscriptPane(props: {
   segments: SpeakerSegment[];
   filter: "all" | "review" | "low";
   reassignKeys: Map<string, number>;
+  textEdits: Map<string, InlineCorrectionEdit>;
   focusSentenceId: number | null;
   onFilter: (f: "all" | "review" | "low") => void;
   onLocateSentence: (value: string) => void;
@@ -887,6 +942,8 @@ function TranscriptPane(props: {
   onDelete: () => void;
   canDelete: boolean;
   onReassign: (seg: SpeakerSegment) => void;
+  onEditText: (seg: SpeakerSegment) => void;
+  canEditText: boolean;
   quality: QualityPerson | undefined;
   repairing: boolean;
   onRepairLibrary: (personRef: string) => void;
@@ -898,6 +955,7 @@ function TranscriptPane(props: {
     segments,
     filter,
     reassignKeys,
+    textEdits,
     focusSentenceId,
     quality,
   } = props;
@@ -1058,6 +1116,7 @@ function TranscriptPane(props: {
         {filtered.map((seg) => {
           const key = segKey(seg);
           const reassigned = reassignKeys.has(key);
+          const textEdit = textEdits.get(key) ?? null;
           const playing = playingKey === key;
           const focused = focusSentenceId != null && seg.sentence_id === focusSentenceId;
           const scoreStatusLabel =
@@ -1076,6 +1135,7 @@ function TranscriptPane(props: {
               : `${tr("voice", "声纹")} ${scoreStatusLabel}`;
           const sentenceRef =
             seg.sentence_ref ?? formatSentenceLocator(projectId, seg.sentence_id);
+          const displayText = textEdit?.corrected_text ?? seg.text;
           return (
             <div
               key={key}
@@ -1107,8 +1167,11 @@ function TranscriptPane(props: {
                     </span>
                   )}
                   {reassigned && <span className="badge reassigned-badge">{tr("reassigned", "已重指派")}</span>}
+                  {textEdit && (
+                    <span className="badge text-edited-badge">{tr("edited", "已编辑")}</span>
+                  )}
                 </div>
-                <div className="segment-text">{seg.text}</div>
+                <div className="segment-text">{displayText}</div>
                 {(scoreEvidence || scoreSuggestion) && (
                   <div
                     className={`identity-detail ${scoreClass}`}
@@ -1135,21 +1198,103 @@ function TranscriptPane(props: {
                   </div>
                 )}
               </div>
-              <button
-                className="reassign-btn"
-                onClick={() => props.onReassign(seg)}
-                title={tr(
-                  "Change this sentence's speaker assignment.",
-                  "修改这句话的 speaker 归属。",
+              <div className="segment-actions">
+                {props.canEditText && (
+                  <button
+                    className="segment-action-btn text-edit-btn"
+                    onClick={() => props.onEditText(seg)}
+                    title={tr("Edit this sentence text.", "编辑这句话的文字。")}
+                    aria-label={tr("Edit text", "编辑文字")}
+                  >
+                    ✎
+                  </button>
                 )}
-              >
-                ⇄ {tr("Owner", "归属")}
-              </button>
+                <button
+                  className="segment-action-btn reassign-btn"
+                  onClick={() => props.onReassign(seg)}
+                  title={tr(
+                    "Change this sentence's speaker assignment.",
+                    "修改这句话的 speaker 归属。",
+                  )}
+                  aria-label={tr("Change owner", "修改归属")}
+                >
+                  ⇄ {tr("Owner", "归属")}
+                </button>
+              </div>
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+function SentenceTextEditor(props: {
+  segment: SpeakerSegment;
+  edit: InlineCorrectionEdit | null;
+  onApply: (value: string) => void;
+  onClose: () => void;
+}) {
+  const { segment, edit, onApply, onClose } = props;
+  const originalText = edit?.original_text ?? segment.text.trim();
+  const [value, setValue] = useState(edit?.corrected_text ?? segment.text);
+  const trimmed = value.trim();
+  const canApply = trimmed.length > 0 && trimmed !== originalText;
+  const sentenceLabel =
+    segment.sentence_ref ??
+    (segment.sentence_id == null
+      ? tr("no sentence id", "无句子 ID")
+      : String(segment.sentence_id));
+  return (
+    <Modal
+      title={tr("Edit transcript text", "编辑转写文本")}
+      onClose={onClose}
+      footer={
+        <div className="row gap">
+          <button className="btn ghost" onClick={onClose}>
+            {tr("Cancel", "取消")}
+          </button>
+          <button
+            className="btn"
+            disabled={!edit && trimmed === originalText}
+            onClick={() => onApply(originalText)}
+            title={tr("Revert this staged edit.", "撤销这条暂存文字修改。")}
+          >
+            {tr("Revert", "恢复原文")}
+          </button>
+          <button
+            className="btn primary"
+            disabled={!canApply}
+            onClick={() => onApply(value)}
+          >
+            {tr("Stage edit", "暂存修改")}
+          </button>
+        </div>
+      }
+    >
+      <div className="segment-editor-meta subtle mono">
+        {sentenceLabel} · {fmtMs(segment.begin_time_ms)}
+      </div>
+      <div className="sentence-preview">
+        <div className="subtle">{tr("Original", "原文")}</div>
+        <div>{originalText}</div>
+      </div>
+      <textarea
+        className="text-edit-area"
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canApply) {
+            e.preventDefault();
+            onApply(value);
+          }
+        }}
+      />
+      <div className="subtle">
+        {tr("Cmd/Ctrl+Enter stages this edit.", "Cmd/Ctrl+Enter 暂存修改。")}
+      </div>
+    </Modal>
   );
 }
 
