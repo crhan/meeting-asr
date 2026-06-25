@@ -540,62 +540,33 @@ tr.clickable {
 .score-badge.low {
   color: var(--red);
 }
-.identity-detail {
-  margin-top: 5px;
-  padding: 7px 9px;
+.identity-popover {
+  position: fixed;
+  z-index: 1000;
+  right: 28px;
+  width: min(520px, 38vw);
+  max-height: min(240px, calc(100vh - 96px));
+  overflow: auto;
+  padding: 9px 12px;
   border-left: 3px solid var(--border);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(29, 32, 40, 0.98);
   color: var(--text-muted);
-  font-size: 11.5px;
-  line-height: 1.35;
-  outline: none;
-}
-.transcript-pane .identity-detail {
-  position: absolute;
-  z-index: 20;
-  top: 6px;
-  right: 88px;
-  width: min(410px, 32vw);
-  max-height: calc(100% - 12px);
-  margin-top: 0;
-  overflow: hidden;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
-  opacity: 1;
-  transform: translateY(0);
-  transition:
-    opacity 0.08s ease,
-    transform 0.08s ease;
-}
-.transcript-pane .segment:not(:hover):not(:focus-within) .identity-detail {
-  opacity: 0;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.42);
+  font-size: 12px;
+  line-height: 1.45;
   pointer-events: none;
-  transform: translateY(-2px);
-  visibility: hidden;
-}
-.transcript-pane .segment:hover .identity-detail,
-.transcript-pane .segment:focus-within .identity-detail {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-  visibility: visible;
 }
 .identity-evidence {
   overflow-wrap: anywhere;
 }
-.transcript-pane .identity-evidence,
-.transcript-pane .identity-suggestion {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.identity-detail.mid {
+.identity-popover.mid {
   border-color: var(--yellow);
 }
-.identity-detail.low {
+.identity-popover.low {
   border-color: var(--red);
 }
-.identity-detail.ok {
+.identity-popover.ok {
   border-color: var(--green);
 }
 .identity-suggestion {
@@ -605,16 +576,6 @@ tr.clickable {
 .identity-suggestion-label {
   color: var(--accent);
   font-weight: 700;
-}
-.identity-suggestion-text {
-  display: none;
-}
-.identity-detail:hover .identity-suggestion-text,
-.identity-detail:focus .identity-suggestion-text,
-.identity-detail:focus-within .identity-suggestion-text,
-.transcript-pane .segment:hover .identity-suggestion-text,
-.transcript-pane .segment:focus-within .identity-suggestion-text {
-  display: inline;
 }
 .seg-progress {
   height: 3px;

@@ -964,12 +964,24 @@ function TranscriptPane(props: {
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [jumpValue, setJumpValue] = useState("");
   const [progress, setProgress] = useState(0);
+  const [identityPopover, setIdentityPopover] = useState<{
+    key: string;
+    top: number;
+    scoreClass: "ok" | "mid" | "low";
+    evidence: string | null;
+    suggestion: string | null;
+    title: string;
+  } | null>(null);
 
   useEffect(() => {
     if (focusSentenceId != null) {
       setJumpValue(formatSentenceLocator(projectId, focusSentenceId) ?? "");
     }
   }, [focusSentenceId, projectId]);
+
+  useEffect(() => {
+    setIdentityPopover(null);
+  }, [filter, selected?.speaker_id]);
 
   const play = (seg: SpeakerSegment) => {
     const el = audioRef.current;
@@ -1019,6 +1031,27 @@ function TranscriptPane(props: {
   if (!selected) return <div className="placeholder">{tr("Select a speaker.", "选择一位发言人。")}</div>;
 
   const canAccept = !!selected.match?.best_name && (selected.match?.best_score ?? 0) > 0;
+
+  const showIdentityPopover = (
+    key: string,
+    row: HTMLElement,
+    scoreClass: "ok" | "mid" | "low",
+    evidence: string | null,
+    suggestion: string | null,
+    title: string,
+  ) => {
+    if (!evidence && !suggestion) return;
+    const rect = row.getBoundingClientRect();
+    const top = Math.min(
+      Math.max(rect.top - 2, 72),
+      Math.max(72, window.innerHeight - 220),
+    );
+    setIdentityPopover({ key, top, scoreClass, evidence, suggestion, title });
+  };
+
+  const hideIdentityPopover = (key: string) => {
+    setIdentityPopover((current) => (current?.key === key ? null : current));
+  };
 
   return (
     <div className="transcript-pane">
@@ -1112,7 +1145,7 @@ function TranscriptPane(props: {
         onEnded={() => setPlayingKey(null)}
       />
 
-      <div className="segments">
+      <div className="segments" onScroll={() => setIdentityPopover(null)}>
         {filtered.map((seg) => {
           const key = segKey(seg);
           const reassigned = reassignKeys.has(key);
@@ -1146,6 +1179,33 @@ function TranscriptPane(props: {
               }}
               className={`segment ${playing ? "playing" : ""} ${reassigned ? "reassigned" : ""} ${focused ? "focused" : ""} ${hasIdentityDetail ? "has-identity-detail" : ""}`}
               data-sentence-id={seg.sentence_id ?? undefined}
+              onMouseEnter={(event) =>
+                showIdentityPopover(
+                  key,
+                  event.currentTarget,
+                  scoreClass,
+                  scoreEvidence,
+                  scoreSuggestion,
+                  [scoreEvidence, scoreSuggestion].filter(Boolean).join(" "),
+                )
+              }
+              onMouseLeave={() => hideIdentityPopover(key)}
+              onFocus={(event) =>
+                showIdentityPopover(
+                  key,
+                  event.currentTarget,
+                  scoreClass,
+                  scoreEvidence,
+                  scoreSuggestion,
+                  [scoreEvidence, scoreSuggestion].filter(Boolean).join(" "),
+                )
+              }
+              onBlur={(event) => {
+                const nextTarget = event.relatedTarget;
+                if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+                  hideIdentityPopover(key);
+                }
+              }}
             >
               <button className="play-btn" onClick={() => play(seg)} aria-label="play">
                 {playing ? "⏸" : "▶"}
@@ -1179,26 +1239,6 @@ function TranscriptPane(props: {
                   </div>
                 )}
               </div>
-              {hasIdentityDetail && (
-                <div
-                  className={`identity-detail ${scoreClass}`}
-                  tabIndex={scoreSuggestion ? 0 : undefined}
-                  title={[scoreEvidence, scoreSuggestion].filter(Boolean).join(" ")}
-                >
-                  {scoreEvidence && <div className="identity-evidence">{scoreEvidence}</div>}
-                  {scoreSuggestion && (
-                    <div className="identity-suggestion">
-                      <span className="identity-suggestion-label">
-                        {tr("Suggestion", "建议")}
-                      </span>
-                      <span className="identity-suggestion-text">
-                        {tr(": ", "：")}
-                        {scoreSuggestion}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
               <div className="segment-actions">
                 {props.canEditText && (
                   <button
@@ -1226,6 +1266,28 @@ function TranscriptPane(props: {
           );
         })}
       </div>
+      {identityPopover && (
+        <div
+          className={`identity-popover ${identityPopover.scoreClass}`}
+          style={{ top: identityPopover.top }}
+          title={identityPopover.title}
+        >
+          {identityPopover.evidence && (
+            <div className="identity-evidence">{identityPopover.evidence}</div>
+          )}
+          {identityPopover.suggestion && (
+            <div className="identity-suggestion">
+              <span className="identity-suggestion-label">
+                {tr("Suggestion", "建议")}
+              </span>
+              <span>
+                {tr(": ", "：")}
+                {identityPopover.suggestion}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
