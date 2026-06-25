@@ -498,6 +498,9 @@ tr.clickable {
   flex: 1;
   min-width: 0;
 }
+.transcript-pane .segment.has-identity-detail .segment-body {
+  padding-right: min(430px, 34vw);
+}
 .segment-meta {
   display: flex;
   align-items: center;
@@ -551,17 +554,40 @@ tr.clickable {
 .transcript-pane .identity-detail {
   position: absolute;
   z-index: 20;
-  top: calc(100% - 2px);
-  left: 48px;
+  top: 6px;
   right: 88px;
+  width: min(410px, 32vw);
+  max-height: calc(100% - 12px);
   margin-top: 0;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
+  overflow: hidden;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 0.08s ease,
+    transform 0.08s ease;
 }
 .transcript-pane .segment:not(:hover):not(:focus-within) .identity-detail {
-  display: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  visibility: hidden;
+}
+.transcript-pane .segment:hover .identity-detail,
+.transcript-pane .segment:focus-within .identity-detail {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  visibility: visible;
 }
 .identity-evidence {
   overflow-wrap: anywhere;
+}
+.transcript-pane .identity-evidence,
+.transcript-pane .identity-suggestion {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .identity-detail.mid {
   border-color: var(--yellow);

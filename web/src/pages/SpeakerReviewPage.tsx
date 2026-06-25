@@ -1128,6 +1128,7 @@ function TranscriptPane(props: {
           const scoreReason = identityScoreReason(seg);
           const scoreEvidence = identityDiagnosticEvidence(seg);
           const scoreSuggestion = identityDiagnosticSuggestion(seg);
+          const hasIdentityDetail = Boolean(scoreEvidence || scoreSuggestion);
           const scoreClass = identityScoreClass(seg.score ?? 1, seg.score_status);
           const scoreBadgeText =
             seg.score != null
@@ -1143,7 +1144,7 @@ function TranscriptPane(props: {
                 if (node) segmentRefs.current.set(key, node);
                 else segmentRefs.current.delete(key);
               }}
-              className={`segment ${playing ? "playing" : ""} ${reassigned ? "reassigned" : ""} ${focused ? "focused" : ""}`}
+              className={`segment ${playing ? "playing" : ""} ${reassigned ? "reassigned" : ""} ${focused ? "focused" : ""} ${hasIdentityDetail ? "has-identity-detail" : ""}`}
               data-sentence-id={seg.sentence_id ?? undefined}
             >
               <button className="play-btn" onClick={() => play(seg)} aria-label="play">
@@ -1172,32 +1173,32 @@ function TranscriptPane(props: {
                   )}
                 </div>
                 <div className="segment-text">{displayText}</div>
-                {(scoreEvidence || scoreSuggestion) && (
-                  <div
-                    className={`identity-detail ${scoreClass}`}
-                    tabIndex={scoreSuggestion ? 0 : undefined}
-                    title={[scoreEvidence, scoreSuggestion].filter(Boolean).join(" ")}
-                  >
-                    {scoreEvidence && <div className="identity-evidence">{scoreEvidence}</div>}
-                    {scoreSuggestion && (
-                      <div className="identity-suggestion">
-                        <span className="identity-suggestion-label">
-                          {tr("Suggestion", "建议")}
-                        </span>
-                        <span className="identity-suggestion-text">
-                          {tr(": ", "：")}
-                          {scoreSuggestion}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
                 {playing && (
                   <div className="seg-progress">
                     <div className="seg-progress-bar" style={{ width: `${progress * 100}%` }} />
                   </div>
                 )}
               </div>
+              {hasIdentityDetail && (
+                <div
+                  className={`identity-detail ${scoreClass}`}
+                  tabIndex={scoreSuggestion ? 0 : undefined}
+                  title={[scoreEvidence, scoreSuggestion].filter(Boolean).join(" ")}
+                >
+                  {scoreEvidence && <div className="identity-evidence">{scoreEvidence}</div>}
+                  {scoreSuggestion && (
+                    <div className="identity-suggestion">
+                      <span className="identity-suggestion-label">
+                        {tr("Suggestion", "建议")}
+                      </span>
+                      <span className="identity-suggestion-text">
+                        {tr(": ", "：")}
+                        {scoreSuggestion}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="segment-actions">
                 {props.canEditText && (
                   <button
