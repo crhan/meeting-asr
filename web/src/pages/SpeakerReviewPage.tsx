@@ -1060,10 +1060,20 @@ function TranscriptPane(props: {
           const reassigned = reassignKeys.has(key);
           const playing = playingKey === key;
           const focused = focusSentenceId != null && seg.sentence_id === focusSentenceId;
-          const scoreTitle = seg.score != null ? identityScoreTitle(seg) : undefined;
+          const scoreStatusLabel =
+            seg.score_status && seg.score_status !== "identity-ok"
+              ? identityStatusLabel(seg.score_status)
+              : null;
+          const scoreTitle =
+            seg.score != null || scoreStatusLabel ? identityScoreTitle(seg) : undefined;
           const scoreReason = identityScoreReason(seg);
           const scoreEvidence = identityDiagnosticEvidence(seg);
           const scoreSuggestion = identityDiagnosticSuggestion(seg);
+          const scoreClass = identityScoreClass(seg.score ?? 1, seg.score_status);
+          const scoreBadgeText =
+            seg.score != null
+              ? `${tr("voice", "声纹匹配")} ${seg.score.toFixed(2)}${scoreReason ? ` ${scoreReason}` : ""}`
+              : `${tr("voice", "声纹")} ${scoreStatusLabel}`;
           const sentenceRef =
             seg.sentence_ref ?? formatSentenceLocator(projectId, seg.sentence_id);
           return (
@@ -1087,14 +1097,13 @@ function TranscriptPane(props: {
                     </span>
                   )}
                   {fmtMs(seg.begin_time_ms)}
-                  {seg.score != null && (
+                  {(seg.score != null || scoreStatusLabel) && (
                     <span
-                      className={`score-badge ${identityScoreClass(seg.score, seg.score_status)}`}
+                      className={`score-badge ${scoreClass}`}
                       title={scoreTitle}
                       aria-label={scoreTitle}
                     >
-                      {tr("voice", "声纹匹配")} {seg.score.toFixed(2)}
-                      {scoreReason ? ` ${scoreReason}` : ""}
+                      {scoreBadgeText}
                     </span>
                   )}
                   {reassigned && <span className="badge reassigned-badge">{tr("reassigned", "已重指派")}</span>}
@@ -1102,10 +1111,11 @@ function TranscriptPane(props: {
                 <div className="segment-text">{seg.text}</div>
                 {(scoreEvidence || scoreSuggestion) && (
                   <div
-                    className={`identity-detail ${identityScoreClass(seg.score ?? 1, seg.score_status)}`}
+                    className={`identity-detail ${scoreClass}`}
                     tabIndex={scoreSuggestion ? 0 : undefined}
+                    title={[scoreEvidence, scoreSuggestion].filter(Boolean).join(" ")}
                   >
-                    {scoreEvidence && <div>{scoreEvidence}</div>}
+                    {scoreEvidence && <div className="identity-evidence">{scoreEvidence}</div>}
                     {scoreSuggestion && (
                       <div className="identity-suggestion">
                         <span className="identity-suggestion-label">

@@ -257,12 +257,15 @@ tr.clickable {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 14px 18px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 .review-head h1 {
-  font-size: 17px;
+  font-size: 16px;
+}
+.review .subtle {
+  margin-bottom: 0;
 }
 .review-body {
   flex: 1;
@@ -285,7 +288,7 @@ tr.clickable {
   border: none;
   border-bottom: 1px solid var(--border);
   border-left: 3px solid transparent;
-  padding: 11px 14px;
+  padding: 8px 12px;
   cursor: pointer;
   color: var(--text);
 }
@@ -309,6 +312,7 @@ tr.clickable {
 .speaker-card-match {
   font-size: 11.5px;
   margin-top: 3px;
+  margin-bottom: 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -356,7 +360,7 @@ tr.clickable {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 18px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--border);
   gap: 12px;
   flex-wrap: wrap;
@@ -369,7 +373,7 @@ tr.clickable {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 18px;
+  padding: 6px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
@@ -411,12 +415,19 @@ tr.clickable {
   overflow-y: auto;
   padding: 6px 0;
 }
+.transcript-pane .segments {
+  padding: 0;
+}
 .segment {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 9px 18px;
   border-bottom: 1px solid rgba(43, 49, 60, 0.5);
+}
+.transcript-pane .segment {
+  gap: 8px;
+  padding: 6px 14px;
 }
 .segment:hover {
   background: var(--surface);
@@ -445,6 +456,10 @@ tr.clickable {
 .play-btn {
   width: 30px;
 }
+.transcript-pane .play-btn {
+  width: 26px;
+  height: 26px;
+}
 .play-btn:hover,
 .reassign-btn:hover {
   border-color: var(--accent);
@@ -457,6 +472,27 @@ tr.clickable {
   padding: 0 9px;
   color: var(--text-muted);
 }
+.transcript-pane .reassign-btn {
+  height: 26px;
+  min-width: 30px;
+  padding: 0 8px;
+  position: relative;
+}
+.transcript-pane .segment:not(:hover):not(:focus-within) .reassign-btn {
+  width: 30px;
+  padding: 0;
+  overflow: hidden;
+  color: transparent;
+}
+.transcript-pane .segment:not(:hover):not(:focus-within) .reassign-btn::before {
+  content: "⇄";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
 .segment-body {
   flex: 1;
   min-width: 0;
@@ -465,8 +501,8 @@ tr.clickable {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11.5px;
-  margin-bottom: 2px;
+  font-size: 11.3px;
+  margin-bottom: 1px;
 }
 .sentence-id {
   color: var(--accent);
@@ -483,7 +519,7 @@ tr.clickable {
   text-decoration: underline;
 }
 .segment-text {
-  line-height: 1.55;
+  line-height: 1.34;
   white-space: pre-wrap;
 }
 .score-badge {
@@ -501,15 +537,21 @@ tr.clickable {
   color: var(--red);
 }
 .identity-detail {
-  margin-top: 8px;
-  padding: 8px 10px;
+  margin-top: 5px;
+  padding: 7px 9px;
   border-left: 3px solid var(--border);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.03);
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.35;
   outline: none;
+}
+.transcript-pane .segment:not(:hover):not(:focus-within) .identity-detail {
+  display: none;
+}
+.identity-evidence {
+  overflow-wrap: anywhere;
 }
 .identity-detail.mid {
   border-color: var(--yellow);
@@ -533,7 +575,9 @@ tr.clickable {
 }
 .identity-detail:hover .identity-suggestion-text,
 .identity-detail:focus .identity-suggestion-text,
-.identity-detail:focus-within .identity-suggestion-text {
+.identity-detail:focus-within .identity-suggestion-text,
+.transcript-pane .segment:hover .identity-suggestion-text,
+.transcript-pane .segment:focus-within .identity-suggestion-text {
   display: inline;
 }
 .seg-progress {
