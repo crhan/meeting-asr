@@ -428,6 +428,7 @@ tr.clickable {
 .transcript-pane .segment {
   gap: 8px;
   padding: 6px 14px;
+  position: relative;
 }
 .segment:hover {
   background: var(--surface);
@@ -473,18 +474,15 @@ tr.clickable {
   color: var(--text-muted);
 }
 .transcript-pane .reassign-btn {
+  width: 30px;
   height: 26px;
   min-width: 30px;
-  padding: 0 8px;
-  position: relative;
-}
-.transcript-pane .segment:not(:hover):not(:focus-within) .reassign-btn {
-  width: 30px;
   padding: 0;
+  position: relative;
   overflow: hidden;
   color: transparent;
 }
-.transcript-pane .segment:not(:hover):not(:focus-within) .reassign-btn::before {
+.transcript-pane .reassign-btn::before {
   content: "⇄";
   position: absolute;
   inset: 0;
@@ -546,6 +544,15 @@ tr.clickable {
   font-size: 11.5px;
   line-height: 1.35;
   outline: none;
+}
+.transcript-pane .identity-detail {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% - 2px);
+  left: 48px;
+  right: 52px;
+  margin-top: 0;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
 }
 .transcript-pane .segment:not(:hover):not(:focus-within) .identity-detail {
   display: none;
