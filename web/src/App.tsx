@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 import { getLang, setLang, tr, type Lang } from "./lib/i18n";
 import { subscribeGlobalError } from "./lib/globalError";
 import { hasUnsavedEdits } from "./lib/unsavedGuard";
+import { confirmDialog } from "./lib/confirm";
 import { AuthGate } from "./components/AuthGate";
+import { ConfirmHost } from "./components/ConfirmHost";
 import { PendingCaptureBanner } from "./components/PendingCaptureBanner";
 import { CapturePage } from "./pages/CapturePage";
 import { CorrectionPage } from "./pages/CorrectionPage";
@@ -15,16 +17,18 @@ import { VoiceprintPage } from "./pages/VoiceprintPage";
 
 function LangToggle() {
   const [lang, setLangState] = useState<Lang>(getLang());
-  const toggle = () => {
+  const toggle = async () => {
     // The reload below would silently destroy unsaved speaker-review edits.
     if (
       hasUnsavedEdits() &&
-      !window.confirm(
-        tr(
+      !(await confirmDialog({
+        message: tr(
           "Discard unsaved speaker review edits and reload?",
           "放弃未保存的 speaker review 改动并刷新？",
         ),
-      )
+        confirmLabel: tr("Discard", "放弃"),
+        danger: true,
+      }))
     )
       return;
     const next: Lang = lang === "zh" ? "en" : "zh";
@@ -90,6 +94,7 @@ export function App() {
           </Routes>
         </AuthGate>
       </main>
+      <ConfirmHost />
       <GlobalErrorToast />
     </div>
   );

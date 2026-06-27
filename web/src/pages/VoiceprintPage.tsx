@@ -17,6 +17,7 @@ import {
   type VoiceprintSample,
 } from "../api/client";
 import { tr } from "../lib/i18n";
+import { confirmDialog } from "../lib/confirm";
 import { useClipAudio } from "../lib/useClipAudio";
 
 type SortMode = "quality" | "name" | "samples";
@@ -447,14 +448,16 @@ function PersonDetail(props: {
             </button>
             <button
               className="btn ghost"
-              onClick={() => {
+              onClick={async () => {
                 if (
-                  window.confirm(
-                    tr(
+                  await confirmDialog({
+                    message: tr(
                       `Delete "${data.person.name}" and all samples?`,
                       `删除「${data.person.name}」及全部样本？`,
                     ),
-                  )
+                    confirmLabel: tr("Delete person", "删除人物"),
+                    danger: true,
+                  })
                 )
                   props.onDeletePerson();
               }}
@@ -628,8 +631,14 @@ function SampleRow(props: {
         <button
           className="reassign-btn"
           title={tr("Delete sample", "删除样本")}
-          onClick={() => {
-            if (window.confirm(tr("Delete this sample?", "删除这条样本？")))
+          onClick={async () => {
+            if (
+              await confirmDialog({
+                message: tr("Delete this sample?", "删除这条样本？"),
+                confirmLabel: tr("Delete", "删除"),
+                danger: true,
+              })
+            )
               props.onDelete(sample.public_id, sampleCount <= 1);
           }}
         >

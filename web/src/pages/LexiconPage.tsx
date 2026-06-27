@@ -11,6 +11,7 @@ import {
 } from "../api/client";
 import type { Disambiguation } from "../api/client";
 import { tr } from "../lib/i18n";
+import { confirmDialog } from "../lib/confirm";
 
 type Tab = "terms" | "disambiguations" | "hotwords";
 
@@ -114,8 +115,14 @@ function TermsTab() {
                   <button
                     className="icon-btn"
                     title={tr("Delete", "删除")}
-                    onClick={() => {
-                      if (window.confirm(tr(`Delete "${t.canonical}"?`, `删除「${t.canonical}」？`)))
+                    onClick={async () => {
+                      if (
+                        await confirmDialog({
+                          message: tr(`Delete "${t.canonical}"?`, `删除「${t.canonical}」？`),
+                          confirmLabel: tr("Delete", "删除"),
+                          danger: true,
+                        })
+                      )
                         deleteMut.mutate(t.public_id);
                     }}
                   >
