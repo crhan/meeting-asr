@@ -1462,8 +1462,13 @@ tr.clickable {
 }
 
 /* ---- accessibility floor ----------------------------------------------- */
+/* Global keyboard-focus fallback: every focusable control gets a visible
+   accent outline. Controls that define their own focus ring (.btn via
+   :focus-visible, inputs/textarea via :focus) have higher specificity and
+   override this cleanly — so no double indicator, and nothing is left blind. */
 :focus-visible {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 @media (prefers-reduced-motion: reduce) {
   * {
