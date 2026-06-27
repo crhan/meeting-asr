@@ -280,10 +280,20 @@ def test_voiceprint_review_quality_mode_marks_verified_active(tmp_path: Path) ->
             await pilot.press("s")
             await pilot.pause()
 
-            assert app.session.quality.suspicious_count == 0
+            # Verify-active confirms identity but KEEPS the sample in matching
+            # (unlike quarantine, which drops it). The low-score outlier therefore
+            # stays flagged as suspicious — confirming identity must not mask a poor
+            # embedding score. The sample is kept, not removed (4 embeddings), and
+            # its lifecycle status is now verified-active.
+            assert app.session.quality.suspicious_count == 1
             assert (
                 len(list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)) == 4
             )
+            statuses = [
+                row.sample_status
+                for row in list_voiceprint_samples_for_project("project-1", db_path)
+            ]
+            assert statuses.count("verified-active") == 1
 
     asyncio.run(scenario())
 
