@@ -14,8 +14,17 @@ import threading
 import webbrowser
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version as _package_version
 from pathlib import Path
 from urllib.parse import quote
+
+
+def _app_version() -> str:
+    """Installed package version, or a local-dev fallback (mirrors cli._installed_version)."""
+    try:
+        return _package_version("meeting-asr")
+    except PackageNotFoundError:
+        return "0.0.0+local"
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
@@ -93,6 +102,7 @@ def create_app(settings: WebSettings) -> FastAPI:
         """
         return {
             "status": "ok",
+            "version": _app_version(),
             "auth_required": settings.token is not None,
             "is_local": settings.is_local,
         }

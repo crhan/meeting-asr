@@ -60,8 +60,12 @@ def token_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_health(client: TestClient) -> None:
     resp = client.get("/api/health")
     assert resp.status_code == 200
+    body = resp.json()
+    # version reflects the installed package (a dev fallback off a non-installed tree); assert
+    # it is present and non-empty rather than pinning an exact string the release will bump.
+    assert isinstance(body.pop("version"), str) and body["status"] == "ok"
     # 127.0.0.1 bind: loopback, no token -> is_local True, auth_required False.
-    assert resp.json() == {
+    assert body == {
         "status": "ok",
         "auth_required": False,
         "is_local": True,

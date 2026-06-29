@@ -9,6 +9,7 @@ import {
   type ConfigKey,
 } from "../api/client";
 import { tr } from "../lib/i18n";
+import { promptDialog } from "../lib/prompt";
 
 type Tab = "config" | "doctor";
 
@@ -48,13 +49,17 @@ function ConfigTab() {
   });
   const unsetMut = useMutation({ mutationFn: (key: string) => unsetConfig(key), onSuccess: invalidate });
 
-  const edit = (k: ConfigKey) => {
+  const edit = async (k: ConfigKey) => {
     // A masked existing secret (reveal off, always so on non-loopback binds) comes back with
     // value === null, so the prompt opens blank even though the row shows bullets. Submitting it
     // unchanged would overwrite the stored key with "". Treat blank input on a masked value as
     // "leave unchanged"; use the 🗑 unset button to actually clear it.
     const masked = k.is_set && k.value == null;
-    const value = window.prompt(tr(`Set ${k.name}:`, `设置 ${k.name}：`), k.value ?? "");
+    const value = await promptDialog({
+      title: tr("Set value", "设置"),
+      message: tr(`Set ${k.name}:`, `设置 ${k.name}：`),
+      defaultValue: k.value ?? "",
+    });
     if (value == null) return;
     if (value === "" && masked) return;
     setMut.mutate({ key: k.name, value });

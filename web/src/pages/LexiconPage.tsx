@@ -12,6 +12,7 @@ import {
 import type { Disambiguation } from "../api/client";
 import { tr } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm";
+import { promptDialog } from "../lib/prompt";
 
 type Tab = "terms" | "disambiguations" | "hotwords";
 
@@ -66,10 +67,17 @@ function TermsTab() {
     onSuccess: invalidate,
   });
 
-  const addTerm = () => {
-    const canonical = window.prompt(tr("Canonical term:", "标准词："));
+  const addTerm = async () => {
+    const canonical = await promptDialog({
+      title: tr("Add term", "新增词条"),
+      message: tr("Canonical term:", "标准词："),
+    });
     if (!canonical?.trim()) return;
-    const aliasStr = window.prompt(tr("Aliases (comma separated):", "别名（逗号分隔）："), "");
+    const aliasStr = await promptDialog({
+      title: tr("Add term", "新增词条"),
+      message: tr("Aliases (comma separated):", "别名（逗号分隔）："),
+      defaultValue: "",
+    });
     const aliases = (aliasStr ?? "")
       .split(",")
       .map((a) => a.trim())
@@ -157,30 +165,41 @@ function DisambiguationsTab() {
     onSuccess: invalidate,
   });
 
-  const add = () => {
-    const term = window.prompt(tr("Term (canonical, id, or alias):", "词条（标准词/ID/别名）："));
+  const add = async () => {
+    const ambTitle = tr("Mark alias ambiguous", "标记歧义别名");
+    const term = await promptDialog({
+      title: ambTitle,
+      message: tr("Term (canonical, id, or alias):", "词条（标准词/ID/别名）："),
+    });
     if (!term?.trim()) return;
-    const alias = window.prompt(tr("Ambiguous alias:", "歧义别名："));
+    const alias = await promptDialog({
+      title: ambTitle,
+      message: tr("Ambiguous alias:", "歧义别名："),
+    });
     if (!alias?.trim()) return;
-    const guidance = window.prompt(
-      tr(
+    const guidance = await promptDialog({
+      title: ambTitle,
+      message: tr(
         "Context guidance for the polish LLM (empty cancels):",
         "给润色 LLM 的语境判别指引（留空则取消）：",
       ),
-    );
+      multiline: true,
+    });
     if (!guidance?.trim()) return;
     mut.mutate({ term: term.trim(), alias: alias.trim(), guidance: guidance.trim() });
   };
 
   // Edit an existing row by its canonical term; empty guidance clears it back to blanket.
-  const edit = (d: Disambiguation) => {
-    const guidance = window.prompt(
-      tr(
+  const edit = async (d: Disambiguation) => {
+    const guidance = await promptDialog({
+      title: tr("Edit guidance", "编辑判别指引"),
+      message: tr(
         `Guidance for '${d.alias}' (empty clears the ambiguity):`,
         `'${d.alias}' 的判别指引（留空则清除歧义标记）：`,
       ),
-      d.guidance,
-    );
+      defaultValue: d.guidance,
+      multiline: true,
+    });
     if (guidance == null) return;
     mut.mutate({ term: d.canonical, alias: d.alias, guidance: guidance.trim() });
   };

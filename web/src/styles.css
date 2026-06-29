@@ -186,6 +186,15 @@ a:hover {
 .topbar .spacer {
   flex: 1;
 }
+.app-version {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  white-space: nowrap;
+}
 
 .content {
   padding: var(--sp-5);

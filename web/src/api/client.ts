@@ -753,6 +753,8 @@ export const getDoctor = () => api<Doctor>("/api/doctor");
 
 export interface Health {
   status: string;
+  /** Installed package version, shown in the topbar. */
+  version: string;
   auth_required: boolean;
   /** Loopback bind: gates loopback-only affordances like revealing secret config. */
   is_local: boolean;

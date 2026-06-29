@@ -18,6 +18,7 @@ import {
 } from "../api/client";
 import { tr } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm";
+import { promptDialog } from "../lib/prompt";
 import { useClipAudio } from "../lib/useClipAudio";
 
 type SortMode = "quality" | "name" | "samples";
@@ -291,8 +292,12 @@ export function VoiceprintPage() {
           <div className="vp-control-block vp-control-edit">
             <button
               className="btn"
-              onClick={() => {
-                const name = window.prompt(tr("New person name:", "新人物姓名："));
+              onClick={async () => {
+                const name = await promptDialog({
+                  title: tr("New person", "新建人物"),
+                  message: tr("New person name:", "新人物姓名："),
+                  confirmLabel: tr("Create", "创建"),
+                });
                 if (name?.trim()) createMut.mutate(name.trim());
               }}
             >
@@ -439,8 +444,13 @@ function PersonDetail(props: {
           <div className="row gap">
             <button
               className="btn"
-              onClick={() => {
-                const name = window.prompt(tr("Rename to:", "改名为："), data.person.name);
+              onClick={async () => {
+                const name = await promptDialog({
+                  title: tr("Rename", "改名"),
+                  message: tr("Rename to:", "改名为："),
+                  defaultValue: data.person.name,
+                  confirmLabel: tr("Rename", "改名"),
+                });
                 if (name?.trim() && name.trim() !== data.person.name) props.onRename(name.trim());
               }}
             >

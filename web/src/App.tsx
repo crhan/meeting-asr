@@ -6,6 +6,8 @@ import { hasUnsavedEdits } from "./lib/unsavedGuard";
 import { confirmDialog } from "./lib/confirm";
 import { AuthGate } from "./components/AuthGate";
 import { ConfirmHost } from "./components/ConfirmHost";
+import { PromptHost } from "./components/PromptHost";
+import { AppVersion } from "./components/AppVersion";
 import { PendingCaptureBanner } from "./components/PendingCaptureBanner";
 import { CapturePage } from "./pages/CapturePage";
 import { CorrectionPage } from "./pages/CorrectionPage";
@@ -73,6 +75,7 @@ export function App() {
           <NavLink to="/settings">{tr("Settings", "设置")}</NavLink>
         </nav>
         <span className="spacer" />
+        <AppVersion />
         <LangToggle />
       </header>
       <main className="content">
@@ -95,6 +98,7 @@ export function App() {
         </AuthGate>
       </main>
       <ConfirmHost />
+      <PromptHost />
       <GlobalErrorToast />
     </div>
   );
