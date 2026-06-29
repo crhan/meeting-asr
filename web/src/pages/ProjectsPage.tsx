@@ -163,14 +163,23 @@ export function ProjectsPage() {
                 onClick={() => navigate(`/projects/${p.project_id}/speakers`)}
                 title={tr("Open speaker review", "打开 speaker review")}
               >
-                <td className="mono">{p.project_id}</td>
+                <td className="mono nowrap">{p.project_id}</td>
                 <td>{p.title || tr("(untitled)", "（无标题）")}</td>
                 <td>
                   <StateBadge project={p} />
                 </td>
-                <td className="mono">{formatTime(p.meeting_time)}</td>
+                <td className="mono nowrap">{formatTime(p.meeting_time)}</td>
                 <td className="mono">
-                  {p.workflow?.outputs.join(", ") || "—"}
+                  {p.workflow?.outputs.length
+                    ? p.workflow.outputs.map((o, i) => (
+                        // Break only between artifacts, never inside one (the
+                        // hyphen in "corrected-srt" is a default break point).
+                        <span key={o}>
+                          {i > 0 ? ", " : ""}
+                          <span className="nowrap">{o}</span>
+                        </span>
+                      ))
+                    : "—"}
                 </td>
               </tr>
             ))}
