@@ -85,6 +85,9 @@ def test_project_speakers_match_writes_suggestions(
     assert payload["matches"][0]["status"] == "matched"
     assert payload["matches"][0]["candidates"][0]["name"] == "欧丁"
     assert isinstance(payload["matches"][0]["candidates"][0]["person_id"], int)
+    assert payload["matches"][0]["candidates"][0]["score_source"] == "person-centroid"
+    assert "probe_segments" in payload["matches"][0]["diagnostics"]
+    assert payload["matches"][0]["diagnostics"]["probe_sample_count"] == 1
     assert payload["provider"] == "local-speechbrain"
     assert payload["model"] == LOCAL_SPEECHBRAIN_MODEL
 
@@ -151,6 +154,9 @@ def test_project_speakers_match_keeps_below_threshold_best_candidate(
             "person_public_id": "vpp-0000000000000007",
             "name": "墨泪",
             "score": 0.8,
+            "score_source": "person-centroid",
+            "sample_count": 0,
+            "project_count": 0,
         }
     ]
 
@@ -209,6 +215,9 @@ def test_project_speakers_match_accepts_strong_margin_candidate(
     assert first["margin_score"] == 0.36000000000000004
     assert first["accept_reason"] == "strong-margin"
     assert first["status"] == "matched"
+    assert first["diagnostics"]["accept_reason"] == "strong-margin"
+    assert first["diagnostics"]["margin_score"] == 0.36000000000000004
+    assert first["diagnostics"]["best_score_source"] == "person-centroid"
 
 
 def test_project_speakers_match_can_apply_matches(

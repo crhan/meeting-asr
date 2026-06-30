@@ -40,7 +40,10 @@ from app.voiceprint_embedding import (
     embed_audio_file,
     resolve_voiceprint_embedding_options,
 )
-from app.voiceprint_segment_selection import select_voiceprint_segments
+from app.voiceprint_segment_selection import (
+    ScoredVoiceprintSegment,
+    select_voiceprint_segments,
+)
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
 
 STRONG_MARGIN_ACCEPT_SCORE = 0.65
@@ -82,6 +85,7 @@ class SpeakerMatch:
     crosstalk: bool = False
     margin_score: float | None = None
     accept_reason: str | None = None
+    diagnostics: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +146,15 @@ class _KnownSpeakerVector:
     project_vectors: tuple[_KnownProjectVector, ...] = ()
     sample_count: int = 0
     project_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _ProbeVector:
+    """Averaged project-speaker probe vector plus sampling diagnostics."""
+
+    vector: list[float]
+    segments: tuple[ScoredVoiceprintSegment, ...]
+    cached: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -505,7 +518,7 @@ def _match_one_speaker_group(
     cache_lock: Lock,
 ) -> SpeakerMatch:
     """Match one project speaker against known voiceprint vectors."""
-    vector = _probe_speaker_vector(
+    probe = _probe_speaker_vector(
         project_root,
         source,
         speaker_id,
@@ -518,7 +531,7 @@ def _match_one_speaker_group(
         padding_seconds,
         cache_lock,
     )
-    candidates = _ranked_matches(vector, known, limit=3)
+    candidates = _ranked_matches(probe.vector, known, limit=3)
     best = candidates[0] if candidates else None
     accepted, accept_reason = _acceptance_decision(best, tuple(candidates), threshold)
     return _speaker_match_from_best(
@@ -529,6 +542,7 @@ def _match_one_speaker_group(
         accepted,
         threshold,
         accept_reason,
+        diagnostics=_match_diagnostics(probe, tuple(candidates), accept_reason),
     )
 
 
@@ -567,6 +581,7 @@ def _speaker_match_from_best(
     accepted: bool,
     threshold: float,
     accept_reason: str | None = None,
+    diagnostics: dict[str, object] | None = None,
 ) -> SpeakerMatch:
     """Build the persisted match row from a best candidate."""
     accepted_name = best.name if accepted and best is not None else None
@@ -593,6 +608,7 @@ def _speaker_match_from_best(
         False,
         _candidate_margin(candidates),
         accept_reason if accepted else None,
+        diagnostics,
     )
 
 
@@ -657,7 +673,7 @@ def _probe_speaker_vector(
     max_seconds: float,
     padding_seconds: float,
     cache_lock: Lock,
-) -> list[float]:
+) -> _ProbeVector:
     """Build an averaged probe vector for one project speaker."""
     selected_segments = _select_probe_segments(segments, all_segments, sample_count)
     cache_key = _probe_cache_key(
@@ -670,9 +686,10 @@ def _probe_speaker_vector(
     )
     cached_vector = _read_probe_cache(project_root, cache_key)
     if cached_vector is not None:
-        return cached_vector
+        return _ProbeVector(cached_vector, tuple(selected_segments), cached=True)
     vectors: list[list[float]] = []
-    for index, segment in enumerate(selected_segments, start=1):
+    for index, candidate in enumerate(selected_segments, start=1):
+        segment = candidate.segment
         clip_path = _probe_clip_path(project_root, speaker_id, index)
         _write_probe_clip(source, clip_path, segment, max_seconds, padding_seconds)
         embedding_path = _probe_embedding_clip_path(project_root, speaker_id, index)
@@ -681,13 +698,13 @@ def _probe_speaker_vector(
     vector = _normalize(_mean_vector(vectors))
     with cache_lock:
         _write_probe_cache(project_root, cache_key, vector)
-    return vector
+    return _ProbeVector(vector, tuple(selected_segments))
 
 
 def _probe_cache_key(
     *,
     speaker_id: int,
-    segments: list[SentenceSegment],
+    segments: list[ScoredVoiceprintSegment],
     provider: str | None,
     model: str,
     max_seconds: float,
@@ -695,7 +712,7 @@ def _probe_cache_key(
 ) -> str:
     """Return a stable cache key for one project speaker probe embedding."""
     payload = {
-        "version": 3,
+        "version": 4,
         "speaker_id": speaker_id,
         "provider": provider,
         "model": model,
@@ -704,12 +721,14 @@ def _probe_cache_key(
         "padding_seconds": padding_seconds,
         "segments": [
             {
-                "sentence_id": segment.sentence_id,
-                "begin_time_ms": segment.begin_time_ms,
-                "end_time_ms": segment.end_time_ms,
-                "text": segment.text,
+                "sentence_id": item.segment.sentence_id,
+                "begin_time_ms": item.segment.begin_time_ms,
+                "end_time_ms": item.segment.end_time_ms,
+                "text": item.segment.text,
+                "selection_score": item.score,
+                "selection_reason": item.reason,
             }
-            for segment in segments
+            for item in segments
         ],
     }
     encoded = json.dumps(
@@ -775,7 +794,7 @@ def _select_probe_segments(
     segments: list[SentenceSegment],
     all_segments: list[SentenceSegment],
     sample_count: int,
-) -> list[SentenceSegment]:
+) -> list[ScoredVoiceprintSegment]:
     """Select quality-scored, time-spread probe segments."""
     candidates = select_voiceprint_segments(
         segments,
@@ -787,18 +806,21 @@ def _select_probe_segments(
     if len(selected) < sample_count:
         selected.extend(item for item in candidates if not item.recommended)
     if selected:
-        return [item.segment for item in selected[:sample_count]]
+        return selected[:sample_count]
     return _select_longest_segments(segments, sample_count)
 
 
 def _select_longest_segments(
     segments: list[SentenceSegment], sample_count: int
-) -> list[SentenceSegment]:
+) -> list[ScoredVoiceprintSegment]:
     """Select longest segments in timeline order as a compatibility fallback."""
     longest = sorted(
         segments, key=lambda item: item.end_time_ms - item.begin_time_ms, reverse=True
     )[:sample_count]
-    return sorted(longest, key=lambda item: item.begin_time_ms)
+    return [
+        ScoredVoiceprintSegment(segment, 0.0, "fallback-longest", recommended=True)
+        for segment in sorted(longest, key=lambda item: item.begin_time_ms)
+    ]
 
 
 def _probe_clip_path(project_root: Path, speaker_id: int, index: int) -> Path:
@@ -865,6 +887,41 @@ def _ranked_matches(
         for item in known.values()
     ]
     return sorted(candidates, key=lambda item: item.score, reverse=True)[:limit]
+
+
+def _match_diagnostics(
+    probe: _ProbeVector,
+    candidates: tuple[VoiceprintCandidate, ...],
+    accept_reason: str | None,
+) -> dict[str, object]:
+    """Build persisted diagnostics for one speaker match."""
+    best = candidates[0] if candidates else None
+    return {
+        "probe_cached": probe.cached,
+        "probe_sample_count": len(probe.segments),
+        "probe_segments": [_probe_segment_payload(item) for item in probe.segments],
+        "candidate_count": len(candidates),
+        "margin_score": _candidate_margin(candidates),
+        "accept_reason": accept_reason,
+        "best_score_source": best.score_source if best is not None else None,
+        "best_sample_count": best.sample_count if best is not None else None,
+        "best_project_count": best.project_count if best is not None else None,
+    }
+
+
+def _probe_segment_payload(segment: ScoredVoiceprintSegment) -> dict[str, object]:
+    """Serialize one selected probe segment for diagnostics."""
+    item = segment.segment
+    return {
+        "sentence_id": item.sentence_id,
+        "begin_time_ms": item.begin_time_ms,
+        "end_time_ms": item.end_time_ms,
+        "duration_seconds": round((item.end_time_ms - item.begin_time_ms) / 1000, 3),
+        "selection_score": segment.score,
+        "selection_reason": segment.reason,
+        "recommended": segment.recommended,
+        "text": item.text.strip(),
+    }
 
 
 def _candidate_from_known_vector(
@@ -962,10 +1019,14 @@ def _matches_payload(
                         "person_public_id": candidate.person_public_id,
                         "name": candidate.name,
                         "score": candidate.score,
+                        "score_source": candidate.score_source,
+                        "sample_count": candidate.sample_count,
+                        "project_count": candidate.project_count,
                     }
                     for candidate in item.candidates
                 ],
                 "sample_count": item.sample_count,
+                "diagnostics": item.diagnostics or {},
             }
             for item in matches
         ],

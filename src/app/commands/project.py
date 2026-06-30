@@ -3477,19 +3477,80 @@ def _voiceprint_match_cli_line(
         name = accepted_match_name(match) or "unknown"
         score = best_candidate_score(match)
         score_text = "" if score is None else f" score={score:.3f}"
-        return f"{label} status=matched name={name}{score_text}{threshold_text}"
+        return (
+            f"{label} status=matched name={name}{score_text}{threshold_text}"
+            f"{_match_diagnostic_suffix(match)}"
+        )
     if status == MATCH_STATUS_BELOW_THRESHOLD:
         name = best_candidate_name(match) or "unrecorded"
         score = best_candidate_score(match)
         score_text = "" if score is None else f" score={score:.3f}"
-        return f"{label} status=below-threshold best={name}{score_text}{threshold_text}"
+        return (
+            f"{label} status=below-threshold best={name}{score_text}{threshold_text}"
+            f"{_match_diagnostic_suffix(match)}"
+        )
     if status == MATCH_STATUS_CROSSTALK:
         # Suspected crosstalk/noise: kept anonymous on purpose, non-blocking.
         name = best_candidate_name(match) or "unrecorded"
         score = best_candidate_score(match)
         score_text = "" if score is None else f" score={score:.3f}"
-        return f"{label} status=crosstalk best={name}{score_text}{threshold_text}"
+        return (
+            f"{label} status=crosstalk best={name}{score_text}{threshold_text}"
+            f"{_match_diagnostic_suffix(match)}"
+        )
     return f"{label} status=no-candidate{threshold_text}"
+
+
+def _match_diagnostic_suffix(match: object) -> str:
+    """Return compact match diagnostics for one CLI line."""
+    parts: list[str] = []
+    reason = _match_field(match, "accept_reason")
+    if reason:
+        parts.append(f"reason={reason}")
+    margin = _match_float_field(match, "margin_score")
+    if margin is not None:
+        parts.append(f"margin={margin:.3f}")
+    source = _best_score_source(match)
+    if source:
+        parts.append(f"source={source}")
+    return "" if not parts else " " + " ".join(parts)
+
+
+def _best_score_source(match: object) -> str | None:
+    """Return the best candidate's scoring source when available."""
+    diagnostics = _match_field(match, "diagnostics")
+    if isinstance(diagnostics, dict):
+        source = diagnostics.get("best_score_source")
+        if source:
+            return str(source)
+    candidates = _match_field(match, "candidates")
+    if isinstance(candidates, (list, tuple)) and candidates:
+        first = candidates[0]
+        if isinstance(first, dict):
+            source = first.get("score_source")
+        else:
+            source = getattr(first, "score_source", None)
+        if source:
+            return str(source)
+    return None
+
+
+def _match_field(match: object, key: str) -> object:
+    """Read a match field from either a mapping or an object."""
+    if isinstance(match, dict):
+        return match.get(key)
+    return getattr(match, key, None)
+
+
+def _match_float_field(match: object, key: str) -> float | None:
+    """Read a float match field from either a mapping or an object."""
+    value = _match_field(match, key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except TypeError, ValueError:
+        return None
 
 
 def _project_ref_from_match_path(match_path: Path) -> str:
