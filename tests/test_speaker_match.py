@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import wave
 from pathlib import Path
 
@@ -148,6 +149,62 @@ def test_project_speakers_match_keeps_below_threshold_best_candidate(
             "score": 0.8,
         }
     ]
+
+
+def test_project_speakers_match_accepts_strong_margin_candidate(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A below-threshold candidate with a large top-2 margin is safe to accept."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    _patch_audio_embedding(monkeypatch)
+    monkeypatch.setattr(
+        "app.speaker_matching._known_speaker_vectors",
+        lambda store_dir, model: {
+            7: _KnownSpeakerVector(
+                7,
+                "墨泪",
+                [0.66, math.sqrt(1 - 0.66**2)],
+                "vpp-0000000000000007",
+            ),
+            8: _KnownSpeakerVector(
+                8,
+                "欧丁",
+                [0.30, math.sqrt(1 - 0.30**2)],
+                "vpp-0000000000000008",
+            ),
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "speakers",
+            "match",
+            str(project_dir),
+            "--store-dir",
+            str(store_dir),
+            "--threshold",
+            "0.75",
+        ],
+    )
+
+    payload = json.loads(
+        (project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8")
+    )
+    first = payload["matches"][0]
+    assert result.exit_code == 0
+    assert "Speaker A status=matched name=墨泪 score=0.660" in result.output
+    assert first["accepted"] is True
+    assert first["accepted_name"] == "墨泪"
+    assert first["best_score"] == 0.66
+    assert first["threshold"] == 0.75
+    assert first["margin_score"] == 0.36000000000000004
+    assert first["accept_reason"] == "strong-margin"
+    assert first["status"] == "matched"
 
 
 def test_project_speakers_match_can_apply_matches(

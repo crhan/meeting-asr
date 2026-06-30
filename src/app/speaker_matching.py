@@ -42,6 +42,9 @@ from app.voiceprint_embedding import (
 )
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
 
+STRONG_MARGIN_ACCEPT_SCORE = 0.65
+STRONG_MARGIN_ACCEPT_MARGIN = 0.25
+
 
 @dataclass(frozen=True, slots=True)
 class VoiceprintCandidate:
@@ -73,6 +76,8 @@ class SpeakerMatch:
     accepted_person_public_id: str | None = None
     candidates: tuple[VoiceprintCandidate, ...] = ()
     crosstalk: bool = False
+    margin_score: float | None = None
+    accept_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -477,10 +482,43 @@ def _match_one_speaker_group(
     )
     candidates = _ranked_matches(vector, known, limit=3)
     best = candidates[0] if candidates else None
-    accepted = best is not None and best.score >= threshold
+    accepted, accept_reason = _acceptance_decision(best, tuple(candidates), threshold)
     return _speaker_match_from_best(
-        speaker_id, speaker_segments, best, tuple(candidates), accepted, threshold
+        speaker_id,
+        speaker_segments,
+        best,
+        tuple(candidates),
+        accepted,
+        threshold,
+        accept_reason,
     )
+
+
+def _acceptance_decision(
+    best: VoiceprintCandidate | None,
+    candidates: tuple[VoiceprintCandidate, ...],
+    threshold: float,
+) -> tuple[bool, str | None]:
+    """Return whether to auto-accept a candidate and why."""
+    if best is None:
+        return False, None
+    if best.score >= threshold:
+        return True, "threshold"
+    margin = _candidate_margin(candidates)
+    if (
+        margin is not None
+        and best.score >= STRONG_MARGIN_ACCEPT_SCORE
+        and margin >= STRONG_MARGIN_ACCEPT_MARGIN
+    ):
+        return True, "strong-margin"
+    return False, None
+
+
+def _candidate_margin(candidates: tuple[VoiceprintCandidate, ...]) -> float | None:
+    """Return top-1 minus top-2 score when a competitor exists."""
+    if len(candidates) < 2:
+        return None
+    return candidates[0].score - candidates[1].score
 
 
 def _speaker_match_from_best(
@@ -490,6 +528,7 @@ def _speaker_match_from_best(
     candidates: tuple[VoiceprintCandidate, ...],
     accepted: bool,
     threshold: float,
+    accept_reason: str | None = None,
 ) -> SpeakerMatch:
     """Build the persisted match row from a best candidate."""
     accepted_name = best.name if accepted and best is not None else None
@@ -513,6 +552,9 @@ def _speaker_match_from_best(
         accepted_person_id,
         accepted_person_public_id,
         candidates,
+        False,
+        _candidate_margin(candidates),
+        accept_reason if accepted else None,
     )
 
 
@@ -823,6 +865,8 @@ def _matches_payload(
                 "accepted_person_public_id": item.accepted_person_public_id,
                 "threshold": item.threshold,
                 "crosstalk": item.crosstalk,
+                "margin_score": item.margin_score,
+                "accept_reason": item.accept_reason,
                 "status": voiceprint_match_status(item),
                 "candidates": [
                     {
