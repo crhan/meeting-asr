@@ -55,6 +55,9 @@ class VoiceprintCandidate:
     name: str
     score: float
     person_public_id: str = ""
+    score_source: str = "person-centroid"
+    sample_count: int = 0
+    project_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +123,15 @@ class SpeakerMatchSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class _KnownProjectVector:
+    """Averaged voiceprint vector for one person's samples in one project."""
+
+    project_id: str
+    vector: list[float]
+    sample_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class _KnownSpeakerVector:
     """Averaged voiceprint vector for one stable person id."""
 
@@ -127,6 +139,9 @@ class _KnownSpeakerVector:
     name: str
     vector: list[float]
     person_public_id: str = ""
+    project_vectors: tuple[_KnownProjectVector, ...] = ()
+    sample_count: int = 0
+    project_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,10 +378,14 @@ def _known_speaker_vectors(
     """Load averaged known speaker vectors."""
     embeddings = list_voiceprint_embeddings(model, get_voiceprint_db_path(store_dir))
     grouped: dict[int, list[list[float]]] = defaultdict(list)
+    grouped_by_project: dict[int, dict[str, list[list[float]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
     names: dict[int, str] = {}
     public_ids: dict[int, str] = {}
     for row in embeddings:
         grouped[row.speaker_id].append(row.vector)
+        grouped_by_project[row.speaker_id][row.project_id].append(row.vector)
         names[row.speaker_id] = row.speaker_name
         public_ids[row.speaker_id] = row.speaker_public_id
     return {
@@ -375,9 +394,23 @@ def _known_speaker_vectors(
             names[person_id],
             _normalize(_mean_vector(vectors)),
             public_ids[person_id],
+            _known_project_vectors(grouped_by_project[person_id]),
+            len(vectors),
+            len(grouped_by_project[person_id]),
         )
         for person_id, vectors in grouped.items()
     }
+
+
+def _known_project_vectors(
+    grouped_by_project: dict[str, list[list[float]]],
+) -> tuple[_KnownProjectVector, ...]:
+    """Return per-project centroids for one voiceprint person."""
+    return tuple(
+        _KnownProjectVector(project_id, _normalize(_mean_vector(vectors)), len(vectors))
+        for project_id, vectors in sorted(grouped_by_project.items())
+        if vectors
+    )
 
 
 def _match_speaker_groups(
@@ -828,15 +861,44 @@ def _ranked_matches(
         Candidates sorted by descending cosine score.
     """
     candidates = [
-        VoiceprintCandidate(
-            item.person_id,
-            item.name,
-            _cosine(vector, item.vector),
-            item.person_public_id,
-        )
+        _candidate_from_known_vector(vector, item)
         for item in known.values()
     ]
     return sorted(candidates, key=lambda item: item.score, reverse=True)[:limit]
+
+
+def _candidate_from_known_vector(
+    vector: list[float], known: _KnownSpeakerVector
+) -> VoiceprintCandidate:
+    """Build a ranked candidate using robust person/project centroid scoring."""
+    score, score_source = _score_known_vector(vector, known)
+    return VoiceprintCandidate(
+        known.person_id,
+        known.name,
+        score,
+        known.person_public_id,
+        score_source,
+        known.sample_count,
+        known.project_count,
+    )
+
+
+def _score_known_vector(
+    vector: list[float], known: _KnownSpeakerVector
+) -> tuple[float, str]:
+    """Score a known person by whole-person centroid plus stable project centroids."""
+    person_score = _cosine(vector, known.vector)
+    project_scores = [
+        _cosine(vector, project.vector)
+        for project in known.project_vectors
+        if project.sample_count >= 2
+    ]
+    if not project_scores:
+        return person_score, "person-centroid"
+    project_score = max(project_scores)
+    if project_score > person_score:
+        return project_score, "project-centroid"
+    return person_score, "person-centroid"
 
 
 def _mean_vector(vectors: list[list[float]]) -> list[float]:

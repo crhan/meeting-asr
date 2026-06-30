@@ -11,7 +11,11 @@ from typer.testing import CliRunner
 
 from app.cli import app
 from app.project_manager import create_project
-from app.speaker_matching import _KnownSpeakerVector
+from app.speaker_matching import (
+    _KnownProjectVector,
+    _KnownSpeakerVector,
+    _ranked_matches,
+)
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
 
 runner = CliRunner()
@@ -366,6 +370,44 @@ def test_project_speakers_match_prefers_quality_probe_segments(
 
     assert result.exit_code == 0
     assert starts == [35.0]
+
+
+def test_ranked_matches_uses_stable_project_centroid() -> None:
+    """Project centroids should rescue cross-project drift from a diluted mean."""
+    probe = [1.0, 0.0]
+    known = {
+        7: _KnownSpeakerVector(
+            7,
+            "米汤",
+            [0.60, 0.80],
+            "vpp-0000000000000007",
+            (
+                _KnownProjectVector("old", [0.60, 0.80], 3),
+                _KnownProjectVector(
+                    "current", [0.92, math.sqrt(1 - 0.92**2)], 2
+                ),
+            ),
+            5,
+            2,
+        ),
+        8: _KnownSpeakerVector(
+            8,
+            "其他人",
+            [0.75, math.sqrt(1 - 0.75**2)],
+            "vpp-0000000000000008",
+            (),
+            2,
+            1,
+        ),
+    }
+
+    candidates = _ranked_matches(probe, known, limit=2)
+
+    assert candidates[0].name == "米汤"
+    assert candidates[0].score == 0.92
+    assert candidates[0].score_source == "project-centroid"
+    assert candidates[0].sample_count == 5
+    assert candidates[0].project_count == 2
 
 
 def test_project_speakers_match_allows_empty_voiceprint_library(
