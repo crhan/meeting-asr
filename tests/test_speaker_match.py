@@ -314,6 +314,60 @@ def test_project_speakers_match_reuses_project_probe_embedding_cache(
     assert (project_dir / "tmp" / "voiceprint_match" / "probe_embeddings.json").exists()
 
 
+def test_project_speakers_match_prefers_quality_probe_segments(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Probe sampling should not blindly choose the longest low-information clip."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    _write_quality_probe_inputs(project_dir)
+    starts: list[float] = []
+
+    def fake_extract(
+        input_path: Path,
+        output_path: Path,
+        *,
+        start_seconds: float,
+        duration_seconds: float,
+    ) -> Path:
+        starts.append(start_seconds)
+        return _fake_extract_audio_clip(
+            input_path,
+            output_path,
+            start_seconds=start_seconds,
+            duration_seconds=duration_seconds,
+        )
+
+    monkeypatch.setattr("app.speaker_matching.extract_audio_clip", fake_extract)
+    monkeypatch.setattr("app.speaker_matching.embed_audio_file", _fake_embed_audio_file)
+    monkeypatch.setattr(
+        "app.speaker_matching._known_speaker_vectors",
+        lambda store_dir, model: {
+            7: _KnownSpeakerVector(7, "欧丁", [1.0, 0.0], "vpp-0000000000000007")
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "speakers",
+            "match",
+            str(project_dir),
+            "--store-dir",
+            str(store_dir),
+            "--sample-count",
+            "1",
+            "--padding-seconds",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert starts == [35.0]
+
+
 def test_project_speakers_match_allows_empty_voiceprint_library(
     monkeypatch,
     tmp_path: Path,
@@ -399,6 +453,37 @@ def _write_named_speaker_inputs(project_dir: Path) -> None:
     )
     (project_dir / "speakers" / "speaker_map.json").write_text(
         json.dumps({"0": "欧丁", "1": "敬悦"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _write_quality_probe_inputs(project_dir: Path) -> None:
+    """Write inputs where the longest segment is low-information filler."""
+    sentences = {
+        "full_text": "嗯嗯嗯。这里开始讲具体方案和风险边界。",
+        "detected_speakers": [0],
+        "sentences": [
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 30000,
+                "text": "嗯嗯嗯",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            },
+            {
+                "begin_time_ms": 35000,
+                "end_time_ms": 41000,
+                "text": "这里开始讲具体方案和风险边界。",
+                "speaker_id": 0,
+                "sentence_id": 2,
+            },
+        ],
+    }
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(sentences, ensure_ascii=False), encoding="utf-8"
+    )
+    (project_dir / "speakers" / "speaker_map.json").write_text(
+        json.dumps({"0": "欧丁"}, ensure_ascii=False),
         encoding="utf-8",
     )
 

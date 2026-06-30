@@ -40,6 +40,7 @@ from app.voiceprint_embedding import (
     embed_audio_file,
     resolve_voiceprint_embedding_options,
 )
+from app.voiceprint_segment_selection import select_voiceprint_segments
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
 
 STRONG_MARGIN_ACCEPT_SCORE = 0.65
@@ -410,6 +411,7 @@ def _match_speaker_groups(
             source,
             speaker_id,
             speaker_segments,
+            segments,
             known,
             provider,
             model,
@@ -432,6 +434,7 @@ def _match_speaker_groups(
                 source,
                 speaker_id,
                 speaker_segments,
+                segments,
                 known,
                 provider,
                 model,
@@ -458,6 +461,7 @@ def _match_one_speaker_group(
     source: Path,
     speaker_id: int,
     speaker_segments: list[SentenceSegment],
+    all_segments: list[SentenceSegment],
     known: dict[int, _KnownSpeakerVector],
     provider: str | None,
     model: str,
@@ -473,6 +477,7 @@ def _match_one_speaker_group(
         source,
         speaker_id,
         speaker_segments,
+        all_segments,
         provider,
         model,
         sample_count,
@@ -612,6 +617,7 @@ def _probe_speaker_vector(
     source: Path,
     speaker_id: int,
     segments: list[SentenceSegment],
+    all_segments: list[SentenceSegment],
     provider: str | None,
     model: str,
     sample_count: int,
@@ -620,7 +626,7 @@ def _probe_speaker_vector(
     cache_lock: Lock,
 ) -> list[float]:
     """Build an averaged probe vector for one project speaker."""
-    selected_segments = _select_segments(segments, sample_count)
+    selected_segments = _select_probe_segments(segments, all_segments, sample_count)
     cache_key = _probe_cache_key(
         speaker_id=speaker_id,
         segments=selected_segments,
@@ -656,7 +662,7 @@ def _probe_cache_key(
 ) -> str:
     """Return a stable cache key for one project speaker probe embedding."""
     payload = {
-        "version": 2,
+        "version": 3,
         "speaker_id": speaker_id,
         "provider": provider,
         "model": model,
@@ -732,10 +738,30 @@ def _valid_probe_cache_payload(payload: object) -> dict[str, list[float]]:
     return valid
 
 
-def _select_segments(
+def _select_probe_segments(
+    segments: list[SentenceSegment],
+    all_segments: list[SentenceSegment],
+    sample_count: int,
+) -> list[SentenceSegment]:
+    """Select quality-scored, time-spread probe segments."""
+    candidates = select_voiceprint_segments(
+        segments,
+        all_segments,
+        sample_count,
+        candidate_count=max(sample_count * 4, sample_count, 12),
+    )
+    selected = [item for item in candidates if item.recommended]
+    if len(selected) < sample_count:
+        selected.extend(item for item in candidates if not item.recommended)
+    if selected:
+        return [item.segment for item in selected[:sample_count]]
+    return _select_longest_segments(segments, sample_count)
+
+
+def _select_longest_segments(
     segments: list[SentenceSegment], sample_count: int
 ) -> list[SentenceSegment]:
-    """Select longest segments in timeline order."""
+    """Select longest segments in timeline order as a compatibility fallback."""
     longest = sorted(
         segments, key=lambda item: item.end_time_ms - item.begin_time_ms, reverse=True
     )[:sample_count]
