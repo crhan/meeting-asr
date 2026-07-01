@@ -5,6 +5,15 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [0.15.0] - 2026-07-02
+
+### 变更
+
+- **声纹匹配打分改用更稳健的项目级质心**：候选打分优先用同一 person 在单个项目内的声纹质心（要求该项目至少 2 个样本），只有在项目质心分高于全局人物质心时才采用，避免个别项目里的偏差样本拖累跨项目匹配；`speaker_matches.json` 新增 `score_source`（`project-centroid` / `person-centroid`）标注打分来源。
+- **声纹探针样本改为质量评分挑选，不再只挑最长句子**：新增 `voiceprint_segment_selection` 模块，按文本质量打分并在说话人时间轴上均匀取样（避免扎堆在同一段长独白），质量不足时回退到旧的“最长句子”策略保底。
+- **below-threshold 候选新增强 margin 兜底接受**：候选分数虽低于常规阈值，但明显显著领先第二名（`score >= 0.65` 且领先 `>= 0.25`）时视为安全接受，减少因阈值一刀切造成的漏识别；接受原因（`threshold` / `strong-margin`）记入 `accept_reason` 供审计。
+- **CLI 输出暴露声纹匹配诊断信息**：`project speakers match` 等命令的匹配行现在附带 `reason=` / `margin=` / `source=` 诊断后缀，便于排查为什么某个 speaker 被判定匹配或未匹配。
+
 ## [0.14.0] - 2026-06-29
 
 ### 变更
