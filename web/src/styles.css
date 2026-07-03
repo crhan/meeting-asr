@@ -330,6 +330,19 @@ table.projects tr:hover td {
   background: var(--red-dim);
 }
 
+/* Voiceprint sample -> source project deep link. */
+.vp-project-link {
+  color: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.vp-project-link:hover {
+  color: var(--accent);
+}
+a.badge {
+  text-decoration: none;
+}
+
 /* ---- Speaker review: timeline view + identity candidates ---- */
 .timeline-speaker {
   display: inline-flex;

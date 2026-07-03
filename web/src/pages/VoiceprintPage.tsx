@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createPerson,
@@ -8,6 +9,7 @@ import {
   getLibrary,
   getPersonSamples,
   getQuality,
+  mergePeople,
   renamePerson,
   sampleClipUrl,
   setSampleStatus,
@@ -20,6 +22,7 @@ import { tr } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm";
 import { promptDialog } from "../lib/prompt";
 import { useClipAudio } from "../lib/useClipAudio";
+import { Modal } from "../components/Modal";
 
 type SortMode = "quality" | "name" | "samples";
 type SampleFilter = "all" | "issues" | "matching" | "excluded" | "confirmed" | "unembedded";
@@ -185,6 +188,24 @@ export function VoiceprintPage() {
       );
     },
   });
+
+  const mergeMut = useMutation({
+    mutationFn: ({ fromRef, intoRef }: { fromRef: string; intoRef: string }) =>
+      mergePeople(fromRef, intoRef),
+    onSuccess: (person, variables) => {
+      // The source person no longer exists; invalidating its samples query would
+      // refetch into a 404 global toast -- remove the cache entry instead.
+      queryClient.removeQueries({ queryKey: ["vp-person", variables.fromRef] });
+      queryClient.invalidateQueries({ queryKey: ["vp-library"] });
+      queryClient.invalidateQueries({ queryKey: ["vp-quality"] });
+      queryClient.invalidateQueries({ queryKey: ["vp-person", person.public_id] });
+      setSelected(person.public_id);
+      setToast(tr(`Merged into "${person.name}".`, `已合并到「${person.name}」。`));
+    },
+  });
+
+  // Person being merged (the SOURCE, which the merge deletes).
+  const [mergeSource, setMergeSource] = useState<PersonView | null>(null);
 
   const qualityByPerson = useMemo(() => {
     return new Map((qualityQuery.data?.people ?? []).map((person) => [person.public_id, person]));
@@ -355,8 +376,16 @@ export function VoiceprintPage() {
               sampleFilter={sampleFilter}
               editMode={editMode}
               audio={audio}
+              pendingSampleId={
+                statusMut.isPending
+                  ? (statusMut.variables?.samplePublicId ?? null)
+                  : deleteSampleMut.isPending
+                    ? (deleteSampleMut.variables?.samplePublicId ?? null)
+                    : null
+              }
               onRename={(name) => renameMut.mutate({ personRef: selectedPerson.public_id, name })}
               onDeletePerson={() => deletePersonMut.mutate(selectedPerson.public_id)}
+              onMerge={() => setMergeSource(selectedPerson)}
               onSetStatus={(samplePublicId, status) =>
                 statusMut.mutate({ personRef: selectedPerson.public_id, samplePublicId, status })
               }
@@ -379,6 +408,26 @@ export function VoiceprintPage() {
           )}
         </div>
       </div>
+      {mergeSource && (
+        <MergePersonModal
+          source={mergeSource}
+          people={people.filter((person) => person.public_id !== mergeSource.public_id)}
+          onPick={async (target) => {
+            const ok = await confirmDialog({
+              message: tr(
+                `Merge all ${mergeSource.sample_count} sample(s) of "${mergeSource.name}" into "${target.name}" and delete "${mergeSource.name}"? This cannot be undone.`,
+                `把「${mergeSource.name}」的全部 ${mergeSource.sample_count} 条样本并入「${target.name}」并删除「${mergeSource.name}」？此操作不可撤销。`,
+              ),
+              confirmLabel: tr("Merge", "合并"),
+              danger: true,
+            });
+            setMergeSource(null);
+            if (ok)
+              mergeMut.mutate({ fromRef: mergeSource.public_id, intoRef: target.public_id });
+          }}
+          onClose={() => setMergeSource(null)}
+        />
+      )}
       {toast && (
         <div className="toast" onClick={() => setToast(null)}>
           {toast}
@@ -388,13 +437,63 @@ export function VoiceprintPage() {
   );
 }
 
+/** Pick the person a duplicate entry should be merged into; likely targets
+ *  (voiceprint-nearest neighbors) come first. */
+function MergePersonModal(props: {
+  source: PersonView;
+  people: PersonView[];
+  onPick: (target: PersonView) => void;
+  onClose: () => void;
+}) {
+  const { source, people } = props;
+  const neighborScores = new Map(
+    (source.quality?.closest_people ?? []).map((n) => [n.public_id, n.score]),
+  );
+  const rows = [...people].sort((a, b) => {
+    const na = neighborScores.get(a.public_id);
+    const nb = neighborScores.get(b.public_id);
+    if (na != null || nb != null) return (nb ?? -1) - (na ?? -1);
+    return compareByName(a, b);
+  });
+  return (
+    <Modal
+      title={tr(`Merge "${source.name}" into…`, `把「${source.name}」合并到…`)}
+      onClose={props.onClose}
+    >
+      <div className="people-list">
+        {rows.length === 0 ? (
+          <div className="subtle pad">{tr("No other people.", "没有其他人物。")}</div>
+        ) : (
+          rows.map((person) => (
+            <button
+              key={person.public_id}
+              className="person-row"
+              onClick={() => props.onPick(person)}
+            >
+              <span className="person-name">{person.name}</span>
+              <span className="person-id mono">
+                {person.sample_count} {tr("samples", "样本")}
+                {neighborScores.has(person.public_id) &&
+                  ` · ${tr("similarity", "相似")} ${neighborScores.get(person.public_id)!.toFixed(2)}`}
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 function PersonDetail(props: {
   person: PersonView;
   sampleFilter: SampleFilter;
   editMode: boolean;
   audio: ReturnType<typeof useClipAudio>;
+  /** Sample with a status/delete mutation in flight: its action chips disable. */
+  pendingSampleId: string | null;
   onRename: (name: string) => void;
   onDeletePerson: () => void;
+  onMerge: () => void;
   onSetStatus: (samplePublicId: string, status: string) => void;
   onDeleteSample: (samplePublicId: string, lastSample: boolean) => void;
   onExcludeIssues: (samplePublicIds?: string[]) => void;
@@ -466,6 +565,16 @@ function PersonDetail(props: {
             </button>
             <button
               className="btn ghost"
+              title={tr(
+                "Merge this (duplicate) person's samples into another person.",
+                "把这个（重复的）人物的样本并入另一个人物。",
+              )}
+              onClick={props.onMerge}
+            >
+              {tr("Merge into…", "合并到…")}
+            </button>
+            <button
+              className="btn ghost"
               onClick={async () => {
                 if (
                   await confirmDialog({
@@ -505,6 +614,7 @@ function PersonDetail(props: {
                 sampleCount={data.samples.length}
                 audio={audio}
                 editMode={editMode}
+                pending={props.pendingSampleId === sample.public_id}
                 onSetStatus={props.onSetStatus}
                 onDelete={props.onDeleteSample}
               />
@@ -554,10 +664,15 @@ function VoiceprintHealthPanel(props: {
         {riskyProjects.length > 0 && (
           <div className="vp-health-projects">
             {riskyProjects.slice(0, 4).map((project) => (
-              <span key={project.project_id} className="badge vp-project-risk">
+              <Link
+                key={project.project_id}
+                className="badge vp-project-risk"
+                to={`/projects/${encodeURIComponent(project.project_id)}/speakers`}
+                title={tr("Open this project's speaker review", "打开该项目的 speaker review")}
+              >
                 {project.project_id} · {project.suspicious_count} {tr("issues", "疑点")} ·{" "}
                 {project.min_score?.toFixed(2) ?? "—"}
-              </span>
+              </Link>
             ))}
           </div>
         )}
@@ -577,10 +692,14 @@ function SampleRow(props: {
   sampleCount: number;
   audio: ReturnType<typeof useClipAudio>;
   editMode: boolean;
+  /** A status/delete mutation for THIS sample is in flight: disable its actions.
+   *  Both chips flip axes of the same status field, so a double-click while the
+   *  first PATCH is in flight silently reverts the user's intent. */
+  pending: boolean;
   onSetStatus: (samplePublicId: string, status: string) => void;
   onDelete: (samplePublicId: string, lastSample: boolean) => void;
 }) {
-  const { personRef, sample, sampleCount, audio, editMode } = props;
+  const { personRef, sample, sampleCount, audio, editMode, pending } = props;
   const key = `${personRef}:${sample.public_id}`;
   const playing = audio.playingKey === key;
   const scoreText = sample.quality?.score == null ? "—" : sample.quality.score.toFixed(2);
@@ -593,7 +712,15 @@ function SampleRow(props: {
       </button>
       <div className="segment-body">
         <div className="segment-meta subtle mono">
-          {fmtMs(sample.begin_time_ms)} · {sample.project_id} ·{" "}
+          {fmtMs(sample.begin_time_ms)} ·{" "}
+          <Link
+            className="vp-project-link"
+            to={`/projects/${encodeURIComponent(sample.project_id)}/speakers`}
+            title={tr("Open this sample's source project", "打开该样本来源项目")}
+          >
+            {sample.project_id}
+          </Link>{" "}
+          ·{" "}
           <span className={`score-badge ${qualityClass(sample)}`}>
             {scoreText} {qualityText}
           </span>{" "}
@@ -617,6 +744,7 @@ function SampleRow(props: {
           <div className="vp-sample-actions">
             <button
               className={`chip ${sample.identity_confirmed ? "on" : ""}`}
+              disabled={pending}
               onClick={() =>
                 props.onSetStatus(
                   sample.public_id,
@@ -628,6 +756,7 @@ function SampleRow(props: {
             </button>
             <button
               className={`chip ${sample.matching_enabled ? "on" : ""}`}
+              disabled={pending}
               onClick={() =>
                 props.onSetStatus(
                   sample.public_id,
@@ -638,7 +767,11 @@ function SampleRow(props: {
               {sample.matching_enabled ? tr("Exclude from matching", "排除匹配") : tr("Use for matching", "参与匹配")}
             </button>
             {sample.status !== "rejected" && (
-              <button className="chip danger" onClick={() => props.onSetStatus(sample.public_id, "rejected")}>
+              <button
+                className="chip danger"
+                disabled={pending}
+                onClick={() => props.onSetStatus(sample.public_id, "rejected")}
+              >
                 {tr("Reject", "废弃")}
               </button>
             )}
@@ -649,6 +782,7 @@ function SampleRow(props: {
         <button
           className="reassign-btn"
           title={tr("Delete sample", "删除样本")}
+          disabled={pending}
           onClick={async () => {
             const lastSample = sampleCount <= 1;
             if (
