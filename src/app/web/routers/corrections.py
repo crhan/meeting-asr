@@ -96,8 +96,10 @@ def polish(
             "model_error": summary.model_error,
         }
 
-    job = jobs.submit("correction-polish", work, project_id=str(project_dir))
-    return JobRef(job_id=job.id, kind=job.kind, status=job.status)
+    job, existing = jobs.submit(
+        "correction-polish", work, project_id=str(project_dir)
+    )
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status, existing=existing)
 
 
 def _proposal_id(proposal) -> str:

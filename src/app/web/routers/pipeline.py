@@ -171,13 +171,13 @@ async def run_pipeline(
             "polished": summary.correction_summary is not None,
         }
 
-    job = jobs.submit(
+    job, existing = jobs.submit(
         "pipeline-run",
         work,
         project_id=str(project_dir),
         store_locks=(store_lock_key("lexicon"), store_lock_key("voiceprints")),
     )
-    return JobRef(job_id=job.id, kind=job.kind, status=job.status)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status, existing=existing)
 
 
 @router.post("/summarize/{project_ref}", response_model=JobRef)
@@ -218,8 +218,8 @@ def summarize(
         )
         return {"project_dir": str(result.project_dir)}
 
-    job = jobs.submit("pipeline-summarize", work, project_id=str(project_dir))
-    return JobRef(job_id=job.id, kind=job.kind, status=job.status)
+    job, existing = jobs.submit("pipeline-summarize", work, project_id=str(project_dir))
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status, existing=existing)
 
 
 def _merge_result_payload(result) -> dict[str, object]:

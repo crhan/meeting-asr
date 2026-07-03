@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   acceptCorrection,
   discardProposal,
+  getJob,
   getProposal,
   polishProject,
   ApiError,
@@ -24,6 +25,8 @@ function fmtMs(ms: number): string {
 function projectFromSentenceRef(sentenceRef: string): string {
   return sentenceRef.split("#", 1)[0];
 }
+
+const polishJobKey = (ref: string) => `masr-polish-job:${ref}`;
 
 export function CorrectionPage() {
   const { ref = "" } = useParams();
@@ -47,11 +50,33 @@ export function CorrectionPage() {
     }
   }, [proposalQuery.data]);
 
+  // The polish job survives this component (it runs server-side); persist its id so a
+  // reload / tab switch re-attaches to the live progress instead of going blind and
+  // letting the button re-trigger a paid LLM run.
+  useEffect(() => {
+    const stored = sessionStorage.getItem(polishJobKey(ref));
+    if (!stored) return;
+    getJob(stored)
+      .then((job) => {
+        if (job.status === "queued" || job.status === "running") setJobId(stored);
+        else sessionStorage.removeItem(polishJobKey(ref));
+      })
+      // 404: jobs live in server memory; a restart forgot it.
+      .catch(() => sessionStorage.removeItem(polishJobKey(ref)));
+  }, [ref]);
+
   const polishMut = useMutation({
     mutationFn: () => polishProject(ref),
     onSuccess: (r) => {
       setJobError(null);
-      setJobNotice(null);
+      setJobNotice(
+        // The backend deduplicates onto an in-flight polish for this project; say so
+        // instead of looking like a fresh (double-billed) run started.
+        r.existing
+          ? tr("A polish is already running; re-attached to it.", "润色已在进行中，已重新挂接进度。")
+          : null,
+      );
+      sessionStorage.setItem(polishJobKey(ref), r.job_id);
       setJobId(r.job_id);
     },
   });
@@ -187,11 +212,18 @@ export function CorrectionPage() {
               // re-enable Accept against the stale proposal during the refetch window; keeping
               // jobId set holds the job panel (and the disabled Accept) until fresh data lands.
               await queryClient.invalidateQueries({ queryKey: ["proposal", ref] });
+              sessionStorage.removeItem(polishJobKey(ref));
               setJobId(null);
             }}
             // Keep the polish failure visible after the job panel unmounts.
             onError={(e) => {
               setJobError(e);
+              sessionStorage.removeItem(polishJobKey(ref));
+              setJobId(null);
+            }}
+            onCancelled={() => {
+              setJobNotice(tr("Polish cancelled.", "润色已取消。"));
+              sessionStorage.removeItem(polishJobKey(ref));
               setJobId(null);
             }}
           />

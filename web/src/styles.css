@@ -312,6 +312,76 @@ table.projects tr:hover td {
   border-color: rgba(199, 125, 255, 0.45);
   background: rgba(199, 125, 255, 0.1);
 }
+/* Background-job statuses (JobsCenter). */
+.badge.state-done {
+  color: var(--green);
+  border-color: rgba(53, 207, 139, 0.4);
+  background: var(--green-dim);
+}
+.badge.state-running,
+.badge.state-queued {
+  color: var(--accent);
+  border-color: rgba(79, 157, 255, 0.4);
+  background: var(--accent-dim);
+}
+.badge.state-error {
+  color: var(--red);
+  border-color: rgba(242, 101, 93, 0.45);
+  background: var(--red-dim);
+}
+
+/* ---- Jobs center (topbar indicator + modal list) ---- */
+.jobs-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.jobs-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  text-align: center;
+}
+.jobs-count.active {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+.jobs-count.error {
+  color: var(--red);
+  background: var(--red-dim);
+}
+.jobs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.jobs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.jobs-row.on {
+  border-color: var(--border-strong);
+}
+.jobs-row-kind {
+  font-weight: 500;
+}
+.jobs-row .badge {
+  margin-left: auto;
+}
+.jobs-row-detail {
+  padding: 8px 4px 4px;
+}
 
 .placeholder {
   padding: 56px 40px;

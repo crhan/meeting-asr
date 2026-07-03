@@ -83,6 +83,9 @@ class JobRef(BaseModel):
     job_id: str
     kind: str
     status: str
+    # True when the submit deduplicated onto an already-running identical job
+    # (same kind + project); the client re-attaches instead of starting anew.
+    existing: bool = False
 
 
 # ---- Ingestion pipeline ----------------------------------------------------

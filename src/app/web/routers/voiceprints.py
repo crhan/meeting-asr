@@ -627,8 +627,8 @@ def capture_run(
             ],
         ).model_dump()
 
-    job = jobs.submit("voiceprint-capture", work, project_id=str(project_dir))
-    return JobRef(job_id=job.id, kind=job.kind, status=job.status)
+    job, existing = jobs.submit("voiceprint-capture", work, project_id=str(project_dir))
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status, existing=existing)
 
 
 def _capture_txn_lock_keys(transaction_id: str) -> list[str]:

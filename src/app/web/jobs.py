@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 from app.core.progress import CliProgressReporter
 from app.web.locks import LockRegistry, project_lock_key
-from app.web.progress_bridge import QueueProgressReporter
+from app.web.progress_bridge import JobCancelledError, QueueProgressReporter
 
 # A unit of work: given a progress reporter, do the blocking work and return a result.
 JobFn = Callable[[CliProgressReporter], Any]
@@ -45,12 +45,20 @@ class Job:
     kind: str
     project_id: str | None
     created_at: float = field(default_factory=time.time)
-    status: str = "queued"  # queued | running | done | error
+    status: str = "queued"  # queued | running | done | error | cancelled
     result: Any = None
     error: str | None = None
     events: list[dict[str, object]] = field(default_factory=list)
     subscribers: set[asyncio.Queue[dict[str, object]]] = field(default_factory=set)
     done: asyncio.Event = field(default_factory=asyncio.Event)
+    # Full lock-key set (project + store locks) for "queued: waiting on whom" reporting.
+    lock_keys: tuple[str, ...] = ()
+    # Cooperative-cancel flag, checked from the executor thread at progress checkpoints;
+    # a threading.Event because asyncio primitives must not be touched off-loop.
+    cancel_requested: threading.Event = field(default_factory=threading.Event)
+    # The job's asyncio task; loop-thread only. Cancelling it while the job still waits
+    # in the lock queue aborts cleanly before any work starts.
+    task: asyncio.Future[None] | None = None
 
     def public(self) -> dict[str, object]:
         """Return a JSON-safe snapshot for the jobs API."""
@@ -61,6 +69,8 @@ class Job:
             "status": self.status,
             "error": self.error,
             "event_count": len(self.events),
+            "created_at": self.created_at,
+            "cancel_requested": self.cancel_requested.is_set(),
         }
 
 
@@ -107,20 +117,34 @@ class JobManager:
         *,
         project_id: str | None = None,
         store_locks: Sequence[str] = (),
-    ) -> Job:
-        """Schedule ``fn`` to run in the background and return its :class:`Job`.
+    ) -> tuple[Job, bool]:
+        """Schedule ``fn`` to run in the background; returns ``(job, existing)``.
 
         ``store_locks`` names shared-store locks (e.g. ``store_lock_key("lexicon")``) the
         job must hold for its whole duration -- a pipeline run learns into the lexicon and
         deletes global voiceprint samples during stabilization, so it has to contend on the
         same store locks the inline lexicon/voiceprint routes take, not just the per-project
         lock. Acquired together with the project lock in deadlock-free sorted order.
+
+        Submitting while an identical ``(kind, project_id)`` job is queued/running returns
+        that in-flight job with ``existing=True`` instead of double-running it: a re-click
+        re-attaches to the live progress (SSE history replay), it does not re-bill the LLM
+        or queue duplicate heavy work. Differing options are deliberately merged into the
+        older job -- acceptable for a single-user tool.
         """
         loop = self._loop
         if loop is None:
             raise RuntimeError("JobManager loop not bound; call bind_loop at startup.")
         job = Job(id=uuid.uuid4().hex, kind=kind, project_id=project_id)
         with self._jobs_lock:
+            if project_id is not None:
+                for candidate in self._jobs.values():
+                    if (
+                        candidate.kind == kind
+                        and candidate.project_id == project_id
+                        and candidate.status in {"queued", "running"}
+                    ):
+                        return candidate, True
             self._jobs[job.id] = job
             self._prune_jobs_locked()
             if len(self._jobs) > _MAX_JOBS:
@@ -134,10 +158,40 @@ class JobManager:
             # Runs on the loop thread. Keep a strong reference until the task finishes --
             # the loop alone holds only weak refs and could let the task be GC'd mid-run.
             task = asyncio.ensure_future(self._run(job, fn, keys))
+            job.task = task
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
 
         loop.call_soon_threadsafe(_spawn)
+        return job, False
+
+    def request_cancel(self, job_id: str) -> Job | None:
+        """Request cancellation of a job; returns the job, or None when unknown.
+
+        Queued jobs (still waiting in the lock queue) are cancelled immediately via
+        ``task.cancel()``. Running jobs are cancelled cooperatively: the flag is checked
+        at every progress checkpoint, so the latency equals the gap between two progress
+        events. Terminal jobs are a no-op.
+        """
+        job = self.get(job_id)
+        if job is None:
+            return None
+        loop = self._loop
+        if loop is None:
+            return job
+
+        def _cancel() -> None:
+            # Loop thread: job.task and status transitions are only touched here.
+            if job.status == "queued" and job.task is not None:
+                job.task.cancel()
+            elif job.status == "running" and not job.cancel_requested.is_set():
+                job.cancel_requested.set()
+                self._publish(
+                    job,
+                    {"type": "status", "status": "running", "cancel_requested": True},
+                )
+
+        loop.call_soon_threadsafe(_cancel)
         return job
 
     async def _run(self, job: Job, fn: JobFn, store_locks: tuple[str, ...]) -> None:
@@ -146,24 +200,77 @@ class JobManager:
             # Same key the inline routes use, so jobs and inline saves serialise together.
             keys.append(project_lock_key(job.project_id))
         keys.extend(store_locks)
-        if keys:
-            # acquire() sorts keys, so project + store locks never deadlock across writers.
-            async with self._locks.acquire(*keys):
+        job.lock_keys = tuple(keys)
+        try:
+            if keys:
+                # Tell the subscriber whom this job is waiting on -- an unexplained
+                # "Queued…" while another project's run holds the store locks reads
+                # like a hang. Status events are must-deliver.
+                waiting_on = self._waiting_on(job)
+                if waiting_on:
+                    self._publish(
+                        job,
+                        {
+                            "type": "status",
+                            "status": "queued",
+                            "waiting_on": waiting_on,
+                        },
+                    )
+                # acquire() sorts keys, so project + store locks never deadlock.
+                async with self._locks.acquire(*keys):
+                    await self._execute(job, fn)
+            else:
                 await self._execute(job, fn)
-        else:
-            await self._execute(job, fn)
+        except asyncio.CancelledError:
+            # request_cancel() cancels the task only while it still waits in the lock
+            # queue; nothing has run yet, so this is a clean abort (not re-raised: the
+            # cancellation is ours, ending the task normally is the intended outcome).
+            job.status = "cancelled"
+            job.error = "Cancelled while queued."
+            self._publish(
+                job, {"type": "status", "status": "cancelled", "error": job.error}
+            )
+            job.done.set()
+            self._publish(job, _SENTINEL)
+
+    def _waiting_on(self, job: Job) -> list[dict[str, object]]:
+        """Running jobs whose lock keys intersect this job's (whom it queues behind)."""
+        wanted = set(job.lock_keys)
+        with self._jobs_lock:
+            return [
+                {
+                    "job_id": other.id,
+                    "kind": other.kind,
+                    "project_id": other.project_id,
+                }
+                for other in self._jobs.values()
+                if other.id != job.id
+                and other.status == "running"
+                and wanted & set(other.lock_keys)
+            ]
 
     async def _execute(self, job: Job, fn: JobFn) -> None:
         loop = asyncio.get_running_loop()
         job.status = "running"
         self._publish(job, {"type": "status", "status": "running"})
         reporter = QueueProgressReporter(
-            loop, lambda payload: self._publish(job, payload)
+            loop,
+            lambda payload: self._publish(job, payload),
+            should_cancel=job.cancel_requested.is_set,
         )
         try:
             job.result = await loop.run_in_executor(None, fn, reporter)
             job.status = "done"
             self._publish(job, {"type": "status", "status": "done"})
+        except JobCancelledError:
+            # Cooperative cancel: the worker unwound at a progress checkpoint. The
+            # project is left in the same partial state a CLI Ctrl-C would leave;
+            # a re-run reuses completed stages (audio/OSS) like any interrupted run.
+            job.status = "cancelled"
+            job.error = "Cancelled by user."
+            self._publish(
+                job, {"type": "status", "status": "cancelled", "error": job.error}
+            )
         except Exception as exc:  # noqa: BLE001 -- surface any failure to the client
             job.status = "error"
             job.error = str(exc) or exc.__class__.__name__
@@ -206,7 +313,7 @@ class JobManager:
             terminal = [
                 (job.created_at, job_id)
                 for job_id, job in self._jobs.items()
-                if job.status in {"done", "error"}
+                if job.status in {"done", "error", "cancelled"}
             ]
             if not terminal:
                 return

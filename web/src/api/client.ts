@@ -515,6 +515,23 @@ export interface JobStatus {
   result: unknown;
 }
 
+export interface JobInfo {
+  id: string;
+  kind: string;
+  project_id: string | null; // pipeline jobs carry the project_dir path
+  status: string; // queued | running | done | error | cancelled
+  error: string | null;
+  event_count: number;
+  created_at: number;
+  cancel_requested: boolean;
+}
+
+export const listJobs = () => api<{ jobs: JobInfo[] }>("/api/jobs");
+
+/** Queued jobs abort immediately; running ones cancel at their next progress event. */
+export const cancelJob = (jobId: string) =>
+  api<JobInfo>(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+
 export const capturePlan = (ref: string) =>
   api<CapturePlan>(`/api/voiceprints/capture/${encodeURIComponent(ref)}/plan`, {
     method: "POST",
@@ -639,10 +656,13 @@ export interface Proposal {
 }
 
 export const polishProject = (ref: string) =>
-  api<{ job_id: string }>(`/api/corrections/${encodeURIComponent(ref)}/polish`, {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
+  api<{ job_id: string; existing: boolean }>(
+    `/api/corrections/${encodeURIComponent(ref)}/polish`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
 
 export const getProposal = (ref: string) =>
   api<Proposal>(`/api/corrections/${encodeURIComponent(ref)}/proposal`);

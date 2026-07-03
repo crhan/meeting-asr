@@ -42,8 +42,8 @@ def _ping_work(reporter: CliProgressReporter) -> dict[str, int]:
 @router.post("/ping", response_model=JobRef)
 def submit_ping(jobs: JobManager = Depends(get_jobs)) -> JobRef:
     """Submit a demo heartbeat job (P0 stack proof)."""
-    job = jobs.submit("ping", _ping_work)
-    return JobRef(job_id=job.id, kind=job.kind, status=job.status)
+    job, existing = jobs.submit("ping", _ping_work)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status, existing=existing)
 
 
 @router.get("")
@@ -61,6 +61,20 @@ def get_job(job_id: str, jobs: JobManager = Depends(get_jobs)) -> dict[str, obje
     if job is None:
         raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
     return {**job.public(), "result": job.result}
+
+
+@router.post("/{job_id}/cancel")
+def cancel_job(job_id: str, jobs: JobManager = Depends(get_jobs)) -> dict[str, object]:
+    """Cancel a job: queued jobs abort immediately, running ones cooperatively.
+
+    Cooperative cancel latency equals the gap between two progress events; the project
+    is left in the same partial state a CLI Ctrl-C would leave (re-runs reuse completed
+    stages). Terminal jobs are a no-op.
+    """
+    job = jobs.request_cancel(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
+    return job.public()
 
 
 @router.get("/{job_id}/events")

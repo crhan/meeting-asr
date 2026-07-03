@@ -6,6 +6,7 @@ import { hasUnsavedEdits } from "./lib/unsavedGuard";
 import { confirmDialog } from "./lib/confirm";
 import { AuthGate } from "./components/AuthGate";
 import { ConfirmHost } from "./components/ConfirmHost";
+import { JobsIndicator } from "./components/JobsCenter";
 import { PromptHost } from "./components/PromptHost";
 import { AppVersion } from "./components/AppVersion";
 import { PendingCaptureBanner } from "./components/PendingCaptureBanner";
@@ -109,6 +110,7 @@ export function App() {
           <GuardedNavLink to="/settings">{tr("Settings", "设置")}</GuardedNavLink>
         </nav>
         <span className="spacer" />
+        <JobsIndicator />
         <AppVersion />
         <LangToggle />
       </header>

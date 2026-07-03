@@ -4,12 +4,15 @@ import { withToken } from "./auth";
 import { tr } from "./i18n";
 
 export interface JobStreamState {
-  status: string; // queued | running | done | error
+  status: string; // queued | running | done | error | cancelled
   latest: ProgressEvent | null;
   steps: string[]; // step plan, if any
   result: unknown;
   error: string | null;
   done: boolean;
+  /** Running jobs this one queues behind (intersecting lock keys). */
+  waitingOn: { kind: string; project_id: string | null }[];
+  cancelRequested: boolean;
 }
 
 const INITIAL: JobStreamState = {
@@ -19,6 +22,8 @@ const INITIAL: JobStreamState = {
   result: null,
   error: null,
   done: false,
+  waitingOn: [],
+  cancelRequested: false,
 };
 
 /** Subscribe to a job's SSE progress; fetches the final result when it ends. */
@@ -32,10 +37,12 @@ export function useJobStream(jobId: string | null): JobStreamState {
     }
     setState(INITIAL);
     const src = new EventSource(withToken(`/api/jobs/${jobId}/events`));
+    const isTerminal = (status: string) =>
+      status === "done" || status === "error" || status === "cancelled";
     const syncSnapshot = () => {
       getJob(jobId)
         .then((job) => {
-          const terminal = job.status === "done" || job.status === "error";
+          const terminal = isTerminal(job.status);
           setState((prev) => ({
             ...prev,
             status: job.status,
@@ -97,6 +104,10 @@ export function useJobStream(jobId: string | null): JobStreamState {
           ...prev,
           status: (ev.status as string) ?? prev.status,
           error: (ev.error as string | undefined) ?? prev.error,
+          waitingOn: Array.isArray(ev.waiting_on)
+            ? (ev.waiting_on as JobStreamState["waitingOn"])
+            : prev.waitingOn,
+          cancelRequested: Boolean(ev.cancel_requested) || prev.cancelRequested,
         }));
         return;
       }

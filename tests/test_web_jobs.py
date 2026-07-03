@@ -94,3 +94,99 @@ def test_finished_jobs_are_pruned_to_bound_memory() -> None:
     jobs = manager.list_jobs()
     assert len(jobs) == _MAX_JOBS
     assert {job.id for job in jobs}.isdisjoint({"0", "1", "2", "3", "4"})
+
+
+def test_submit_deduplicates_identical_active_job() -> None:
+    """Re-submitting the same (kind, project) re-attaches instead of double-running."""
+    manager = JobManager(LockRegistry())
+    running = Job(
+        id="j1", kind="correction-polish", project_id="/p/a", status="running"
+    )
+    with manager._jobs_lock:
+        manager._jobs[running.id] = running
+
+    async def run() -> tuple[Job, bool]:
+        manager.bind_loop(asyncio.get_running_loop())
+        return manager.submit("correction-polish", lambda _r: None, project_id="/p/a")
+
+    job, existing = asyncio.run(run())
+    assert existing is True
+    assert job is running
+
+
+def test_submit_does_not_deduplicate_terminal_or_other_project() -> None:
+    """Terminal jobs and other projects never absorb a new submit."""
+    manager = JobManager(LockRegistry())
+    finished = Job(id="j1", kind="correction-polish", project_id="/p/a", status="done")
+    other = Job(id="j2", kind="correction-polish", project_id="/p/b", status="running")
+    with manager._jobs_lock:
+        manager._jobs[finished.id] = finished
+        manager._jobs[other.id] = other
+
+    async def run() -> tuple[Job, bool]:
+        manager.bind_loop(asyncio.get_running_loop())
+        job, existing = manager.submit(
+            "correction-polish", lambda _r: None, project_id="/p/a"
+        )
+        # Cancel the freshly spawned task so the loop shuts down cleanly.
+        await asyncio.sleep(0)
+        if job.task is not None:
+            job.task.cancel()
+            await asyncio.sleep(0)
+        return job, existing
+
+    job, existing = asyncio.run(run())
+    assert existing is False
+    assert job.id not in {"j1", "j2"}
+
+
+def test_cancel_queued_job_waiting_on_lock() -> None:
+    """A job stuck in the lock queue cancels immediately with a cancelled terminal frame."""
+    locks = LockRegistry()
+    manager = JobManager(locks)
+
+    async def run() -> Job:
+        manager.bind_loop(asyncio.get_running_loop())
+        async with locks.acquire("project:/p/a"):
+            job, _ = manager.submit("pipeline-run", lambda _r: None, project_id="/p/a")
+            # Let the task start and block on the held lock, then cancel it.
+            await asyncio.sleep(0.05)
+            assert job.status == "queued"
+            manager.request_cancel(job.id)
+            await asyncio.wait_for(job.done.wait(), timeout=2)
+            return job
+
+    job = asyncio.run(run())
+    assert job.status == "cancelled"
+    assert job.events[-1] is _SENTINEL
+    statuses = [e.get("status") for e in job.events if e.get("type") == "status"]
+    assert "cancelled" in statuses
+
+
+def test_cooperative_cancel_unwinds_at_progress_checkpoint() -> None:
+    """A running job cancels at its next progress emission."""
+    import time as time_mod
+
+    from app.core.progress import emit_progress
+
+    manager = JobManager(LockRegistry())
+
+    def work(reporter) -> None:
+        # Slow enough that the cancel flag lands before the loop finishes; the
+        # checkpoint raise then unwinds at the next emit.
+        for index in range(1000):
+            emit_progress(reporter, f"step {index}", total=1000, completed=index)
+            time_mod.sleep(0.01)
+
+    async def run() -> Job:
+        manager.bind_loop(asyncio.get_running_loop())
+        job, _ = manager.submit("pipeline-run", work, project_id="/p/c")
+        while job.status == "queued":
+            await asyncio.sleep(0.01)
+        manager.request_cancel(job.id)
+        await asyncio.wait_for(job.done.wait(), timeout=5)
+        return job
+
+    job = asyncio.run(run())
+    assert job.status == "cancelled"
+    assert job.error == "Cancelled by user."

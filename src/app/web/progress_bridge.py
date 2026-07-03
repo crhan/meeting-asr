@@ -16,6 +16,15 @@ from collections.abc import Callable
 from app.core.progress import CliProgressEvent
 
 
+class JobCancelledError(RuntimeError):
+    """Raised inside a worker thread when the user cancelled the running job.
+
+    Progress callbacks are the natural cooperative checkpoints: workflows call
+    ``emit_progress`` between steps, so raising here unwinds the worker at the next
+    step boundary without needing cancellation hooks in every business function.
+    """
+
+
 def event_to_payload(event: CliProgressEvent) -> dict[str, object]:
     """Convert a progress event into a JSON-serialisable SSE payload."""
     return {
@@ -49,12 +58,16 @@ class QueueProgressReporter:
         self,
         loop: asyncio.AbstractEventLoop,
         on_event: Callable[[dict[str, object]], None],
+        should_cancel: Callable[[], bool] | None = None,
     ) -> None:
         self._loop = loop
         self._on_event = on_event
+        self._should_cancel = should_cancel
 
     def __call__(self, event: CliProgressEvent) -> None:
         """Marshal one progress event onto the loop thread."""
+        if self._should_cancel is not None and self._should_cancel():
+            raise JobCancelledError("Job cancelled by user.")
         payload = event_to_payload(event)
         try:
             self._loop.call_soon_threadsafe(self._on_event, payload)
