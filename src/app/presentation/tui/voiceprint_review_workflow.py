@@ -13,6 +13,7 @@ from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from app.core.progress import CliProgressReporter, emit_progress
 from app.presentation.tui.i18n import tr
 from app.voiceprint_embedding import VoiceprintEmbedSummary, embed_voiceprint_samples
 from app.voiceprint_quality import (
@@ -185,6 +186,7 @@ def run_voiceprint_review_workflow(
     planned: VoiceprintCaptureSummary,
     selected_clip_rel_paths: frozenset[str],
     store_dir: Path | None,
+    progress: CliProgressReporter | None = None,
 ) -> VoiceprintReviewWorkflowSummary:
     """
     Capture selected clips, embed them, and evaluate matching scores.
@@ -194,16 +196,32 @@ def run_voiceprint_review_workflow(
         planned: Dry-run capture plan.
         selected_clip_rel_paths: Accepted clip relative paths.
         store_dir: Optional voiceprint store directory.
+        progress: Optional stage-boundary reporter (web SSE progress); the TUI
+            call site omits it and behaves exactly as before.
 
     Returns:
         Completed workflow summary.
     """
     transaction = _begin_transaction(project_dir, planned, selected_clip_rel_paths)
     try:
+        emit_progress(
+            progress,
+            "Capturing selected clips",
+            step_index=1,
+            step_total=4,
+            stage="capture",
+        )
         capture = persist_voiceprint_capture_selection(
             project_dir,
             planned=planned,
             selected_clip_rel_paths=selected_clip_rel_paths,
+        )
+        emit_progress(
+            progress,
+            "Embedding samples",
+            step_index=2,
+            step_total=4,
+            stage="embed",
         )
         embedding = embed_voiceprint_samples(
             store_dir=store_dir or capture.store_dir,
@@ -211,8 +229,22 @@ def run_voiceprint_review_workflow(
             model=None,
             rebuild=False,
         )
+        emit_progress(
+            progress,
+            "Applying quality gate",
+            step_index=3,
+            step_total=4,
+            stage="quality-gate",
+        )
         quality_gate = _apply_capture_quality_gate(
             capture, store_dir=store_dir or capture.store_dir, model=embedding.model
+        )
+        emit_progress(
+            progress,
+            "Evaluating match impact (current + historical projects)",
+            step_index=4,
+            step_total=4,
+            stage="evaluate",
         )
         evaluation = evaluate_voiceprint_embedding(
             project_dir,

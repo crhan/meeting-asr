@@ -808,6 +808,11 @@ export function SpeakerReviewPage() {
   const unresolved = speakers.filter(
     (s) => s.status === "review" || s.status === "conflict" || s.status === "mismatch",
   ).length;
+  // Capture needs at least one named, non-ignored speaker; the backend 400s otherwise.
+  // Cheaper to disable the entry with an explanation than to bounce off the error page.
+  const hasNamedSpeaker = speakers.some(
+    (s) => !s.ignored && s.current_name.trim() !== "" && s.current_name !== s.label,
+  );
   const mergingSpeaker = merging ? effective(merging) : null;
 
   return (
@@ -819,6 +824,7 @@ export function SpeakerReviewPage() {
         dirty={dirty}
         saving={saveMutation.isPending}
         rematching={rematchMutation.isPending}
+        canCapture={hasNamedSpeaker}
         view={view}
         onViewChange={setView}
         onSave={() => saveMutation.mutate(buildSaveBody())}
@@ -963,6 +969,7 @@ function ReviewHeader(props: {
   dirty: boolean;
   saving: boolean;
   rematching: boolean;
+  canCapture: boolean;
   view: "speakers" | "timeline";
   onViewChange: (view: "speakers" | "timeline") => void;
   onSave: () => void;
@@ -1034,8 +1041,17 @@ function ReviewHeader(props: {
         <button
           className="btn ghost"
           onClick={onCapture}
-          disabled={saving || dirty}
-          title={dirty ? tr("Save changes first", "请先保存改动") : undefined}
+          disabled={saving || dirty || !props.canCapture}
+          title={
+            dirty
+              ? tr("Save changes first", "请先保存改动")
+              : !props.canCapture
+                ? tr(
+                    "Name at least one speaker first.",
+                    "先给至少一位发言人命名。",
+                  )
+                : undefined
+          }
         >
           {tr("Capture voiceprints", "采集声纹")}
         </button>

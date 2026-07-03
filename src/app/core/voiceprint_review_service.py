@@ -155,6 +155,7 @@ class CaptureTransactionRegistry:
         planned: VoiceprintCaptureSummary,
         selected_clip_rel_paths: frozenset[str],
         store_dir: Path | None,
+        progress=None,
     ) -> tuple[str, VoiceprintReviewWorkflowSummary]:
         """Run the capture+embed+evaluate workflow and register its transaction.
 
@@ -162,6 +163,9 @@ class CaptureTransactionRegistry:
         awaits accept/rollback would snapshot a store that already includes the first run's
         writes, so rolling back either one could corrupt the other. The check and the
         registration happen under ``_store_write_lock`` so they cannot interleave.
+
+        ``progress`` (optional CliProgressReporter) surfaces the workflow's stage
+        boundaries; the TUI path omits it.
         """
         with self._store_write_lock:
             self._raise_if_pending_locked()
@@ -170,6 +174,7 @@ class CaptureTransactionRegistry:
                 planned=planned,
                 selected_clip_rel_paths=selected_clip_rel_paths,
                 store_dir=store_dir,
+                progress=progress,
             )
             txn_id = uuid.uuid4().hex
             created_at = time.time()

@@ -2,18 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ApiError,
   capturePlan,
   captureAccept,
   captureRollback,
   captureRollbackUrl,
   captureRun,
   clipUrl,
-  getJob,
   type CaptureResult,
   type ScoreChange,
 } from "../api/client";
 import { tr } from "../lib/i18n";
 import { useClipAudio } from "../lib/useClipAudio";
+import { JobProgress } from "../components/JobProgress";
 import { Modal } from "../components/Modal";
 
 function fmtMs(ms: number): string {
@@ -27,7 +28,7 @@ export function CapturePage() {
   const queryClient = useQueryClient();
   const audio = useClipAudio();
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["capture-plan", ref],
     queryFn: () => capturePlan(ref),
     staleTime: Infinity,
@@ -81,39 +82,6 @@ export function CapturePage() {
       setSelected(rec);
     }
   }, [data]);
-
-  // Poll the capture job until it finishes.
-  useEffect(() => {
-    if (!jobId) return;
-    let alive = true;
-    const tick = async () => {
-      try {
-        const job = await getJob(jobId);
-        if (!alive) return;
-        if (job.status === "done") {
-          setResult(job.result as CaptureResult);
-          setRunning(false);
-          setJobId(null);
-        } else if (job.status === "error") {
-          setRunError(job.error ?? "capture failed");
-          setRunning(false);
-          setJobId(null);
-        } else {
-          setTimeout(tick, 1000);
-        }
-      } catch (e) {
-        if (alive) {
-          setRunError((e as Error).message);
-          setRunning(false);
-          setJobId(null);
-        }
-      }
-    };
-    tick();
-    return () => {
-      alive = false;
-    };
-  }, [jobId]);
 
   const totalSelected = selected.size;
   const allClipRefs = useMemo(
@@ -188,7 +156,38 @@ export function CapturePage() {
 
   if (isLoading)
     return <div className="placeholder">{tr("Planning capture (extracting clips)…", "正在规划采集（抽取片段）…")}</div>;
-  if (error) return <div className="error-box">{(error as Error).message}</div>;
+  if (error) {
+    // 400 = "no named speaker yet" (user input, not a fault): show guidance.
+    const noNamed = error instanceof ApiError && error.status === 400;
+    return (
+      <div>
+        <div className="review-head" style={{ margin: "-18px -18px 14px", borderRadius: 0 }}>
+          <div>
+            <h1>{tr("Capture voiceprints", "采集声纹")}</h1>
+            <div className="subtle mono">{ref}</div>
+          </div>
+          <div className="row gap">
+            <button className="btn ghost" onClick={() => navigate(`/projects/${ref}/speakers`)}>
+              {tr("Back to review", "返回 review")}
+            </button>
+            <button className="btn" onClick={() => refetch()}>
+              {tr("Retry", "重试")}
+            </button>
+          </div>
+        </div>
+        {noNamed ? (
+          <div className="placeholder">
+            {tr(
+              "No named speakers to capture from. Name (or accept a match for) at least one speaker in the review page first.",
+              "还没有已命名的发言人可采集。请先在复核页给至少一位发言人命名或接受匹配。",
+            )}
+          </div>
+        ) : (
+          <div className="error-box">{(error as Error).message}</div>
+        )}
+      </div>
+    );
+  }
   if (!data) return null;
 
   return (
@@ -214,7 +213,47 @@ export function CapturePage() {
         </div>
       </div>
 
-      {runError && <div className="error-box" style={{ marginBottom: 12 }}>{runError}</div>}
+      {runError && (
+        <div className="error-box" style={{ marginBottom: 12 }}>
+          <div>{runError}</div>
+          {/* Plan drift arrives as a job-error STRING (no status code): always offer a
+              re-plan; the plan-reload effect resets the selection to recommended. */}
+          <button
+            className="btn ghost"
+            style={{ marginTop: 8 }}
+            onClick={() => {
+              setRunError(null);
+              queryClient.invalidateQueries({ queryKey: ["capture-plan", ref] });
+            }}
+          >
+            {tr("Re-plan and re-select", "重新规划并重选")}
+          </button>
+        </div>
+      )}
+
+      {jobId && (
+        <div style={{ marginBottom: 12 }}>
+          <JobProgress
+            jobId={jobId}
+            onDone={(jobResult) => {
+              setResult(jobResult as CaptureResult);
+              setRunning(false);
+              setJobId(null);
+            }}
+            onError={(e) => {
+              setRunError(e);
+              setRunning(false);
+              setJobId(null);
+            }}
+            onCancelled={() => {
+              // The workflow rolls its transaction back on the way out; nothing pending.
+              setRunError(tr("Capture cancelled.", "采集已取消。"));
+              setRunning(false);
+              setJobId(null);
+            }}
+          />
+        </div>
+      )}
 
       <div className="capture-toolbar">
         <button className="chip" onClick={selectOnlyRecommended}>

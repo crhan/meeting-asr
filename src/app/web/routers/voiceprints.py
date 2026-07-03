@@ -580,7 +580,7 @@ def capture_run(
     project_dir = resolve_web_project_ref(project_ref, settings)
     store_dir = settings.voiceprint_store_dir
 
-    def work(_reporter) -> dict[str, object]:
+    def work(reporter) -> dict[str, object]:
         planned = plan_capture(
             project_dir,
             store_dir=store_dir,
@@ -598,6 +598,7 @@ def capture_run(
             planned=planned,
             selected_clip_rel_paths=selected_rel_paths,
             store_dir=store_dir,
+            progress=reporter,
         )
         evaluation = summary.evaluation
         current = evaluation.current

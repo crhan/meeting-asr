@@ -131,7 +131,10 @@ def capture_voiceprints(
         padding_seconds,
     )
     if not speakers:
-        raise RuntimeError(
+        # ValueError: this is a user-input condition ("name someone first"), not a server
+        # fault -- the web boundary maps it to 400 with the message intact even on
+        # non-loopback binds (500 detail gets scrubbed there).
+        raise ValueError(
             "No named speaker segments are available for voiceprint capture. "
             "Run meeting-asr project review and confirm speaker names first."
         )
