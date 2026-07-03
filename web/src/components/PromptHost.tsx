@@ -65,16 +65,27 @@ export function PromptHost() {
         </div>
       )}
       {req.multiline ? (
-        <textarea
-          ref={(el) => {
-            inputRef.current = el;
-          }}
-          className="text-edit-area"
-          style={{ minHeight: 96 }}
-          placeholder={req.placeholder}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-        />
+        <>
+          <textarea
+            ref={(el) => {
+              inputRef.current = el;
+            }}
+            className="text-edit-area"
+            style={{ minHeight: 96 }}
+            placeholder={req.placeholder}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                e.preventDefault();
+                settle(value);
+              }
+            }}
+          />
+          <div className="subtle" style={{ marginTop: 4 }}>
+            {tr("Cmd/Ctrl+Enter submits.", "Cmd/Ctrl+Enter 提交。")}
+          </div>
+        </>
       ) : (
         <input
           ref={(el) => {

@@ -138,7 +138,12 @@ function RunDialog({ onClose }: { onClose: () => void }) {
           }}
         />
       ) : (
-        <>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (paths[0].trim() && !runMut.isPending) runMut.mutate();
+          }}
+        >
           {jobError && (
             <div className="error-box" style={{ marginBottom: 10 }}>
               {jobError}
@@ -159,6 +164,7 @@ function RunDialog({ onClose }: { onClose: () => void }) {
               />
               {index > 0 && (
                 <button
+                  type="button"
                   className="icon-btn"
                   aria-label={tr("Remove segment", "移除该段")}
                   onClick={() => removePath(index)}
@@ -172,7 +178,11 @@ function RunDialog({ onClose }: { onClose: () => void }) {
             {/* One meeting recorded as several consecutive files (e.g. a call split into
                 two captures): segments are concatenated BEFORE ASR, so diarization and
                 voiceprints run once over the whole meeting. */}
-            <button className="chip" onClick={() => setPaths((prev) => [...prev, ""])}>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => setPaths((prev) => [...prev, ""])}
+            >
               + {tr("Add another segment", "添加另一段")}
             </button>
             {paths.length > 1 && (
@@ -196,6 +206,7 @@ function RunDialog({ onClose }: { onClose: () => void }) {
             {tr("Polish", "润色")}
           </label>
           <button
+            type="button"
             className="chip"
             style={{ marginBottom: 8 }}
             onClick={() => setShowAdvanced((v) => !v)}
@@ -233,13 +244,13 @@ function RunDialog({ onClose }: { onClose: () => void }) {
             </div>
           )}
           <button
+            type="submit"
             className="btn primary"
             disabled={!paths[0].trim() || runMut.isPending}
-            onClick={() => runMut.mutate()}
           >
             {runMut.isPending ? tr("Starting…", "启动中…") : tr("Run", "运行")}
           </button>
-        </>
+        </form>
       )}
     </Modal>
   );

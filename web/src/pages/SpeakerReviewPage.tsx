@@ -1667,6 +1667,25 @@ function SentenceTextEditor(props: {
   const [value, setValue] = useState(edit?.corrected_text ?? segment.text);
   const trimmed = value.trim();
   const canApply = trimmed.length > 0 && trimmed !== originalText;
+  // Dirty vs the LOADED baseline (a staged edit re-opened unchanged closes freely);
+  // Esc / backdrop / Cancel would otherwise silently drop un-staged typing.
+  const loadedBaseline = (edit?.corrected_text ?? segment.text).trim();
+  const guardedClose = () => {
+    if (trimmed === loadedBaseline) {
+      onClose();
+      return;
+    }
+    void confirmDialog({
+      message: tr(
+        "Discard this un-staged text edit?",
+        "放弃这条尚未暂存的文字修改？",
+      ),
+      confirmLabel: tr("Discard", "放弃"),
+      danger: true,
+    }).then((ok) => {
+      if (ok) onClose();
+    });
+  };
   const sentenceLabel =
     segment.sentence_ref ??
     (segment.sentence_id == null
@@ -1675,10 +1694,10 @@ function SentenceTextEditor(props: {
   return (
     <Modal
       title={tr("Edit transcript text", "编辑转写文本")}
-      onClose={onClose}
+      onClose={guardedClose}
       footer={
         <div className="row gap">
-          <button className="btn ghost" onClick={onClose}>
+          <button className="btn ghost" onClick={guardedClose}>
             {tr("Cancel", "取消")}
           </button>
           <button
