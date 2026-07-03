@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { getJob, type ProgressEvent } from "../api/client";
+import { ApiError, getJob, type ProgressEvent } from "../api/client";
 import { withToken } from "./auth";
+import { tr } from "./i18n";
 
 export interface JobStreamState {
   status: string; // queued | running | done | error
@@ -44,12 +45,28 @@ export function useJobStream(jobId: string | null): JobStreamState {
           }));
           if (terminal) src.close();
         })
-        .catch((e) =>
+        .catch((e) => {
+          if (e instanceof ApiError && e.status === 404) {
+            // Jobs live in server memory; a 404 here means the server restarted and the
+            // job is gone. Terminal-error instead of hanging in "running" forever behind
+            // an endlessly reconnecting EventSource (which locked the launching UI).
+            src.close();
+            setState((prev) => ({
+              ...prev,
+              status: "error",
+              error: tr(
+                "Job no longer exists (server restarted?)",
+                "任务已不存在（服务器可能重启过）",
+              ),
+              done: true,
+            }));
+            return;
+          }
           setState((prev) => ({
             ...prev,
             error: (e as Error).message,
-          })),
-        );
+          }));
+        });
     };
 
     src.onmessage = (msg) => {

@@ -3,17 +3,30 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { listProjects, runPipeline, type ProjectSummary } from "../api/client";
 import { tr } from "../lib/i18n";
+import { confirmDialog } from "../lib/confirm";
 import { Modal } from "../components/Modal";
 import { JobProgress } from "../components/JobProgress";
 
+/** Terminal payload of the pipeline-run job (see routers/pipeline.py work()). */
+interface RunSummary {
+  project_id?: string;
+  detected_speaker_count?: number;
+  sentence_count?: number;
+  applied_speaker_count?: number;
+  has_summary?: boolean;
+  polished?: boolean;
+}
+
 function RunDialog({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [path, setPath] = useState("");
   const [title, setTitle] = useState("");
   const [summarize, setSummarize] = useState(true);
   const [polish, setPolish] = useState(true);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
+  const [runResult, setRunResult] = useState<RunSummary | null>(null);
 
   const runMut = useMutation({
     mutationFn: () =>
@@ -32,14 +45,67 @@ function RunDialog({ onClose }: { onClose: () => void }) {
     onError: () => {},
   });
 
+  // While the job runs, an accidental Esc/backdrop click would hide the only progress
+  // view (there is no other place to re-attach yet) -- ask first. The job itself keeps
+  // running server-side either way.
+  const requestClose = () => {
+    if (!jobId) {
+      onClose();
+      return;
+    }
+    void confirmDialog({
+      message: tr(
+        "The pipeline keeps running in the background, but this dialog is currently the only progress view. Close it anyway?",
+        "管线会继续在后台运行，但这个对话框目前是唯一的进度视图。仍要关闭吗？",
+      ),
+      confirmLabel: tr("Close", "关闭"),
+    }).then((ok) => {
+      if (ok) onClose();
+    });
+  };
+
   return (
-    <Modal title={tr("Run pipeline (new transcription)", "运行管线（新转写）")} onClose={onClose}>
-      {jobId ? (
+    <Modal title={tr("Run pipeline (new transcription)", "运行管线（新转写）")} onClose={requestClose}>
+      {runResult ? (
+        <div>
+          <div className="capture-result">
+            <div>
+              {tr("Pipeline finished.", "管线已完成。")}{" "}
+              <span className="mono subtle">{runResult.project_id}</span>
+            </div>
+            <div className="subtle" style={{ marginTop: 6 }}>
+              {runResult.detected_speaker_count ?? "—"} {tr("speakers detected", "位发言人")} ·{" "}
+              {runResult.sentence_count ?? "—"} {tr("sentences", "句")} ·{" "}
+              {runResult.has_summary ? tr("summary ready", "纪要已生成") : tr("no summary", "无纪要")} ·{" "}
+              {runResult.polished ? tr("polished", "已润色") : tr("not polished", "未润色")}
+            </div>
+          </div>
+          <div className="row gap" style={{ marginTop: 12 }}>
+            <button className="btn ghost" onClick={onClose}>
+              {tr("Back to list", "返回列表")}
+            </button>
+            {runResult.project_id && (
+              <button
+                className="btn primary"
+                onClick={() => {
+                  onClose();
+                  navigate(`/projects/${encodeURIComponent(runResult.project_id!)}/speakers`);
+                }}
+              >
+                {tr("Review speakers", "去复核发言人")}
+              </button>
+            )}
+          </div>
+        </div>
+      ) : jobId ? (
         <JobProgress
           jobId={jobId}
-          onDone={() => {
+          onDone={(result) => {
             queryClient.invalidateQueries({ queryKey: ["projects"] });
-            onClose();
+            // Show a completion summary with a "review speakers" entry instead of
+            // silently vanishing back to the list.
+            setRunResult((result ?? {}) as RunSummary);
+            setJobId(null);
           }}
           // Keep the terminal error after the job panel unmounts; clearing jobId alone would
           // drop the only explanation and bounce the user back to a blank form.
