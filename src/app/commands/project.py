@@ -136,7 +136,7 @@ from app.speaker_match_status import (
     best_candidate_score,
     effective_match_status,
     match_threshold,
-    speaker_id_from_match,
+    project_has_unresolved_match,
     voiceprint_match_status,
 )
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
@@ -1783,7 +1783,7 @@ def speakers_inspect(
                 ignored=is_ignored,
             )
         )
-    if _project_has_unresolved_match(
+    if project_has_unresolved_match(
         resolved_project_dir, ignored_speaker_ids=ignored_speakers
     ):
         manifest = run_with_cli_errors(lambda: load_manifest(resolved_project_dir))
@@ -4333,42 +4333,6 @@ def _load_speaker_match_summaries(
             item, mapped_name=speaker_mapping.get(speaker_id)
         )
     return summaries
-
-
-def _project_has_unresolved_match(
-    project_dir: Path,
-    *,
-    ignored_speaker_ids: set[int] | None = None,
-) -> bool:
-    """
-    Return whether a project has any unresolved non-ignored speaker match.
-
-    Args:
-        project_dir: Project root.
-        ignored_speaker_ids: Speaker ids the user has marked as ignored.
-
-    Returns:
-        True when at least one non-ignored match row is not automatically matched.
-    """
-    match_path = project_paths(project_dir).speakers_dir / "speaker_matches.json"
-    if not match_path.exists():
-        return False
-    payload = json.loads(match_path.read_text(encoding="utf-8"))
-    ignored = ignored_speaker_ids or set()
-    for item in payload.get("matches", []):
-        if not isinstance(item, dict):
-            continue
-        speaker_id = speaker_id_from_match(item)
-        if speaker_id is not None and speaker_id in ignored:
-            continue
-        # Crosstalk/noise clusters stay anonymous on purpose and must not block
-        # the main flow; downstream can choose to let them through.
-        if voiceprint_match_status(item) not in (
-            MATCH_STATUS_MATCHED,
-            MATCH_STATUS_CROSSTALK,
-        ):
-            return True
-    return False
 
 
 def _speaker_match_summary(

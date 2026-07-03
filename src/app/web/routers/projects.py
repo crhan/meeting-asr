@@ -19,6 +19,7 @@ from app.core.project_models import ProjectListItem
 from app.core.project_refs import list_projects
 from app.core.project_workflow import load_project_workflow_summary
 from app.project_manager import load_manifest
+from app.speaker_match_status import project_has_unresolved_match
 from app.web.deps import get_settings, require_auth, resolve_web_project_ref
 from app.web.schemas import (
     ArtifactListOut,
@@ -39,7 +40,9 @@ def get_projects(settings: WebSettings = Depends(get_settings)) -> ProjectListRe
     result = list_projects(settings.projects_dir, restrict_to_projects_dir=True)
     summaries = [
         ProjectSummary.from_item(
-            item, load_project_workflow_summary(item.project_dir, item.project_id)
+            item,
+            load_project_workflow_summary(item.project_dir, item.project_id),
+            has_unresolved_matches=project_has_unresolved_match(item.project_dir),
         )
         for item in result.projects
     ]
@@ -66,7 +69,11 @@ def get_project(
         tuple(manifest.meeting_keywords),
     )
     workflow = load_project_workflow_summary(project_dir, project_ref)
-    return ProjectSummary.from_item(item, workflow)
+    return ProjectSummary.from_item(
+        item,
+        workflow,
+        has_unresolved_matches=project_has_unresolved_match(project_dir),
+    )
 
 
 @router.get("/{project_ref}/artifacts", response_model=ArtifactListOut)

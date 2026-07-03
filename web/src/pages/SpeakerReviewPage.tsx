@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ApiError,
   clipUrl,
   excludeQualitySamples,
   getQuality,
@@ -435,13 +436,26 @@ export function SpeakerReviewPage() {
   }, [data, selectedId, edits, deletedSpeakerIds]);
 
   if (isLoading) return <div className="placeholder">{tr("Loading…", "加载中…")}</div>;
-  if (error)
+  if (error) {
+    // A 404 here usually means "not transcribed yet", not a broken server -- say so
+    // instead of dumping a raw errno-style message.
+    if (error instanceof ApiError && error.status === 404) {
+      return (
+        <div className="placeholder">
+          {tr(
+            "This project has no transcript to review yet (or the id is unknown). Run the pipeline from the Projects page first.",
+            "该项目还没有可复核的转写（或项目 ID 不存在）。请先在「项目」页对它运行管线。",
+          )}
+        </div>
+      );
+    }
     return (
       <div className="error-box">
         {tr("Failed to load: ", "加载失败：")}
         {(error as Error).message}
       </div>
     );
+  }
   if (!data) return null;
 
   const speakers = data.speakers

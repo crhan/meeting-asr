@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Collection, Mapping
+from pathlib import Path
 from typing import Any
 
 MATCH_STATUS_MATCHED = "matched"
@@ -38,6 +40,50 @@ def voiceprint_match_status(match: object) -> str:
     if score is not None and score > 0:
         return MATCH_STATUS_BELOW_THRESHOLD
     return MATCH_STATUS_NO_CANDIDATE
+
+
+def project_has_unresolved_match(
+    project_dir: Path,
+    *,
+    ignored_speaker_ids: Collection[int] | None = None,
+) -> bool:
+    """
+    Return whether a project has any unresolved non-ignored speaker match.
+
+    Shared by CLI next-step hints and the web project list ("needs review" badge).
+
+    Args:
+        project_dir: Project root.
+        ignored_speaker_ids: Speaker ids the user marked as ignored; ``None`` loads
+            ``speakers/speaker_ignore.json`` from the project.
+
+    Returns:
+        True when at least one non-ignored match row is neither matched nor
+        crosstalk-flagged (crosstalk is advisory-only and must not block).
+    """
+    match_path = project_dir / "speakers" / "speaker_matches.json"
+    if not match_path.exists():
+        return False
+    payload = json.loads(match_path.read_text(encoding="utf-8"))
+    if ignored_speaker_ids is None:
+        # Local import: speaker_labeling imports app.models/postprocess; keeping this
+        # module import-light avoids pulling that stack in for pure status checks.
+        from app.speaker_labeling import load_project_ignored_speakers
+
+        ignored_speaker_ids = load_project_ignored_speakers(project_dir)
+    ignored = set(ignored_speaker_ids)
+    for item in payload.get("matches", []):
+        if not isinstance(item, dict):
+            continue
+        speaker_id = speaker_id_from_match(item)
+        if speaker_id is not None and speaker_id in ignored:
+            continue
+        if voiceprint_match_status(item) not in (
+            MATCH_STATUS_MATCHED,
+            MATCH_STATUS_CROSSTALK,
+        ):
+            return True
+    return False
 
 
 def effective_match_status(

@@ -49,12 +49,18 @@ class ProjectSummary(BaseModel):
     meeting_keywords: list[str]
     path: str
     workflow: WorkflowState | None = None
+    # Any non-ignored speaker match still unresolved (excludes crosstalk) -- the
+    # list's key decision signal, deliberately not folded into workflow.state_key
+    # (the file-derived state machine is shared with the CLI).
+    has_unresolved_matches: bool = False
 
     @classmethod
     def from_item(
         cls,
         item: ProjectListItem,
         workflow: ProjectWorkflowSummary | None = None,
+        *,
+        has_unresolved_matches: bool = False,
     ) -> "ProjectSummary":
         """Build from a :class:`ProjectListItem` and optional workflow summary."""
         return cls(
@@ -67,6 +73,7 @@ class ProjectSummary(BaseModel):
             meeting_keywords=list(item.meeting_keywords),
             path=str(item.project_dir),
             workflow=WorkflowState.from_summary(workflow) if workflow else None,
+            has_unresolved_matches=has_unresolved_matches,
         )
 
 

@@ -382,8 +382,8 @@ def test_project_review_summary_skips_ignored_speaker(tmp_path: Path) -> None:
 
 
 def test_project_has_unresolved_match_ignores_ignored_speakers(tmp_path: Path) -> None:
-    """_project_has_unresolved_match should treat ignored speakers as resolved."""
-    from app.commands.project import _project_has_unresolved_match
+    """project_has_unresolved_match should treat ignored speakers as resolved."""
+    from app.speaker_match_status import project_has_unresolved_match
 
     project_dir = _sample_project(tmp_path)
     _write_three_speaker_sentences(project_dir / "asr" / "sentences.json")
@@ -406,5 +406,5 @@ def test_project_has_unresolved_match_ignores_ignored_speakers(tmp_path: Path) -
         json.dumps(payload, ensure_ascii=False), encoding="utf-8"
     )
 
-    assert _project_has_unresolved_match(project_dir) is True
-    assert _project_has_unresolved_match(project_dir, ignored_speaker_ids={2}) is False
+    assert project_has_unresolved_match(project_dir) is True
+    assert project_has_unresolved_match(project_dir, ignored_speaker_ids={2}) is False

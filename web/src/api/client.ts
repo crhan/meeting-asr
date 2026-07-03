@@ -74,6 +74,8 @@ export interface ProjectSummary {
   meeting_keywords: string[];
   path: string;
   workflow: WorkflowState | null;
+  /** Any non-ignored speaker match still unresolved (crosstalk excluded). */
+  has_unresolved_matches: boolean;
 }
 
 export interface ProjectListResponse {
@@ -590,24 +592,31 @@ export const getJob = (jobId: string) =>
 
 export interface RunPipelineBody {
   input_path: string;
+  /** Additional media segments concatenated after input_path. ORDER-SENSITIVE:
+   *  the multi-input project id is a combined hash over the ordered file hashes. */
+  extra_inputs?: string[];
   title?: string | null;
   meeting_time?: string | null;
+  speaker_count?: number | null;
   model?: string;
   summarize?: boolean;
   polish?: boolean;
 }
 
 export const runPipeline = (body: RunPipelineBody) =>
-  api<{ job_id: string }>("/api/pipeline/run", {
+  api<{ job_id: string; existing: boolean }>("/api/pipeline/run", {
     method: "POST",
     body: JSON.stringify(body),
   });
 
 export const summarizeProject = (ref: string) =>
-  api<{ job_id: string }>(`/api/pipeline/summarize/${encodeURIComponent(ref)}`, {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
+  api<{ job_id: string; existing: boolean }>(
+    `/api/pipeline/summarize/${encodeURIComponent(ref)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
 
 export interface MergePreview {
   order_source: string;

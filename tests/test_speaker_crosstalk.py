@@ -11,7 +11,6 @@ from typer.testing import CliRunner
 from app.cli import app
 from app.commands.project import (
     _ensure_named_outputs_for_nonblocking_run,
-    _project_has_unresolved_match,
     _voiceprint_match_cli_line,
 )
 from app.project_manager import create_project, load_manifest
@@ -19,6 +18,7 @@ from app.speaker_crosstalk import CrosstalkParams, is_crosstalk
 from app.speaker_match_status import (
     MATCH_STATUS_BELOW_THRESHOLD,
     MATCH_STATUS_CROSSTALK,
+    project_has_unresolved_match,
     voiceprint_match_status,
 )
 from app.speaker_matching import (
@@ -252,7 +252,7 @@ def test_match_flags_crosstalk_non_blocking(monkeypatch, tmp_path: Path) -> None
     assert row["crosstalk"] is True
     assert row["status"] == MATCH_STATUS_CROSSTALK
     # Non-blocking: the only unmatched speaker is crosstalk, so nothing is unresolved.
-    assert _project_has_unresolved_match(project_dir) is False
+    assert project_has_unresolved_match(project_dir) is False
     # Non-destructive: the speaker stays anonymous and no sentence moved.
     assert not (project_dir / "speakers" / "speaker_map.json").exists()
     assert (project_dir / "asr" / "sentences.json").read_text(encoding="utf-8") == before
