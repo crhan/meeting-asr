@@ -189,6 +189,20 @@ class AcceptCorrectionOut(BaseModel):
     corrected_transcript_path: str | None
 
 
+class DiscardProposalIn(BaseModel):
+    """Discard the pending proposal without applying anything."""
+
+    # Same stale-proposal guard as accept: refuse if the on-disk proposal changed since review.
+    proposal_id: str
+
+
+class DiscardProposalOut(BaseModel):
+    """Result of discarding a proposal (the file is archived, not deleted)."""
+
+    discarded: bool
+    archived_name: str
+
+
 # ---- Lexicon ---------------------------------------------------------------
 
 

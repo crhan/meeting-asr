@@ -32,6 +32,7 @@ from app.correction_llm import (
 )
 from app.core.progress import CliProgressReporter, emit_progress
 from app.correction_proposals import (
+    archive_correction_proposal,
     load_correction_proposal,
     write_correction_proposal_files,
 )
@@ -359,11 +360,14 @@ def accept_correction_proposal(
         accepted_changes, manifest.project_id, proposal.category, proposal.review_path
     )
     learned_count = record_lexicon_contexts(contexts, db_path=database_path)
+    # Acceptance consumes the proposal: archive it out of the pending glob so it can't be
+    # served (or accepted) again as pending. Only after every write above succeeded.
+    archived_json_path = archive_correction_proposal(proposal, suffix="accepted")
     return CorrectionEditSummary(
         review_path=proposal.review_path,
         proposal_path=proposal.proposal_path,
         proposal_diff_path=proposal.diff_path,
-        proposal_json_path=proposal.json_path,
+        proposal_json_path=archived_json_path,
         change_count=len(accepted_changes),
         sample_change_count=len(proposal.sample_changes),
         proposed_change_count=len(proposal.proposed_changes),

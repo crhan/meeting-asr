@@ -327,6 +327,15 @@ table.projects tr:hover td {
   padding: 12px 14px;
 }
 
+/* Informational (non-error) outcome, e.g. "polish proposed no changes". */
+.notice-box {
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+}
+
 .pending-capture-banner {
   display: flex;
   align-items: center;

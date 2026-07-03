@@ -21,7 +21,10 @@ from app.commands.project_correct import (
     prepare_transcript_polish_for_review,
 )
 from app.core.voiceprint_review_service import REGISTRY, CaptureConflictError
-from app.correction_proposals import load_correction_proposal
+from app.correction_proposals import (
+    archive_correction_proposal,
+    load_correction_proposal,
+)
 from app.lexicon_store import get_lexicon_db_path
 from app.project_manager import load_manifest, project_paths
 from app.sentence_locator import format_sentence_ref
@@ -39,6 +42,8 @@ from app.web.schemas import (
     AcceptCorrectionIn,
     AcceptCorrectionOut,
     CorrectionChangeOut,
+    DiscardProposalIn,
+    DiscardProposalOut,
     JobRef,
     PolishIn,
     ProposalOut,
@@ -165,6 +170,41 @@ def get_proposal(
         changes=changes,
         proposal_id=_proposal_id(proposal),
     )
+
+
+@router.delete("/{project_ref}/proposal", response_model=DiscardProposalOut)
+async def discard_proposal(
+    project_ref: str,
+    payload: DiscardProposalIn,
+    settings: WebSettings = Depends(get_settings),
+    locks: LockRegistry = Depends(get_locks),
+) -> DiscardProposalOut:
+    """Discard the pending proposal without applying anything (archives the file)."""
+    project_dir = resolve_web_project_ref(project_ref, settings)
+
+    def work() -> DiscardProposalOut:
+        paths = project_paths(project_dir)
+        try:
+            proposal = load_correction_proposal(paths, None)
+        except RuntimeError as exc:
+            # Mirror get_proposal: only absence maps to 404; malformed stays a 500.
+            if "No correction proposal found" not in str(exc):
+                raise
+            raise FileNotFoundError(str(exc)) from exc
+        if _proposal_id(proposal) != payload.proposal_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The correction proposal changed since you reviewed it. "
+                    "Reload the proposal before discarding."
+                ),
+            )
+        archived = archive_correction_proposal(proposal, suffix="discarded")
+        return DiscardProposalOut(discarded=True, archived_name=archived.name)
+
+    loop = asyncio.get_running_loop()
+    async with locks.acquire(project_lock_key(str(project_dir))):
+        return await loop.run_in_executor(None, work)
 
 
 @router.post("/{project_ref}/accept", response_model=AcceptCorrectionOut)

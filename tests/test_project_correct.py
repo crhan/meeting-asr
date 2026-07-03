@@ -1275,9 +1275,15 @@ def _editor_script(tmp_path: Path, old: str, new: str) -> Path:
 
 
 def _latest_proposal(project_dir: Path) -> dict:
-    """Load the latest correction proposal JSON."""
+    """Load the latest correction proposal JSON (pending or archived).
+
+    Accepting archives the proposal to ``*.json.accepted`` (it is no longer pending),
+    so post-accept assertions must look at both names.
+    """
+    proposal_dir = project_dir / "tmp" / "corrections"
     proposal_path = sorted(
-        (project_dir / "tmp" / "corrections").glob("proposal_*.json")
+        list(proposal_dir.glob("proposal_*.json"))
+        + list(proposal_dir.glob("proposal_*.json.accepted"))
     )[-1]
     return json.loads(proposal_path.read_text(encoding="utf-8"))
 

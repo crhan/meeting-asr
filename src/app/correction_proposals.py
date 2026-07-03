@@ -421,6 +421,25 @@ def _change_payload(change: CorrectionChange) -> dict:
     }
 
 
+def archive_correction_proposal(
+    proposal: CorrectionProposal, *, suffix: str = "accepted"
+) -> Path:
+    """Rename a resolved proposal JSON out of the pending discovery glob.
+
+    ``_resolve_json`` discovers pending proposals via ``proposal_*.json``. Appending
+    ``.accepted`` / ``.discarded`` to the file NAME removes it from that glob (a name like
+    ``proposal_*_accepted.json`` would still match) while keeping the record on disk for
+    audit. Without this, an already-applied proposal keeps being served as pending: the
+    review page re-offers it fully pre-checked and a second accept fails stale or applies
+    rejected changes again.
+    """
+    target = proposal.json_path.with_name(f"{proposal.json_path.name}.{suffix}")
+    if not proposal.json_path.exists():
+        return proposal.json_path
+    proposal.json_path.rename(target)
+    return target
+
+
 def _resolve_json(paths: ProjectPaths, proposal_path: Path | None) -> Path:
     """Resolve an explicit or latest proposal JSON path."""
     if proposal_path is not None:

@@ -627,6 +627,13 @@ export const acceptCorrection = (
     },
   );
 
+// Discard the pending proposal without applying anything (server archives the file).
+export const discardProposal = (ref: string, proposalId: string) =>
+  api<{ discarded: boolean; archived_name: string }>(
+    `/api/corrections/${encodeURIComponent(ref)}/proposal`,
+    { method: "DELETE", body: JSON.stringify({ proposal_id: proposalId }) },
+  );
+
 // ---- Lexicon ---------------------------------------------------------------
 
 export interface LexiconTerm {

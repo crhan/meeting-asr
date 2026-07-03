@@ -3,12 +3,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   acceptCorrection,
+  discardProposal,
   getProposal,
   polishProject,
   ApiError,
   clipUrl,
 } from "../api/client";
 import { tr } from "../lib/i18n";
+import { confirmDialog } from "../lib/confirm";
 import { JobProgress } from "../components/JobProgress";
 import { useClipAudio } from "../lib/useClipAudio";
 
@@ -30,6 +32,7 @@ export function CorrectionPage() {
   const audio = useClipAudio();
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
+  const [jobNotice, setJobNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
   const proposalQuery = useQuery({
@@ -48,6 +51,7 @@ export function CorrectionPage() {
     mutationFn: () => polishProject(ref),
     onSuccess: (r) => {
       setJobError(null);
+      setJobNotice(null);
       setJobId(r.job_id);
     },
   });
@@ -60,9 +64,21 @@ export function CorrectionPage() {
       acceptCorrection(ref, [...selected], proposalQuery.data!.proposal_id),
     onSuccess: async () => {
       // Accepting rewrites the transcript; drop the cached review so navigating back shows
-      // the corrected sentences instead of the still-fresh pre-correction text.
+      // the corrected sentences instead of the still-fresh pre-correction text. The server
+      // also archived the proposal, so drop the cached one too.
+      await queryClient.invalidateQueries({ queryKey: ["proposal", ref] });
       await queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
       navigate(`/projects/${ref}/speakers`);
+    },
+  });
+
+  const discardMut = useMutation({
+    mutationFn: () => discardProposal(ref, proposalQuery.data!.proposal_id),
+    onSuccess: async () => {
+      setJobNotice(
+        tr("Proposal discarded; no changes were applied.", "已放弃提案，未应用任何修改。"),
+      );
+      await queryClient.invalidateQueries({ queryKey: ["proposal", ref] });
     },
   });
 
@@ -95,6 +111,26 @@ export function CorrectionPage() {
           >
             {tr("Generate polish", "生成润色")}
           </button>
+          {proposalQuery.data && (
+            <button
+              className="btn ghost"
+              disabled={discardMut.isPending || !!jobId || proposalQuery.isFetching}
+              onClick={async () => {
+                if (
+                  await confirmDialog({
+                    message: tr(
+                      "Discard this proposal? No changes will be applied; you can regenerate at any time.",
+                      "放弃这份提案？不会应用任何修改，之后可以随时重新生成。",
+                    ),
+                    confirmLabel: tr("Discard", "放弃"),
+                  })
+                )
+                  discardMut.mutate();
+              }}
+            >
+              {discardMut.isPending ? tr("Discarding…", "放弃中…") : tr("Discard", "放弃提案")}
+            </button>
+          )}
           {proposalQuery.data && (
             <button
               className="btn primary"
@@ -136,6 +172,16 @@ export function CorrectionPage() {
                 setJobError(
                   tr("Polish model failed: ", "润色模型失败：") + summary.model_error,
                 );
+              } else if (summary.proposed_change_count === 0) {
+                // Zero proposed changes is a legitimate outcome, not a failure -- without
+                // this the panel just vanishes and the page shows the empty state with
+                // no explanation of what the LLM concluded.
+                setJobNotice(
+                  tr(
+                    "Polish proposed no changes — the transcript looks clean.",
+                    "润色未提出任何修改——转写看起来已经很干净。",
+                  ),
+                );
               }
               // Refetch the regenerated proposal BEFORE clearing jobId. Clearing first would
               // re-enable Accept against the stale proposal during the refetch window; keeping
@@ -155,6 +201,12 @@ export function CorrectionPage() {
       {jobError && !jobId && (
         <div className="error-box" style={{ marginBottom: 14 }}>
           {jobError}
+        </div>
+      )}
+
+      {jobNotice && !jobId && !jobError && (
+        <div className="notice-box" style={{ marginBottom: 14 }}>
+          {jobNotice}
         </div>
       )}
 
