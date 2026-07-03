@@ -274,6 +274,36 @@ class UpsertTermIn(BaseModel):
     status: str = "active"
 
 
+class LexiconAliasOut(BaseModel):
+    """One alias attached to a term (with its optional disambiguation guidance)."""
+
+    alias: str
+    alias_type: str
+    disambiguation: str | None = None
+
+
+class LexiconContextOut(BaseModel):
+    """One stored correction context for a term."""
+
+    wrong_text: str
+    corrected_text: str
+    left_context: str
+    right_context: str
+    speaker_name: str | None
+    project_id: str
+    sentence_id: int | None
+    source: str
+    created_at: str
+
+
+class LexiconTermDetailOut(BaseModel):
+    """Full term detail: aliases + recent correction contexts."""
+
+    term: LexiconTermOut
+    aliases: list[LexiconAliasOut]
+    contexts: list[LexiconContextOut]
+
+
 class SetDisambiguationIn(BaseModel):
     """Mark an alias as context-ambiguous. An empty ``guidance`` clears it, returning the
     alias to deterministic blanket replacement (mirrors ``lexicon disambiguate``)."""

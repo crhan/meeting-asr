@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Query
 from app.lexicon_store import (
     delete_lexicon_term,
     get_lexicon_db_path,
+    get_lexicon_term,
     lexicon_stats,
     list_asr_hotwords,
     list_lexicon_disambiguations,
@@ -27,7 +28,10 @@ from app.web.locks import LockRegistry, store_lock_key
 from app.web.schemas import (
     DisambiguationOut,
     HotwordOut,
+    LexiconAliasOut,
+    LexiconContextOut,
     LexiconStatsOut,
+    LexiconTermDetailOut,
     LexiconTermOut,
     LexiconTermsOut,
     SetDisambiguationIn,
@@ -162,6 +166,43 @@ def get_hotwords(
         )
         for row in rows
     ]
+
+
+@router.get("/terms/{ref}", response_model=LexiconTermDetailOut)
+def get_term_detail(
+    ref: str, settings: WebSettings = Depends(get_settings)
+) -> LexiconTermDetailOut:
+    """One term's full detail: aliases (with disambiguation) + recent contexts.
+
+    ``ref`` resolves like the CLI/DELETE: term id, canonical text, or alias
+    (LookupError -> 404).
+    """
+    detail = get_lexicon_term(ref, db_path=get_lexicon_db_path(settings.store_dir))
+    return LexiconTermDetailOut(
+        term=_term_out(detail.term),
+        aliases=[
+            LexiconAliasOut(
+                alias=alias.alias,
+                alias_type=alias.alias_type,
+                disambiguation=alias.disambiguation,
+            )
+            for alias in detail.aliases
+        ],
+        contexts=[
+            LexiconContextOut(
+                wrong_text=row.wrong_text,
+                corrected_text=row.corrected_text,
+                left_context=row.left_context,
+                right_context=row.right_context,
+                speaker_name=row.speaker_name,
+                project_id=row.project_id,
+                sentence_id=row.sentence_id,
+                source=row.source,
+                created_at=row.created_at,
+            )
+            for row in detail.contexts
+        ],
+    )
 
 
 @router.post("/terms", response_model=LexiconTermOut)

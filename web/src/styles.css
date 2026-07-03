@@ -330,6 +330,35 @@ table.projects tr:hover td {
   background: var(--red-dim);
 }
 
+/* ---- Lexicon term detail ---- */
+.term-detail-section {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.term-alias-row,
+.term-context-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.term-context-row {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.term-context-row del {
+  color: var(--red);
+}
+.term-context-row ins {
+  color: var(--green);
+  text-decoration: none;
+}
+
 /* Voiceprint sample -> source project deep link. */
 .vp-project-link {
   color: inherit;

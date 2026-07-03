@@ -736,10 +736,39 @@ export interface Hotword {
   source: string;
 }
 
-export const getLexiconTerms = (query?: string) =>
+export interface LexiconAlias {
+  alias: string;
+  alias_type: string;
+  disambiguation: string | null;
+}
+
+export interface LexiconContext {
+  wrong_text: string;
+  corrected_text: string;
+  left_context: string;
+  right_context: string;
+  speaker_name: string | null;
+  project_id: string;
+  sentence_id: number | null;
+  source: string;
+  created_at: string;
+}
+
+export interface LexiconTermDetail {
+  term: LexiconTerm;
+  aliases: LexiconAlias[];
+  contexts: LexiconContext[];
+}
+
+export const getLexiconTerms = (query?: string, status = "active") =>
   api<{ terms: LexiconTerm[] }>(
-    `/api/lexicon/terms?limit=500${query ? `&query=${encodeURIComponent(query)}` : ""}`,
+    `/api/lexicon/terms?limit=500&status=${encodeURIComponent(status)}${
+      query ? `&query=${encodeURIComponent(query)}` : ""
+    }`,
   );
+
+export const getLexiconTerm = (ref: string) =>
+  api<LexiconTermDetail>(`/api/lexicon/terms/${encodeURIComponent(ref)}`);
 
 export const getLexiconStats = () => api<LexiconStats>("/api/lexicon/stats");
 
@@ -755,15 +784,18 @@ export const upsertLexiconTerm = (body: {
   category?: string | null;
   description?: string | null;
   aliases?: string[];
+  status?: string;
 }) =>
   api<LexiconTerm>("/api/lexicon/terms", {
     method: "POST",
     body: JSON.stringify(body),
   });
 
-export const deleteLexiconTerm = (ref: string) =>
+// Default delete is a soft-deactivate (recoverable); permanent=true physically
+// removes the term with its aliases/contexts.
+export const deleteLexiconTerm = (ref: string, permanent = false) =>
   api<{ deleted_public_id: string }>(
-    `/api/lexicon/terms/${encodeURIComponent(ref)}`,
+    `/api/lexicon/terms/${encodeURIComponent(ref)}${permanent ? "?permanent=true" : ""}`,
     { method: "DELETE" },
   );
 
