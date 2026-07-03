@@ -8,6 +8,8 @@ reuse the existing discovery functions in ``app.core.project_refs`` /
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 
@@ -18,14 +20,21 @@ from app.core.project_artifacts import (
 from app.core.project_models import ProjectListItem
 from app.core.project_refs import list_projects
 from app.core.project_workflow import load_project_workflow_summary
-from app.project_manager import load_manifest
+from app.project_manager import load_manifest, update_project_metadata
 from app.speaker_match_status import project_has_unresolved_match
-from app.web.deps import get_settings, require_auth, resolve_web_project_ref
+from app.web.deps import (
+    get_locks,
+    get_settings,
+    require_auth,
+    resolve_web_project_ref,
+)
+from app.web.locks import LockRegistry, project_lock_key
 from app.web.schemas import (
     ArtifactListOut,
     ArtifactOut,
     ProjectListResponse,
     ProjectSummary,
+    ProjectUpdateIn,
 )
 from app.web.settings import WebSettings
 
@@ -74,6 +83,47 @@ def get_project(
         workflow,
         has_unresolved_matches=project_has_unresolved_match(project_dir),
     )
+
+
+@router.patch("/{project_ref}", response_model=ProjectSummary)
+async def patch_project(
+    project_ref: str,
+    payload: ProjectUpdateIn,
+    settings: WebSettings = Depends(get_settings),
+    locks: LockRegistry = Depends(get_locks),
+) -> ProjectSummary:
+    """Edit a project's title / meeting time (reuses the CLI's update semantics).
+
+    Runs under the per-project lock so a concurrent run/save cannot interleave with
+    the manifest rewrite.
+    """
+    project_dir = resolve_web_project_ref(project_ref, settings)
+
+    def work() -> ProjectSummary:
+        update_project_metadata(
+            project_dir, title=payload.title, meeting_time=payload.meeting_time
+        )
+        manifest = load_manifest(project_dir)
+        item = ProjectListItem(
+            project_dir,
+            manifest.project_id,
+            manifest.title,
+            manifest.source.meeting_time,
+            manifest.status,
+            manifest.created_at,
+            manifest.updated_at,
+            tuple(manifest.meeting_keywords),
+        )
+        workflow = load_project_workflow_summary(project_dir, project_ref)
+        return ProjectSummary.from_item(
+            item,
+            workflow,
+            has_unresolved_matches=project_has_unresolved_match(project_dir),
+        )
+
+    loop = asyncio.get_running_loop()
+    async with locks.acquire(project_lock_key(str(project_dir))):
+        return await loop.run_in_executor(None, work)
 
 
 @router.get("/{project_ref}/artifacts", response_model=ArtifactListOut)

@@ -140,9 +140,15 @@ export function VoiceprintPage() {
 
   const deletePersonMut = useMutation({
     mutationFn: (personRef: string) => deletePerson(personRef),
-    onSuccess: () => {
+    onSuccess: (res) => {
       setSelected(null);
       invalidatePerson();
+      setToast(
+        tr(
+          `Person deleted with ${res.deleted_sample_count} sample(s).`,
+          `已删除人物及 ${res.deleted_sample_count} 条样本。`,
+        ),
+      );
     },
   });
 
@@ -579,8 +585,8 @@ function PersonDetail(props: {
                 if (
                   await confirmDialog({
                     message: tr(
-                      `Delete "${data.person.name}" and all samples?`,
-                      `删除「${data.person.name}」及全部样本？`,
+                      `Delete "${data.person.name}" with ${person.sample_count} sample(s) across ${person.project_count} project(s)? Clip files are removed too; this cannot be undone.`,
+                      `删除「${data.person.name}」及其 ${person.sample_count} 条样本（涉及 ${person.project_count} 个项目）？clip 音频文件将一并删除，不可恢复。`,
                     ),
                     confirmLabel: tr("Delete person", "删除人物"),
                     danger: true,
@@ -595,7 +601,19 @@ function PersonDetail(props: {
         )}
       </div>
       {samples.length === 0 ? (
-        <div className="placeholder">{tr("No samples match the filter.", "没有符合筛选的样本。")}</div>
+        <div className="placeholder">
+          {allSamples.length === 0 ? (
+            <>
+              {tr(
+                "This person has no samples yet. Identify them in a project's speaker review, then capture voiceprints there.",
+                "该人物还没有声纹样本。先在某个项目的发言人复核页指认，再从那里采集声纹。",
+              )}{" "}
+              <Link to="/projects">{tr("Open projects", "打开项目列表")}</Link>
+            </>
+          ) : (
+            tr("No samples match the filter.", "没有符合筛选的样本。")
+          )}
+        </div>
       ) : (
         <>
           <VoiceprintHealthPanel

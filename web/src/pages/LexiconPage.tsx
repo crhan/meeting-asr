@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   deleteLexiconTerm,
   getDisambiguations,
@@ -393,10 +393,15 @@ function TermsTab() {
   const { data, isLoading } = useQuery({
     queryKey: ["lex-terms", query, status],
     queryFn: () => getLexiconTerms(query || undefined, status),
+    // Keep the table on screen while typing instead of flashing "Loading…" per keystroke.
+    placeholderData: keepPreviousData,
   });
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["lex-terms"] });
     queryClient.invalidateQueries({ queryKey: ["lex-stats"] });
+    // Term edits change the derived hotwords and disambiguation lists too.
+    queryClient.invalidateQueries({ queryKey: ["lex-hotwords"] });
+    queryClient.invalidateQueries({ queryKey: ["lex-disambig"] });
   };
   const upsertMut = useMutation({
     mutationFn: upsertLexiconTerm,

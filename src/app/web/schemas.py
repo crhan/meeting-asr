@@ -213,6 +213,13 @@ class DiscardProposalOut(BaseModel):
     archived_name: str
 
 
+class ProjectUpdateIn(BaseModel):
+    """Edit a project's user-facing metadata (None = leave unchanged)."""
+
+    title: str | None = None
+    meeting_time: str | None = None
+
+
 # ---- Project artifacts -------------------------------------------------------
 
 

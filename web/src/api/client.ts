@@ -107,9 +107,15 @@ export function listProjects(): Promise<ProjectListResponse> {
   return api<ProjectListResponse>("/api/projects");
 }
 
-export function getProject(ref: string): Promise<ProjectSummary> {
-  return api<ProjectSummary>(`/api/projects/${encodeURIComponent(ref)}`);
-}
+/** Edit a project's title / meeting time (None = unchanged). */
+export const updateProject = (
+  ref: string,
+  body: { title?: string | null; meeting_time?: string | null },
+) =>
+  api<ProjectSummary>(`/api/projects/${encodeURIComponent(ref)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
 
 // ---- Speaker review --------------------------------------------------------
 
@@ -701,7 +707,12 @@ export const acceptCorrection = (
   selectedIndices: number[] | null,
   proposalId: string,
 ) =>
-  api<{ accepted: boolean; change_count: number; learned_count: number }>(
+  api<{
+    accepted: boolean;
+    change_count: number;
+    learned_count: number;
+    corrected_transcript_path: string | null;
+  }>(
     `/api/corrections/${encodeURIComponent(ref)}/accept`,
     {
       method: "POST",
@@ -871,7 +882,9 @@ export const unsetConfig = (key: string) =>
     method: "DELETE",
   });
 
-export const getDoctor = () => api<Doctor>("/api/doctor");
+/** oss=true additionally exercises the OSS credential/config checks (real network probe). */
+export const getDoctor = (oss = false) =>
+  api<Doctor>(`/api/doctor${oss ? "?oss=true" : ""}`);
 
 // ---- Health + auth ---------------------------------------------------------
 
@@ -900,21 +913,4 @@ export interface ProgressEvent {
   status?: string;
   stage?: string | null;
   [key: string]: unknown;
-}
-
-/** Subscribe to a job's SSE stream; returns an unsubscribe function. */
-export function subscribeToJob(
-  jobId: string,
-  onEvent: (event: ProgressEvent) => void,
-): () => void {
-  // EventSource can't set headers, so the token rides along as a query param.
-  const source = new EventSource(withToken(`/api/jobs/${jobId}/events`));
-  source.onmessage = (msg) => {
-    try {
-      onEvent(JSON.parse(msg.data) as ProgressEvent);
-    } catch {
-      // ignore malformed frames
-    }
-  };
-  return () => source.close();
 }

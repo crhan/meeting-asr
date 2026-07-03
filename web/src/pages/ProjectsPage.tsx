@@ -3,12 +3,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   listProjects,
+  mergeApply,
+  mergePreview,
   runPipeline,
   summarizeProject,
+  updateProject,
+  type MergePreview,
   type ProjectSummary,
 } from "../api/client";
 import { tr } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm";
+import { promptDialog } from "../lib/prompt";
 import { ExportsModal } from "../components/ExportsModal";
 import { Modal } from "../components/Modal";
 import { JobProgress } from "../components/JobProgress";
@@ -256,10 +261,164 @@ function RunDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** Merge N finished projects into one exported transcript bundle (stateless read;
+ *  never writes back into any project -- see AGENTS.md Project Merge Notes). */
+function MergeDialog({
+  projects,
+  onClose,
+}: {
+  projects: ProjectSummary[];
+  onClose: () => void;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [outDir, setOutDir] = useState(
+    `merged/merge-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}`,
+  );
+  const [preview, setPreview] = useState<MergePreview | null>(null);
+  const [applied, setApplied] = useState<MergePreview | null>(null);
+  const [errorText, setErrorText] = useState<string | null>(null);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const previewMut = useMutation({
+    mutationFn: () => mergePreview(selected),
+    onSuccess: (r) => {
+      setErrorText(null);
+      setPreview(r);
+    },
+    onError: (e) => setErrorText((e as Error).message),
+  });
+  const applyMut = useMutation({
+    mutationFn: () => mergeApply(selected, outDir.trim()),
+    onSuccess: (r) => {
+      setErrorText(null);
+      setApplied(r);
+    },
+    onError: (e) => setErrorText((e as Error).message),
+  });
+
+  return (
+    <Modal title={tr("Merge projects", "合并项目")} onClose={onClose}>
+      {applied ? (
+        <div>
+          <div className="capture-result">
+            <div>{tr("Merged transcript written.", "合并转写已写出。")}</div>
+            <div className="subtle mono" style={{ marginTop: 6 }}>
+              {applied.out_dir}
+            </div>
+            <div className="subtle" style={{ marginTop: 6 }}>
+              {(applied.written ?? []).map((p) => (
+                <div key={p} className="mono">
+                  {p}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="row gap" style={{ marginTop: 12 }}>
+            <button className="btn primary" onClick={onClose}>
+              {tr("Done", "完成")}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="subtle" style={{ marginBottom: 8 }}>
+            {tr(
+              "Pick the already-transcribed segments of one meeting; speakers are unified across segments by voiceprint identity. Nothing is written back into the source projects.",
+              "选择同一场会议已各自转写完成的分段；说话人按声纹身份跨段归一。不会回写任何源项目。",
+            )}
+          </div>
+          <div className="people-list" style={{ maxHeight: 260, overflowY: "auto" }}>
+            {projects.map((p) => {
+              const index = selected.indexOf(p.project_id);
+              return (
+                <button
+                  key={p.project_id}
+                  className={`person-row ${index >= 0 ? "current" : ""}`}
+                  onClick={() => toggle(p.project_id)}
+                >
+                  <span className="person-name">
+                    {index >= 0 ? `${index + 1}. ` : ""}
+                    {p.title || p.project_id}
+                  </span>
+                  <span className="person-id mono">{p.project_id}</span>
+                </button>
+              );
+            })}
+          </div>
+          <input
+            className="search"
+            style={{ marginTop: 10 }}
+            value={outDir}
+            onChange={(e) => setOutDir(e.target.value)}
+            placeholder={tr("Output directory (under projects dir)…", "输出目录（projects 目录下）…")}
+          />
+          {errorText && (
+            <div className="error-box" style={{ marginBottom: 10 }}>
+              {errorText}
+            </div>
+          )}
+          {preview && (
+            <div className="notice-box" style={{ marginBottom: 10 }}>
+              <div>
+                {preview.identity_count} {tr("identities", "人")} · {preview.speaker_count}{" "}
+                {tr("speakers", "speaker")} · {preview.sentence_count} {tr("sentences", "句")} ·{" "}
+                {tr("order", "排序")} {preview.order_source}
+              </div>
+              <div className="subtle" style={{ marginTop: 4 }}>
+                {preview.names.join("、")}
+              </div>
+              {preview.warnings.length > 0 && (
+                <div className="warn" style={{ marginTop: 4 }}>
+                  {preview.warnings.map((w) => (
+                    <div key={w}>⚠ {w}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          <div className="row gap">
+            <button
+              className="btn"
+              disabled={selected.length < 2 || previewMut.isPending}
+              onClick={() => previewMut.mutate()}
+            >
+              {previewMut.isPending ? tr("Previewing…", "预览中…") : tr("Preview", "预览")}
+            </button>
+            <button
+              className="btn primary"
+              disabled={selected.length < 2 || !outDir.trim() || applyMut.isPending || !preview}
+              title={!preview ? tr("Preview first.", "先预览。") : undefined}
+              onClick={() => applyMut.mutate()}
+            >
+              {applyMut.isPending ? tr("Merging…", "合并中…") : tr("Merge", "执行合并")}
+            </button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+const STATE_LABEL: Record<string, [string, string]> = {
+  created: ["Created", "已创建"],
+  prepared: ["Prepared", "已备料"],
+  transcribed: ["Transcribed", "已转写"],
+  completed: ["Completed", "已完成"],
+  corrected: ["Corrected", "已纠错"],
+  broken: ["Broken", "异常"],
+};
+
+function stateLabel(key: string, fallback: string): string {
+  const pair = STATE_LABEL[key];
+  return pair ? tr(pair[0], pair[1]) : fallback;
+}
+
 function StateBadge({ project }: { project: ProjectSummary }) {
   const key = project.workflow?.state_key ?? project.status;
   const label = project.workflow?.state ?? project.status;
-  return <span className={`badge state-${key}`}>{label}</span>;
+  return <span className={`badge state-${key}`}>{stateLabel(key, label)}</span>;
 }
 
 function formatTime(value: string | null): string {
@@ -276,6 +435,7 @@ export function ProjectsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showRun, setShowRun] = useState(false);
+  const [showMerge, setShowMerge] = useState(false);
   const [exportsFor, setExportsFor] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [summarizeJob, setSummarizeJob] = useState<{ id: string; ref: string } | null>(null);
@@ -293,6 +453,21 @@ export function ProjectsPage() {
     queryKey: ["projects"],
     queryFn: listProjects,
   });
+
+  const renameMut = useMutation({
+    mutationFn: ({ ref, title }: { ref: string; title: string }) => updateProject(ref, { title }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
+  });
+
+  const editTitle = async (p: ProjectSummary) => {
+    const value = await promptDialog({
+      title: tr("Edit title", "编辑标题"),
+      message: tr(`Title of ${p.project_id}:`, `${p.project_id} 的标题：`),
+      defaultValue: p.title,
+    });
+    if (value?.trim() && value.trim() !== p.title)
+      renameMut.mutate({ ref: p.project_id, title: value.trim() });
+  };
 
   const summarizeMut = useMutation({
     mutationFn: (ref: string) => summarizeProject(ref),
@@ -372,9 +547,14 @@ export function ProjectsPage() {
             {data?.projects_dir} · {projects.length} {tr("projects", "个项目")}
           </div>
         </div>
-        <button className="btn primary" onClick={() => setShowRun(true)}>
-          + {tr("Run pipeline", "运行管线")}
-        </button>
+        <span className="row gap">
+          <button className="btn ghost" onClick={() => setShowMerge(true)}>
+            {tr("Merge projects", "合并项目")}
+          </button>
+          <button className="btn primary" onClick={() => setShowRun(true)}>
+            + {tr("Run pipeline", "运行管线")}
+          </button>
+        </span>
       </div>
       <div className="row gap" style={{ margin: "10px 0" }}>
         <input
@@ -402,7 +582,7 @@ export function ProjectsPage() {
             className={`chip ${stateFilter === key ? "on" : ""}`}
             onClick={() => setParam("state", key)}
           >
-            {key}
+            {stateLabel(key, key)}
           </button>
         ))}
         {(needle || stateFilter) && (
@@ -412,6 +592,7 @@ export function ProjectsPage() {
         )}
       </div>
       {showRun && <RunDialog onClose={() => setShowRun(false)} />}
+      {showMerge && <MergeDialog projects={allProjects} onClose={() => setShowMerge(false)} />}
       {exportsFor && <ExportsModal projectRef={exportsFor} onClose={() => setExportsFor(null)} />}
       {notice && (
         <div className="notice-box" style={{ margin: "10px 0" }} onClick={() => setNotice(null)}>
@@ -482,7 +663,20 @@ export function ProjectsPage() {
                       {p.project_id}
                     </Link>
                   </td>
-                  <td>{p.title || tr("(untitled)", "（无标题）")}</td>
+                  <td>
+                    {p.title || tr("(untitled)", "（无标题）")}
+                    <button
+                      className="icon-btn"
+                      style={{ marginLeft: 4 }}
+                      title={tr("Edit title", "编辑标题")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void editTitle(p);
+                      }}
+                    >
+                      ✎
+                    </button>
+                  </td>
                   <td>
                     <StateBadge project={p} />
                     {p.has_unresolved_matches && (

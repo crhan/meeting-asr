@@ -121,7 +121,11 @@ function ConfigTab() {
             <tr key={k.name}>
               <td className="mono">
                 {k.name}
-                {k.secret && <span className="badge" style={{ marginLeft: 6 }}>secret</span>}
+                {k.secret && (
+                  <span className="badge" style={{ marginLeft: 6 }}>
+                    {tr("secret", "密钥")}
+                  </span>
+                )}
               </td>
               <td className="mono">
                 {k.is_set ? (k.value ?? "••••••••") : <span className="subtle">{tr("unset", "未设置")}</span>}
@@ -173,9 +177,11 @@ function ConfigTab() {
 }
 
 function DoctorTab() {
+  const [withOss, setWithOss] = useState(false);
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ["doctor"],
-    queryFn: getDoctor,
+    // oss must be part of the key or toggling would serve the cached non-OSS run.
+    queryKey: ["doctor", withOss],
+    queryFn: () => getDoctor(withOss),
   });
   if (isLoading) return <div className="placeholder">{tr("Running checks…", "检查中…")}</div>;
   if (isError)
@@ -200,6 +206,14 @@ function DoctorTab() {
         <button className="btn ghost" onClick={() => refetch()} disabled={isFetching}>
           {tr("Re-run", "重跑")}
         </button>
+        <label className="row gap subtle">
+          <input
+            type="checkbox"
+            checked={withOss}
+            onChange={(e) => setWithOss(e.target.checked)}
+          />
+          {tr("Include OSS checks (network probe)", "包含 OSS 检查（真实网络探测）")}
+        </label>
       </div>
       <div className="checks">
         {(data?.checks ?? []).map((c) => (

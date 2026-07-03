@@ -1168,7 +1168,9 @@ function SpeakerSidebar(props: {
             <div className="speaker-card-top">
               <span className={`status-dot status-${s.status}`} title={label} />
               <span className="speaker-name">{s.current_name || s.label}</span>
-              {editedIds.has(s.speaker_id) && <span className="dot-edited" title="edited" />}
+              {editedIds.has(s.speaker_id) && (
+                <span className="dot-edited" title={tr("edited", "已修改")} />
+              )}
             </div>
             <div className="speaker-card-meta subtle">
               {s.label} · {segs.length} {tr("seg", "句")} · {fmtDur(dur)}

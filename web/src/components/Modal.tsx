@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { tr } from "../lib/i18n";
 
 // Module-level count of mounted modals (mirrors unsavedGuard's plain-flag pattern):
 // page-level keyboard shortcuts need a synchronous "is any dialog open?" read at event
@@ -92,7 +93,7 @@ export function Modal({
           <button
             className="icon-btn"
             onClick={onClose}
-            aria-label="close"
+            aria-label={tr("Close", "关闭")}
             disabled={closeDisabled}
           >
             ✕
