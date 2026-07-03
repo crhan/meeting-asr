@@ -84,9 +84,11 @@ export function PromptHost() {
           style={{ marginBottom: 0 }}
           placeholder={req.placeholder}
           value={value}
-          // Enter submits, Escape cancels (Modal also closes on Escape).
+          // Enter submits, Escape cancels (Modal also closes on Escape). During IME
+          // composition (Chinese pinyin etc.) Enter only commits the composition --
+          // without the isComposing check it would submit the half-typed value.
           onKeyDown={(e) => {
-            if (e.key === "Enter") settle(value);
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) settle(value);
           }}
           onChange={(e) => setValue(e.target.value)}
         />

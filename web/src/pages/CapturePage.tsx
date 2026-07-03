@@ -50,13 +50,22 @@ export function CapturePage() {
     pendingTxnRef.current = result ? result.transaction_id : null;
   }, [result]);
   useEffect(() => {
-    const onUnload = () => {
+    // Ask before reload/close while a capture awaits a decision. The rollback beacon must
+    // NOT fire here: beforeunload runs before the user answers the browser prompt, so a
+    // beacon from it would destroy the capture even when they choose to stay.
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (pendingTxnRef.current) e.preventDefault();
+    };
+    // pagehide fires only when the page is actually going away -- roll back then.
+    const onPageHide = () => {
       const txn = pendingTxnRef.current;
       if (txn) navigator.sendBeacon(captureRollbackUrl(txn));
     };
-    window.addEventListener("beforeunload", onUnload);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
-      window.removeEventListener("beforeunload", onUnload);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("pagehide", onPageHide);
       const txn = pendingTxnRef.current;
       // In-app navigation away from the page: best-effort rollback of an undecided capture.
       if (txn) captureRollback(txn).catch(() => {});
@@ -415,8 +424,10 @@ function CaptureResultModal(props: {
   return (
     <Modal
       title={tr("Capture result", "采集结果")}
-      onClose={() => void resolve("rollback", onRollback)}
-      closeDisabled={resolving !== null}
+      // No passive close: Esc / backdrop / ✕ used to silently roll back the whole
+      // capture+embed run. Force an explicit Accept-or-Rollback choice instead.
+      onClose={() => {}}
+      closeDisabled
       footer={
         <div className="row gap">
           <button

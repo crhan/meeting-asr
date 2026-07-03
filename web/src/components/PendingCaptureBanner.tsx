@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { captureAccept, captureRollback, getPendingCapture } from "../api/client";
+import { confirmDialog } from "../lib/confirm";
 import { tr } from "../lib/i18n";
 
 /**
@@ -45,6 +46,33 @@ export function PendingCaptureBanner() {
 
   if (!data) return null;
 
+  // The banner has no room for the capture's score details, so both one-click
+  // resolutions of somebody-else's-work get a plain-language confirm first.
+  const askRollback = async () => {
+    if (
+      await confirmDialog({
+        message: tr(
+          "Roll back this capture? The voiceprint library returns to its pre-capture state; you can re-run the capture at any time.",
+          "回滚这次采集？声纹库将恢复到采集前的状态，之后可以随时重新采集。",
+        ),
+        confirmLabel: tr("Rollback", "回滚"),
+      })
+    )
+      resolve.mutate("rollback");
+  };
+  const askAccept = async () => {
+    if (
+      await confirmDialog({
+        message: tr(
+          "Accept this capture and merge its samples into the voiceprint library?",
+          "接受这次采集，把采到的样本并入声纹库？",
+        ),
+        confirmLabel: tr("Accept", "接受"),
+      })
+    )
+      resolve.mutate("accept");
+  };
+
   return (
     <div className="pending-capture-banner">
       <span>
@@ -56,18 +84,10 @@ export function PendingCaptureBanner() {
         {data.project_id ? <span className="mono"> · {data.project_id}</span> : null}
       </span>
       <span className="row gap">
-        <button
-          className="btn ghost"
-          disabled={resolve.isPending}
-          onClick={() => resolve.mutate("rollback")}
-        >
+        <button className="btn ghost" disabled={resolve.isPending} onClick={askRollback}>
           {tr("Rollback", "回滚")}
         </button>
-        <button
-          className="btn"
-          disabled={resolve.isPending}
-          onClick={() => resolve.mutate("accept")}
-        >
+        <button className="btn" disabled={resolve.isPending} onClick={askAccept}>
           {tr("Accept", "接受")}
         </button>
       </span>

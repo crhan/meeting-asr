@@ -9,6 +9,7 @@ import {
   type ConfigKey,
 } from "../api/client";
 import { tr } from "../lib/i18n";
+import { confirmDialog } from "../lib/confirm";
 import { promptDialog } from "../lib/prompt";
 
 type Tab = "config" | "doctor";
@@ -101,7 +102,25 @@ function ConfigTab() {
                   {tr("Edit", "编辑")}
                 </button>
                 {k.is_set && (
-                  <button className="icon-btn" title={tr("Unset", "清除")} onClick={() => unsetMut.mutate(k.name)}>
+                  <button
+                    className="icon-btn"
+                    title={tr("Unset", "清除")}
+                    onClick={async () => {
+                      if (
+                        await confirmDialog({
+                          message: k.secret
+                            ? tr(
+                                `Unset ${k.name}? The stored key is not recoverable; you will need to enter it again.`,
+                                `清除 ${k.name}？已存的密钥无法找回，之后需要重新输入。`,
+                              )
+                            : tr(`Unset ${k.name}?`, `清除 ${k.name}？`),
+                          confirmLabel: tr("Unset", "清除"),
+                          danger: true,
+                        })
+                      )
+                        unsetMut.mutate(k.name);
+                    }}
+                  >
                     🗑
                   </button>
                 )}

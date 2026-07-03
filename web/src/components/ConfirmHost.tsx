@@ -42,12 +42,14 @@ export function ConfirmHost() {
       onClose={() => settle(false)}
       footer={
         <>
-          <button className="btn ghost" onClick={() => settle(false)}>
+          {/* Danger confirms focus Cancel: the "Enter submits" muscle memory from prompt
+              dialogs must not one-key an irreversible delete. */}
+          <button className="btn ghost" autoFocus={req.danger} onClick={() => settle(false)}>
             {req.cancelLabel ?? tr("Cancel", "取消")}
           </button>
           <button
             className={`btn ${req.danger ? "danger" : "primary"}`}
-            autoFocus
+            autoFocus={!req.danger}
             onClick={() => settle(true)}
           >
             {req.confirmLabel ?? tr("Confirm", "确认")}

@@ -159,7 +159,15 @@ export function VoiceprintPage() {
       lastSample: boolean;
     }) => deleteSample(personRef, samplePublicId),
     onSuccess: (_row, variables) => {
-      if (variables.lastSample) setSelected(null);
+      if (variables.lastSample) {
+        setSelected(null);
+        setToast(
+          tr(
+            "Last sample deleted; the person was removed from the library.",
+            "已删除最后一条样本，人物已从声纹库移除。",
+          ),
+        );
+      }
       invalidatePerson(variables.personRef);
     },
   });
@@ -642,14 +650,21 @@ function SampleRow(props: {
           className="reassign-btn"
           title={tr("Delete sample", "删除样本")}
           onClick={async () => {
+            const lastSample = sampleCount <= 1;
             if (
               await confirmDialog({
-                message: tr("Delete this sample?", "删除这条样本？"),
-                confirmLabel: tr("Delete", "删除"),
+                // Deleting the last sample hard-deletes the whole person row -- say so.
+                message: lastSample
+                  ? tr(
+                      `This is the last sample of "${sample.speaker_name}"; deleting it also removes the person from the library.`,
+                      `这是「${sample.speaker_name}」的最后一条样本，删除后该人物将一并从声纹库移除。`,
+                    )
+                  : tr("Delete this sample?", "删除这条样本？"),
+                confirmLabel: lastSample ? tr("Delete person", "删除人物") : tr("Delete", "删除"),
                 danger: true,
               })
             )
-              props.onDelete(sample.public_id, sampleCount <= 1);
+              props.onDelete(sample.public_id, lastSample);
           }}
         >
           🗑
