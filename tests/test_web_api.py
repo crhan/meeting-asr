@@ -1963,3 +1963,81 @@ def test_exclude_quality_samples_preserves_confirmed_identity(
         "bad-active": "quarantined",
         "bad-verified": "verified-quarantined",
     }
+
+
+# ---- Project artifacts (final deliverables) ---------------------------------
+
+
+def _make_artifact_project(tmp_path: Path, name: str) -> tuple[Path, str]:
+    """Create a minimal project under the web projects dir; returns (dir, project_id)."""
+    from app.project_manager import create_project
+
+    source = tmp_path / f"{name}.wav"
+    source.write_bytes(b"fake")
+    project_dir = tmp_path / "projects" / name
+    create_project(
+        source,
+        title=name,
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    payload = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    return project_dir, str(payload["project_id"])
+
+
+def test_artifacts_list_preview_and_download(
+    client: TestClient, tmp_path: Path
+) -> None:
+    project_dir, project_id = _make_artifact_project(tmp_path, "p-artifacts")
+    exports = project_dir / "exports"
+    exports.mkdir(exist_ok=True)
+    (exports / "transcript_named.txt").write_text("张三: 你好\n", encoding="utf-8")
+    (exports / "meeting_summary.md").write_text("# 纪要\n", encoding="utf-8")
+
+    listing = client.get(f"/api/projects/{project_id}/artifacts")
+    assert listing.status_code == 200
+    body = listing.json()
+    assert body["project_id"] == project_id
+    # Deliverables first: summary before the named transcript.
+    assert [a["name"] for a in body["artifacts"]] == [
+        "meeting_summary",
+        "transcript_named",
+    ]
+
+    preview = client.get(f"/api/projects/{project_id}/artifacts/transcript_named")
+    assert preview.status_code == 200
+    assert "张三" in preview.text
+    assert preview.headers["content-disposition"].startswith("inline")
+
+    download = client.get(
+        f"/api/projects/{project_id}/artifacts/meeting_summary",
+        params={"download": "true"},
+    )
+    assert download.status_code == 200
+    assert download.headers["content-disposition"].startswith("attachment")
+
+    missing = client.get(f"/api/projects/{project_id}/artifacts/nope")
+    assert missing.status_code == 404
+    assert missing.json()["error"] == "not_found"
+
+
+def test_artifact_manifest_path_escaping_project_is_refused(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A manifest outputs entry pointing outside the project root must not be served."""
+    project_dir, project_id = _make_artifact_project(tmp_path, "p-escape")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("outside", encoding="utf-8")
+    manifest_path = project_dir / "project.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload.setdefault("outputs", {})["named_transcript"] = str(secret)
+    manifest_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    listing = client.get(f"/api/projects/{project_id}/artifacts")
+    assert listing.status_code == 200
+    assert listing.json()["artifacts"] == []
+
+    resp = client.get(f"/api/projects/{project_id}/artifacts/transcript_named")
+    assert resp.status_code == 404

@@ -19,6 +19,7 @@ import {
 import { tr } from "../lib/i18n";
 import { setUnsavedEdits } from "../lib/unsavedGuard";
 import { confirmDialog } from "../lib/confirm";
+import { ExportsModal } from "../components/ExportsModal";
 import { IdentityPicker, type IdentitySelection } from "../components/IdentityPicker";
 import { anyModalOpen, Modal } from "../components/Modal";
 import { SpeakerPicker } from "../components/SpeakerPicker";
@@ -272,6 +273,7 @@ export function SpeakerReviewPage() {
   const [reassigning, setReassigning] = useState<SpeakerSegment | null>(null);
   const [editingText, setEditingText] = useState<SpeakerSegment | null>(null);
   const [merging, setMerging] = useState<ReviewSpeaker | null>(null);
+  const [showExports, setShowExports] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   // Reset working state whenever a fresh session loads.
@@ -735,6 +737,7 @@ export function SpeakerReviewPage() {
         }}
         onCapture={() => navigate(`/projects/${ref}/capture`)}
         onCorrect={() => navigate(`/projects/${ref}/corrections`)}
+        onExports={() => setShowExports(true)}
       />
       <div className="review-body">
         <SpeakerSidebar
@@ -821,6 +824,7 @@ export function SpeakerReviewPage() {
           onClose={() => setMerging(null)}
         />
       )}
+      {showExports && <ExportsModal projectRef={ref} onClose={() => setShowExports(false)} />}
       {toast && (
         <div className="toast" onClick={() => setToast(null)}>
           {toast}
@@ -842,6 +846,7 @@ function ReviewHeader(props: {
   onDiscard: () => void;
   onCapture: () => void;
   onCorrect: () => void;
+  onExports: () => void;
 }) {
   const { review, speakerCount, unresolved, dirty, saving, onSave, onDiscard, onCapture, onCorrect } =
     props;
@@ -859,6 +864,10 @@ function ReviewHeader(props: {
         </div>
       </div>
       <div className="row gap">
+        {/* Exports is read-only, so it stays enabled while dirty. */}
+        <button className="btn ghost" onClick={props.onExports}>
+          {tr("Exports", "导出")}
+        </button>
         {/* Capture/Correct reload from on-disk speaker_map.json + transcript artifacts, so
             leaving with unsaved edits (dirty) would act on stale/anonymous identities -- e.g.
             "accept match -> Capture" would capture under the old name. Block until saved. */}

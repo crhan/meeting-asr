@@ -227,6 +227,40 @@ export function clipUrl(ref: string, beginMs: number, endMs: number): string {
   );
 }
 
+// ---- Project artifacts (final deliverables) --------------------------------
+
+export interface ProjectArtifact {
+  name: string;
+  kind: string; // transcript | subtitle | summary
+  corrected: boolean;
+  file_name: string;
+  size_bytes: number;
+  media_type: string;
+}
+
+export const getArtifacts = (ref: string) =>
+  api<{ project_id: string; artifacts: ProjectArtifact[] }>(
+    `/api/projects/${encodeURIComponent(ref)}/artifacts`,
+  );
+
+/** Direct GET url for an artifact; <a download> can't set headers, so token rides the query. */
+export const artifactUrl = (ref: string, name: string, download = false) =>
+  withToken(
+    `/api/projects/${encodeURIComponent(ref)}/artifacts/${encodeURIComponent(name)}${
+      download ? "?download=true" : ""
+    }`,
+  );
+
+/** Fetch an artifact's text content for in-app preview. */
+export async function fetchArtifactText(ref: string, name: string): Promise<string> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(ref)}/artifacts/${encodeURIComponent(name)}`,
+    { headers: authHeaders() },
+  );
+  if (!res.ok) throw new ApiError(res.status, res.statusText, "error");
+  return res.text();
+}
+
 // ---- Voiceprint registry ---------------------------------------------------
 
 export interface VoiceprintPerson {

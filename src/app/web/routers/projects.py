@@ -8,14 +8,24 @@ reuse the existing discovery functions in ``app.core.project_refs`` /
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse
 
+from app.core.project_artifacts import (
+    list_project_artifacts,
+    resolve_project_artifact,
+)
 from app.core.project_models import ProjectListItem
 from app.core.project_refs import list_projects
 from app.core.project_workflow import load_project_workflow_summary
 from app.project_manager import load_manifest
 from app.web.deps import get_settings, require_auth, resolve_web_project_ref
-from app.web.schemas import ProjectListResponse, ProjectSummary
+from app.web.schemas import (
+    ArtifactListOut,
+    ArtifactOut,
+    ProjectListResponse,
+    ProjectSummary,
+)
 from app.web.settings import WebSettings
 
 router = APIRouter(
@@ -57,3 +67,54 @@ def get_project(
     )
     workflow = load_project_workflow_summary(project_dir, project_ref)
     return ProjectSummary.from_item(item, workflow)
+
+
+@router.get("/{project_ref}/artifacts", response_model=ArtifactListOut)
+def get_artifacts(
+    project_ref: str, settings: WebSettings = Depends(get_settings)
+) -> ArtifactListOut:
+    """List the project's existing exportable artifacts (final deliverables)."""
+    project_dir = resolve_web_project_ref(project_ref, settings)
+    manifest = load_manifest(project_dir)
+    return ArtifactListOut(
+        project_id=manifest.project_id,
+        artifacts=[
+            ArtifactOut(
+                name=artifact.name,
+                kind=artifact.kind,
+                corrected=artifact.corrected,
+                file_name=artifact.path.name,
+                size_bytes=artifact.size_bytes,
+                media_type=artifact.media_type,
+            )
+            for artifact in list_project_artifacts(project_dir)
+        ],
+    )
+
+
+@router.get("/{project_ref}/artifacts/{name}")
+def download_artifact(
+    project_ref: str,
+    name: str,
+    download: bool = Query(default=False),
+    settings: WebSettings = Depends(get_settings),
+) -> FileResponse:
+    """Serve one artifact by whitelist name -- inline for preview, attachment for download.
+
+    ``resolve_project_artifact`` only serves registered, project-contained files
+    (LookupError -> 404), so this cannot be steered to arbitrary paths.
+    """
+    project_dir = resolve_web_project_ref(project_ref, settings)
+    artifact = resolve_project_artifact(project_dir, name)
+    return FileResponse(
+        artifact.path,
+        # Serve text artifacts as UTF-8 text so inline preview renders in-browser;
+        # .srt would otherwise default to a download prompt.
+        media_type=(
+            "text/plain; charset=utf-8"
+            if artifact.media_type != "text/markdown"
+            else "text/markdown; charset=utf-8"
+        ),
+        filename=artifact.path.name,
+        content_disposition_type="attachment" if download else "inline",
+    )

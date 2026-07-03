@@ -203,6 +203,27 @@ class DiscardProposalOut(BaseModel):
     archived_name: str
 
 
+# ---- Project artifacts -------------------------------------------------------
+
+
+class ArtifactOut(BaseModel):
+    """One downloadable project artifact (final deliverable)."""
+
+    name: str
+    kind: str  # transcript | subtitle | summary
+    corrected: bool
+    file_name: str
+    size_bytes: int
+    media_type: str
+
+
+class ArtifactListOut(BaseModel):
+    """The project's existing exportable artifacts, deliverables first."""
+
+    project_id: str
+    artifacts: list[ArtifactOut]
+
+
 # ---- Lexicon ---------------------------------------------------------------
 
 

@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { listProjects, runPipeline, type ProjectSummary } from "../api/client";
 import { tr } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm";
+import { ExportsModal } from "../components/ExportsModal";
 import { Modal } from "../components/Modal";
 import { JobProgress } from "../components/JobProgress";
 
@@ -176,6 +177,7 @@ function formatTime(value: string | null): string {
 export function ProjectsPage() {
   const navigate = useNavigate();
   const [showRun, setShowRun] = useState(false);
+  const [exportsFor, setExportsFor] = useState<string | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
@@ -208,6 +210,7 @@ export function ProjectsPage() {
         </button>
       </div>
       {showRun && <RunDialog onClose={() => setShowRun(false)} />}
+      {exportsFor && <ExportsModal projectRef={exportsFor} onClose={() => setExportsFor(null)} />}
       {projects.length === 0 ? (
         <div className="placeholder">{tr("No projects yet.", "暂无项目。")}</div>
       ) : (
@@ -219,6 +222,7 @@ export function ProjectsPage() {
               <th>{tr("State", "状态")}</th>
               <th>{tr("Meeting time", "会议时间")}</th>
               <th>{tr("Outputs", "产物")}</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -246,6 +250,20 @@ export function ProjectsPage() {
                         </span>
                       ))
                     : "—"}
+                </td>
+                <td>
+                  {p.workflow?.outputs.length ? (
+                    <button
+                      className="chip"
+                      title={tr("View / download exports", "查看/下载产物")}
+                      onClick={(e) => {
+                        e.stopPropagation(); // row click opens speaker review
+                        setExportsFor(p.project_id);
+                      }}
+                    >
+                      {tr("Exports", "导出")}
+                    </button>
+                  ) : null}
                 </td>
               </tr>
             ))}
