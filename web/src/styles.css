@@ -1469,15 +1469,29 @@ tr.clickable {
   font-size: var(--fs-xs);
   color: var(--text-muted);
 }
+/* Character-level diff: unchanged context stays muted; only the changed runs
+   light up (whole-line red/green hid what actually changed in long sentences). */
 .diff-before {
-  color: var(--red);
-  text-decoration: line-through;
-  opacity: 0.85;
+  color: var(--text-muted);
   line-height: 1.5;
 }
+.diff-before del {
+  color: var(--red);
+  background: var(--red-dim);
+  text-decoration: line-through;
+  border-radius: 3px;
+  padding: 0 1px;
+}
 .diff-after {
-  color: var(--green);
+  color: var(--text-muted);
   line-height: 1.5;
+}
+.diff-after ins {
+  color: var(--green);
+  background: var(--green-dim);
+  text-decoration: none;
+  border-radius: 3px;
+  padding: 0 1px;
 }
 
 /* ---- job progress ------------------------------------------------------ */

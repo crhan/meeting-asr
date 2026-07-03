@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -12,6 +12,7 @@ import {
 } from "../api/client";
 import { tr } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm";
+import { diffPair } from "../lib/textDiff";
 import { JobProgress } from "../components/JobProgress";
 import { useClipAudio } from "../lib/useClipAudio";
 
@@ -27,6 +28,15 @@ function projectFromSentenceRef(sentenceRef: string): string {
 }
 
 const polishJobKey = (ref: string) => `masr-polish-job:${ref}`;
+// proposal_id is a content hash, so a regenerated proposal never inherits a stale selection.
+const selectionKey = (ref: string, proposalId: string) =>
+  `masr-correction-sel:${ref}:${proposalId}`;
+
+/** First tag of a possibly multi-tagged change_type ('dup|filler' -> 'dup'), '' -> other. */
+function primaryChangeType(changeType: string): string {
+  const first = changeType.split("|", 1)[0].trim();
+  return first || "other";
+}
 
 export function CorrectionPage() {
   const { ref = "" } = useParams();
@@ -45,10 +55,32 @@ export function CorrectionPage() {
   });
 
   useEffect(() => {
-    if (proposalQuery.data) {
-      setSelected(new Set(proposalQuery.data.changes.map((c) => c.index)));
+    if (!proposalQuery.data) return;
+    const { changes, proposal_id } = proposalQuery.data;
+    const valid = new Set(changes.map((c) => c.index));
+    // Restore a persisted selection (survives the sentence-locator jump / reload);
+    // fall back to select-all for a freshly reviewed proposal.
+    try {
+      const stored = sessionStorage.getItem(selectionKey(ref, proposal_id));
+      if (stored) {
+        const indices = (JSON.parse(stored) as number[]).filter((i) => valid.has(i));
+        setSelected(new Set(indices));
+        return;
+      }
+    } catch {
+      // corrupt storage entry; fall through to select-all
     }
-  }, [proposalQuery.data]);
+    setSelected(valid);
+  }, [proposalQuery.data, ref]);
+
+  // Persist the working selection per (project, proposal) so it survives navigation.
+  useEffect(() => {
+    if (!proposalQuery.data) return;
+    sessionStorage.setItem(
+      selectionKey(ref, proposalQuery.data.proposal_id),
+      JSON.stringify([...selected]),
+    );
+  }, [selected, proposalQuery.data, ref]);
 
   // The polish job survives this component (it runs server-side); persist its id so a
   // reload / tab switch re-attaches to the live progress instead of going blind and
@@ -88,6 +120,8 @@ export function CorrectionPage() {
     mutationFn: () =>
       acceptCorrection(ref, [...selected], proposalQuery.data!.proposal_id),
     onSuccess: async () => {
+      if (proposalQuery.data)
+        sessionStorage.removeItem(selectionKey(ref, proposalQuery.data.proposal_id));
       // Accepting rewrites the transcript; drop the cached review so navigating back shows
       // the corrected sentences instead of the still-fresh pre-correction text. The server
       // also archived the proposal, so drop the cached one too.
@@ -117,6 +151,41 @@ export function CorrectionPage() {
       else next.add(i);
       return next;
     });
+
+  // Indices grouped by primary change type, for batch check/uncheck chips.
+  const typeGroups = useMemo(() => {
+    const groups = new Map<string, number[]>();
+    for (const change of proposalQuery.data?.changes ?? []) {
+      const key = primaryChangeType(change.change_type);
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(change.index);
+      else groups.set(key, [change.index]);
+    }
+    return groups;
+  }, [proposalQuery.data]);
+
+  const toggleGroup = (indices: number[]) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const allOn = indices.every((i) => next.has(i));
+      for (const i of indices) {
+        if (allOn) next.delete(i);
+        else next.add(i);
+      }
+      return next;
+    });
+
+  // Character-level diffs, one pass per proposal load (not per re-render).
+  const diffs = useMemo(
+    () =>
+      new Map(
+        (proposalQuery.data?.changes ?? []).map((change) => [
+          change.index,
+          diffPair(change.original_text, change.corrected_text),
+        ]),
+      ),
+    [proposalQuery.data],
+  );
 
   return (
     <div>
@@ -259,6 +328,35 @@ export function CorrectionPage() {
             {proposalQuery.data.model} · {proposalQuery.data.change_count}{" "}
             {tr("proposed changes", "条建议")}
           </div>
+          <div className="capture-toolbar">
+            <button
+              className="chip"
+              onClick={() =>
+                setSelected(new Set(proposalQuery.data!.changes.map((c) => c.index)))
+              }
+            >
+              {tr("Select all", "全选")}
+            </button>
+            <button className="chip" onClick={() => setSelected(new Set())}>
+              {tr("Clear", "清空")}
+            </button>
+            {[...typeGroups.entries()].map(([type, indices]) => {
+              const onCount = indices.filter((i) => selected.has(i)).length;
+              return (
+                <button
+                  key={type}
+                  className={`chip ${onCount === indices.length ? "on" : ""}`}
+                  title={tr(
+                    "Toggle all changes of this type.",
+                    "整组勾选/取消该类型的修改。",
+                  )}
+                  onClick={() => toggleGroup(indices)}
+                >
+                  {type} {onCount}/{indices.length}
+                </button>
+              );
+            })}
+          </div>
           <div className="changes">
             {proposalQuery.data.changes.map((c) => {
               const hasAudio = c.begin_time_ms != null && c.end_time_ms != null;
@@ -291,24 +389,45 @@ export function CorrectionPage() {
                   <div className="change-card-body">
                     <div className="change-card-meta subtle mono">
                       {c.sentence_ref && (
-                        <button
+                        // New tab: the point is to peek at surrounding context; an in-tab
+                        // navigation would throw away this page's checkbox review state.
+                        <a
                           className="sentence-id sentence-id-button"
-                          onClick={() =>
-                            navigate(
-                              `/projects/${encodeURIComponent(projectFromSentenceRef(c.sentence_ref!))}/speakers?sentence=${encodeURIComponent(c.sentence_ref!)}`,
-                            )
-                          }
-                          title={tr("Locate in speaker review", "在 speaker review 中定位")}
+                          target="_blank"
+                          rel="noreferrer"
+                          href={`/projects/${encodeURIComponent(projectFromSentenceRef(c.sentence_ref))}/speakers?sentence=${encodeURIComponent(c.sentence_ref)}`}
+                          title={tr(
+                            "Locate in speaker review (new tab)",
+                            "在 speaker review 中定位（新标签页）",
+                          )}
                         >
                           {c.sentence_ref}
-                        </button>
+                        </a>
                       )}
                       {hasAudio && <span>{fmtMs(c.begin_time_ms!)}</span>}
                       {c.speaker_name}
                       {c.change_type && <span className="badge">{c.change_type}</span>}
                     </div>
-                    <div className="diff-before">{c.original_text}</div>
-                    <div className="diff-after">{c.corrected_text}</div>
+                    <div className="diff-before">
+                      {(diffs.get(c.index)?.before ?? [{ text: c.original_text, changed: false }]).map(
+                        (segment, i) =>
+                          segment.changed ? (
+                            <del key={i}>{segment.text}</del>
+                          ) : (
+                            <span key={i}>{segment.text}</span>
+                          ),
+                      )}
+                    </div>
+                    <div className="diff-after">
+                      {(diffs.get(c.index)?.after ?? [{ text: c.corrected_text, changed: false }]).map(
+                        (segment, i) =>
+                          segment.changed ? (
+                            <ins key={i}>{segment.text}</ins>
+                          ) : (
+                            <span key={i}>{segment.text}</span>
+                          ),
+                      )}
+                    </div>
                     {c.reason && (
                       <div className="subtle" style={{ fontSize: 11.5 }}>
                         {c.reason}
