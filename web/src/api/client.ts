@@ -685,10 +685,12 @@ export const getDisambiguations = () =>
 
 export const getHotwords = () => api<Hotword[]>("/api/lexicon/hotwords");
 
+// category/description omitted (or null) = preserve the existing values on update;
+// sending a value overwrites. Never send a placeholder category here.
 export const upsertLexiconTerm = (body: {
   canonical: string;
-  category: string;
-  description?: string;
+  category?: string | null;
+  description?: string | null;
   aliases?: string[];
 }) =>
   api<LexiconTerm>("/api/lexicon/terms", {

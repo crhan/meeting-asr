@@ -136,9 +136,17 @@ def term_show_command(
 @app.command("add")
 def term_add_command(
     term: str = typer.Argument(..., help="Canonical vocabulary term."),
-    category: str = typer.Option("unknown", "--category", "-c", help="Term category."),
-    description: str = typer.Option(
-        "", "--description", "-d", help="Human note for this term."
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        "-c",
+        help="Term category. Omit to keep the existing value (new terms: unknown).",
+    ),
+    description: Optional[str] = typer.Option(
+        None,
+        "--description",
+        "-d",
+        help="Human note for this term. Omit to keep the existing value.",
     ),
     alias: Optional[list[str]] = typer.Option(
         None, "--alias", "-a", help="Alias or common ASR mistake."

@@ -82,7 +82,9 @@ function TermsTab() {
       .split(",")
       .map((a) => a.trim())
       .filter(Boolean);
-    upsertMut.mutate({ canonical: canonical.trim(), category: "unknown", aliases });
+    // No category/description: the server preserves existing values on update
+    // (previously a hardcoded "unknown" here silently clobbered curated categories).
+    upsertMut.mutate({ canonical: canonical.trim(), aliases });
   };
 
   return (

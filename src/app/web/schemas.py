@@ -229,11 +229,16 @@ class LexiconTermsOut(BaseModel):
 
 
 class UpsertTermIn(BaseModel):
-    """Create or update a lexicon term."""
+    """Create or update a lexicon term.
+
+    ``category`` / ``description`` default to None = "preserve the existing value":
+    an alias-only upsert from the web must not clobber a curated category back to
+    ``unknown`` or blank a description (new terms fall back to unknown/empty).
+    """
 
     canonical: str
-    category: str = "unknown"
-    description: str = ""
+    category: str | None = None
+    description: str | None = None
     aliases: list[str] = []
     status: str = "active"
 

@@ -140,8 +140,8 @@ def record_lexicon_contexts(
 def upsert_lexicon_term(
     *,
     canonical: str,
-    category: str,
-    description: str = "",
+    category: str | None = None,
+    description: str | None = None,
     aliases: tuple[str, ...] = (),
     status: str = "active",
     db_path: Path | None = None,
@@ -151,8 +151,12 @@ def upsert_lexicon_term(
 
     Args:
         canonical: Canonical term text.
-        category: Term category, for example ``person`` or ``system``.
-        description: Optional human note.
+        category: Term category, for example ``person`` or ``system``. ``None``
+            preserves the existing value on update (new terms fall back to
+            ``unknown``) -- an alias-only upsert must never clobber a curated
+            category back to ``unknown``.
+        description: Optional human note. ``None`` preserves the existing value on
+            update (new terms fall back to empty).
         aliases: Optional aliases or common ASR mistakes.
         status: Term status.
         db_path: Optional database path override.
@@ -161,7 +165,8 @@ def upsert_lexicon_term(
         Saved term detail.
     """
     canonical = _require_text(canonical, "canonical")
-    category = _require_text(category, "category")
+    if category is not None:
+        category = _require_text(category, "category")
     status = _validate_status(status)
     database_path = _database_path(db_path, create_parent=True)
     with sqlite3.connect(database_path) as connection:
@@ -1237,12 +1242,12 @@ def _insert_imported_context(
 def _upsert_term(
     connection: sqlite3.Connection,
     canonical: str,
-    category: str,
+    category: str | None,
     description: str | None = None,
     status: str | None = None,
     public_id: str | None = None,
 ) -> int:
-    """Insert or refresh a canonical term."""
+    """Insert or refresh a canonical term. ``None`` fields are preserved on update."""
     row = connection.execute(
         "SELECT id FROM terms WHERE canonical = ?", (canonical,)
     ).fetchone()
@@ -1257,7 +1262,7 @@ def _upsert_term(
         (
             _public_id_for_insert(connection, public_id),
             canonical,
-            category,
+            category or "unknown",
             description or "",
             status or "active",
         ),
@@ -1273,22 +1278,26 @@ def _upsert_term(
 def _update_term(
     connection: sqlite3.Connection,
     term_id: int,
-    category: str,
+    category: str | None,
     description: str | None,
     status: str | None,
 ) -> None:
-    """Update one term without clobbering fields not provided by callers."""
-    fields = ["category = ?", "updated_at = CURRENT_TIMESTAMP"]
-    params: list[object] = [category]
+    """Update one term without clobbering fields not provided by callers (None)."""
+    assignments: list[str] = []
+    params: list[object] = []
+    if category is not None:
+        assignments.append("category = ?")
+        params.append(category)
     if description is not None:
-        fields.insert(-1, "description = ?")
+        assignments.append("description = ?")
         params.append(description)
     if status is not None:
-        fields.insert(-1, "status = ?")
+        assignments.append("status = ?")
         params.append(status)
+    assignments.append("updated_at = CURRENT_TIMESTAMP")
     params.append(term_id)
     connection.execute(
-        f"UPDATE terms SET {', '.join(fields)} WHERE id = ?", tuple(params)
+        f"UPDATE terms SET {', '.join(assignments)} WHERE id = ?", tuple(params)
     )
 
 
