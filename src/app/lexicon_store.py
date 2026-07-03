@@ -143,7 +143,7 @@ def upsert_lexicon_term(
     category: str | None = None,
     description: str | None = None,
     aliases: tuple[str, ...] = (),
-    status: str = "active",
+    status: str | None = None,
     db_path: Path | None = None,
 ) -> LexiconTermDetail:
     """
@@ -158,7 +158,9 @@ def upsert_lexicon_term(
         description: Optional human note. ``None`` preserves the existing value on
             update (new terms fall back to empty).
         aliases: Optional aliases or common ASR mistakes.
-        status: Term status.
+        status: Term status. ``None`` preserves the existing value on update (new
+            terms fall back to ``active``) -- an alias-only upsert must not silently
+            resurrect a deactivated (soft-deleted) term.
         db_path: Optional database path override.
 
     Returns:
@@ -167,7 +169,8 @@ def upsert_lexicon_term(
     canonical = _require_text(canonical, "canonical")
     if category is not None:
         category = _require_text(category, "category")
-    status = _validate_status(status)
+    if status is not None:
+        status = _validate_status(status)
     database_path = _database_path(db_path, create_parent=True)
     with sqlite3.connect(database_path) as connection:
         _ensure_schema(connection)

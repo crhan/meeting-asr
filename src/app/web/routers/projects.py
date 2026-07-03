@@ -60,12 +60,8 @@ def get_projects(settings: WebSettings = Depends(get_settings)) -> ProjectListRe
     )
 
 
-@router.get("/{project_ref}", response_model=ProjectSummary)
-def get_project(
-    project_ref: str, settings: WebSettings = Depends(get_settings)
-) -> ProjectSummary:
-    """Resolve one project by id/title/path and return its summary + workflow state."""
-    project_dir = resolve_web_project_ref(project_ref, settings)
+def _project_summary(project_dir, project_ref: str) -> ProjectSummary:
+    """Assemble one project's full summary (manifest + workflow + unresolved flag)."""
     manifest = load_manifest(project_dir)
     item = ProjectListItem(
         project_dir,
@@ -83,6 +79,15 @@ def get_project(
         workflow,
         has_unresolved_matches=project_has_unresolved_match(project_dir),
     )
+
+
+@router.get("/{project_ref}", response_model=ProjectSummary)
+def get_project(
+    project_ref: str, settings: WebSettings = Depends(get_settings)
+) -> ProjectSummary:
+    """Resolve one project by id/title/path and return its summary + workflow state."""
+    project_dir = resolve_web_project_ref(project_ref, settings)
+    return _project_summary(project_dir, project_ref)
 
 
 @router.patch("/{project_ref}", response_model=ProjectSummary)
@@ -103,23 +108,7 @@ async def patch_project(
         update_project_metadata(
             project_dir, title=payload.title, meeting_time=payload.meeting_time
         )
-        manifest = load_manifest(project_dir)
-        item = ProjectListItem(
-            project_dir,
-            manifest.project_id,
-            manifest.title,
-            manifest.source.meeting_time,
-            manifest.status,
-            manifest.created_at,
-            manifest.updated_at,
-            tuple(manifest.meeting_keywords),
-        )
-        workflow = load_project_workflow_summary(project_dir, project_ref)
-        return ProjectSummary.from_item(
-            item,
-            workflow,
-            has_unresolved_matches=project_has_unresolved_match(project_dir),
-        )
+        return _project_summary(project_dir, project_ref)
 
     loop = asyncio.get_running_loop()
     async with locks.acquire(project_lock_key(str(project_dir))):

@@ -15,6 +15,7 @@ import {
 import { tr } from "../lib/i18n";
 import { useClipAudio } from "../lib/useClipAudio";
 import { JobProgress } from "../components/JobProgress";
+import { SeekBar } from "../components/SeekBar";
 import { Modal } from "../components/Modal";
 
 function fmtMs(ms: number): string {
@@ -40,6 +41,7 @@ export function CapturePage() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<CaptureResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [runNotice, setRunNotice] = useState<string | null>(null);
 
   // A completed capture leaves a server-side transaction pending until the user accepts or
   // rolls it back. If they navigate away (or reload / close the tab) without deciding, that
@@ -146,7 +148,18 @@ export function CapturePage() {
         const c = byRel.get(rel);
         return c ? [c] : [];
       });
-      const { job_id } = await captureRun(ref, selectedClips);
+      const { job_id, existing } = await captureRun(ref, selectedClips);
+      // The server deduplicates onto an in-flight capture for this project; THIS
+      // submit's clip selection did not run. Attaching silently would present the
+      // other selection's result as if it were this one.
+      setRunNotice(
+        existing
+          ? tr(
+              "A capture for this project is already running — attached to its progress. This submission's clip selection was NOT used; wait for (or cancel) the running capture, then re-select.",
+              "该项目已有一次采集在进行中——已挂接其进度。本次提交的片段选择并未生效；请等它完成（或取消）后重新选择提交。",
+            )
+          : null,
+      );
       setJobId(job_id);
     } catch (e) {
       setRunError((e as Error).message);
@@ -228,6 +241,12 @@ export function CapturePage() {
           >
             {tr("Re-plan and re-select", "重新规划并重选")}
           </button>
+        </div>
+      )}
+
+      {runNotice && (
+        <div className="notice-box" style={{ marginBottom: 12 }}>
+          {runNotice}
         </div>
       )}
 
@@ -340,20 +359,7 @@ export function CapturePage() {
                         {c.selection_reason}
                         {c.audio_reason && c.audio_reason !== "-" ? ` · ${c.audio_reason}` : ""}
                       </div>
-                      {playing && (
-                        <div
-                          className="seg-progress seekable"
-                          onClick={(e) => {
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            audio.seek((e.clientX - rect.left) / rect.width);
-                          }}
-                        >
-                          <div
-                            className="seg-progress-bar"
-                            style={{ width: `${audio.progress * 100}%` }}
-                          />
-                        </div>
-                      )}
+                      {playing && <SeekBar progress={audio.progress} onSeek={audio.seek} />}
                     </div>
                   </div>
                 );

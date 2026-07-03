@@ -562,8 +562,10 @@ def diff_command(
 ) -> None:
     """Print the latest or specified correction proposal diff for human review."""
     paths, _, _ = _load_command_context(project_dir, projects_dir)
+    # Post-accept audit is this command's main use, and accept archives the proposal
+    # out of the pending glob -- so fall back to archived proposals here.
     correction_proposal = run_with_cli_errors(
-        lambda: load_correction_proposal(paths, proposal)
+        lambda: load_correction_proposal(paths, proposal, include_archived=True)
     )
     typer.echo(correction_proposal.diff_path.read_text(encoding="utf-8"), nl=False)
 

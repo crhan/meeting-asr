@@ -199,13 +199,6 @@ class AcceptCorrectionOut(BaseModel):
     corrected_transcript_path: str | None
 
 
-class DiscardProposalIn(BaseModel):
-    """Discard the pending proposal without applying anything."""
-
-    # Same stale-proposal guard as accept: refuse if the on-disk proposal changed since review.
-    proposal_id: str
-
-
 class DiscardProposalOut(BaseModel):
     """Result of discarding a proposal (the file is archived, not deleted)."""
 
@@ -269,16 +262,17 @@ class LexiconTermsOut(BaseModel):
 class UpsertTermIn(BaseModel):
     """Create or update a lexicon term.
 
-    ``category`` / ``description`` default to None = "preserve the existing value":
-    an alias-only upsert from the web must not clobber a curated category back to
-    ``unknown`` or blank a description (new terms fall back to unknown/empty).
+    ``category`` / ``description`` / ``status`` default to None = "preserve the
+    existing value": an alias-only upsert from the web must not clobber a curated
+    category back to ``unknown``, blank a description, or resurrect a deactivated
+    term (new terms fall back to unknown/empty/active).
     """
 
     canonical: str
     category: str | None = None
     description: str | None = None
     aliases: list[str] = []
-    status: str = "active"
+    status: str | None = None
 
 
 class LexiconAliasOut(BaseModel):

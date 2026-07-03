@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { useJobStream } from "../lib/useJobStream";
 import { cancelJob } from "../api/client";
 import { confirmDialog } from "../lib/confirm";
+import { reportGlobalError } from "../lib/globalError";
 import { tr } from "../lib/i18n";
+import { jobKindLabel, jobProjectName } from "../lib/jobs";
 
 interface Props {
   jobId: string;
@@ -53,7 +55,11 @@ export function JobProgress({ jobId, onDone, onError, onCancelled, canCancel = t
     setCancelling(true);
     try {
       await cancelJob(jobId);
-    } catch {
+    } catch (e) {
+      // A silently re-enabled button reads as "cancel underway" -- say it failed.
+      reportGlobalError(
+        tr("Cancel request failed: ", "取消请求失败：") + (e as Error).message,
+      );
       setCancelling(false);
     }
   };
@@ -109,7 +115,10 @@ export function JobProgress({ jobId, onDone, onError, onCancelled, canCancel = t
         <div className="job-progress-desc subtle">
           {tr("Waiting for", "正在等待")}{" "}
           {state.waitingOn
-            .map((j) => `${j.kind}${j.project_id ? ` (${j.project_id.split("/").pop()})` : ""}`)
+            .map((j) => {
+              const name = jobProjectName(j.project_id);
+              return `${jobKindLabel(j.kind)}${name ? ` (${name})` : ""}`;
+            })
             .join(", ")}{" "}
           {tr("to finish…", "完成…")}
         </div>
@@ -120,7 +129,10 @@ export function JobProgress({ jobId, onDone, onError, onCancelled, canCancel = t
           <div className="seg-progress-bar" style={{ width: `${pct}%` }} />
         </div>
       )}
-      {state.error && state.status === "error" && (
+      {/* Show any error text except the redundant "Cancelled by user" (the badge says
+          so); transient snapshot failures set error while status stays "running" and
+          must remain visible. */}
+      {state.error && state.status !== "cancelled" && (
         <div className="error-box" style={{ marginTop: 8 }}>{state.error}</div>
       )}
     </div>

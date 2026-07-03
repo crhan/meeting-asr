@@ -151,7 +151,11 @@ def term_add_command(
     alias: Optional[list[str]] = typer.Option(
         None, "--alias", "-a", help="Alias or common ASR mistake."
     ),
-    status: str = typer.Option("active", "--status", help="active or inactive."),
+    status: Optional[str] = typer.Option(
+        None,
+        "--status",
+        help="active or inactive. Omit to keep the existing value (new terms: active).",
+    ),
     lexicon_db: Optional[Path] = typer.Option(
         None, "--lexicon-db", help="Override lexicon SQLite path."
     ),

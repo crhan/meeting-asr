@@ -143,6 +143,10 @@ class JobManager:
                         candidate.kind == kind
                         and candidate.project_id == project_id
                         and candidate.status in {"queued", "running"}
+                        # A cancel-requested job is dying (cooperative cancel keeps it
+                        # "running" until the next checkpoint); attaching a retry to it
+                        # would make the retry silently terminate as cancelled.
+                        and not candidate.cancel_requested.is_set()
                     ):
                         return candidate, True
             self._jobs[job.id] = job

@@ -23,6 +23,7 @@ import { confirmDialog } from "../lib/confirm";
 import { promptDialog } from "../lib/prompt";
 import { useClipAudio } from "../lib/useClipAudio";
 import { Modal } from "../components/Modal";
+import { SeekBar } from "../components/SeekBar";
 
 type SortMode = "quality" | "name" | "samples";
 type SampleFilter = "all" | "issues" | "matching" | "excluded" | "confirmed" | "unembedded";
@@ -753,17 +754,7 @@ function SampleRow(props: {
             {sample.quality.reason}
           </div>
         )}
-        {playing && (
-          <div
-            className="seg-progress seekable"
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              audio.seek((e.clientX - rect.left) / rect.width);
-            }}
-          >
-            <div className="seg-progress-bar" style={{ width: `${audio.progress * 100}%` }} />
-          </div>
-        )}
+        {playing && <SeekBar progress={audio.progress} onSeek={audio.seek} />}
         {editMode && (
           <div className="vp-sample-actions">
             <button

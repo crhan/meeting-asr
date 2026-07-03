@@ -574,12 +574,15 @@ export interface SelectedCaptureClip {
 }
 
 export const captureRun = (ref: string, selectedClips: SelectedCaptureClip[]) =>
-  api<{ job_id: string }>(`/api/voiceprints/capture/${encodeURIComponent(ref)}/run`, {
-    method: "POST",
-    // Send each pick's stable (begin,end) so the server can reject a drifted plan instead of
-    // capturing the wrong clip under a stale index-based rel_path.
-    body: JSON.stringify({ selected_clips: selectedClips }),
-  });
+  api<{ job_id: string; existing: boolean }>(
+    `/api/voiceprints/capture/${encodeURIComponent(ref)}/run`,
+    {
+      method: "POST",
+      // Send each pick's stable (begin,end) so the server can reject a drifted plan instead of
+      // capturing the wrong clip under a stale index-based rel_path.
+      body: JSON.stringify({ selected_clips: selectedClips }),
+    },
+  );
 
 export const captureAccept = (txnId: string) =>
   api<{ status: string }>(
@@ -722,10 +725,11 @@ export const acceptCorrection = (
   );
 
 // Discard the pending proposal without applying anything (server archives the file).
+// proposal_id rides the query string: DELETE bodies get stripped by some proxies.
 export const discardProposal = (ref: string, proposalId: string) =>
   api<{ discarded: boolean; archived_name: string }>(
-    `/api/corrections/${encodeURIComponent(ref)}/proposal`,
-    { method: "DELETE", body: JSON.stringify({ proposal_id: proposalId }) },
+    `/api/corrections/${encodeURIComponent(ref)}/proposal?proposal_id=${encodeURIComponent(proposalId)}`,
+    { method: "DELETE" },
   );
 
 // ---- Lexicon ---------------------------------------------------------------

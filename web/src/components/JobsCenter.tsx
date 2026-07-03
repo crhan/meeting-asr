@@ -2,17 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listJobs, type JobInfo } from "../api/client";
 import { tr } from "../lib/i18n";
+import { jobKindLabel, jobProjectName } from "../lib/jobs";
 import { Modal } from "./Modal";
 import { JobProgress } from "./JobProgress";
 
 const ACTIVE = new Set(["queued", "running"]);
-
-const KIND_LABEL: Record<string, [string, string]> = {
-  "pipeline-run": ["Pipeline run", "管线转写"],
-  "pipeline-summarize": ["Summarize", "生成纪要"],
-  "correction-polish": ["Polish", "润色"],
-  "voiceprint-capture": ["Voiceprint capture", "声纹采集"],
-};
 
 /** Query-key prefixes each job kind invalidates when it completes. Unknown kinds are
  *  only displayed, never trigger refreshes. */
@@ -20,18 +14,15 @@ const INVALIDATE_BY_KIND: Record<string, string[][]> = {
   "pipeline-run": [["projects"], ["speakers"], ["artifacts"]],
   "pipeline-summarize": [["projects"], ["speakers"], ["artifacts"]],
   "correction-polish": [["proposal"]],
+  // capture-plan caches with staleTime: Infinity; a background-finished capture would
+  // otherwise re-offer the pre-capture plan forever.
+  "voiceprint-capture": [
+    ["capture-plan"],
+    ["vp-library"],
+    ["vp-quality"],
+    ["pending-capture"],
+  ],
 };
-
-function kindLabel(kind: string): string {
-  const pair = KIND_LABEL[kind];
-  return pair ? tr(pair[0], pair[1]) : kind;
-}
-
-/** pipeline jobs carry the project_dir absolute path; show its basename. */
-function projectName(projectId: string | null): string | null {
-  if (!projectId) return null;
-  return projectId.split("/").filter(Boolean).pop() ?? projectId;
-}
 
 function statusBadge(job: JobInfo): string {
   if (job.status === "running") return tr("running", "运行中");
@@ -63,14 +54,25 @@ export function JobsIndicator() {
     },
   });
 
-  // Centralized completion refresh: when a job transitions into "done", invalidate the
-  // queries its kind affects -- pages update even when the launching component is gone.
+  // Centralized completion refresh: when a job reaches "done", invalidate the queries
+  // its kind affects -- pages update even when the launching component is gone. The
+  // FIRST poll after mount only seeds (those are historical jobs); after that, a job
+  // first seen already done finished within one poll gap and must refresh too.
   const prevStatuses = useRef<Map<string, string>>(new Map());
+  const seededRef = useRef(false);
   useEffect(() => {
-    const jobs = jobsQuery.data?.jobs ?? [];
+    if (!jobsQuery.data) return;
+    const jobs = jobsQuery.data.jobs;
+    if (!seededRef.current) {
+      for (const job of jobs) prevStatuses.current.set(job.id, job.status);
+      seededRef.current = true;
+      return;
+    }
     for (const job of jobs) {
       const prev = prevStatuses.current.get(job.id);
-      if (prev !== undefined && ACTIVE.has(prev) && job.status === "done") {
+      const transitioned = prev !== undefined && ACTIVE.has(prev) && job.status === "done";
+      const finishedInGap = prev === undefined && job.status === "done";
+      if (transitioned || finishedInGap) {
         for (const key of INVALIDATE_BY_KIND[job.kind] ?? []) {
           queryClient.invalidateQueries({ queryKey: key });
         }
@@ -107,7 +109,7 @@ function JobsModal({ jobs, onClose }: { jobs: JobInfo[]; onClose: () => void }) 
     <Modal title={tr("Background jobs", "后台任务")} onClose={onClose}>
       <div className="jobs-list">
         {jobs.map((job) => {
-          const name = projectName(job.project_id);
+          const name = jobProjectName(job.project_id);
           const isOpen = expanded === job.id;
           return (
             <div key={job.id} className="jobs-row-wrap">
@@ -115,7 +117,7 @@ function JobsModal({ jobs, onClose }: { jobs: JobInfo[]; onClose: () => void }) 
                 className={`jobs-row ${isOpen ? "on" : ""}`}
                 onClick={() => setExpanded(isOpen ? null : job.id)}
               >
-                <span className="jobs-row-kind">{kindLabel(job.kind)}</span>
+                <span className="jobs-row-kind">{jobKindLabel(job.kind)}</span>
                 {name && <span className="subtle mono">{name}</span>}
                 <span className={`badge state-${job.status}`}>{statusBadge(job)}</span>
               </button>

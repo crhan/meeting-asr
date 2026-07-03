@@ -278,8 +278,13 @@ function MergeDialog({
   const [applied, setApplied] = useState<MergePreview | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
 
-  const toggle = (id: string) =>
+  const toggle = (id: string) => {
+    // Any selection change invalidates a shown preview: Merge is gated on `preview`,
+    // and applying a set the user never previewed would skip its warnings.
+    setPreview(null);
+    setErrorText(null);
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
 
   const previewMut = useMutation({
     mutationFn: () => mergePreview(selected),

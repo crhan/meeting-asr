@@ -25,6 +25,7 @@ import { confirmDialog } from "../lib/confirm";
 import { ExportsModal } from "../components/ExportsModal";
 import { IdentityPicker, type IdentitySelection } from "../components/IdentityPicker";
 import { anyModalOpen, Modal } from "../components/Modal";
+import { SeekBar } from "../components/SeekBar";
 import { SpeakerPicker } from "../components/SpeakerPicker";
 
 interface SpeakerEdit {
@@ -315,6 +316,9 @@ export function SpeakerReviewPage() {
     if (consumedLocatorRef.current === key) return;
     const focused = findSentence(data, focusedSentenceId);
     if (!focused) {
+      // Consume even on failure: a stale locator would otherwise re-toast "not found"
+      // after every save/rematch refetch, clobbering the save-summary toast.
+      consumedLocatorRef.current = key;
       const display = formatSentenceLocator(data.project_id, focusedSentenceId);
       setToast(tr(`Sentence ${display} not found.`, `未找到句子 ${display}。`));
       return;
@@ -1281,12 +1285,11 @@ function TranscriptPane(props: {
     setProgress(0);
   };
 
-  // Progress-bar click seeks within the playing clip (the backend serves Range requests).
-  const seekTo = (e: React.MouseEvent<HTMLDivElement>) => {
+  // SeekBar fraction -> currentTime on this pane's own <audio> element.
+  const seekTo = (fraction: number) => {
     const el = audioRef.current;
     if (!el || !el.duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    el.currentTime = ((e.clientX - rect.left) / rect.width) * el.duration;
+    el.currentTime = Math.min(Math.max(fraction, 0), 1) * el.duration;
   };
 
   const filtered = useMemo(
@@ -1547,11 +1550,7 @@ function TranscriptPane(props: {
                   )}
                 </div>
                 <div className="segment-text">{displayText}</div>
-                {playing && (
-                  <div className="seg-progress seekable" onClick={seekTo}>
-                    <div className="seg-progress-bar" style={{ width: `${progress * 100}%` }} />
-                  </div>
-                )}
+                {playing && <SeekBar progress={progress} onSeek={seekTo} />}
               </div>
               <div className="segment-actions">
                 {props.canEditText && (
@@ -1712,17 +1711,7 @@ function TimelinePane(props: {
                   )}
                 </div>
                 <div className="segment-text">{displayText}</div>
-                {playing && (
-                  <div
-                    className="seg-progress seekable"
-                    onClick={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      audio.seek((e.clientX - rect.left) / rect.width);
-                    }}
-                  >
-                    <div className="seg-progress-bar" style={{ width: `${audio.progress * 100}%` }} />
-                  </div>
-                )}
+                {playing && <SeekBar progress={audio.progress} onSeek={audio.seek} />}
               </div>
               <div className="segment-actions">
                 {props.canEditText && (

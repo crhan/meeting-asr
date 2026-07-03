@@ -64,7 +64,14 @@ def project_has_unresolved_match(
     match_path = project_dir / "speakers" / "speaker_matches.json"
     if not match_path.exists():
         return False
-    payload = json.loads(match_path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(match_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # One truncated/corrupt match file (killed run, hand edit) must not take the
+        # whole web project list down; treat it as "nothing unresolved to report".
+        return False
+    if not isinstance(payload, dict):
+        return False
     if ignored_speaker_ids is None:
         # Local import: speaker_labeling imports app.models/postprocess; keeping this
         # module import-light avoids pulling that stack in for pure status checks.

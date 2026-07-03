@@ -13,7 +13,7 @@ import asyncio
 import hashlib
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.commands.project_correct import (
     accept_correction_for_review,
@@ -42,7 +42,6 @@ from app.web.schemas import (
     AcceptCorrectionIn,
     AcceptCorrectionOut,
     CorrectionChangeOut,
-    DiscardProposalIn,
     DiscardProposalOut,
     JobRef,
     PolishIn,
@@ -96,9 +95,7 @@ def polish(
             "model_error": summary.model_error,
         }
 
-    job, existing = jobs.submit(
-        "correction-polish", work, project_id=str(project_dir)
-    )
+    job, existing = jobs.submit("correction-polish", work, project_id=str(project_dir))
     return JobRef(job_id=job.id, kind=job.kind, status=job.status, existing=existing)
 
 
@@ -115,6 +112,28 @@ def _proposal_id(proposal) -> str:
     ]
     blob = json.dumps([proposal.model, payload], ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_pending_proposal(paths):
+    """Load the pending proposal; absence maps to 404, a malformed file stays a 500."""
+    try:
+        return load_correction_proposal(paths, None)
+    except RuntimeError as exc:
+        if "No correction proposal found" not in str(exc):
+            raise
+        raise FileNotFoundError(str(exc)) from exc
+
+
+def _require_proposal_id(proposal, expected: str, action: str) -> None:
+    """Refuse (409) when the on-disk proposal is not the one the user reviewed."""
+    if _proposal_id(proposal) != expected:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The correction proposal changed since you reviewed it. "
+                f"Reload the proposal before {action}."
+            ),
+        )
 
 
 def _audio_window(change) -> tuple[int | None, int | None]:
@@ -136,16 +155,10 @@ def get_proposal(
     """Load the latest pending transcript correction proposal."""
     project_dir = resolve_web_project_ref(project_ref, settings)
     paths = project_paths(project_dir)
-    try:
-        proposal = load_correction_proposal(paths, None)
-    except RuntimeError as exc:
-        # Only "no proposal file" is a not-found condition -> 404, where the correction page
-        # renders its "no pending proposal" empty state. load_correction_proposal also raises
-        # RuntimeError for a MALFORMED proposal (non-object JSON); that is corruption, not
-        # absence, so let it surface as a 500 instead of hiding a repairable file behind 404.
-        if "No correction proposal found" not in str(exc):
-            raise
-        raise FileNotFoundError(str(exc)) from exc
+    # Only "no proposal file" is a not-found condition -> 404, where the correction page
+    # renders its "no pending proposal" empty state. A MALFORMED proposal (non-object
+    # JSON) is corruption, not absence, and surfaces as a 500 (see _load_pending_proposal).
+    proposal = _load_pending_proposal(paths)
     manifest = load_manifest(paths.root)
     changes = []
     for index, change in enumerate(proposal.proposed_changes):
@@ -177,7 +190,10 @@ def get_proposal(
 @router.delete("/{project_ref}/proposal", response_model=DiscardProposalOut)
 async def discard_proposal(
     project_ref: str,
-    payload: DiscardProposalIn,
+    # Query parameter, not a request body: DELETE bodies have no defined HTTP
+    # semantics and some proxies strip them -- the stale-proposal 409 guard must
+    # not silently disappear behind one.
+    proposal_id: str = Query(...),
     settings: WebSettings = Depends(get_settings),
     locks: LockRegistry = Depends(get_locks),
 ) -> DiscardProposalOut:
@@ -186,21 +202,8 @@ async def discard_proposal(
 
     def work() -> DiscardProposalOut:
         paths = project_paths(project_dir)
-        try:
-            proposal = load_correction_proposal(paths, None)
-        except RuntimeError as exc:
-            # Mirror get_proposal: only absence maps to 404; malformed stays a 500.
-            if "No correction proposal found" not in str(exc):
-                raise
-            raise FileNotFoundError(str(exc)) from exc
-        if _proposal_id(proposal) != payload.proposal_id:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "The correction proposal changed since you reviewed it. "
-                    "Reload the proposal before discarding."
-                ),
-            )
+        proposal = _load_pending_proposal(paths)
+        _require_proposal_id(proposal, proposal_id, "discarding")
         archived = archive_correction_proposal(proposal, suffix="discarded")
         return DiscardProposalOut(discarded=True, archived_name=archived.name)
 
@@ -234,15 +237,10 @@ async def accept(
         # Bind the accept to the reviewed proposal: if it was regenerated (another tab/CLI)
         # since the user reviewed it, the selected indices belong to a different proposal, so
         # applying them would write the wrong subset. Refuse (409) and let the user re-review.
-        current = load_correction_proposal(paths, None)
-        if _proposal_id(current) != payload.proposal_id:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "The correction proposal changed since you reviewed it. "
-                    "Reload the proposal and re-select before accepting."
-                ),
-            )
+        # A proposal consumed meanwhile (concurrent CLI accept archived it) maps to 404,
+        # not a scrubbed 500.
+        current = _load_pending_proposal(paths)
+        _require_proposal_id(current, payload.proposal_id, "accepting")
         summary = accept_correction_for_review(
             paths=paths,
             manifest=manifest,

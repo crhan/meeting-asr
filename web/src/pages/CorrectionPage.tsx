@@ -15,6 +15,7 @@ import { confirmDialog } from "../lib/confirm";
 import { reportGlobalError, reportGlobalNotice } from "../lib/globalError";
 import { diffPair } from "../lib/textDiff";
 import { JobProgress } from "../components/JobProgress";
+import { SeekBar } from "../components/SeekBar";
 import { useClipAudio } from "../lib/useClipAudio";
 
 function fmtMs(ms: number): string {
@@ -486,20 +487,7 @@ export function CorrectionPage() {
                         {c.reason}
                       </div>
                     )}
-                    {playing && (
-                      <div
-                        className="seg-progress seekable"
-                        onClick={(e) => {
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          audio.seek((e.clientX - rect.left) / rect.width);
-                        }}
-                      >
-                        <div
-                          className="seg-progress-bar"
-                          style={{ width: `${audio.progress * 100}%` }}
-                        />
-                      </div>
-                    )}
+                    {playing && <SeekBar progress={audio.progress} onSeek={audio.seek} />}
                   </div>
                 </div>
               );

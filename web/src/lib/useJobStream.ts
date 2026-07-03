@@ -43,13 +43,19 @@ export function useJobStream(jobId: string | null): JobStreamState {
       getJob(jobId)
         .then((job) => {
           const terminal = isTerminal(job.status);
-          setState((prev) => ({
-            ...prev,
-            status: job.status,
-            result: terminal ? job.result : prev.result,
-            error: job.error ?? prev.error,
-            done: terminal ? true : prev.done,
-          }));
+          setState((prev) => {
+            // A slow snapshot started before the terminal frame must not resolve
+            // AFTER it and flip a finished job back to "running" (which would re-run
+            // JobProgress's completion effect and double-fire onDone).
+            if (prev.done && !terminal) return prev;
+            return {
+              ...prev,
+              status: job.status,
+              result: terminal ? job.result : prev.result,
+              error: job.error ?? prev.error,
+              done: terminal ? true : prev.done,
+            };
+          });
           if (terminal) src.close();
         })
         .catch((e) => {

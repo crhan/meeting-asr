@@ -111,7 +111,10 @@ def write_correction_proposal_files(
 
 
 def load_correction_proposal(
-    paths: ProjectPaths, proposal_path: Path | None
+    paths: ProjectPaths,
+    proposal_path: Path | None,
+    *,
+    include_archived: bool = False,
 ) -> CorrectionProposal:
     """
     Load a pending correction proposal JSON file.
@@ -119,11 +122,14 @@ def load_correction_proposal(
     Args:
         paths: Project paths.
         proposal_path: Explicit proposal JSON path, or None for latest.
+        include_archived: Also consider accepted/discarded proposals when no pending
+            one exists -- for post-accept audit paths (``project correct diff``);
+            pending-only consumers (web review, accept) must keep the default.
 
     Returns:
         Parsed proposal record.
     """
-    json_path = _resolve_json(paths, proposal_path)
+    json_path = _resolve_json(paths, proposal_path, include_archived=include_archived)
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise RuntimeError(f"Correction proposal must be a JSON object: {json_path}")
@@ -440,12 +446,22 @@ def archive_correction_proposal(
     return target
 
 
-def _resolve_json(paths: ProjectPaths, proposal_path: Path | None) -> Path:
-    """Resolve an explicit or latest proposal JSON path."""
+def _resolve_json(
+    paths: ProjectPaths,
+    proposal_path: Path | None,
+    *,
+    include_archived: bool = False,
+) -> Path:
+    """Resolve an explicit or latest (optionally archived) proposal JSON path."""
     if proposal_path is not None:
         return proposal_path.expanduser().resolve()
     proposal_dir = paths.root / "tmp" / REVIEW_DIR
     proposals = sorted(proposal_dir.glob("proposal_*.json"))
+    if not proposals and include_archived:
+        proposals = sorted(
+            list(proposal_dir.glob("proposal_*.json.accepted"))
+            + list(proposal_dir.glob("proposal_*.json.discarded"))
+        )
     if not proposals:
         raise RuntimeError(f"No correction proposal found in {proposal_dir}")
     return proposals[-1]
