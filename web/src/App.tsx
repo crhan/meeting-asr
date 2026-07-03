@@ -1,5 +1,5 @@
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
 import { getLang, setLang, tr, type Lang } from "./lib/i18n";
 import { subscribeGlobalError } from "./lib/globalError";
 import { hasUnsavedEdits } from "./lib/unsavedGuard";
@@ -16,6 +16,40 @@ import { ProjectsPage } from "./pages/ProjectsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SpeakerReviewPage } from "./pages/SpeakerReviewPage";
 import { VoiceprintPage } from "./pages/VoiceprintPage";
+
+/**
+ * Topbar NavLink that won't silently destroy unsaved speaker-review edits: useBlocker
+ * needs a data router (we stay on plain <BrowserRouter>), so guard the app's own nav
+ * links instead. confirmDialog is async, so the click is always blocked first and the
+ * navigation re-issued programmatically on confirm.
+ */
+function GuardedNavLink({ to, children }: { to: string; children: ReactNode }) {
+  const navigate = useNavigate();
+  return (
+    <NavLink
+      to={to}
+      onClick={(e) => {
+        // Modified/middle clicks open a new tab and leave this page's state intact.
+        if (e.defaultPrevented || e.button !== 0) return;
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        if (!hasUnsavedEdits()) return;
+        e.preventDefault();
+        void confirmDialog({
+          message: tr(
+            "Discard unsaved speaker review edits and leave this page?",
+            "放弃未保存的 speaker review 改动并离开此页？",
+          ),
+          confirmLabel: tr("Discard", "放弃"),
+          danger: true,
+        }).then((ok) => {
+          if (ok) navigate(to);
+        });
+      }}
+    >
+      {children}
+    </NavLink>
+  );
+}
 
 function LangToggle() {
   const [lang, setLangState] = useState<Lang>(getLang());
@@ -69,10 +103,10 @@ export function App() {
       <header className="topbar">
         <span className="brand">meeting-asr</span>
         <nav>
-          <NavLink to="/projects">{tr("Projects", "项目")}</NavLink>
-          <NavLink to="/voiceprints">{tr("Voiceprints", "声纹库")}</NavLink>
-          <NavLink to="/lexicon">{tr("Lexicon", "词库")}</NavLink>
-          <NavLink to="/settings">{tr("Settings", "设置")}</NavLink>
+          <GuardedNavLink to="/projects">{tr("Projects", "项目")}</GuardedNavLink>
+          <GuardedNavLink to="/voiceprints">{tr("Voiceprints", "声纹库")}</GuardedNavLink>
+          <GuardedNavLink to="/lexicon">{tr("Lexicon", "词库")}</GuardedNavLink>
+          <GuardedNavLink to="/settings">{tr("Settings", "设置")}</GuardedNavLink>
         </nav>
         <span className="spacer" />
         <AppVersion />

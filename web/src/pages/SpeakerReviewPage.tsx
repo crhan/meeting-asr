@@ -18,8 +18,9 @@ import {
 } from "../api/client";
 import { tr } from "../lib/i18n";
 import { setUnsavedEdits } from "../lib/unsavedGuard";
+import { confirmDialog } from "../lib/confirm";
 import { IdentityPicker, type IdentitySelection } from "../components/IdentityPicker";
-import { Modal } from "../components/Modal";
+import { anyModalOpen, Modal } from "../components/Modal";
 import { SpeakerPicker } from "../components/SpeakerPicker";
 
 interface SpeakerEdit {
@@ -338,9 +339,10 @@ export function SpeakerReviewPage() {
     deletedSpeakerIds.size > 0;
 
   // Unsaved edits live only in this component's state; losing the page loses them.
-  // Publish the dirty flag for app chrome (LangToggle's reload confirm) and warn on
-  // reload/close via beforeunload. In-app NavLink switches remain unguarded: useBlocker
-  // needs a data router and we stay on plain <BrowserRouter> (see lib/unsavedGuard.ts).
+  // Publish the dirty flag for app chrome (topbar GuardedNavLink + LangToggle's reload
+  // confirm) and warn on reload/close via beforeunload. Browser back/forward remains
+  // unguarded: useBlocker needs a data router and we stay on plain <BrowserRouter>
+  // (see lib/unsavedGuard.ts).
   useEffect(() => {
     setUnsavedEdits(dirty);
     return () => setUnsavedEdits(false);
@@ -400,6 +402,9 @@ export function SpeakerReviewPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!data) return;
+      // While any dialog is up (pickers, text editor, confirm/prompt hosts), these
+      // shortcuts would silently stage edits on the page behind it.
+      if (anyModalOpen()) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       const ids = data.speakers
@@ -617,7 +622,7 @@ export function SpeakerReviewPage() {
     );
   }
 
-  function locateSentence(rawValue: string) {
+  async function locateSentence(rawValue: string) {
     if (!data) return;
     const locator = parseSentenceLocator(rawValue);
     if (locator == null) {
@@ -625,6 +630,19 @@ export function SpeakerReviewPage() {
       return;
     }
     if (locator.projectId && locator.projectId !== data.project_id) {
+      // Jumping to another project remounts this page and destroys staged edits.
+      if (
+        dirty &&
+        !(await confirmDialog({
+          message: tr(
+            "Discard unsaved speaker review edits and jump to another project?",
+            "放弃未保存的 speaker review 改动并跳转到其他项目？",
+          ),
+          confirmLabel: tr("Discard", "放弃"),
+          danger: true,
+        }))
+      )
+        return;
       navigate(
         `/projects/${encodeURIComponent(locator.projectId)}/speakers?sentence=${encodeURIComponent(`${locator.projectId}#${locator.sentenceId}`)}`,
       );
@@ -757,6 +775,7 @@ export function SpeakerReviewPage() {
           onEditText={(seg) => setEditingText(seg)}
           canEditText={data.allow_correction}
           quality={selectedQuality}
+          dirty={dirty}
           repairing={repairLibraryMutation.isPending}
           onRepairLibrary={(personRef) => repairLibraryMutation.mutate({ personRef })}
         />
@@ -945,6 +964,7 @@ function TranscriptPane(props: {
   onEditText: (seg: SpeakerSegment) => void;
   canEditText: boolean;
   quality: QualityPerson | undefined;
+  dirty: boolean;
   repairing: boolean;
   onRepairLibrary: (personRef: string) => void;
 }) {
@@ -1131,6 +1151,7 @@ function TranscriptPane(props: {
         <SpeakerQualityRepairPanel
           quality={quality}
           matchScore={selected.match?.best_score ?? null}
+          dirty={props.dirty}
           repairing={props.repairing}
           onRepair={() => props.onRepairLibrary(quality.public_id)}
         />
@@ -1364,10 +1385,11 @@ function SentenceTextEditor(props: {
 function SpeakerQualityRepairPanel(props: {
   quality: QualityPerson;
   matchScore: number | null;
+  dirty: boolean;
   repairing: boolean;
   onRepair: () => void;
 }) {
-  const { quality, matchScore, repairing } = props;
+  const { quality, matchScore, dirty, repairing } = props;
   const riskyProjects = quality.projects.filter((project) => project.suspicious_count > 0);
   const hasRisk = quality.suspicious_count > 0 || quality.critical_count > 0;
   const nearThreshold = matchScore != null && matchScore < 0.82;
@@ -1408,7 +1430,15 @@ function SpeakerQualityRepairPanel(props: {
         )}
       </div>
       {hasRisk && (
-        <button className="btn ghost danger" disabled={repairing} onClick={props.onRepair}>
+        // The rematch invalidates the review query, which resets all staged edits;
+        // disable while dirty (same rule as Capture/Correct) instead of confirming —
+        // there is no way to run it without losing the staged work.
+        <button
+          className="btn ghost danger"
+          disabled={repairing || dirty}
+          title={dirty ? tr("Save changes first", "请先保存改动") : undefined}
+          onClick={props.onRepair}
+        >
           {repairing
             ? tr("Repairing…", "修复中…")
             : tr("Exclude issues + rematch", "排除疑点并重跑匹配")}
