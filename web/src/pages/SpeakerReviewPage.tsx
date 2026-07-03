@@ -19,6 +19,7 @@ import {
 } from "../api/client";
 import { tr } from "../lib/i18n";
 import { setUnsavedEdits } from "../lib/unsavedGuard";
+import { useClipAudio } from "../lib/useClipAudio";
 import { confirmDialog } from "../lib/confirm";
 import { ExportsModal } from "../components/ExportsModal";
 import { IdentityPicker, type IdentitySelection } from "../components/IdentityPicker";
@@ -268,8 +269,12 @@ export function SpeakerReviewPage() {
   const [reassign, setReassign] = useState<Map<string, number>>(new Map());
   const [textEdits, setTextEdits] = useState<Map<string, InlineCorrectionEdit>>(new Map());
   const [deletedSpeakerIds, setDeletedSpeakerIds] = useState<Set<number>>(new Set());
+  // Locally minted speakers (ASR under-split rescue): exist only as staged state until
+  // save; the backend accepts reassignments to unseen speaker ids (same path the TUI uses).
+  const [extraSpeakers, setExtraSpeakers] = useState<ReviewSpeaker[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [filter, setFilter] = useState<"all" | "review" | "low">("all");
+  const [view, setView] = useState<"speakers" | "timeline">("speakers");
   const [picking, setPicking] = useState<ReviewSpeaker | null>(null);
   const [reassigning, setReassigning] = useState<SpeakerSegment | null>(null);
   const [editingText, setEditingText] = useState<SpeakerSegment | null>(null);
@@ -277,16 +282,21 @@ export function SpeakerReviewPage() {
   const [showExports, setShowExports] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  // Reset working state whenever a fresh session loads.
+  // Reset working state whenever a fresh session loads. Selection is preserved when the
+  // speaker still exists -- a save/rematch refetch used to bounce the user back to the
+  // first speaker mid-review.
   useEffect(() => {
     if (data) {
       setEdits(new Map());
       setReassign(new Map());
       setTextEdits(new Map());
       setDeletedSpeakerIds(new Set());
-      const focused = focusedSentenceId == null ? null : findSentence(data, focusedSentenceId);
-      setSelectedId(focused?.speaker.speaker_id ?? data.speakers[0]?.speaker_id ?? null);
-      if (focused) setFilter("all");
+      setExtraSpeakers([]);
+      setSelectedId((prev) =>
+        prev != null && data.speakers.some((s) => s.speaker_id === prev)
+          ? prev
+          : (data.speakers[0]?.speaker_id ?? null),
+      );
       setMerging(null);
     }
     // focusedSentenceId is handled by the locator effect below; a query-param change must not
@@ -294,17 +304,30 @@ export function SpeakerReviewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
+  // Consume the ?sentence= locator ONCE: it must focus on arrival (deep link / jump),
+  // but a save/rematch refetch of `data` must not re-hijack the selection afterwards.
+  const consumedLocatorRef = useRef<string | null>(null);
   useEffect(() => {
     if (!data || focusedSentenceId == null) return;
+    const key = `${data.project_id}#${focusedSentenceId}`;
+    if (consumedLocatorRef.current === key) return;
     const focused = findSentence(data, focusedSentenceId);
     if (!focused) {
       const display = formatSentenceLocator(data.project_id, focusedSentenceId);
       setToast(tr(`Sentence ${display} not found.`, `未找到句子 ${display}。`));
       return;
     }
+    consumedLocatorRef.current = key;
     setSelectedId(focused.speaker.speaker_id);
     setFilter("all");
   }, [data, focusedSentenceId]);
+
+  // Loaded speakers plus locally minted ones -- every lookup that used data.speakers
+  // must see the minted speakers too (reassign targets, keyboard nav, save body).
+  const allSpeakers = useMemo<ReviewSpeaker[]>(
+    () => (data ? [...data.speakers, ...extraSpeakers] : []),
+    [data, extraSpeakers],
+  );
 
   const effective = (s: ReviewSpeaker): ReviewSpeaker => {
     const e = edits.get(s.speaker_id);
@@ -322,7 +345,7 @@ export function SpeakerReviewPage() {
   const segmentsBySpeaker = useMemo(() => {
     const map = new Map<number, SpeakerSegment[]>();
     if (!data) return map;
-    for (const s of data.speakers) map.set(s.speaker_id, []);
+    for (const s of allSpeakers) map.set(s.speaker_id, []);
     for (const s of data.speakers) {
       for (const seg of s.segments) {
         const owner = reassign.get(segKey(seg)) ?? s.speaker_id;
@@ -333,13 +356,14 @@ export function SpeakerReviewPage() {
     for (const segs of map.values())
       segs.sort((a, b) => a.begin_time_ms - b.begin_time_ms);
     return map;
-  }, [data, reassign]);
+  }, [data, allSpeakers, reassign]);
 
   const dirty =
     edits.size > 0 ||
     reassign.size > 0 ||
     textEdits.size > 0 ||
-    deletedSpeakerIds.size > 0;
+    deletedSpeakerIds.size > 0 ||
+    extraSpeakers.length > 0;
 
   // Unsaved edits live only in this component's state; losing the page loses them.
   // Publish the dirty flag for app chrome (topbar GuardedNavLink + LangToggle's reload
@@ -381,6 +405,26 @@ export function SpeakerReviewPage() {
     onError: (e) => setToast(tr("Save failed: ", "保存失败：") + (e as Error).message),
   });
 
+  // Standalone rematch against the current voiceprint library -- previously only
+  // reachable through the risk-gated repair panel or implicitly inside save.
+  const rematchMutation = useMutation({
+    mutationFn: () => rematchSpeakerReview(ref),
+    onSuccess: (res) => {
+      setToast(
+        tr(
+          `Rematched: ${res.matched_count} matched, ${res.below_threshold_count} below threshold, ${res.total_count} total.`,
+          `已重跑匹配：命中 ${res.matched_count}，低于阈值 ${res.below_threshold_count}，共 ${res.total_count}。`,
+        ),
+      );
+      queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
+      // The capture plan caches with staleTime: Infinity and depends on match state.
+      queryClient.invalidateQueries({ queryKey: ["capture-plan", ref] });
+      // The projects list's "needs review" badge may flip.
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+    onError: (e) => setToast(tr("Rematch failed: ", "重跑匹配失败：") + (e as Error).message),
+  });
+
   const repairLibraryMutation = useMutation({
     mutationFn: async ({ personRef }: { personRef: string }) => {
       const excluded = await excludeQualitySamples(personRef);
@@ -410,7 +454,7 @@ export function SpeakerReviewPage() {
       if (anyModalOpen()) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      const ids = data.speakers
+      const ids = allSpeakers
         .map((s) => s.speaker_id)
         .filter((id) => !deletedSpeakerIds.has(id));
       const idx = selectedId == null ? -1 : ids.indexOf(selectedId);
@@ -420,20 +464,20 @@ export function SpeakerReviewPage() {
         setSelectedId(ids[Math.max(0, idx - 1)] ?? ids[0]);
       } else if (e.key === "/" && selectedId != null) {
         e.preventDefault();
-        setPicking(data.speakers.find((s) => s.speaker_id === selectedId) ?? null);
+        setPicking(allSpeakers.find((s) => s.speaker_id === selectedId) ?? null);
       } else if (e.key === "i" && selectedId != null) {
         toggleIgnore(selectedId);
       } else if (e.key === "a" && selectedId != null) {
         acceptMatch(selectedId);
       } else if (e.key === "m" && selectedId != null) {
-        const base = data.speakers.find((s) => s.speaker_id === selectedId);
+        const base = allSpeakers.find((s) => s.speaker_id === selectedId);
         if (base) setMerging(base);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, selectedId, edits, deletedSpeakerIds]);
+  }, [data, allSpeakers, selectedId, edits, deletedSpeakerIds]);
 
   if (isLoading) return <div className="placeholder">{tr("Loading…", "加载中…")}</div>;
   if (error) {
@@ -458,7 +502,7 @@ export function SpeakerReviewPage() {
   }
   if (!data) return null;
 
-  const speakers = data.speakers
+  const speakers = allSpeakers
     .map(effective)
     .filter((s) => !deletedSpeakerIds.has(s.speaker_id));
   const selected =
@@ -491,7 +535,7 @@ export function SpeakerReviewPage() {
   }
 
   function acceptMatch(speakerId: number) {
-    const s = data!.speakers.find((x) => x.speaker_id === speakerId);
+    const s = allSpeakers.find((x) => x.speaker_id === speakerId);
     const best = s?.match?.best_name;
     if (!s || !best || (s.match?.best_score ?? 0) <= 0) return;
     const cand = s.match!.candidates.find((c) => c.name === best);
@@ -505,7 +549,7 @@ export function SpeakerReviewPage() {
   }
 
   function toggleIgnore(speakerId: number) {
-    const base = data!.speakers.find((x) => x.speaker_id === speakerId)!;
+    const base = allSpeakers.find((x) => x.speaker_id === speakerId)!;
     const s = effective(base);
     setEdits((prev) => {
       const next = new Map(prev);
@@ -548,6 +592,39 @@ export function SpeakerReviewPage() {
       return next;
     });
     setReassigning(null);
+  }
+
+  // ASR under-split rescue: mint a brand-new staged speaker and move the sentence to it.
+  // The save endpoint accepts reassignments to unseen ids (the TUI mints the same way);
+  // ids are max+1, monotonic, never reused.
+  function createSpeakerAndReassign(seg: SpeakerSegment) {
+    const nextId = Math.max(0, ...allSpeakers.map((s) => s.speaker_id)) + 1;
+    const label = `Speaker ${nextId}`;
+    setExtraSpeakers((prev) => [
+      ...prev,
+      {
+        speaker_id: nextId,
+        label,
+        current_name: label,
+        ignored: false,
+        person_id: null,
+        person_public_id: null,
+        status: "review",
+        crosstalk: false,
+        segment_count: 0,
+        duration_ms: 0,
+        match: null,
+        segments: [],
+      },
+    ]);
+    doReassign(seg, nextId);
+    setSelectedId(nextId);
+    setToast(
+      tr(
+        `Created ${label} and moved the sentence there. Identify it, then save.`,
+        `已新建 ${label} 并把这句移入。请指认身份后保存。`,
+      ),
+    );
   }
 
   function stageTextEdit(seg: SpeakerSegment, correctedText: string) {
@@ -741,62 +818,86 @@ export function SpeakerReviewPage() {
         unresolved={unresolved}
         dirty={dirty}
         saving={saveMutation.isPending}
+        rematching={rematchMutation.isPending}
+        view={view}
+        onViewChange={setView}
         onSave={() => saveMutation.mutate(buildSaveBody())}
         onDiscard={() => {
           setEdits(new Map());
           setReassign(new Map());
           setTextEdits(new Map());
           setDeletedSpeakerIds(new Set());
+          setExtraSpeakers([]);
           setMerging(null);
         }}
+        onRematch={() => rematchMutation.mutate()}
         onCapture={() => navigate(`/projects/${ref}/capture`)}
         onCorrect={() => navigate(`/projects/${ref}/corrections`)}
         onExports={() => setShowExports(true)}
       />
-      <div className="review-body">
-        <SpeakerSidebar
-          speakers={speakers}
-          segmentsBySpeaker={segmentsBySpeaker}
-          selectedId={selectedId}
-          editedIds={new Set([...edits.keys()])}
-          onSelect={setSelectedId}
-        />
-        <TranscriptPane
+      {view === "timeline" ? (
+        <TimelinePane
           projectRef={ref}
           projectId={data.project_id}
-          selected={selected}
-          segments={selected ? (segmentsBySpeaker.get(selected.speaker_id) ?? []) : []}
-          filter={filter}
+          speakers={speakers}
+          segmentsBySpeaker={segmentsBySpeaker}
           reassignKeys={reassign}
           textEdits={textEdits}
           focusSentenceId={focusedSentenceId}
-          onFilter={setFilter}
-          onLocateSentence={locateSentence}
-          onIdentify={() =>
-            selected &&
-            setPicking(
-              data.speakers.find((s) => s.speaker_id === selected.speaker_id) ?? null,
-            )
-          }
-          onAccept={() => selected && acceptMatch(selected.speaker_id)}
-          onIgnore={() => selected && toggleIgnore(selected.speaker_id)}
-          onMerge={() =>
-            selected &&
-            setMerging(
-              data.speakers.find((s) => s.speaker_id === selected.speaker_id) ?? null,
-            )
-          }
-          onDelete={() => selected && doDeleteSpeaker(selected.speaker_id)}
-          canDelete={selected ? canDeleteSpeaker(selected.speaker_id) : false}
+          onPickSpeaker={(id) => {
+            setSelectedId(id);
+            setView("speakers");
+          }}
           onReassign={(seg) => setReassigning(seg)}
           onEditText={(seg) => setEditingText(seg)}
           canEditText={data.allow_correction}
-          quality={selectedQuality}
-          dirty={dirty}
-          repairing={repairLibraryMutation.isPending}
-          onRepairLibrary={(personRef) => repairLibraryMutation.mutate({ personRef })}
         />
-      </div>
+      ) : (
+        <div className="review-body">
+          <SpeakerSidebar
+            speakers={speakers}
+            segmentsBySpeaker={segmentsBySpeaker}
+            selectedId={selectedId}
+            editedIds={new Set([...edits.keys()])}
+            onSelect={setSelectedId}
+          />
+          <TranscriptPane
+            projectRef={ref}
+            projectId={data.project_id}
+            selected={selected}
+            segments={selected ? (segmentsBySpeaker.get(selected.speaker_id) ?? []) : []}
+            filter={filter}
+            reassignKeys={reassign}
+            textEdits={textEdits}
+            focusSentenceId={focusedSentenceId}
+            onFilter={setFilter}
+            onLocateSentence={locateSentence}
+            onIdentify={() =>
+              selected &&
+              setPicking(
+                allSpeakers.find((s) => s.speaker_id === selected.speaker_id) ?? null,
+              )
+            }
+            onAccept={() => selected && acceptMatch(selected.speaker_id)}
+            onIgnore={() => selected && toggleIgnore(selected.speaker_id)}
+            onMerge={() =>
+              selected &&
+              setMerging(
+                allSpeakers.find((s) => s.speaker_id === selected.speaker_id) ?? null,
+              )
+            }
+            onDelete={() => selected && doDeleteSpeaker(selected.speaker_id)}
+            canDelete={selected ? canDeleteSpeaker(selected.speaker_id) : false}
+            onReassign={(seg) => setReassigning(seg)}
+            onEditText={(seg) => setEditingText(seg)}
+            canEditText={data.allow_correction}
+            quality={selectedQuality}
+            dirty={dirty}
+            repairing={repairLibraryMutation.isPending}
+            onRepairLibrary={(personRef) => repairLibraryMutation.mutate({ personRef })}
+          />
+        </div>
+      )}
 
       {picking && (
         <IdentityPicker
@@ -814,6 +915,11 @@ export function SpeakerReviewPage() {
             textEdits.get(segKey(reassigning))?.corrected_text ?? reassigning.text
           }
           onPick={(target) => doReassign(reassigning, target)}
+          onCreate={() => {
+            const seg = reassigning;
+            setReassigning(null);
+            createSpeakerAndReassign(seg);
+          }}
           onClose={() => setReassigning(null)}
         />
       )}
@@ -856,8 +962,12 @@ function ReviewHeader(props: {
   unresolved: number;
   dirty: boolean;
   saving: boolean;
+  rematching: boolean;
+  view: "speakers" | "timeline";
+  onViewChange: (view: "speakers" | "timeline") => void;
   onSave: () => void;
   onDiscard: () => void;
+  onRematch: () => void;
   onCapture: () => void;
   onCorrect: () => void;
   onExports: () => void;
@@ -876,11 +986,39 @@ function ReviewHeader(props: {
             <span className="warn"> · {unresolved} {tr("unresolved", "待定")}</span>
           )}
         </div>
+        <div className="row gap" style={{ marginTop: 6 }}>
+          {(["speakers", "timeline"] as const).map((v) => (
+            <button
+              key={v}
+              className={`chip ${props.view === v ? "on" : ""}`}
+              onClick={() => props.onViewChange(v)}
+            >
+              {v === "speakers" ? tr("By speaker", "按发言人") : tr("Timeline", "时间轴")}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="row gap">
         {/* Exports is read-only, so it stays enabled while dirty. */}
         <button className="btn ghost" onClick={props.onExports}>
           {tr("Exports", "导出")}
+        </button>
+        {/* Rematch rewrites speaker_matches.json and refetches the review, which resets
+            staged edits -- same disable-when-dirty rule as Capture/Correct. */}
+        <button
+          className="btn ghost"
+          onClick={props.onRematch}
+          disabled={saving || dirty || props.rematching}
+          title={
+            dirty
+              ? tr("Save changes first", "请先保存改动")
+              : tr(
+                  "Re-run voiceprint matching against the current library.",
+                  "用当前声纹库重跑说话人匹配。",
+                )
+          }
+        >
+          {props.rematching ? tr("Rematching…", "匹配中…") : tr("Rematch", "重跑匹配")}
         </button>
         {/* Capture/Correct reload from on-disk speaker_map.json + transcript artifacts, so
             leaving with unsaved edits (dirty) would act on stale/anonymous identities -- e.g.
@@ -1042,18 +1180,22 @@ function TranscriptPane(props: {
     setProgress(0);
   };
 
-  const filtered = segments.filter((seg) => {
-    if (filter === "all") return true;
-    if (filter === "review") {
-      return (
-        (seg.score_status != null && seg.score_status !== "identity-ok") ||
-        (seg.score != null && seg.score < 0.6)
-      );
-    }
-    return (
-      (seg.score != null && seg.score < 0.45) || seg.score_status === "identity-weak"
-    );
-  });
+  const filtered = useMemo(
+    () =>
+      segments.filter((seg) => {
+        if (filter === "all") return true;
+        if (filter === "review") {
+          return (
+            (seg.score_status != null && seg.score_status !== "identity-ok") ||
+            (seg.score != null && seg.score < 0.6)
+          );
+        }
+        return (
+          (seg.score != null && seg.score < 0.45) || seg.score_status === "identity-weak"
+        );
+      }),
+    [segments, filter],
+  );
   const focusedKey =
     focusSentenceId == null
       ? null
@@ -1070,6 +1212,25 @@ function TranscriptPane(props: {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [focusedSegKey]);
+
+  // Stop playback when the playing clip leaves the visible list (speaker switch,
+  // filter change, or the sentence was reassigned away): its pause button is gone,
+  // so the audio would keep playing with no way to stop it.
+  useEffect(() => {
+    if (playingKey == null) return;
+    if (!filtered.some((seg) => segKey(seg) === playingKey)) {
+      audioRef.current?.pause();
+      setPlayingKey(null);
+    }
+  }, [filtered, playingKey]);
+
+  // Fresh speaker/filter without an explicit focus target starts at the top --
+  // the pane used to keep the previous speaker's scroll offset.
+  const segmentsBoxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focusedSegKey) segmentsBoxRef.current?.scrollTo({ top: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.speaker_id, filter]);
 
   if (!selected) return <div className="placeholder">{tr("Select a speaker.", "选择一位发言人。")}</div>;
 
@@ -1189,7 +1350,7 @@ function TranscriptPane(props: {
         onEnded={() => setPlayingKey(null)}
       />
 
-      <div className="segments" onScroll={() => setIdentityPopover(null)}>
+      <div className="segments" ref={segmentsBoxRef} onScroll={() => setIdentityPopover(null)}>
         {filtered.map((seg) => {
           const key = segKey(seg);
           const reassigned = reassignKeys.has(key);
@@ -1332,6 +1493,149 @@ function TranscriptPane(props: {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Chronological view across ALL speakers: rebuilds the meeting's flow so cross-speaker
+ *  context (who replied to whom) is visible while reassigning/correcting. */
+function TimelinePane(props: {
+  projectRef: string;
+  projectId: string;
+  speakers: ReviewSpeaker[];
+  segmentsBySpeaker: Map<number, SpeakerSegment[]>;
+  reassignKeys: Map<string, number>;
+  textEdits: Map<string, InlineCorrectionEdit>;
+  focusSentenceId: number | null;
+  onPickSpeaker: (speakerId: number) => void;
+  onReassign: (seg: SpeakerSegment) => void;
+  onEditText: (seg: SpeakerSegment) => void;
+  canEditText: boolean;
+}) {
+  const {
+    projectRef,
+    projectId,
+    speakers,
+    segmentsBySpeaker,
+    reassignKeys,
+    textEdits,
+    focusSentenceId,
+  } = props;
+  const audio = useClipAudio();
+  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  const rows = useMemo(() => {
+    const merged: { seg: SpeakerSegment; owner: ReviewSpeaker }[] = [];
+    for (const owner of speakers) {
+      for (const seg of segmentsBySpeaker.get(owner.speaker_id) ?? []) {
+        merged.push({ seg, owner });
+      }
+    }
+    merged.sort((a, b) => a.seg.begin_time_ms - b.seg.begin_time_ms);
+    return merged;
+  }, [speakers, segmentsBySpeaker]);
+
+  const focusedRow =
+    focusSentenceId == null
+      ? null
+      : (rows.find((row) => row.seg.sentence_id === focusSentenceId) ?? null);
+  const focusedRowKey = focusedRow ? segKey(focusedRow.seg) : null;
+  useEffect(() => {
+    if (!focusedRowKey) return;
+    const frame = window.requestAnimationFrame(() => {
+      rowRefs.current.get(focusedRowKey)?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusedRowKey]);
+
+  return (
+    // Reuses .transcript-pane's layout/scroll rules; timeline-specific bits layer on top.
+    <div className="transcript-pane timeline-pane">
+      <div className="segments">
+        {rows.map(({ seg, owner }) => {
+          const key = segKey(seg);
+          const playing = audio.playingKey === key;
+          const reassigned = reassignKeys.has(key);
+          const textEdit = textEdits.get(key) ?? null;
+          const focused = focusSentenceId != null && seg.sentence_id === focusSentenceId;
+          const displayText = textEdit?.corrected_text ?? seg.text;
+          const sentenceRef =
+            seg.sentence_ref ?? formatSentenceLocator(projectId, seg.sentence_id);
+          return (
+            <div
+              key={key}
+              ref={(node) => {
+                if (node) rowRefs.current.set(key, node);
+                else rowRefs.current.delete(key);
+              }}
+              className={`segment ${playing ? "playing" : ""} ${reassigned ? "reassigned" : ""} ${focused ? "focused" : ""}`}
+              data-sentence-id={seg.sentence_id ?? undefined}
+            >
+              <button
+                className="play-btn"
+                onClick={() =>
+                  audio.toggle(key, clipUrl(projectRef, seg.begin_time_ms, seg.end_time_ms))
+                }
+                aria-label="play"
+              >
+                {playing ? "⏸" : "▶"}
+              </button>
+              <div className="segment-body">
+                <div className="segment-meta subtle mono">
+                  <button
+                    className="chip timeline-speaker"
+                    onClick={() => props.onPickSpeaker(owner.speaker_id)}
+                    title={tr("Open this speaker's pane", "打开该发言人")}
+                  >
+                    <span className={`status-dot status-${owner.status}`} />
+                    {owner.current_name || owner.label}
+                  </button>
+                  {fmtMs(seg.begin_time_ms)}
+                  {sentenceRef != null && <span className="sentence-id">{sentenceRef}</span>}
+                  {reassigned && (
+                    <span className="badge reassigned-badge">{tr("reassigned", "已重指派")}</span>
+                  )}
+                  {textEdit && (
+                    <span className="badge text-edited-badge">{tr("edited", "已编辑")}</span>
+                  )}
+                </div>
+                <div className="segment-text">{displayText}</div>
+                {playing && (
+                  <div className="seg-progress">
+                    <div className="seg-progress-bar" style={{ width: `${audio.progress * 100}%` }} />
+                  </div>
+                )}
+              </div>
+              <div className="segment-actions">
+                {props.canEditText && (
+                  <button
+                    className="segment-action-btn text-edit-btn"
+                    onClick={() => props.onEditText(seg)}
+                    title={tr("Edit this sentence text.", "编辑这句话的文字。")}
+                    aria-label={tr("Edit text", "编辑文字")}
+                  >
+                    ✎
+                  </button>
+                )}
+                <button
+                  className="segment-action-btn reassign-btn"
+                  onClick={() => props.onReassign(seg)}
+                  title={tr(
+                    "Change this sentence's speaker assignment.",
+                    "修改这句话的 speaker 归属。",
+                  )}
+                  aria-label={tr("Change owner", "修改归属")}
+                >
+                  ⇄ {tr("Owner", "归属")}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

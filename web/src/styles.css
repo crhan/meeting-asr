@@ -330,6 +330,20 @@ table.projects tr:hover td {
   background: var(--red-dim);
 }
 
+/* ---- Speaker review: timeline view + identity candidates ---- */
+.timeline-speaker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+}
+.candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
 /* ---- Jobs center (topbar indicator + modal list) ---- */
 .jobs-indicator {
   display: inline-flex;

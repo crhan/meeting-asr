@@ -39,6 +39,12 @@ export function IdentityPicker({ speaker, people, onSelect, onClose }: Props) {
 
   const match = speaker.match;
   const canAccept = !!match?.best_name && (match?.best_score ?? 0) > 0;
+  // The runner-up candidates are the key evidence when the best match is wrong;
+  // show the top few directly instead of making the user dig through the people list.
+  const rankedCandidates = useMemo(() => {
+    const rows = (match?.candidates ?? []).filter((c) => c.name);
+    return [...rows].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 3);
+  }, [match]);
 
   const pickPerson = (p: Person) =>
     onSelect({
@@ -122,6 +128,31 @@ export function IdentityPicker({ speaker, people, onSelect, onClose }: Props) {
           </span>
         </button>
       )}
+      {rankedCandidates.length > 1 && (
+        <div className="candidate-list">
+          {rankedCandidates.map((candidate) => (
+            <button
+              key={`${candidate.person_id ?? candidate.name}`}
+              className="person-row candidate-row"
+              onClick={() =>
+                onSelect({
+                  name: candidate.name,
+                  person_id: candidate.person_id,
+                  person_public_id: candidate.person_public_id,
+                  ignored: false,
+                  create_person: false,
+                })
+              }
+            >
+              <span className="person-name">{candidate.name}</span>
+              <span className="person-id mono">
+                {candidate.score != null ? candidate.score.toFixed(3) : "—"}
+                {candidate.name === match?.best_name ? ` · ${tr("best", "最佳")}` : ""}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
       <input
         className="search"
         autoFocus
@@ -131,6 +162,11 @@ export function IdentityPicker({ speaker, people, onSelect, onClose }: Props) {
         )}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
+        // Enter picks the exact-name person or creates one -- same as the footer
+        // button; guarded against IME composition commits.
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing) useFreeName();
+        }}
       />
       <div className="people-list">
         {filtered.length === 0 ? (

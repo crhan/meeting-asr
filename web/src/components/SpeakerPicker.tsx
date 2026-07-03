@@ -8,6 +8,9 @@ interface Props {
   sentencePreview: string;
   title?: string;
   onPick: (speakerId: number) => void;
+  /** Offered for reassignment (not merge): mint a brand-new speaker as the target,
+   *  the web-side rescue for ASR under-split tracks. */
+  onCreate?: () => void;
   onClose: () => void;
 }
 
@@ -18,6 +21,7 @@ export function SpeakerPicker({
   sentencePreview,
   title,
   onPick,
+  onCreate,
   onClose,
 }: Props) {
   return (
@@ -40,6 +44,13 @@ export function SpeakerPicker({
             <span className="person-id mono">{s.label}</span>
           </button>
         ))}
+        {onCreate && (
+          <button className="person-row" onClick={onCreate}>
+            <span className="person-name">
+              + {tr("New speaker (split an under-split track)", "新建 speaker（拆分误合并的轨道）")}
+            </span>
+          </button>
+        )}
       </div>
     </Modal>
   );
