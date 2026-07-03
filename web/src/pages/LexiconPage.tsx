@@ -486,7 +486,8 @@ function TermsTab() {
               )}
         </div>
       ) : (
-        <table className="projects">
+        <div className="table-scroll">
+      <table className="projects">
           <thead>
             <tr>
               <th>{tr("Canonical", "标准词")}</th>
@@ -550,6 +551,7 @@ function TermsTab() {
             ))}
           </tbody>
         </table>
+      </div>
       )}
     </div>
   );
@@ -606,7 +608,8 @@ function DisambiguationsTab() {
           )}
         </div>
       ) : (
-        <table className="projects">
+        <div className="table-scroll">
+      <table className="projects">
           <thead>
             <tr>
               <th>{tr("Alias", "别名")}</th>
@@ -630,6 +633,7 @@ function DisambiguationsTab() {
             ))}
           </tbody>
         </table>
+      </div>
       )}
     </div>
   );
@@ -648,7 +652,8 @@ function HotwordsTab() {
       </div>
     );
   return (
-    <table className="projects">
+    <div className="table-scroll">
+      <table className="projects">
       <thead>
         <tr>
           <th>{tr("Text", "词")}</th>
@@ -668,5 +673,6 @@ function HotwordsTab() {
         ))}
       </tbody>
     </table>
+      </div>
   );
 }

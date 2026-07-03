@@ -334,6 +334,22 @@ table.projects tr:hover td {
   cursor: pointer;
 }
 
+/* Compact step plan inside the job panel. */
+.job-steps {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-xs);
+}
+.job-step.now {
+  color: var(--accent);
+}
+.job-step.done {
+  color: var(--green);
+  opacity: 0.75;
+}
+
 /* ---- Lexicon term detail ---- */
 .term-detail-section {
   margin-top: 12px;
@@ -1277,6 +1293,38 @@ tr.clickable {
     padding-left: 0;
     border-left: none;
   }
+  /* Narrow-window survival: single-column layouts with their own scroll areas
+     instead of a squashed two-pane grid. */
+  .topbar {
+    flex-wrap: wrap;
+    height: auto;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .review-body {
+    grid-template-columns: 1fr;
+  }
+  .review-body .speaker-list {
+    max-height: 32vh;
+    overflow-y: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .vp-layout {
+    grid-template-columns: 1fr;
+  }
+  .vp-side {
+    max-height: 40vh;
+  }
+  .filter-bar,
+  .transcript-head .row {
+    flex-wrap: wrap;
+  }
+}
+
+/* Wide tables scroll inside their own container instead of the page body. */
+.table-scroll {
+  overflow-x: auto;
 }
 .vp-layout {
   display: grid;

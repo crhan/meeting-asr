@@ -89,6 +89,22 @@ export function JobProgress({ jobId, onDone, onError, onCancelled, canCancel = t
           </button>
         )}
       </div>
+      {state.steps.length > 0 && stepIndex != null && (
+        <div className="job-steps">
+          {state.steps.map((step, index) => {
+            const n = index + 1;
+            const marker = n < stepIndex ? "✓" : n === stepIndex ? "▸" : "·";
+            return (
+              <div
+                key={index}
+                className={`job-step subtle ${n === stepIndex ? "now" : n < stepIndex ? "done" : ""}`}
+              >
+                {marker} {step}
+              </div>
+            );
+          })}
+        </div>
+      )}
       {state.status === "queued" && state.waitingOn.length > 0 && (
         <div className="job-progress-desc subtle">
           {tr("Waiting for", "正在等待")}{" "}

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   listProjects,
   runPipeline,
@@ -279,6 +279,16 @@ export function ProjectsPage() {
   const [exportsFor, setExportsFor] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [summarizeJob, setSummarizeJob] = useState<{ id: string; ref: string } | null>(null);
+  // Filters live in the URL so a filtered view survives reload / can be shared.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const search = searchParams.get("q") ?? "";
+  const stateFilter = searchParams.get("state") ?? "";
+  const setParam = (key: string, value: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setSearchParams(next, { replace: true });
+  };
   const { data, isLoading, error } = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
@@ -322,6 +332,14 @@ export function ProjectsPage() {
     navigate(`/projects/${p.project_id}/speakers`);
   };
 
+  // Available state options derived from the data (never a hardcoded enum), plus the
+  // cross-cutting "needs review" pseudo-state.
+  const stateOptions = useMemo(() => {
+    const keys = new Set<string>();
+    for (const p of data?.projects ?? []) keys.add(p.workflow?.state_key ?? p.status);
+    return [...keys].sort();
+  }, [data]);
+
   if (isLoading) {
     return <div className="placeholder">{tr("Loading projects…", "正在加载项目…")}</div>;
   }
@@ -333,7 +351,17 @@ export function ProjectsPage() {
       </div>
     );
   }
-  const projects = data?.projects ?? [];
+  const allProjects = data?.projects ?? [];
+  const needle = search.trim().toLowerCase();
+  const projects = allProjects.filter((p) => {
+    if (needle) {
+      const haystack = [p.title, p.project_id, ...p.meeting_keywords].join(" ").toLowerCase();
+      if (!haystack.includes(needle)) return false;
+    }
+    if (stateFilter === "needs-review") return p.has_unresolved_matches;
+    if (stateFilter) return (p.workflow?.state_key ?? p.status) === stateFilter;
+    return true;
+  });
 
   return (
     <div>
@@ -347,6 +375,41 @@ export function ProjectsPage() {
         <button className="btn primary" onClick={() => setShowRun(true)}>
           + {tr("Run pipeline", "运行管线")}
         </button>
+      </div>
+      <div className="row gap" style={{ margin: "10px 0" }}>
+        <input
+          className="search"
+          style={{ marginBottom: 0, maxWidth: 320 }}
+          placeholder={tr("Search title / id / keywords…", "搜索标题 / ID / 关键词…")}
+          value={search}
+          onChange={(e) => setParam("q", e.target.value)}
+        />
+        <button
+          className={`chip ${stateFilter === "" ? "on" : ""}`}
+          onClick={() => setParam("state", "")}
+        >
+          {tr("All", "全部")}
+        </button>
+        <button
+          className={`chip ${stateFilter === "needs-review" ? "on" : ""}`}
+          onClick={() => setParam("state", "needs-review")}
+        >
+          {tr("Needs review", "待复核")}
+        </button>
+        {stateOptions.map((key) => (
+          <button
+            key={key}
+            className={`chip ${stateFilter === key ? "on" : ""}`}
+            onClick={() => setParam("state", key)}
+          >
+            {key}
+          </button>
+        ))}
+        {(needle || stateFilter) && (
+          <span className="subtle">
+            {projects.length}/{allProjects.length}
+          </span>
+        )}
       </div>
       {showRun && <RunDialog onClose={() => setShowRun(false)} />}
       {exportsFor && <ExportsModal projectRef={exportsFor} onClose={() => setExportsFor(null)} />}
@@ -379,6 +442,7 @@ export function ProjectsPage() {
       {projects.length === 0 ? (
         <div className="placeholder">{tr("No projects yet.", "暂无项目。")}</div>
       ) : (
+        <div className="table-scroll">
         <table className="projects">
           <thead>
             <tr>
@@ -401,10 +465,23 @@ export function ProjectsPage() {
                 <tr
                   key={p.project_id}
                   className="clickable"
-                  onClick={() => openProject(p)}
+                  onClick={(e) => {
+                    // Modified/middle clicks belong to the inner Link (new tab).
+                    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                    openProject(p);
+                  }}
                   title={tr("Open speaker review", "打开 speaker review")}
                 >
-                  <td className="mono nowrap">{p.project_id}</td>
+                  <td className="mono nowrap">
+                    {/* A real link: Tab/Enter/中键/cmd+click all work natively. */}
+                    <Link
+                      to={`/projects/${encodeURIComponent(p.project_id)}/speakers`}
+                      className="vp-project-link"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {p.project_id}
+                    </Link>
+                  </td>
                   <td>{p.title || tr("(untitled)", "（无标题）")}</td>
                   <td>
                     <StateBadge project={p} />
@@ -466,6 +543,7 @@ export function ProjectsPage() {
             })}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

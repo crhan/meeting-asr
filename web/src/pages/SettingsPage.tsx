@@ -107,6 +107,7 @@ function ConfigTab() {
           </label>
         )}
       </div>
+      <div className="table-scroll">
       <table className="projects">
         <thead>
           <tr>
@@ -161,6 +162,7 @@ function ConfigTab() {
           ))}
         </tbody>
       </table>
+      </div>
       {toast && (
         <div className="toast" onClick={() => setToast(null)}>
           {toast}

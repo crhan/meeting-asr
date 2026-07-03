@@ -1143,6 +1143,12 @@ function SpeakerSidebar(props: {
   onSelect: (id: number) => void;
 }) {
   const { speakers, segmentsBySpeaker, selectedId, editedIds, onSelect } = props;
+  // j/k navigation moves the selection out of view without this.
+  const cardRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
+  useEffect(() => {
+    if (selectedId != null)
+      cardRefs.current.get(selectedId)?.scrollIntoView({ block: "nearest" });
+  }, [selectedId]);
   return (
     <div className="speaker-list">
       {speakers.map((s) => {
@@ -1152,6 +1158,10 @@ function SpeakerSidebar(props: {
         return (
           <button
             key={s.speaker_id}
+            ref={(node) => {
+              if (node) cardRefs.current.set(s.speaker_id, node);
+              else cardRefs.current.delete(s.speaker_id);
+            }}
             className={`speaker-card ${s.speaker_id === selectedId ? "active" : ""}`}
             onClick={() => onSelect(s.speaker_id)}
           >

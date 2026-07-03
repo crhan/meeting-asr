@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { getLang, setLang, tr, type Lang } from "./lib/i18n";
 import { subscribeGlobalError, subscribeGlobalNotice } from "./lib/globalError";
@@ -81,6 +81,32 @@ function LangToggle() {
   );
 }
 
+/** Per-route chrome: scroll to top on page change and keep the tab title meaningful
+ *  (every tab used to be just "meeting-asr"). Only pathname changes count -- filter
+ *  params must not yank the scroll position. */
+function RouteChrome() {
+  const location = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    const path = location.pathname;
+    let title = "meeting-asr";
+    if (/^\/projects\/[^/]+/.test(path)) {
+      const ref = decodeURIComponent(path.split("/")[2] ?? "");
+      const sub = path.endsWith("/capture")
+        ? tr("Capture", "声纹采集")
+        : path.endsWith("/corrections")
+          ? tr("Correction", "纠错")
+          : tr("Speaker Review", "发言人复核");
+      title = `${sub} · ${ref} · meeting-asr`;
+    } else if (path.startsWith("/voiceprints")) title = `${tr("Voiceprints", "声纹库")} · meeting-asr`;
+    else if (path.startsWith("/lexicon")) title = `${tr("Lexicon", "词库")} · meeting-asr`;
+    else if (path.startsWith("/settings")) title = `${tr("Settings", "设置")} · meeting-asr`;
+    else if (path.startsWith("/projects")) title = `${tr("Projects", "项目")} · meeting-asr`;
+    document.title = title;
+  }, [location.pathname]);
+  return null;
+}
+
 /** App-wide error toast fed by the QueryClient's default mutation onError (main.tsx). */
 function GlobalErrorToast() {
   const [message, setMessage] = useState<string | null>(null);
@@ -119,6 +145,7 @@ function GlobalNoticeToast() {
 export function App() {
   return (
     <div className="app-shell">
+      <RouteChrome />
       <header className="topbar">
         <span className="brand">meeting-asr</span>
         <nav>
