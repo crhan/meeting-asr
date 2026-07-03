@@ -1,7 +1,7 @@
 import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { getLang, setLang, tr, type Lang } from "./lib/i18n";
-import { subscribeGlobalError } from "./lib/globalError";
+import { subscribeGlobalError, subscribeGlobalNotice } from "./lib/globalError";
 import { hasUnsavedEdits } from "./lib/unsavedGuard";
 import { confirmDialog } from "./lib/confirm";
 import { AuthGate } from "./components/AuthGate";
@@ -98,6 +98,24 @@ function GlobalErrorToast() {
   );
 }
 
+/** Non-error counterpart: outcomes that outlive the page that caused them
+ *  (e.g. "learned N contexts into the lexicon" after accept navigates away). */
+function GlobalNoticeToast() {
+  const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => subscribeGlobalNotice(setMessage), []);
+  useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => setMessage(null), 8000);
+    return () => clearTimeout(timer);
+  }, [message]);
+  if (!message) return null;
+  return (
+    <div className="toast" onClick={() => setMessage(null)}>
+      {message}
+    </div>
+  );
+}
+
 export function App() {
   return (
     <div className="app-shell">
@@ -136,6 +154,7 @@ export function App() {
       <ConfirmHost />
       <PromptHost />
       <GlobalErrorToast />
+      <GlobalNoticeToast />
     </div>
   );
 }

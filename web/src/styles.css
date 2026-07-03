@@ -330,6 +330,10 @@ table.projects tr:hover td {
   background: var(--red-dim);
 }
 
+.seg-progress.seekable {
+  cursor: pointer;
+}
+
 /* ---- Lexicon term detail ---- */
 .term-detail-section {
   margin-top: 12px;

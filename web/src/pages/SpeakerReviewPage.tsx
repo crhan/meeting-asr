@@ -17,6 +17,7 @@ import {
   type SpeakerReview,
   type SpeakerSegment,
 } from "../api/client";
+import { reportGlobalError } from "../lib/globalError";
 import { tr } from "../lib/i18n";
 import { setUnsavedEdits } from "../lib/unsavedGuard";
 import { useClipAudio } from "../lib/useClipAudio";
@@ -244,7 +245,7 @@ export function SpeakerReviewPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["speakers", ref],
     queryFn: () => getSpeakerReview(ref),
   });
@@ -280,6 +281,7 @@ export function SpeakerReviewPage() {
   const [editingText, setEditingText] = useState<SpeakerSegment | null>(null);
   const [merging, setMerging] = useState<ReviewSpeaker | null>(null);
   const [showExports, setShowExports] = useState(false);
+  const [saveConflict, setSaveConflict] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   // Reset working state whenever a fresh session loads. Selection is preserved when the
@@ -386,10 +388,16 @@ export function SpeakerReviewPage() {
   const saveMutation = useMutation({
     mutationFn: (body: SaveSpeakerReviewBody) => saveSpeakerReview(ref, body),
     onSuccess: (res) => {
+      const skipped = res.rematch_skipped_reason
+        ? tr(
+            ` Match NOT refreshed: ${res.rematch_skipped_reason}`,
+            ` 匹配未刷新：${res.rematch_skipped_reason}`,
+          )
+        : "";
       setToast(
         tr(
-          `Saved. ${res.reassigned_count} reassigned, ${res.corrected_count} text corrected, ${res.created_person_count} people created, ${res.deleted_sample_count} samples invalidated.`,
-          `已保存。重指派 ${res.reassigned_count} 句，文字修正 ${res.corrected_count} 句，新建人物 ${res.created_person_count} 个，失效声纹样本 ${res.deleted_sample_count} 个。`,
+          `Saved. ${res.reassigned_count} reassigned, ${res.corrected_count} text corrected, ${res.created_person_count} people created, ${res.deleted_sample_count} samples invalidated.${skipped}`,
+          `已保存。重指派 ${res.reassigned_count} 句，文字修正 ${res.corrected_count} 句，新建人物 ${res.created_person_count} 个，失效声纹样本 ${res.deleted_sample_count} 个。${skipped}`,
         ),
       );
       queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
@@ -402,7 +410,16 @@ export function SpeakerReviewPage() {
         queryClient.invalidateQueries({ queryKey: ["vp-quality"] });
       }
     },
-    onError: (e) => setToast(tr("Save failed: ", "保存失败：") + (e as Error).message),
+    onError: (e) => {
+      // 409 = the on-disk review changed since this baseline loaded (another tab / CLI).
+      // Staged edits are based on a stale revision -- offer an explicit reload instead
+      // of a dead-end toast.
+      if (e instanceof ApiError && e.status === 409) {
+        setSaveConflict(true);
+        return;
+      }
+      setToast(tr("Save failed: ", "保存失败：") + (e as Error).message);
+    },
   });
 
   // Standalone rematch against the current voiceprint library -- previously only
@@ -428,7 +445,19 @@ export function SpeakerReviewPage() {
   const repairLibraryMutation = useMutation({
     mutationFn: async ({ personRef }: { personRef: string }) => {
       const excluded = await excludeQualitySamples(personRef);
-      const rematched = await rematchSpeakerReview(ref);
+      // If the rematch fails AFTER the exclusion applied, surface that split state --
+      // "samples excluded but matches stale, retry rematch" -- not a generic failure.
+      let rematched;
+      try {
+        rematched = await rematchSpeakerReview(ref);
+      } catch (e) {
+        throw new Error(
+          tr(
+            `Excluded ${excluded.updated_count} sample(s), but the rematch failed (${(e as Error).message}). Use Rematch to retry.`,
+            `已排除 ${excluded.updated_count} 条样本，但重跑匹配失败（${(e as Error).message}）。可用「重跑匹配」重试。`,
+          ),
+        );
+      }
       return { excluded, rematched };
     },
     onSuccess: ({ excluded, rematched }) => {
@@ -438,11 +467,14 @@ export function SpeakerReviewPage() {
           `已排除 ${excluded.updated_count} 条低质样本；已刷新 ${rematched.total_count} 个 speaker 匹配。`,
         ),
       );
+    },
+    onError: (e) => setToast(tr("Repair failed: ", "修库失败：") + (e as Error).message),
+    // The exclusion may have applied even when the rematch failed -- refresh either way.
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
       queryClient.invalidateQueries({ queryKey: ["vp-library"] });
       queryClient.invalidateQueries({ queryKey: ["vp-quality"] });
     },
-    onError: (e) => setToast(tr("Repair failed: ", "修库失败：") + (e as Error).message),
   });
 
   // ---- keyboard shortcuts (when not typing) -------------------------------
@@ -497,6 +529,11 @@ export function SpeakerReviewPage() {
       <div className="error-box">
         {tr("Failed to load: ", "加载失败：")}
         {(error as Error).message}
+        <div style={{ marginTop: 8 }}>
+          <button className="btn ghost" onClick={() => refetch()}>
+            {tr("Retry", "重试")}
+          </button>
+        </div>
       </div>
     );
   }
@@ -841,6 +878,36 @@ export function SpeakerReviewPage() {
         onCorrect={() => navigate(`/projects/${ref}/corrections`)}
         onExports={() => setShowExports(true)}
       />
+      {saveConflict && (
+        <div className="error-box" style={{ margin: "10px 16px" }}>
+          {tr(
+            "The review was saved elsewhere (another tab or the CLI) since you loaded it, so this save was refused. Reloading discards the staged edits and continues from the latest state.",
+            "复核在加载后已被别处保存（另一个标签页或 CLI），本次保存被拒绝。重新加载将丢弃当前暂存改动，从最新状态继续。",
+          )}
+          <div style={{ marginTop: 8 }}>
+            <button
+              className="btn ghost"
+              onClick={() => {
+                setSaveConflict(false);
+                queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
+              }}
+            >
+              {tr("Reload review", "重新加载复核")}
+            </button>
+          </div>
+        </div>
+      )}
+      {qualityQuery.isError && (
+        <div className="notice-box" style={{ margin: "10px 16px" }}>
+          {tr(
+            "Voiceprint library diagnostics failed to load (repair panel unavailable).",
+            "声纹库诊断加载失败（修库面板不可用）。",
+          )}{" "}
+          <button className="chip" onClick={() => qualityQuery.refetch()}>
+            {tr("Retry", "重试")}
+          </button>
+        </div>
+      )}
       {view === "timeline" ? (
         <TimelinePane
           projectRef={ref}
@@ -1190,10 +1257,24 @@ function TranscriptPane(props: {
       return;
     }
     el.src = clipUrl(projectRef, seg.begin_time_ms, seg.end_time_ms);
-    // A failed load (404/401 clip) never fires onended; reset so the button isn't stuck on ⏸.
-    el.play().catch(() => setPlayingKey((prev) => (prev === key ? null : prev)));
+    // A failed load (404/401 clip) never fires onended; reset so the button isn't stuck
+    // on ⏸ and say so (AbortError = rapid clip switch, not a failure).
+    el.play().catch((err: unknown) => {
+      if ((err as DOMException)?.name !== "AbortError") {
+        reportGlobalError(tr("Audio clip failed to load.", "音频片段加载失败。"));
+      }
+      setPlayingKey((prev) => (prev === key ? null : prev));
+    });
     setPlayingKey(key);
     setProgress(0);
+  };
+
+  // Progress-bar click seeks within the playing clip (the backend serves Range requests).
+  const seekTo = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = audioRef.current;
+    if (!el || !el.duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    el.currentTime = ((e.clientX - rect.left) / rect.width) * el.duration;
   };
 
   const filtered = useMemo(
@@ -1455,7 +1536,7 @@ function TranscriptPane(props: {
                 </div>
                 <div className="segment-text">{displayText}</div>
                 {playing && (
-                  <div className="seg-progress">
+                  <div className="seg-progress seekable" onClick={seekTo}>
                     <div className="seg-progress-bar" style={{ width: `${progress * 100}%` }} />
                   </div>
                 )}
@@ -1620,7 +1701,13 @@ function TimelinePane(props: {
                 </div>
                 <div className="segment-text">{displayText}</div>
                 {playing && (
-                  <div className="seg-progress">
+                  <div
+                    className="seg-progress seekable"
+                    onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      audio.seek((e.clientX - rect.left) / rect.width);
+                    }}
+                  >
                     <div className="seg-progress-bar" style={{ width: `${audio.progress * 100}%` }} />
                   </div>
                 )}

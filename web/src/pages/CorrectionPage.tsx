@@ -12,6 +12,7 @@ import {
 } from "../api/client";
 import { tr } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm";
+import { reportGlobalError, reportGlobalNotice } from "../lib/globalError";
 import { diffPair } from "../lib/textDiff";
 import { JobProgress } from "../components/JobProgress";
 import { useClipAudio } from "../lib/useClipAudio";
@@ -119,15 +120,39 @@ export function CorrectionPage() {
     // when proposalQuery.data exists, so proposal_id is present here.
     mutationFn: () =>
       acceptCorrection(ref, [...selected], proposalQuery.data!.proposal_id),
-    onSuccess: async () => {
+    onSuccess: async (res) => {
       if (proposalQuery.data)
         sessionStorage.removeItem(selectionKey(ref, proposalQuery.data.proposal_id));
+      // The lexicon learning side effect is otherwise invisible (we navigate away).
+      if (res.learned_count > 0) {
+        reportGlobalNotice(
+          tr(
+            `Applied ${res.change_count} change(s); learned ${res.learned_count} context(s) into the lexicon.`,
+            `已应用 ${res.change_count} 条修改；已学习 ${res.learned_count} 条语境进纠错词库。`,
+          ),
+        );
+      }
       // Accepting rewrites the transcript; drop the cached review so navigating back shows
       // the corrected sentences instead of the still-fresh pre-correction text. The server
       // also archived the proposal, so drop the cached one too.
       await queryClient.invalidateQueries({ queryKey: ["proposal", ref] });
       await queryClient.invalidateQueries({ queryKey: ["speakers", ref] });
       navigate(`/projects/${ref}/speakers`);
+    },
+    onError: (e) => {
+      // 409 = the proposal was regenerated since review; reload it and ask to re-select.
+      if (e instanceof ApiError && e.status === 409) {
+        setJobError(
+          tr(
+            "The proposal changed since you reviewed it — it was reloaded; please re-select and accept again.",
+            "提案在审阅后被更新——已重新加载，请重新勾选后再应用。",
+          ),
+        );
+        void queryClient.invalidateQueries({ queryKey: ["proposal", ref] });
+        return;
+      }
+      // A custom onError replaces the global default; report explicitly.
+      reportGlobalError(tr("Operation failed: ", "操作失败：") + (e as Error).message);
     },
   });
 
@@ -200,10 +225,25 @@ export function CorrectionPage() {
           </button>
           <button
             className="btn"
-            onClick={() => polishMut.mutate()}
+            onClick={async () => {
+              // Regenerating overwrites the pending proposal (and the staged selection).
+              if (
+                proposalQuery.data &&
+                !(await confirmDialog({
+                  message: tr(
+                    "A pending proposal already exists; regenerating replaces it and resets your selection.",
+                    "已有待处理的提案；重新生成会覆盖它并重置当前勾选。",
+                  ),
+                  confirmLabel: tr("Regenerate", "重新生成"),
+                  danger: true,
+                }))
+              )
+                return;
+              polishMut.mutate();
+            }}
             disabled={polishMut.isPending || !!jobId}
           >
-            {tr("Generate polish", "生成润色")}
+            {proposalQuery.data ? tr("Regenerate polish", "重新生成润色") : tr("Generate polish", "生成润色")}
           </button>
           {proposalQuery.data && (
             <button
@@ -312,6 +352,19 @@ export function CorrectionPage() {
       )}
 
       {proposalQuery.isLoading && <div className="placeholder">{tr("Loading…", "加载中…")}</div>}
+
+      {proposalQuery.isError && !noProposal && (
+        // Non-404 load failure (e.g. a malformed proposal file deliberately 500s):
+        // without this branch the page is just blank.
+        <div className="error-box" style={{ marginBottom: 14 }}>
+          {(proposalQuery.error as Error).message}
+          <div style={{ marginTop: 8 }}>
+            <button className="btn ghost" onClick={() => proposalQuery.refetch()}>
+              {tr("Retry", "重试")}
+            </button>
+          </div>
+        </div>
+      )}
 
       {noProposal && !jobId && (
         <div className="placeholder">
@@ -434,7 +487,13 @@ export function CorrectionPage() {
                       </div>
                     )}
                     {playing && (
-                      <div className="seg-progress">
+                      <div
+                        className="seg-progress seekable"
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          audio.seek((e.clientX - rect.left) / rect.width);
+                        }}
+                      >
                         <div
                           className="seg-progress-bar"
                           style={{ width: `${audio.progress * 100}%` }}

@@ -21,6 +21,19 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Mid-session 401 channel (token invalidated / server restarted with a new token):
+// AuthGate subscribes and drops back to the token form. /api/auth/check and /api/health
+// are exempt -- the probe itself 401s by design and must not re-trigger the reset loop.
+type UnauthorizedListener = () => void;
+let unauthorizedListener: UnauthorizedListener | null = null;
+
+export function subscribeUnauthorized(fn: UnauthorizedListener): () => void {
+  unauthorizedListener = fn;
+  return () => {
+    if (unauthorizedListener === fn) unauthorizedListener = null;
+  };
+}
+
 export async function api<T>(
   path: string,
   options: RequestInit = {},
@@ -33,6 +46,13 @@ export async function api<T>(
       ...(options.headers ?? {}),
     },
   });
+  if (
+    res.status === 401 &&
+    !path.startsWith("/api/auth/check") &&
+    !path.startsWith("/api/health")
+  ) {
+    unauthorizedListener?.();
+  }
   if (!res.ok) {
     let detail = res.statusText;
     let kind = "error";

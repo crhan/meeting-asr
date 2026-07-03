@@ -1,7 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getAuthCheck, getHealth } from "../api/client";
-import { getToken, setToken } from "../lib/auth";
+import { getAuthCheck, getHealth, subscribeUnauthorized } from "../api/client";
+import { clearToken, getToken, setToken } from "../lib/auth";
 import { tr } from "../lib/i18n";
 
 /**
@@ -29,11 +29,27 @@ export function AuthGate({ children }: { children: ReactNode }) {
   });
   const [value, setValue] = useState("");
 
+  // Mid-session 401 (token rotated / server restarted): drop the stale token and reset
+  // the probe so the token form comes back instead of every request failing silently.
+  useEffect(
+    () =>
+      subscribeUnauthorized(() => {
+        if (!authRequired) return;
+        clearToken();
+        void qc.resetQueries({ queryKey: ["auth-check"] });
+      }),
+    [authRequired, qc],
+  );
+
   if (health.isLoading) {
     return <div className="placeholder">…</div>;
   }
   if (!authRequired || probe.isSuccess) {
     return <>{children}</>;
+  }
+  if (probe.isPending && authRequired) {
+    // First probe still in flight: don't flash the token form at every load.
+    return <div className="placeholder">…</div>;
   }
 
   const submit = (e: React.FormEvent) => {
@@ -41,11 +57,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const next = value.trim();
     if (!next) return;
     setToken(next);
+    // Invalidation refetches everything -- including the auth probe -- so the earlier
+    // explicit probe.refetch() was a duplicate request.
     qc.invalidateQueries();
-    void probe.refetch();
   };
 
-  const rejected = probe.isError && getToken() !== null;
+  const rejected = probe.isError && !probe.isFetching && getToken() !== null;
 
   return (
     <div className="auth-gate">
@@ -64,7 +81,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
           placeholder={tr("Paste token", "粘贴 token")}
           autoFocus
         />
-        <button type="submit">{tr("Continue", "继续")}</button>
+        <button type="submit" disabled={probe.isFetching}>
+          {probe.isFetching ? tr("Checking…", "校验中…") : tr("Continue", "继续")}
+        </button>
         {rejected && (
           <p className="auth-error">{tr("Token rejected.", "Token 无效。")}</p>
         )}

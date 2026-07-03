@@ -736,7 +736,13 @@ function SampleRow(props: {
           </div>
         )}
         {playing && (
-          <div className="seg-progress">
+          <div
+            className="seg-progress seekable"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              audio.seek((e.clientX - rect.left) / rect.width);
+            }}
+          >
             <div className="seg-progress-bar" style={{ width: `${audio.progress * 100}%` }} />
           </div>
         )}

@@ -34,21 +34,33 @@ export function SettingsPage() {
 function ConfigTab() {
   const queryClient = useQueryClient();
   const [reveal, setReveal] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   // Revealing plaintext secrets is loopback-only on the server (it 403s otherwise), so
   // only offer the toggle on a loopback bind and never request reveal on a networked one.
   const health = useQuery({ queryKey: ["health"], queryFn: getHealth });
   const canReveal = health.data?.is_local ?? false;
   const showSecrets = reveal && canReveal;
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["config", showSecrets],
     queryFn: () => getConfig(showSecrets),
   });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["config"] });
   const setMut = useMutation({
     mutationFn: ({ key, value }: { key: string; value: string }) => setConfig(key, value),
-    onSuccess: invalidate,
+    onSuccess: (_res, variables) => {
+      // Secret rows render masked either way; without this a successful save is
+      // indistinguishable from a silently dropped one.
+      setToast(tr(`Saved ${variables.key}.`, `已保存 ${variables.key}。`));
+      invalidate();
+    },
   });
-  const unsetMut = useMutation({ mutationFn: (key: string) => unsetConfig(key), onSuccess: invalidate });
+  const unsetMut = useMutation({
+    mutationFn: (key: string) => unsetConfig(key),
+    onSuccess: (_res, key) => {
+      setToast(tr(`Cleared ${key}.`, `已清除 ${key}。`));
+      invalidate();
+    },
+  });
 
   const edit = async (k: ConfigKey) => {
     // A masked existing secret (reveal off, always so on non-loopback binds) comes back with
@@ -58,7 +70,12 @@ function ConfigTab() {
     const masked = k.is_set && k.value == null;
     const value = await promptDialog({
       title: tr("Set value", "设置"),
-      message: tr(`Set ${k.name}:`, `设置 ${k.name}：`),
+      message: masked
+        ? tr(
+            `Set ${k.name} (leave empty to keep the current value; use 🗑 to clear):`,
+            `设置 ${k.name}（留空保持现值不变；要清除请用 🗑）：`,
+          )
+        : tr(`Set ${k.name}:`, `设置 ${k.name}：`),
       defaultValue: k.value ?? "",
     });
     if (value == null) return;
@@ -67,6 +84,17 @@ function ConfigTab() {
   };
 
   if (isLoading) return <div className="placeholder">{tr("Loading…", "加载中…")}</div>;
+  if (isError)
+    return (
+      <div className="error-box">
+        {(error as Error).message}
+        <div style={{ marginTop: 8 }}>
+          <button className="btn ghost" onClick={() => refetch()}>
+            {tr("Retry", "重试")}
+          </button>
+        </div>
+      </div>
+    );
 
   return (
     <div>
@@ -98,7 +126,11 @@ function ConfigTab() {
                 {k.is_set ? (k.value ?? "••••••••") : <span className="subtle">{tr("unset", "未设置")}</span>}
               </td>
               <td>
-                <button className="btn ghost" onClick={() => edit(k)}>
+                <button
+                  className="btn ghost"
+                  disabled={setMut.isPending || unsetMut.isPending}
+                  onClick={() => edit(k)}
+                >
                   {tr("Edit", "编辑")}
                 </button>
                 {k.is_set && (
@@ -129,22 +161,40 @@ function ConfigTab() {
           ))}
         </tbody>
       </table>
+      {toast && (
+        <div className="toast" onClick={() => setToast(null)}>
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
 
 function DoctorTab() {
-  const { data, isLoading, refetch, isFetching } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["doctor"],
     queryFn: getDoctor,
   });
   if (isLoading) return <div className="placeholder">{tr("Running checks…", "检查中…")}</div>;
+  if (isError)
+    return (
+      <div className="error-box">
+        {(error as Error).message}
+        <div style={{ marginTop: 8 }}>
+          <button className="btn ghost" onClick={() => refetch()}>
+            {tr("Retry", "重试")}
+          </button>
+        </div>
+      </div>
+    );
   return (
     <div>
       <div className="row gap" style={{ marginBottom: 10 }}>
-        <span className={`badge ${data?.ok ? "state-completed" : "state-broken"}`}>
-          {data?.ok ? tr("All OK", "全部正常") : tr("Issues found", "发现问题")}
-        </span>
+        {data && (
+          <span className={`badge ${data.ok ? "state-completed" : "state-broken"}`}>
+            {data.ok ? tr("All OK", "全部正常") : tr("Issues found", "发现问题")}
+          </span>
+        )}
         <button className="btn ghost" onClick={() => refetch()} disabled={isFetching}>
           {tr("Re-run", "重跑")}
         </button>
@@ -157,7 +207,15 @@ function DoctorTab() {
               <div>
                 <strong>{c.name}</strong> <span className="subtle">{c.detail}</span>
               </div>
-              {c.fix_prompt && <div className="subtle" style={{ fontSize: 11.5, marginTop: 2 }}>{c.fix_prompt}</div>}
+              {c.fix_prompt && (
+                // fix_prompt is a multi-line paste-me-to-an-agent block; keep its lines.
+                <div
+                  className="subtle"
+                  style={{ fontSize: 11.5, marginTop: 2, whiteSpace: "pre-wrap" }}
+                >
+                  {c.fix_prompt}
+                </div>
+              )}
             </div>
           </div>
         ))}

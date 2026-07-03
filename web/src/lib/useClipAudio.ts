@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { reportGlobalError } from "./globalError";
+import { tr } from "./i18n";
 
 /** Single-clip audio controller: only one clip plays at a time, with progress. */
 export function useClipAudio() {
@@ -35,11 +37,25 @@ export function useClipAudio() {
       return;
     }
     audio.src = url;
-    // A failed load (404/401 clip) never fires onended; reset so the button isn't stuck on ⏸.
-    audio.play().catch(() => setPlayingKey((prev) => (prev === key ? null : prev)));
+    // A failed load (404/401 clip) never fires onended; reset so the button isn't stuck
+    // on ⏸, and say so -- a silent no-op reads as a dead button. AbortError is just a
+    // rapid clip switch, not a failure.
+    audio.play().catch((err: unknown) => {
+      if ((err as DOMException)?.name !== "AbortError") {
+        reportGlobalError(tr("Audio clip failed to load.", "音频片段加载失败。"));
+      }
+      setPlayingKey((prev) => (prev === key ? null : prev));
+    });
     setPlayingKey(key);
     setProgress(0);
   }
 
-  return { playingKey, progress, toggle };
+  /** Seek the playing clip to a 0..1 fraction (progress-bar click). */
+  function seek(fraction: number): void {
+    const audio = ref.current;
+    if (!audio || !audio.duration) return;
+    audio.currentTime = Math.min(Math.max(fraction, 0), 1) * audio.duration;
+  }
+
+  return { playingKey, progress, toggle, seek };
 }
