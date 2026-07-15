@@ -12,7 +12,10 @@ from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL, embed_voiceprint_s
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
+    list_all_voiceprint_samples,
+    list_voiceprint_embeddings,
     store_voiceprint_samples,
+    upsert_voiceprint_embedding,
 )
 
 
@@ -116,6 +119,113 @@ def test_embed_voiceprint_samples_uses_normalized_audio(
 
     assert summary.model == LOCAL_SPEECHBRAIN_MODEL
     assert embedded_paths == [normalized_path]
+
+
+def test_embed_voiceprint_samples_can_rebuild_only_selected_rows(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Focused embedding must not process or rewrite unrelated library samples."""
+    store_dir = _store(tmp_path)
+    db_path = get_voiceprint_db_path(store_dir)
+    source_path = tmp_path / "meeting.mp4"
+    second_clip = store_dir / "clips" / "project-2" / "speaker_0" / "clip_001.wav"
+    second_clip.parent.mkdir(parents=True, exist_ok=True)
+    second_clip.write_bytes(b"second")
+    store_voiceprint_samples(
+        [
+            StoredVoiceprintSample(
+                speaker_name="Bob",
+                project_id="project-2",
+                project_path=tmp_path / "project-2",
+                project_speaker_id=0,
+                source_path=source_path,
+                clip_path=second_clip,
+                clip_rel_path=str(second_clip.relative_to(store_dir)),
+                source_begin_time_ms=0,
+                source_end_time_ms=1000,
+                clip_begin_time_ms=0,
+                clip_end_time_ms=1000,
+                transcript_text="second",
+            )
+        ],
+        db_path,
+    )
+    rows = list_all_voiceprint_samples(db_path)
+    first, second = rows
+    upsert_voiceprint_embedding(
+        first.sample_id, LOCAL_SPEECHBRAIN_MODEL, [1.0, 0.0], db_path
+    )
+    upsert_voiceprint_embedding(
+        second.sample_id, LOCAL_SPEECHBRAIN_MODEL, [0.0, 1.0], db_path
+    )
+    normalized_ids: list[int] = []
+
+    def fake_normalize(sample, *, store_dir: Path | None) -> Path:
+        normalized_ids.append(sample.sample_id)
+        return sample.clip_path
+
+    monkeypatch.setattr(
+        voiceprint_embedding, "ensure_normalized_voiceprint_sample", fake_normalize
+    )
+    monkeypatch.setattr(
+        voiceprint_embedding,
+        "embed_audio_file",
+        lambda path, *, provider: [0.5, 0.5],
+    )
+
+    summary = embed_voiceprint_samples(
+        store_dir=store_dir,
+        provider=None,
+        model=None,
+        rebuild=True,
+        sample_ids={second.sample_id},
+    )
+    embeddings = {
+        row.sample_id: row.vector
+        for row in list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)
+    }
+
+    assert summary.embedded_count == 1
+    assert summary.skipped_count == 0
+    assert normalized_ids == [second.sample_id]
+    assert embeddings[first.sample_id] == [1.0, 0.0]
+    assert embeddings[second.sample_id] == [0.5, 0.5]
+
+
+def test_sample_upsert_invalidates_embedding_when_clip_bytes_change(
+    tmp_path: Path,
+) -> None:
+    """A deterministic capture path must never retain a vector for older audio bytes."""
+    store_dir = _store(tmp_path)
+    db_path = get_voiceprint_db_path(store_dir)
+    row = list_all_voiceprint_samples(db_path)[0]
+    upsert_voiceprint_embedding(
+        row.sample_id, LOCAL_SPEECHBRAIN_MODEL, [1.0, 0.0], db_path
+    )
+    row.clip_path.write_bytes(b"replacement audio")
+
+    store_voiceprint_samples(
+        [
+            StoredVoiceprintSample(
+                speaker_name=row.speaker_name,
+                person_id=row.speaker_id,
+                project_id=row.project_id,
+                project_path=tmp_path / row.project_id,
+                project_speaker_id=row.project_speaker_id,
+                source_path=tmp_path / "meeting.mp4",
+                clip_path=row.clip_path,
+                clip_rel_path=row.clip_rel_path,
+                source_begin_time_ms=row.source_begin_time_ms,
+                source_end_time_ms=row.source_end_time_ms,
+                clip_begin_time_ms=row.source_begin_time_ms,
+                clip_end_time_ms=row.source_end_time_ms,
+                transcript_text=row.transcript_text,
+            )
+        ],
+        db_path,
+    )
+
+    assert list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path) == []
 
 
 def _capture_speechbrain_fetch_logger() -> tuple[

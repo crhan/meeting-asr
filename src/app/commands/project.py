@@ -139,6 +139,11 @@ from app.speaker_match_status import (
     project_has_unresolved_match,
     voiceprint_match_status,
 )
+from app.speaker_learning import (
+    SpeakerLearningSummary,
+    learn_project_speakers,
+    speaker_learning_payload,
+)
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
 from app.speaker_resplit import (
     DEFAULT_CANDIDATE_FLOOR,
@@ -2690,6 +2695,142 @@ def speakers_rerun(
             f"reassigned {stabilization_summary.reassignment_count} sentence(s)."
         )
     typer.echo("Speaker outputs rebuilt from raw ASR.")
+
+
+@speakers_app.command("learn")
+def speakers_learn(
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    speaker_id: list[int] = typer.Option(
+        [],
+        "--speaker-id",
+        min=0,
+        help="Confirmed project speaker id to learn; repeat for multiple speakers.",
+    ),
+    speaker_ids: Optional[str] = typer.Option(
+        None, "--speaker-ids", help="Comma-separated project speaker ids."
+    ),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
+    threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
+    sample_count: int = typer.Option(3, "--sample-count", min=1, max=20),
+    match_sample_count: int = typer.Option(2, "--match-sample-count", min=1, max=20),
+    max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
+    padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
+    only_needed: bool = typer.Option(
+        True,
+        "--only-needed/--force-capture",
+        help="Skip people with at least --min-samples, or force another capture.",
+    ),
+    min_samples: int = typer.Option(10, "--min-samples", min=1),
+    apply_changes: bool = typer.Option(
+        False,
+        "--apply",
+        help="Execute the plan. Without this flag the command is a read-only dry-run.",
+    ),
+    embed: bool = typer.Option(False, "--embed", help="Embed only captured samples."),
+    rematch: bool = typer.Option(
+        False,
+        "--rematch",
+        help="Re-run speaker matching and verify the target identity.",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    progress: bool = typer.Option(
+        True,
+        "--progress/--no-progress",
+        help="Show interactive progress on a terminal.",
+    ),
+) -> None:
+    """Learn selected confirmed speakers and optionally close embed/rematch/apply."""
+    selected = _parse_learning_speaker_ids(speaker_id, speaker_ids)
+    if selected is None:
+        raise typer.BadParameter(
+            "At least one --speaker-id or --speaker-ids value is required."
+        )
+    if (embed or rematch) and not apply_changes:
+        raise typer.BadParameter("--embed and --rematch require --apply.")
+    resolved_project_dir = run_with_cli_errors(
+        lambda: resolve_project_ref(project_dir, projects_dir)
+    )
+    summary = run_with_progress(
+        lambda reporter: learn_project_speakers(
+            resolved_project_dir,
+            speaker_ids=selected,
+            store_dir=store_dir,
+            model=model,
+            threshold=threshold,
+            capture_sample_count=sample_count,
+            match_sample_count=match_sample_count,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+            min_samples=min_samples,
+            only_needed=only_needed,
+            apply_changes=apply_changes,
+            embed=embed,
+            rematch=rematch,
+            progress=reporter,
+        ),
+        description="Learning project speakers",
+        enabled=progress and not as_json,
+    )
+    if as_json:
+        emit_json(speaker_learning_payload(summary))
+    else:
+        _echo_speaker_learning_summary(summary)
+    if summary.needs_review:
+        raise typer.Exit(code=1)
+
+
+def _parse_learning_speaker_ids(
+    repeated: list[int], comma_separated: str | None
+) -> set[int] | None:
+    """Merge repeatable and comma-separated learn speaker ids."""
+    values = set(repeated)
+    if comma_separated is not None:
+        parts = [part.strip() for part in comma_separated.split(",")]
+        if not parts or any(not part for part in parts):
+            raise typer.BadParameter("--speaker-ids must be a comma-separated id list.")
+        for part in parts:
+            if not part.isdecimal():
+                raise typer.BadParameter(
+                    f"Invalid project speaker id in --speaker-ids: {part!r}."
+                )
+            values.add(int(part))
+    return values or None
+
+
+def _echo_speaker_learning_summary(summary: SpeakerLearningSummary) -> None:
+    """Print concise human-readable focused learning results."""
+    typer.echo(f"Speaker learning status: {summary.status}")
+    typer.echo(f"Project: {summary.project_id}")
+    typer.echo(f"Threshold: {summary.threshold:.3f}")
+    for item in summary.speakers:
+        before = "-" if item.before is None else _learning_match_text(item.before)
+        after = "-" if item.after is None else _learning_match_text(item.after)
+        applied = " applied" if item.applied else ""
+        typer.echo(
+            f"Speaker {item.speaker_id} {item.canonical_name}: status={item.status} "
+            f"capture={item.capture_decision} samples={len(item.captured_sample_ids)}"
+            f"{applied} reason={item.reason}"
+        )
+        if item.before is not None or item.after is not None:
+            typer.echo(f"  match: {before} -> {after}")
+
+
+def _learning_match_text(match: object) -> str:
+    """Format one compact learning match snapshot."""
+    name = getattr(match, "best_name", None) or "no-candidate"
+    score = getattr(match, "best_score", None)
+    score_text = "-" if score is None else f"{score:.3f}"
+    return f"{name} {score_text} ({getattr(match, 'status', 'unknown')})"
 
 
 @speakers_app.command("match")

@@ -677,6 +677,38 @@ def test_voiceprint_capture_filters_repeatable_and_csv_speaker_ids(
     assert not (store_dir / "voiceprints.sqlite").exists()
 
 
+def test_voiceprint_capture_rejects_saved_placeholder_name(
+    tmp_path: Path,
+) -> None:
+    """A UI placeholder is still unnamed and must never enter the global store."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    (project_dir / "speakers" / "speaker_map.json").write_text(
+        json.dumps({"0": "待确认发言人2", "1": "敬悦"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--speaker-id",
+            "0",
+            "--store-dir",
+            str(store_dir),
+            "--no-progress",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "not confirmed and named" in result.output
+    assert not (store_dir / "voiceprints.sqlite").exists()
+    assert not (store_dir / "clips").exists()
+
+
 def test_voiceprint_capture_only_needed_skips_well_sampled_person(
     monkeypatch,
     tmp_path: Path,
@@ -810,9 +842,7 @@ def test_voiceprint_capture_database_failure_restores_clip_targets(
     store_dir = tmp_path / "voiceprints"
     _write_named_speaker_inputs(project_dir)
     project_id = load_manifest(project_dir).project_id
-    existing_clip = (
-        store_dir / "clips" / project_id / "speaker_0" / "clip_001.wav"
-    )
+    existing_clip = store_dir / "clips" / project_id / "speaker_0" / "clip_001.wav"
     existing_clip.parent.mkdir(parents=True, exist_ok=True)
     existing_clip.write_bytes(b"previous valid sample")
     monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)

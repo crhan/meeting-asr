@@ -58,6 +58,7 @@ def embed_voiceprint_samples(
     provider: str | None,
     model: str | None,
     rebuild: bool,
+    sample_ids: set[int] | None = None,
     progress: CliProgressReporter | None = None,
 ) -> VoiceprintEmbedSummary:
     """
@@ -68,6 +69,8 @@ def embed_voiceprint_samples(
         provider: Optional local provider alias.
         model: Embedding model key for SQLite.
         rebuild: Rebuild existing embeddings when true.
+        sample_ids: Optional registry row ids to embed.  When provided, no
+            unrelated library samples are read or modified.
         progress: Optional progress reporter.
 
     Returns:
@@ -78,6 +81,13 @@ def embed_voiceprint_samples(
     )
     db_path = get_voiceprint_db_path(store_dir)
     samples = list_all_voiceprint_samples(db_path)
+    if sample_ids is not None:
+        available = {sample.sample_id for sample in samples}
+        missing = sample_ids.difference(available)
+        if missing:
+            joined = ", ".join(str(value) for value in sorted(missing))
+            raise LookupError(f"No voiceprint sample found for row id(s): {joined}")
+        samples = [sample for sample in samples if sample.sample_id in sample_ids]
     embedded_ids = (
         set() if rebuild else list_embedded_sample_ids(resolved_model, db_path)
     )

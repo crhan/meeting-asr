@@ -15,7 +15,6 @@ from pathlib import Path
 from app.core.progress import CliProgressReporter, emit_progress
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
-from app.postprocess import speaker_id_to_label
 from app.project_manager import (
     ensure_project_dirs,
     load_manifest,
@@ -23,6 +22,7 @@ from app.project_manager import (
     save_manifest,
 )
 from app.speaker_labeling import load_transcript_result
+from app.transcript_merge import is_placeholder_name
 from app.voiceprint_audio import trim_embedding_audio_silence
 from app.voiceprint_embedding import embed_audio_file
 from app.voiceprint_segment_selection import (
@@ -958,7 +958,7 @@ def _identified_speaker_identity(
     if identity is None:
         return None
     name = identity.name.strip()
-    if not name or name == speaker_id_to_label(speaker_id):
+    if is_placeholder_name(name):
         return None
     return identity
 
