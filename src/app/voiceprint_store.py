@@ -168,14 +168,18 @@ def store_voiceprint_samples(
 
 
 def store_voiceprint_samples_with_rows(
-    samples: list[StoredVoiceprintSample], db_path: Path | None = None
+    samples: list[StoredVoiceprintSample],
+    db_path: Path | None = None,
+    *,
+    require_all: bool = False,
 ) -> tuple[Path, list[VoiceprintSampleRow]]:
     """Store one atomic sample batch and return the rows that were indexed.
 
     A batch is committed only after every sample has been validated and written.
     Duplicate audio intentionally skipped by the registry is omitted from the
     returned rows, so callers can report the actual store mutation instead of
-    merely echoing their input plan.
+    merely echoing their input plan.  When ``require_all`` is true, a skipped
+    input aborts and rolls back the entire SQLite batch.
     """
     database_path = _resolve_db_path(db_path)
     database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -190,8 +194,14 @@ def store_voiceprint_samples_with_rows(
                 _sample_by_clip_path_sql(),
                 (str(sample.clip_path.expanduser().resolve()),),
             ).fetchone()
-            if row is not None:
-                stored.append(_sample_row(row))
+            if row is None:
+                if require_all:
+                    raise RuntimeError(
+                        "Voiceprint sample was not indexed because the same audio "
+                        f"already exists: {sample.clip_path}"
+                    )
+                continue
+            stored.append(_sample_row(row))
     return database_path, stored
 
 
@@ -720,13 +730,20 @@ def _upsert_sample(
     now = _now_iso()
     clip_sha256 = _sha256_file(sample.clip_path)
     speaker_id = _speaker_id_for_sample(connection, sample, now)
-    if _has_duplicate_clip_hash(connection, sample, speaker_id, clip_sha256):
-        return
     resolved_clip_path = str(sample.clip_path.expanduser().resolve())
     existing = connection.execute(
         "SELECT id, clip_sha256 FROM voiceprint_samples WHERE clip_path = ?",
         (resolved_clip_path,),
     ).fetchone()
+    # Deterministic capture paths are authoritative for their existing row.  If
+    # the bytes at that path changed, always refresh the row even when the new
+    # hash is also present under another path for the same person.  Checking
+    # duplicate hashes first would leave the file, metadata, and embedding out
+    # of sync with SQLite.
+    if existing is None and _has_duplicate_clip_hash(
+        connection, sample, speaker_id, clip_sha256
+    ):
+        return
     connection.execute(
         UPSERT_SAMPLE_SQL,
         _sample_values(

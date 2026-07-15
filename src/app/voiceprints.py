@@ -387,27 +387,29 @@ def _persist_voiceprint_capture(
         db_path: SQLite database path.
         progress: Optional progress reporter.
     """
-    captured: list[VoiceprintSpeaker] = []
-    rows_by_speaker: dict[int, list[VoiceprintSampleRow]] = {}
-    failures: dict[int, str] = {}
-    for speaker in speakers:
-        try:
-            persisted_speaker, rows = _persist_voiceprint_speaker(
-                project_root,
-                manifest.project_id,
-                source,
-                speaker,
-                db_path,
-                progress,
-                target_sample_count=target_sample_count,
-            )
-        except Exception as exc:
-            if not continue_on_error:
-                raise
-            failures[speaker.speaker_id] = str(exc)
-            continue
-        captured.append(persisted_speaker)
-        rows_by_speaker[speaker.speaker_id] = rows
+    if continue_on_error:
+        persisted = _persist_voiceprint_speakers_individually(
+            project_root,
+            manifest.project_id,
+            source,
+            speakers,
+            db_path,
+            progress,
+            target_sample_count=target_sample_count,
+        )
+    else:
+        persisted = _persist_voiceprint_speakers_atomically(
+            project_root,
+            manifest.project_id,
+            source,
+            speakers,
+            db_path,
+            progress,
+            target_sample_count=target_sample_count,
+        )
+    captured = persisted.speakers
+    rows_by_speaker = persisted.rows_by_speaker
+    failures = persisted.failures
     sample_count = sum(len(rows) for rows in rows_by_speaker.values())
     if not captured and not failures:
         raise RuntimeError("No voiceprint clips passed audio quality checks.")
@@ -422,6 +424,96 @@ def _persist_voiceprint_capture(
     save_manifest(project_root, manifest)
     emit_progress(progress, "Voiceprint capture complete")
     return _PersistedCapture(captured, rows_by_speaker, failures)
+
+
+def _persist_voiceprint_speakers_individually(
+    project_root: Path,
+    project_id: str,
+    source: Path,
+    speakers: list[VoiceprintSpeaker],
+    db_path: Path,
+    progress: CliProgressReporter | None,
+    *,
+    target_sample_count: int,
+) -> _PersistedCapture:
+    """Persist independent speaker batches and retain per-speaker failures."""
+    captured: list[VoiceprintSpeaker] = []
+    rows_by_speaker: dict[int, list[VoiceprintSampleRow]] = {}
+    failures: dict[int, str] = {}
+    for speaker in speakers:
+        try:
+            persisted_speaker, rows = _persist_voiceprint_speaker(
+                project_root,
+                project_id,
+                source,
+                speaker,
+                db_path,
+                progress,
+                target_sample_count=target_sample_count,
+            )
+        except Exception as exc:
+            failures[speaker.speaker_id] = str(exc)
+            continue
+        captured.append(persisted_speaker)
+        rows_by_speaker[speaker.speaker_id] = rows
+    return _PersistedCapture(captured, rows_by_speaker, failures)
+
+
+def _persist_voiceprint_speakers_atomically(
+    project_root: Path,
+    project_id: str,
+    source: Path,
+    speakers: list[VoiceprintSpeaker],
+    db_path: Path,
+    progress: CliProgressReporter | None,
+    *,
+    target_sample_count: int,
+) -> _PersistedCapture:
+    """Persist a strict multi-speaker review selection as one atomic batch."""
+    with tempfile.TemporaryDirectory(prefix="meeting-asr-voiceprint-review-") as raw:
+        backup_root = Path(raw)
+        backups: list[_CaptureFileBackup] = []
+        selected: list[VoiceprintSpeaker] = []
+        try:
+            for speaker in speakers:
+                backups.extend(
+                    _backup_capture_files(
+                        speaker, backup_root / f"speaker-{speaker.speaker_id}"
+                    )
+                )
+            for speaker in speakers:
+                written = _write_voiceprint_clips(source, [speaker], progress)
+                selected_for_speaker = _select_central_voiceprint_clips(
+                    written, target_sample_count
+                )
+                if not selected_for_speaker:
+                    raise RuntimeError(
+                        "No voiceprint clips passed audio quality checks for "
+                        f"speaker {speaker.speaker_id}."
+                    )
+                selected.extend(selected_for_speaker)
+            emit_progress(progress, "Indexing reviewed voiceprint samples")
+            samples = _stored_samples(project_root, project_id, source, selected)
+            _database_path, rows = store_voiceprint_samples_with_rows(
+                samples, db_path, require_all=True
+            )
+        except Exception:
+            _restore_capture_files(backups, keep=set())
+            raise
+
+        rows_by_speaker: dict[int, list[VoiceprintSampleRow]] = defaultdict(list)
+        for row in rows:
+            rows_by_speaker[row.project_speaker_id].append(row)
+        _restore_capture_files(
+            backups,
+            keep={
+                clip.path.expanduser().resolve()
+                for speaker in speakers
+                for clip in speaker.clips
+            },
+            strict=False,
+        )
+        return _PersistedCapture(selected, dict(rows_by_speaker), {})
 
 
 def _persist_voiceprint_speaker(
@@ -491,6 +583,7 @@ def _backup_capture_files(
         backup_path = backup_root / f"{index:04d}-{path.name}"
         existed = path.is_file()
         if existed:
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, backup_path)
         backups.append(_CaptureFileBackup(path, backup_path, existed))
     return backups

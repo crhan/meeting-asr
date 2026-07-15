@@ -6,6 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
 from textual.widgets import Static
 from typer.testing import CliRunner
 
@@ -179,6 +180,69 @@ def test_persist_voiceprint_capture_selection_writes_only_accepted_samples(
     assert sources == [audio_path.resolve()]
     assert manifest.status == "voiceprinted"
     assert manifest.speakers["voiceprints"]["sample_count"] == 1
+
+
+def test_review_multi_speaker_failure_rolls_back_entire_selection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Strict review persistence must not retain an earlier speaker on later failure."""
+    project_dir = _sample_project(tmp_path)
+    sentences_path = project_dir / "asr" / "sentences.json"
+    sentences = [
+        _sentence(1, "Alice 第一段完整的声纹采集表达。", 1000, 5000),
+        _sentence(2, "Bob 第一段完整的声纹采集表达。", 6000, 10_000),
+        _sentence(3, "Alice 第二段完整的声纹采集表达。", 11_000, 15_000),
+        _sentence(4, "Bob 第二段完整的声纹采集表达。", 16_000, 20_000),
+    ]
+    sentences[1]["speaker_id"] = 1
+    sentences[3]["speaker_id"] = 1
+    payload = {
+        "full_text": "".join(str(sentence["text"]) for sentence in sentences),
+        "detected_speakers": [0, 1],
+        "sentences": sentences,
+    }
+    sentences_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    (project_dir / "speakers" / "speaker_map.json").write_text(
+        '{"0": "Alice", "1": "Bob"}\n', encoding="utf-8"
+    )
+    store_dir = tmp_path / "voiceprints"
+    planned = plan_voiceprint_capture(
+        project_dir,
+        sample_count=1,
+        max_seconds=10.0,
+        padding_seconds=0.0,
+        store_dir=store_dir,
+    )
+    assert [speaker.speaker_id for speaker in planned.speakers] == [0, 1]
+    first_clip = planned.speakers[0].clips[0].path
+    first_clip.parent.mkdir(parents=True, exist_ok=True)
+    first_clip.write_bytes(b"previous valid sample")
+    original_manifest = load_manifest(project_dir)
+
+    def fail_second_speaker(source, output, start_seconds, duration_seconds) -> Path:
+        if "speaker_1" in str(output):
+            raise RuntimeError("speaker 1 slicing failed")
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_bytes(b"new speaker 0 sample")
+        return Path(output)
+
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", fail_second_speaker)
+
+    with pytest.raises(RuntimeError, match="speaker 1 slicing failed"):
+        persist_voiceprint_capture_selection(
+            project_dir,
+            planned=planned,
+            selected_clip_rel_paths={
+                clip.rel_path for speaker in planned.speakers for clip in speaker.clips
+            },
+        )
+
+    assert first_clip.read_bytes() == b"previous valid sample"
+    assert not planned.speakers[1].clips[0].path.exists()
+    assert list_all_voiceprint_samples(get_voiceprint_db_path(store_dir)) == []
+    current_manifest = load_manifest(project_dir)
+    assert current_manifest.status == original_manifest.status
+    assert "voiceprints" not in current_manifest.speakers
 
 
 def test_plan_voiceprint_capture_resolves_existing_person_by_name(
