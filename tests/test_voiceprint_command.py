@@ -12,7 +12,11 @@ from typer.testing import CliRunner
 from app.cli import app
 from app.project_manager import create_project, load_manifest
 from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
-from app.voiceprint_people import get_voiceprint_person, merge_voiceprint_people
+from app.voiceprint_people import (
+    create_voiceprint_person,
+    get_voiceprint_person,
+    merge_voiceprint_people,
+)
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
@@ -637,6 +641,212 @@ def test_voiceprint_capture_dry_run_does_not_write_store(
     assert "meeting-asr voiceprint embed" not in result.output
     assert not (store_dir / "voiceprints.sqlite").exists()
     assert not (store_dir / "clips").exists()
+
+
+def test_voiceprint_capture_filters_repeatable_and_csv_speaker_ids(
+    tmp_path: Path,
+) -> None:
+    """Explicit speaker ids should be merged, deduplicated, and machine-readable."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+
+    result = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--speaker-id",
+            "0",
+            "--speaker-ids",
+            "0,1",
+            "--store-dir",
+            str(store_dir),
+            "--dry-run",
+            "--json",
+            "--no-progress",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "planned"
+    assert [item["speaker_id"] for item in payload["selected_speakers"]] == [0, 1]
+    assert {item["decision"] for item in payload["selected_speakers"]} == {"capture"}
+    assert not (store_dir / "voiceprints.sqlite").exists()
+
+
+def test_voiceprint_capture_only_needed_skips_well_sampled_person(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Only-needed must not create any new sample for a well-sampled attendee."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    _write_named_speaker_inputs(project_dir)
+    existing = create_voiceprint_person("敬悦", db_path)
+    seed_source = tmp_path / "seed.wav"
+    seed_source.write_bytes(b"seed")
+    samples: list[StoredVoiceprintSample] = []
+    for index in range(66):
+        clip = store_dir / "clips" / "seed" / f"sample_{index:03d}.wav"
+        clip.parent.mkdir(parents=True, exist_ok=True)
+        clip.write_bytes(f"sample-{index}".encode())
+        samples.append(
+            StoredVoiceprintSample(
+                speaker_name=existing.name,
+                person_id=existing.speaker_id,
+                project_id=f"seed-{index}",
+                project_path=tmp_path / f"seed-{index}",
+                project_speaker_id=1,
+                source_path=seed_source,
+                clip_path=clip,
+                clip_rel_path=str(clip.relative_to(store_dir)),
+                source_begin_time_ms=index * 1000,
+                source_end_time_ms=index * 1000 + 500,
+                clip_begin_time_ms=0,
+                clip_end_time_ms=500,
+                transcript_text=f"seed {index}",
+            )
+        )
+    store_voiceprint_samples(samples, db_path)
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+
+    result = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--only-needed",
+            "--min-samples",
+            "10",
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+            "--json",
+            "--no-progress",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    decisions = {item["speaker_id"]: item for item in payload["selected_speakers"]}
+    assert decisions[0]["decision"] == "captured"
+    assert decisions[0]["reason"] == "no_samples"
+    assert decisions[0]["existing_sample_count"] == 0
+    assert len(decisions[0]["samples"]) == 1
+    assert re.fullmatch(r"vps-[0-9a-f]{16}", decisions[0]["samples"][0]["public_id"])
+    assert decisions[0]["samples"][0]["embedding_generated"] is False
+    assert decisions[1]["decision"] == "skip"
+    assert decisions[1]["reason"] == "enough_samples"
+    assert decisions[1]["existing_sample_count"] == 66
+    refreshed = get_voiceprint_person(existing.public_id, db_path)
+    assert refreshed is not None
+    assert refreshed.sample_count == 66
+    project_id = load_manifest(project_dir).project_id
+    assert not (store_dir / "clips" / project_id / "speaker_1").exists()
+
+
+def test_voiceprint_capture_failure_rolls_back_one_speaker_files_and_rows(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A slicing failure must leave neither sample rows nor partial clip files."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    calls = 0
+
+    def flaky_extract(input_path, output_path, *, start_seconds, duration_seconds):
+        nonlocal calls
+        calls += 1
+        _fake_extract_audio_clip(
+            input_path,
+            output_path,
+            start_seconds=start_seconds,
+            duration_seconds=duration_seconds,
+        )
+        if calls == 2:
+            raise RuntimeError("simulated slicing failure")
+        return output_path
+
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", flaky_extract)
+    result = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--speaker-id",
+            "0",
+            "--sample-count",
+            "2",
+            "--store-dir",
+            str(store_dir),
+            "--json",
+            "--no-progress",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "failed"
+    assert payload["selected_speakers"][0]["decision"] == "failed"
+    assert "simulated slicing failure" in payload["selected_speakers"][0]["error"]
+    assert not (store_dir / "voiceprints.sqlite").exists()
+    assert list(store_dir.rglob("*.wav")) == []
+
+
+def test_voiceprint_delete_sample_accepts_stable_public_id(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Stable vps ids should delete exact samples without a mutable list index."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+    capture = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--speaker-id",
+            "0",
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+            "--json",
+            "--no-progress",
+        ],
+    )
+    payload = json.loads(capture.output)
+    sample = payload["selected_speakers"][0]["samples"][0]
+    clip_path = Path(sample["clip_path"])
+
+    deleted = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "delete-sample",
+            "--sample-id",
+            sample["public_id"],
+            "--store-dir",
+            str(store_dir),
+            "--keep-clip",
+        ],
+    )
+
+    assert deleted.exit_code == 0, deleted.output
+    assert "clip file: kept" in deleted.output
+    assert clip_path.exists()
+    assert list_voiceprint_samples("欧丁", get_voiceprint_db_path(store_dir)) == []
 
 
 def test_voiceprint_path_prints_xdg_paths(tmp_path: Path) -> None:

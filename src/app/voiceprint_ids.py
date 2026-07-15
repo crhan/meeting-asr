@@ -64,6 +64,11 @@ def valid_person_public_id(public_id: str) -> bool:
     return _valid_public_id(public_id, VOICEPRINT_PERSON_ID_PREFIX)
 
 
+def valid_sample_public_id(public_id: str) -> bool:
+    """Return whether a string is a stable voiceprint sample id."""
+    return _valid_public_id(public_id, VOICEPRINT_SAMPLE_ID_PREFIX)
+
+
 def _ensure_public_id_column(connection: sqlite3.Connection, table: str) -> None:
     """Add the public_id column and index when upgrading an old database."""
     columns = {

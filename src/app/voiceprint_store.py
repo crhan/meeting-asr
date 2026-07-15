@@ -14,6 +14,7 @@ from app.voiceprint_ids import (
     new_sample_public_id,
     new_speaker_public_id,
     valid_person_public_id,
+    valid_sample_public_id,
 )
 from app.voiceprint_models import (
     DeletedVoiceprintSample,
@@ -162,14 +163,36 @@ def store_voiceprint_samples(
     Returns:
         SQLite database path.
     """
+    database_path, _rows = store_voiceprint_samples_with_rows(samples, db_path)
+    return database_path
+
+
+def store_voiceprint_samples_with_rows(
+    samples: list[StoredVoiceprintSample], db_path: Path | None = None
+) -> tuple[Path, list[VoiceprintSampleRow]]:
+    """Store one atomic sample batch and return the rows that were indexed.
+
+    A batch is committed only after every sample has been validated and written.
+    Duplicate audio intentionally skipped by the registry is omitted from the
+    returned rows, so callers can report the actual store mutation instead of
+    merely echoing their input plan.
+    """
     database_path = _resolve_db_path(db_path)
     database_path.parent.mkdir(parents=True, exist_ok=True)
+    stored: list[VoiceprintSampleRow] = []
     with sqlite3.connect(database_path) as connection:
         _configure_connection(connection)
         _ensure_schema(connection)
         for sample in samples:
             _upsert_sample(connection, sample)
-    return database_path
+        for sample in samples:
+            row = connection.execute(
+                _sample_by_clip_path_sql(),
+                (str(sample.clip_path.expanduser().resolve()),),
+            ).fetchone()
+            if row is not None:
+                stored.append(_sample_row(row))
+    return database_path, stored
 
 
 def list_voiceprint_speakers(db_path: Path | None = None) -> list[VoiceprintSpeakerRow]:
@@ -340,6 +363,20 @@ def list_embedded_sample_ids(model: str, db_path: Path | None = None) -> set[int
     return {int(row["sample_id"]) for row in rows}
 
 
+def list_any_embedded_sample_ids(db_path: Path | None = None) -> set[int]:
+    """Return sample row ids that have at least one stored embedding."""
+    database_path = _resolve_db_path(db_path)
+    if not database_path.exists():
+        return set()
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        rows = connection.execute(
+            "SELECT DISTINCT sample_id FROM voiceprint_embeddings"
+        ).fetchall()
+    return {int(row["sample_id"]) for row in rows}
+
+
 def upsert_voiceprint_embedding(
     sample_id: int, model: str, vector: list[float], db_path: Path | None = None
 ) -> None:
@@ -470,6 +507,35 @@ def delete_voiceprint_sample(
         _ensure_schema(connection)
         connection.execute(
             "DELETE FROM voiceprint_samples WHERE id = ?", (row.sample_id,)
+        )
+        _delete_empty_speaker(connection, row.speaker_id)
+    return _deleted_sample(row, delete_clip, database_path.parent)
+
+
+def delete_voiceprint_sample_by_public_id(
+    sample_public_id: str,
+    *,
+    db_path: Path | None = None,
+    delete_clip: bool = True,
+) -> DeletedVoiceprintSample:
+    """Delete one sample by its stable ``vps-*`` public id."""
+    normalized = sample_public_id.strip().lower()
+    if not valid_sample_public_id(normalized):
+        raise ValueError(
+            "Voiceprint sample id must use the stable vps-xxxxxxxxxxxxxxxx form."
+        )
+    database_path = _resolve_db_path(db_path)
+    if not database_path.exists():
+        raise LookupError(f"No voiceprint sample found for id: {normalized}")
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        raw = connection.execute(_sample_by_public_id_sql(), (normalized,)).fetchone()
+        if raw is None:
+            raise LookupError(f"No voiceprint sample found for id: {normalized}")
+        row = _sample_row(raw)
+        connection.execute(
+            "DELETE FROM voiceprint_samples WHERE public_id = ?", (normalized,)
         )
         _delete_empty_speaker(connection, row.speaker_id)
     return _deleted_sample(row, delete_clip, database_path.parent)
@@ -656,12 +722,25 @@ def _upsert_sample(
     speaker_id = _speaker_id_for_sample(connection, sample, now)
     if _has_duplicate_clip_hash(connection, sample, speaker_id, clip_sha256):
         return
+    resolved_clip_path = str(sample.clip_path.expanduser().resolve())
+    existing = connection.execute(
+        "SELECT id, clip_sha256 FROM voiceprint_samples WHERE clip_path = ?",
+        (resolved_clip_path,),
+    ).fetchone()
     connection.execute(
         UPSERT_SAMPLE_SQL,
         _sample_values(
             sample, speaker_id, new_sample_public_id(connection), clip_sha256, now
         ),
     )
+    if existing is not None and str(existing["clip_sha256"]) != clip_sha256:
+        # Deterministic capture paths are intentionally reused.  When their audio
+        # changes, the old vector describes different bytes and must not survive
+        # the upsert or a focused embed would incorrectly skip it.
+        connection.execute(
+            "DELETE FROM voiceprint_embeddings WHERE sample_id = ?",
+            (int(existing["id"]),),
+        )
 
 
 def _has_duplicate_clip_hash(
@@ -1028,6 +1107,21 @@ def _sample_by_public_id_sql() -> str:
         FROM voiceprint_samples AS samples
         JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
         WHERE samples.public_id = ?
+    """
+
+
+def _sample_by_clip_path_sql() -> str:
+    """Return SQL for one sample by its canonical absolute clip path."""
+    return """
+        SELECT samples.id, samples.public_id,
+               speakers.id AS speaker_id, speakers.public_id AS speaker_public_id, speakers.name,
+               samples.project_id, samples.project_speaker_id,
+               samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
+               samples.source_begin_time_ms, samples.source_end_time_ms,
+               samples.transcript_text, samples.sample_status
+        FROM voiceprint_samples AS samples
+        JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
+        WHERE samples.clip_path = ?
     """
 
 

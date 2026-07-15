@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 import struct
+import tempfile
 import wave
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from app.core.progress import CliProgressReporter, emit_progress
@@ -31,9 +33,11 @@ from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_clip_dir,
     get_voiceprint_db_path,
-    store_voiceprint_samples,
+    list_any_embedded_sample_ids,
+    store_voiceprint_samples_with_rows,
 )
 from app.voiceprint_people import get_voiceprint_person
+from app.voiceprint_models import VoiceprintSampleRow
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +75,31 @@ class VoiceprintSpeaker:
 
 
 @dataclass(frozen=True, slots=True)
+class VoiceprintCapturedSample:
+    """One sample actually present in the registry after capture."""
+
+    sample_id: int
+    public_id: str
+    clip_path: Path
+    embedded: bool
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceprintCaptureDecision:
+    """Selection and execution result for one project speaker."""
+
+    speaker_id: int
+    name: str
+    person_id: int | None
+    person_public_id: str | None
+    existing_sample_count: int
+    decision: str
+    reason: str
+    samples: list[VoiceprintCapturedSample] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceprintCaptureSummary:
     """Result of capturing cross-project voiceprint references."""
 
@@ -80,11 +109,20 @@ class VoiceprintCaptureSummary:
     speakers: list[VoiceprintSpeaker]
     dry_run: bool
     target_sample_count: int = 0
+    project_id: str = ""
+    decisions: list[VoiceprintCaptureDecision] = field(default_factory=list)
+    only_needed: bool = False
+    min_samples: int = 10
 
     @property
     def sample_count(self) -> int:
         """Return total selected sample count."""
         return sum(len(speaker.clips) for speaker in self.speakers)
+
+    @property
+    def failed_count(self) -> int:
+        """Return the number of speakers whose capture failed."""
+        return sum(1 for item in self.decisions if item.decision == "failed")
 
 
 def capture_voiceprints(
@@ -95,6 +133,9 @@ def capture_voiceprints(
     padding_seconds: float,
     store_dir: Path | None = None,
     dry_run: bool = False,
+    speaker_ids: set[int] | None = None,
+    only_needed: bool = False,
+    min_samples: int = 10,
     progress: CliProgressReporter | None = None,
 ) -> VoiceprintCaptureSummary:
     """
@@ -107,12 +148,17 @@ def capture_voiceprints(
         padding_seconds: Extra context around each sentence.
         store_dir: Optional XDG-style voiceprint store directory.
         dry_run: Only plan clips when true.
+        speaker_ids: Optional project speaker ids to capture.
+        only_needed: Skip people who already have enough samples.
+        min_samples: Existing-sample threshold used by ``only_needed``.
         progress: Optional progress reporter.
 
     Returns:
         Capture summary.
     """
-    _validate_capture_options(sample_count, max_seconds, padding_seconds)
+    _validate_capture_options(
+        sample_count, max_seconds, padding_seconds, min_samples=min_samples
+    )
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(paths.root)
     source = resolve_project_audio_path(paths.root, manifest)
@@ -120,8 +166,10 @@ def capture_voiceprints(
     resolved_store_dir = _resolve_store_dir(store_dir)
     clip_dir = get_voiceprint_clip_dir(resolved_store_dir)
     db_path = get_voiceprint_db_path(resolved_store_dir)
-    identities = _load_required_speaker_identities(paths.speakers_dir, db_path)
-    speakers = _build_voiceprint_speakers(
+    identities = _load_required_speaker_identities(
+        paths.speakers_dir, db_path, speaker_ids=speaker_ids
+    )
+    speakers, decisions = _plan_voiceprint_speakers(
         clip_dir,
         manifest.project_id,
         result,
@@ -129,8 +177,11 @@ def capture_voiceprints(
         sample_count,
         max_seconds,
         padding_seconds,
+        speaker_ids=speaker_ids,
+        only_needed=only_needed,
+        min_samples=min_samples,
     )
-    if not speakers:
+    if not speakers and not decisions:
         # ValueError: this is a user-input condition ("name someone first"), not a server
         # fault -- the web boundary maps it to 400 with the message intact even on
         # non-loopback binds (500 detail gets scrubbed there).
@@ -145,8 +196,8 @@ def capture_voiceprints(
             total=_clip_count(speakers),
             completed=_clip_count(speakers),
         )
-    if not dry_run:
-        speakers = _persist_voiceprint_capture(
+    if not dry_run and speakers:
+        persisted = _persist_voiceprint_capture(
             paths.root,
             manifest,
             source,
@@ -155,9 +206,21 @@ def capture_voiceprints(
             db_path,
             progress,
             target_sample_count=sample_count,
+            continue_on_error=True,
         )
+        speakers = persisted.speakers
+        decisions = _apply_capture_results(decisions, persisted, db_path)
     return VoiceprintCaptureSummary(
-        resolved_store_dir, db_path, clip_dir, speakers, dry_run, sample_count
+        resolved_store_dir,
+        db_path,
+        clip_dir,
+        speakers,
+        dry_run,
+        sample_count,
+        manifest.project_id,
+        decisions,
+        only_needed,
+        min_samples,
     )
 
 
@@ -168,6 +231,9 @@ def plan_voiceprint_capture(
     max_seconds: float,
     padding_seconds: float,
     store_dir: Path | None = None,
+    speaker_ids: set[int] | None = None,
+    only_needed: bool = False,
+    min_samples: int = 10,
 ) -> VoiceprintCaptureSummary:
     """
     Plan voiceprint clips without writing WAV files or SQLite rows.
@@ -178,6 +244,9 @@ def plan_voiceprint_capture(
         max_seconds: Maximum seconds per output clip.
         padding_seconds: Extra context around each sentence.
         store_dir: Optional XDG-style voiceprint store directory.
+        speaker_ids: Optional project speaker ids to capture.
+        only_needed: Skip people who already have enough samples.
+        min_samples: Existing-sample threshold used by ``only_needed``.
 
     Returns:
         Dry-run capture summary.
@@ -189,6 +258,9 @@ def plan_voiceprint_capture(
         padding_seconds=padding_seconds,
         store_dir=store_dir,
         dry_run=True,
+        speaker_ids=speaker_ids,
+        only_needed=only_needed,
+        min_samples=min_samples,
         progress=None,
     )
 
@@ -220,7 +292,7 @@ def persist_voiceprint_capture_selection(
     speakers = _filter_voiceprint_speakers(planned.speakers, selected_clip_rel_paths)
     if not speakers:
         raise ValueError("No selected voiceprint clips matched the capture plan.")
-    speakers = _persist_voiceprint_capture(
+    persisted = _persist_voiceprint_capture(
         paths.root,
         manifest,
         source,
@@ -230,6 +302,12 @@ def persist_voiceprint_capture_selection(
         progress,
         target_sample_count=planned.target_sample_count,
     )
+    speakers = persisted.speakers
+    decisions = (
+        _apply_capture_results(planned.decisions, persisted, planned.db_path)
+        if planned.decisions
+        else []
+    )
     return VoiceprintCaptureSummary(
         planned.store_dir,
         planned.db_path,
@@ -237,6 +315,10 @@ def persist_voiceprint_capture_selection(
         speakers,
         False,
         planned.target_sample_count,
+        manifest.project_id,
+        decisions,
+        planned.only_needed,
+        planned.min_samples,
     )
 
 
@@ -263,6 +345,24 @@ def _filter_voiceprint_speakers(
     return filtered
 
 
+@dataclass(frozen=True, slots=True)
+class _PersistedCapture:
+    """Internal per-speaker persistence result."""
+
+    speakers: list[VoiceprintSpeaker]
+    rows_by_speaker: dict[int, list[VoiceprintSampleRow]]
+    failures: dict[int, str]
+
+
+@dataclass(frozen=True, slots=True)
+class _CaptureFileBackup:
+    """Rollback information for one deterministic capture output."""
+
+    path: Path
+    backup_path: Path
+    existed: bool
+
+
 def _persist_voiceprint_capture(
     project_root: Path,
     manifest,
@@ -273,7 +373,8 @@ def _persist_voiceprint_capture(
     progress: CliProgressReporter | None,
     *,
     target_sample_count: int,
-) -> list[VoiceprintSpeaker]:
+    continue_on_error: bool = False,
+) -> _PersistedCapture:
     """
     Write clips, store SQLite rows, and update the project manifest pointer.
 
@@ -286,26 +387,192 @@ def _persist_voiceprint_capture(
         db_path: SQLite database path.
         progress: Optional progress reporter.
     """
-    speakers = _write_voiceprint_clips(source, speakers, progress)
-    speakers = _select_central_voiceprint_clips(speakers, target_sample_count)
-    if not speakers:
+    captured: list[VoiceprintSpeaker] = []
+    rows_by_speaker: dict[int, list[VoiceprintSampleRow]] = {}
+    failures: dict[int, str] = {}
+    for speaker in speakers:
+        try:
+            persisted_speaker, rows = _persist_voiceprint_speaker(
+                project_root,
+                manifest.project_id,
+                source,
+                speaker,
+                db_path,
+                progress,
+                target_sample_count=target_sample_count,
+            )
+        except Exception as exc:
+            if not continue_on_error:
+                raise
+            failures[speaker.speaker_id] = str(exc)
+            continue
+        captured.append(persisted_speaker)
+        rows_by_speaker[speaker.speaker_id] = rows
+    sample_count = sum(len(rows) for rows in rows_by_speaker.values())
+    if not captured and not failures:
         raise RuntimeError("No voiceprint clips passed audio quality checks.")
-    emit_progress(progress, "Indexing voiceprint samples")
-    samples = _stored_samples(project_root, manifest.project_id, source, speakers)
-    store_voiceprint_samples(samples, db_path)
+    if not captured:
+        return _PersistedCapture([], {}, failures)
     manifest.speakers["voiceprints"] = {
         "store_dir": str(store_dir),
         "db_path": str(db_path),
-        "sample_count": len(samples),
+        "sample_count": sample_count,
     }
     manifest.status = "voiceprinted"
     save_manifest(project_root, manifest)
     emit_progress(progress, "Voiceprint capture complete")
-    return speakers
+    return _PersistedCapture(captured, rows_by_speaker, failures)
+
+
+def _persist_voiceprint_speaker(
+    project_root: Path,
+    project_id: str,
+    source: Path,
+    speaker: VoiceprintSpeaker,
+    db_path: Path,
+    progress: CliProgressReporter | None,
+    *,
+    target_sample_count: int,
+) -> tuple[VoiceprintSpeaker, list[VoiceprintSampleRow]]:
+    """Capture and index one speaker as an atomic unit.
+
+    SQLite already rolls a failed batch back.  This wrapper also snapshots every
+    deterministic clip target so extraction or database failures cannot leave
+    orphaned files or overwrite a previously valid sample.
+    """
+    with tempfile.TemporaryDirectory(prefix="meeting-asr-voiceprint-capture-") as raw:
+        backup_root = Path(raw)
+        backups = _backup_capture_files(speaker, backup_root)
+        try:
+            written = _write_voiceprint_clips(source, [speaker], progress)
+            selected = _select_central_voiceprint_clips(written, target_sample_count)
+            if not selected:
+                raise RuntimeError(
+                    f"No voiceprint clips passed audio quality checks for speaker {speaker.speaker_id}."
+                )
+            emit_progress(progress, f"Indexing {speaker.name} voiceprint samples")
+            samples = _stored_samples(project_root, project_id, source, selected)
+            _database_path, rows = store_voiceprint_samples_with_rows(samples, db_path)
+            selected_speaker = selected[0]
+            if not rows:
+                raise RuntimeError(
+                    f"No new voiceprint samples were indexed for speaker {speaker.speaker_id}."
+                )
+            persisted = selected_speaker
+        except Exception:
+            _restore_capture_files(backups, keep=set())
+            raise
+        _restore_capture_files(
+            backups,
+            # Preserve the historical capture contract: candidate WAVs remain
+            # available for review even when centrality or duplicate detection
+            # indexes only a subset.  The snapshot is still restored in full on
+            # any failure before the batch commits.
+            keep={clip.path.expanduser().resolve() for clip in speaker.clips},
+        )
+        return persisted, rows
+
+
+def _backup_capture_files(
+    speaker: VoiceprintSpeaker, backup_root: Path
+) -> list[_CaptureFileBackup]:
+    """Snapshot clip and temporary embedding targets for one speaker."""
+    backups: list[_CaptureFileBackup] = []
+    paths: list[Path] = []
+    for clip in speaker.clips:
+        paths.append(clip.path.expanduser().resolve())
+        paths.append(
+            clip.path.with_name(f"{clip.path.stem}_embedding.wav")
+            .expanduser()
+            .resolve()
+        )
+    for index, path in enumerate(dict.fromkeys(paths)):
+        backup_path = backup_root / f"{index:04d}-{path.name}"
+        existed = path.is_file()
+        if existed:
+            shutil.copy2(path, backup_path)
+        backups.append(_CaptureFileBackup(path, backup_path, existed))
+    return backups
+
+
+def _restore_capture_files(
+    backups: list[_CaptureFileBackup], *, keep: set[Path]
+) -> None:
+    """Restore or remove every capture target not committed by the speaker batch."""
+    for item in backups:
+        resolved = item.path.expanduser().resolve()
+        if resolved in keep:
+            continue
+        if item.existed:
+            item.path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item.backup_path, item.path)
+        else:
+            item.path.unlink(missing_ok=True)
+
+
+def _apply_capture_results(
+    decisions: list[VoiceprintCaptureDecision],
+    persisted: _PersistedCapture,
+    db_path: Path,
+) -> list[VoiceprintCaptureDecision]:
+    """Merge actual sample ids and failures into a capture plan."""
+    embedded_ids = list_any_embedded_sample_ids(db_path)
+    updated: list[VoiceprintCaptureDecision] = []
+    for decision in decisions:
+        if decision.decision == "skip":
+            updated.append(decision)
+            continue
+        failure = persisted.failures.get(decision.speaker_id)
+        if failure is not None:
+            updated.append(
+                replace(
+                    decision,
+                    decision="failed",
+                    reason="capture_failed",
+                    error=failure,
+                )
+            )
+            continue
+        rows = persisted.rows_by_speaker.get(decision.speaker_id, [])
+        if not rows:
+            updated.append(
+                replace(
+                    decision,
+                    decision="failed",
+                    reason="no_samples_indexed",
+                    error="No voiceprint samples were indexed.",
+                )
+            )
+            continue
+        first = rows[0]
+        samples = [
+            VoiceprintCapturedSample(
+                sample_id=row.sample_id,
+                public_id=row.public_id,
+                clip_path=row.clip_path,
+                embedded=row.sample_id in embedded_ids,
+            )
+            for row in rows
+        ]
+        updated.append(
+            replace(
+                decision,
+                name=first.speaker_name,
+                person_id=first.speaker_id,
+                person_public_id=first.speaker_public_id,
+                decision="captured",
+                samples=samples,
+            )
+        )
+    return updated
 
 
 def _validate_capture_options(
-    sample_count: int, max_seconds: float, padding_seconds: float
+    sample_count: int,
+    max_seconds: float,
+    padding_seconds: float,
+    *,
+    min_samples: int = 10,
 ) -> None:
     """
     Validate voiceprint capture options.
@@ -314,6 +581,7 @@ def _validate_capture_options(
         sample_count: Requested clips per speaker.
         max_seconds: Requested maximum clip length.
         padding_seconds: Requested context padding.
+        min_samples: Required existing sample count for ``only_needed``.
     """
     if sample_count < 1:
         raise ValueError("sample_count must be >= 1.")
@@ -321,6 +589,8 @@ def _validate_capture_options(
         raise ValueError("max_seconds must be > 0.")
     if padding_seconds < 0:
         raise ValueError("padding_seconds must be >= 0.")
+    if min_samples < 1:
+        raise ValueError("min_samples must be >= 1.")
 
 
 def _resolve_store_dir(store_dir: Path | None) -> Path:
@@ -345,10 +615,14 @@ class _SpeakerIdentity:
     name: str
     person_id: int | None
     person_public_id: str | None
+    sample_count: int = 0
 
 
 def _load_required_speaker_identities(
-    speakers_dir: Path, db_path: Path
+    speakers_dir: Path,
+    db_path: Path,
+    *,
+    speaker_ids: set[int] | None = None,
 ) -> dict[int, _SpeakerIdentity]:
     """
     Load named speaker identities required for voiceprint references.
@@ -356,6 +630,7 @@ def _load_required_speaker_identities(
     Args:
         speakers_dir: Project speakers directory.
         db_path: Voiceprint SQLite path.
+        speaker_ids: Optional explicit ids; unrelated mappings are not resolved.
 
     Returns:
         Project speaker id to identity mapping.
@@ -366,7 +641,11 @@ def _load_required_speaker_identities(
             "Speaker mapping does not exist. Run meeting-asr project review first."
         )
     payload = json.loads(path.read_text(encoding="utf-8"))
-    names = {int(key): str(value) for key, value in payload.items()}
+    names = {
+        int(key): str(value)
+        for key, value in payload.items()
+        if speaker_ids is None or int(key) in speaker_ids
+    }
     person_map = _load_speaker_person_refs(speakers_dir / "speaker_person_map.json")
     return {
         speaker_id: _identity_for_capture(speaker_id, name, person_map, db_path)
@@ -416,17 +695,37 @@ def _identity_for_capture(
     if person_ref is None:
         person = get_voiceprint_person(name, db_path)
         if person is not None:
-            return _SpeakerIdentity(name, person.speaker_id, person.public_id)
+            return _SpeakerIdentity(
+                person.name,
+                person.speaker_id,
+                person.public_id,
+                person.sample_count,
+            )
         return _SpeakerIdentity(name, None, None)
     person = get_voiceprint_person(person_ref, db_path)
     if person is None:
         raise LookupError(
             f"speaker_person_map.json points to missing voiceprint person id {person_ref} for {name}."
         )
-    return _SpeakerIdentity(name, person.speaker_id, person.public_id)
+    if _normalize_identity_name(name) != _normalize_identity_name(person.name):
+        raise ValueError(
+            f"Project speaker {speaker_id} name {name!r} conflicts with canonical "
+            f"voiceprint person name {person.name!r} ({person.public_id})."
+        )
+    return _SpeakerIdentity(
+        person.name,
+        person.speaker_id,
+        person.public_id,
+        person.sample_count,
+    )
 
 
-def _build_voiceprint_speakers(
+def _normalize_identity_name(name: str) -> str:
+    """Normalize a display name using the registry's identity semantics."""
+    return " ".join(name.strip().split()).casefold()
+
+
+def _plan_voiceprint_speakers(
     clip_dir: Path,
     project_id: str,
     result: TranscriptResult,
@@ -434,7 +733,11 @@ def _build_voiceprint_speakers(
     sample_count: int,
     max_seconds: float,
     padding_seconds: float,
-) -> list[VoiceprintSpeaker]:
+    *,
+    speaker_ids: set[int] | None,
+    only_needed: bool,
+    min_samples: int,
+) -> tuple[list[VoiceprintSpeaker], list[VoiceprintCaptureDecision]]:
     """
     Select reference clips for all identified speakers in the transcript.
 
@@ -448,13 +751,29 @@ def _build_voiceprint_speakers(
         padding_seconds: Extra context around each sentence.
 
     Returns:
-        Selected voiceprint speakers.
+        Selected voiceprint speakers plus per-speaker decisions.
     """
     speakers: list[VoiceprintSpeaker] = []
+    decisions: list[VoiceprintCaptureDecision] = []
     grouped = _speaker_segments_by_id(result)
-    for speaker_id in sorted(grouped):
+    requested = _resolve_requested_speaker_ids(grouped, identities, speaker_ids)
+    for speaker_id in requested:
         identity = _identified_speaker_identity(speaker_id, identities)
         if identity is None:
+            continue
+        decision, reason = _capture_decision(identity, only_needed, min_samples)
+        decisions.append(
+            VoiceprintCaptureDecision(
+                speaker_id=speaker_id,
+                name=identity.name,
+                person_id=identity.person_id,
+                person_public_id=identity.person_public_id,
+                existing_sample_count=identity.sample_count,
+                decision=decision,
+                reason=reason,
+            )
+        )
+        if decision == "skip":
             continue
         selected = select_voiceprint_segments(
             grouped[speaker_id], result.sentences, sample_count
@@ -472,7 +791,55 @@ def _build_voiceprint_speakers(
                     clips,
                 )
             )
-    return speakers
+    return speakers, decisions
+
+
+def _resolve_requested_speaker_ids(
+    grouped: dict[int, list[SentenceSegment]],
+    identities: dict[int, _SpeakerIdentity],
+    speaker_ids: set[int] | None,
+) -> list[int]:
+    """Validate explicit ids or return every named speaker with usable audio."""
+    if speaker_ids is None:
+        return [
+            speaker_id
+            for speaker_id in sorted(grouped)
+            if _identified_speaker_identity(speaker_id, identities) is not None
+        ]
+    if not speaker_ids:
+        raise ValueError("At least one speaker id must be selected.")
+    if any(speaker_id < 0 for speaker_id in speaker_ids):
+        raise ValueError("speaker_id must be >= 0.")
+    missing = sorted(speaker_ids.difference(grouped))
+    if missing:
+        joined = ", ".join(str(value) for value in missing)
+        raise ValueError(
+            f"Project speaker id(s) have no usable transcript segments: {joined}."
+        )
+    unnamed = [
+        speaker_id
+        for speaker_id in sorted(speaker_ids)
+        if _identified_speaker_identity(speaker_id, identities) is None
+    ]
+    if unnamed:
+        joined = ", ".join(str(value) for value in unnamed)
+        raise ValueError(
+            f"Project speaker id(s) are not confirmed and named: {joined}."
+        )
+    return sorted(speaker_ids)
+
+
+def _capture_decision(
+    identity: _SpeakerIdentity, only_needed: bool, min_samples: int
+) -> tuple[str, str]:
+    """Return selection decision and stable reason for one named speaker."""
+    if not only_needed:
+        return "capture", "selected"
+    if identity.sample_count == 0:
+        return "capture", "no_samples"
+    if identity.sample_count < min_samples:
+        return "capture", "below_min_samples"
+    return "skip", "enough_samples"
 
 
 def _identified_speaker_identity(

@@ -40,6 +40,7 @@ from app.voiceprint_people import (
 )
 from app.voiceprint_store import (
     delete_voiceprint_sample,
+    delete_voiceprint_sample_by_public_id,
     delete_voiceprint_speaker,
     get_voiceprint_clip_dir,
     get_voiceprint_db_path,
@@ -180,6 +181,23 @@ def capture_command(
     store_dir: Optional[Path] = typer.Option(
         None, "--store-dir", file_okay=False, dir_okay=True
     ),
+    speaker_id: list[int] = typer.Option(
+        [],
+        "--speaker-id",
+        min=0,
+        help="Capture only this project speaker id; repeat for multiple speakers.",
+    ),
+    speaker_ids: Optional[str] = typer.Option(
+        None,
+        "--speaker-ids",
+        help="Comma-separated project speaker ids, for example 0,2.",
+    ),
+    only_needed: bool = typer.Option(
+        False,
+        "--only-needed",
+        help="Capture only people whose library sample count is below --min-samples.",
+    ),
+    min_samples: int = typer.Option(10, "--min-samples", min=1),
     review: bool = typer.Option(
         False,
         "--review",
@@ -193,6 +211,7 @@ def capture_command(
         help="Override samples per page when --review is used.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
     progress: bool = typer.Option(
         True,
         "--progress/--no-progress",
@@ -200,6 +219,12 @@ def capture_command(
     ),
 ) -> None:
     """Capture this project's named speakers into the global voiceprint store."""
+    selected_speaker_ids = _parse_capture_speaker_ids(speaker_id, speaker_ids)
+    if review and (selected_speaker_ids is not None or only_needed or as_json):
+        raise typer.BadParameter(
+            "--review cannot be combined with speaker filters, --only-needed, or --json. "
+            "Use `voiceprint review PROJECT` for interactive selection."
+        )
     resolved_project_dir = run_with_cli_errors(
         lambda: resolve_project_ref(project_dir, projects_dir)
     )
@@ -212,12 +237,17 @@ def capture_command(
                 padding_seconds=padding_seconds,
                 store_dir=store_dir,
                 dry_run=True,
+                speaker_ids=selected_speaker_ids,
+                only_needed=only_needed,
+                min_samples=min_samples,
                 progress=reporter,
             ),
             description="Planning voiceprints",
-            enabled=progress,
+            enabled=progress and not as_json,
         )
-        _echo_capture_summary(summary)
+        _emit_capture_summary(summary, as_json=as_json)
+        if summary.failed_count:
+            raise typer.Exit(code=1)
         return
     if review:
         summary = _run_capture_review_workflow(
@@ -240,12 +270,17 @@ def capture_command(
             padding_seconds=padding_seconds,
             store_dir=store_dir,
             dry_run=dry_run,
+            speaker_ids=selected_speaker_ids,
+            only_needed=only_needed,
+            min_samples=min_samples,
             progress=reporter,
         ),
         description="Capturing voiceprints",
-        enabled=progress,
+        enabled=progress and not as_json,
     )
-    _echo_capture_summary(summary)
+    _emit_capture_summary(summary, as_json=as_json)
+    if summary.failed_count:
+        raise typer.Exit(code=1)
 
 
 def _run_capture_review_workflow(
@@ -547,7 +582,9 @@ def people_merge_command(
             f"Merge {source.name} ({source.public_id}, {source.sample_count} sample(s)) "
             f"into {target.name} ({target.public_id}, {target.sample_count} sample(s))."
         )
-        typer.echo(f"Source {source.public_id} will be deleted (clip files kept on disk).")
+        typer.echo(
+            f"Source {source.public_id} will be deleted (clip files kept on disk)."
+        )
         typer.confirm("Proceed?", abort=True)
     result = run_with_cli_errors(
         lambda: merge_voiceprint_people(from_id, into_id, db_path)
@@ -724,20 +761,40 @@ def play_command(
 
 @app.command("delete-sample")
 def delete_sample_command(
-    speaker: str = typer.Argument(..., metavar="SPEAKER"),
-    sample: int = typer.Option(..., "--sample", "-s", min=1),
+    speaker: Optional[str] = typer.Argument(None, metavar="[SPEAKER]"),
+    sample: Optional[int] = typer.Option(None, "--sample", "-s", min=1),
+    sample_id: Optional[str] = typer.Option(
+        None,
+        "--sample-id",
+        help="Stable vps-* sample id; does not require SPEAKER or --sample.",
+    ),
     store_dir: Optional[Path] = typer.Option(
         None, "--store-dir", file_okay=False, dir_okay=True
     ),
     keep_clip: bool = typer.Option(False, "--keep-clip"),
 ) -> None:
-    """Delete one numbered voiceprint sample and its WAV file."""
+    """Delete one voiceprint sample by stable id or legacy numbered position."""
     db_path = get_voiceprint_db_path(store_dir)
-    deleted = run_with_cli_errors(
-        lambda: delete_voiceprint_sample(
-            speaker, sample, db_path=db_path, delete_clip=not keep_clip
+    if sample_id is not None:
+        if speaker is not None or sample is not None:
+            raise typer.BadParameter(
+                "--sample-id cannot be combined with SPEAKER or --sample."
+            )
+        deleted = run_with_cli_errors(
+            lambda: delete_voiceprint_sample_by_public_id(
+                sample_id, db_path=db_path, delete_clip=not keep_clip
+            )
         )
-    )
+    else:
+        if speaker is None or sample is None:
+            raise typer.BadParameter(
+                "Provide --sample-id vps-... or the legacy SPEAKER --sample N pair."
+            )
+        deleted = run_with_cli_errors(
+            lambda: delete_voiceprint_sample(
+                speaker, sample, db_path=db_path, delete_clip=not keep_clip
+            )
+        )
     _echo_deleted_sample(deleted.clip_path, deleted.clip_deleted, kept=keep_clip)
 
 
@@ -1045,6 +1102,87 @@ def _format_updated_at(value: str | None) -> str:
     return f"{date_text} {time_text[:8]}"
 
 
+def _parse_capture_speaker_ids(
+    repeated: list[int], comma_separated: str | None
+) -> set[int] | None:
+    """Merge repeatable and comma-separated project speaker id options."""
+    values = set(repeated)
+    if comma_separated is not None:
+        parts = [part.strip() for part in comma_separated.split(",")]
+        if not parts or any(not part for part in parts):
+            raise typer.BadParameter("--speaker-ids must be a comma-separated id list.")
+        for part in parts:
+            if not part.isdecimal():
+                raise typer.BadParameter(
+                    f"Invalid project speaker id in --speaker-ids: {part!r}."
+                )
+            values.add(int(part))
+    return values or None
+
+
+def _emit_capture_summary(summary: VoiceprintCaptureSummary, *, as_json: bool) -> None:
+    """Render a capture result using the requested output contract."""
+    if as_json:
+        emit_json(_capture_summary_payload(summary))
+        return
+    _echo_capture_summary(summary)
+
+
+def _capture_summary_payload(summary: VoiceprintCaptureSummary) -> dict[str, object]:
+    """Build stable automation output for capture planning and execution."""
+    status = "planned" if summary.dry_run else "completed"
+    if summary.failed_count:
+        status = "partial_failure" if summary.sample_count else "failed"
+    stored_sample_count = sum(
+        len(item.samples) for item in summary.decisions if item.decision == "captured"
+    )
+    return {
+        "project_id": summary.project_id,
+        "status": status,
+        "dry_run": summary.dry_run,
+        "only_needed": summary.only_needed,
+        "min_samples": summary.min_samples,
+        "store_dir": summary.store_dir,
+        "database": summary.db_path,
+        "clip_dir": summary.clip_dir,
+        "sample_count": summary.sample_count
+        if summary.dry_run
+        else stored_sample_count,
+        "clip_count": summary.sample_count,
+        "failed_count": summary.failed_count,
+        "selected_speakers": [
+            {
+                "speaker_id": item.speaker_id,
+                "name": item.name,
+                "canonical_name": item.name,
+                # Public ids are the stable automation contract; expose the
+                # SQLite row id separately for local diagnostics only.
+                "person_id": item.person_public_id,
+                "person_public_id": item.person_public_id,
+                "person_internal_id": item.person_id,
+                "existing_sample_count": item.existing_sample_count,
+                "decision": item.decision,
+                "reason": item.reason,
+                "error": item.error,
+                "samples": [
+                    {
+                        "sample_id": sample.sample_id,
+                        "public_id": sample.public_id,
+                        "clip_path": sample.clip_path,
+                        "speaker_id": item.speaker_id,
+                        "person_id": item.person_public_id,
+                        "person_public_id": item.person_public_id,
+                        "person_name": item.name,
+                        "embedding_generated": sample.embedded,
+                    }
+                    for sample in item.samples
+                ],
+            }
+            for item in summary.decisions
+        ],
+    }
+
+
 def _echo_capture_summary(summary: VoiceprintCaptureSummary) -> None:
     """
     Print capture results.
@@ -1071,6 +1209,17 @@ def _echo_capture_summary(summary: VoiceprintCaptureSummary) -> None:
             typer.echo(
                 f"  - {clip.path} "
                 f"({tag}; score={clip.selection_score:.3f}; {clip.selection_reason}; {clip.audio_reason})"
+            )
+    for decision in summary.decisions:
+        if decision.decision == "skip":
+            typer.echo(
+                f"{decision.name} (speaker {decision.speaker_id}): skipped "
+                f"({decision.reason}; existing samples={decision.existing_sample_count})"
+            )
+        elif decision.decision == "failed":
+            typer.echo(
+                f"{decision.name} (speaker {decision.speaker_id}): failed "
+                f"({decision.reason}: {decision.error or 'unknown error'})"
             )
     if not summary.dry_run and summary.sample_count:
         typer.echo("")
