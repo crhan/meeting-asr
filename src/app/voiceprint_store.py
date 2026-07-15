@@ -189,6 +189,7 @@ def store_voiceprint_samples_with_rows(
         _ensure_schema(connection)
         for sample in samples:
             _upsert_sample(connection, sample)
+        _prune_touched_duplicate_hashes(connection, samples)
         for sample in samples:
             row = connection.execute(
                 _sample_by_clip_path_sql(),
@@ -786,6 +787,50 @@ def _has_duplicate_clip_hash(
         return False
     existing_path = Path(str(existing["clip_path"])).expanduser().resolve()
     return existing_path != sample.clip_path.expanduser().resolve()
+
+
+def _prune_touched_duplicate_hashes(
+    connection: sqlite3.Connection, samples: list[StoredVoiceprintSample]
+) -> None:
+    """Keep one final row per person/hash, preferring this batch's first path.
+
+    Existing deterministic paths must be updated before deduplication so a
+    batch can swap two paths' audio hashes without treating the intermediate
+    state as a duplicate. After every upsert, any duplicate group touched by
+    this batch is collapsed to the first input path; cascading deletes also
+    remove stale embeddings from losing rows. Unrelated legacy duplicate groups
+    are deliberately left untouched.
+    """
+    input_order: dict[str, int] = {}
+    for index, sample in enumerate(samples):
+        input_order.setdefault(str(sample.clip_path.expanduser().resolve()), index)
+    if not input_order:
+        return
+    rows = connection.execute(
+        """
+        SELECT id, speaker_id, clip_sha256, clip_path
+        FROM voiceprint_samples
+        ORDER BY id
+        """
+    ).fetchall()
+    grouped: dict[tuple[int, str], list[sqlite3.Row]] = {}
+    for row in rows:
+        key = (int(row["speaker_id"]), str(row["clip_sha256"]))
+        grouped.setdefault(key, []).append(row)
+    for duplicates in grouped.values():
+        if len(duplicates) < 2:
+            continue
+        touched = [row for row in duplicates if str(row["clip_path"]) in input_order]
+        if not touched:
+            continue
+        keep = min(
+            touched,
+            key=lambda row: (input_order[str(row["clip_path"])], int(row["id"])),
+        )
+        connection.executemany(
+            "DELETE FROM voiceprint_samples WHERE id = ?",
+            [(int(row["id"]),) for row in duplicates if row["id"] != keep["id"]],
+        )
 
 
 def _speaker_id_for_sample(
