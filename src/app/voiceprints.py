@@ -469,6 +469,7 @@ def _persist_voiceprint_speaker(
             # indexes only a subset.  The snapshot is still restored in full on
             # any failure before the batch commits.
             keep={clip.path.expanduser().resolve() for clip in speaker.clips},
+            strict=False,
         )
         return persisted, rows
 
@@ -496,18 +497,22 @@ def _backup_capture_files(
 
 
 def _restore_capture_files(
-    backups: list[_CaptureFileBackup], *, keep: set[Path]
+    backups: list[_CaptureFileBackup], *, keep: set[Path], strict: bool = True
 ) -> None:
     """Restore or remove every capture target not committed by the speaker batch."""
     for item in backups:
         resolved = item.path.expanduser().resolve()
         if resolved in keep:
             continue
-        if item.existed:
-            item.path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(item.backup_path, item.path)
-        else:
-            item.path.unlink(missing_ok=True)
+        try:
+            if item.existed:
+                item.path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item.backup_path, item.path)
+            else:
+                item.path.unlink(missing_ok=True)
+        except OSError:
+            if strict:
+                raise
 
 
 def _apply_capture_results(

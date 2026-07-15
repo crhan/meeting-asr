@@ -801,6 +801,97 @@ def test_voiceprint_capture_failure_rolls_back_one_speaker_files_and_rows(
     assert list(store_dir.rglob("*.wav")) == []
 
 
+def test_voiceprint_capture_database_failure_restores_clip_targets(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A failed SQLite batch must roll back every WAV written for that speaker."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    _write_named_speaker_inputs(project_dir)
+    project_id = load_manifest(project_dir).project_id
+    existing_clip = (
+        store_dir / "clips" / project_id / "speaker_0" / "clip_001.wav"
+    )
+    existing_clip.parent.mkdir(parents=True, exist_ok=True)
+    existing_clip.write_bytes(b"previous valid sample")
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", _fake_extract_audio_clip)
+    monkeypatch.setattr(
+        "app.voiceprints.store_voiceprint_samples_with_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("simulated database failure")
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--speaker-id",
+            "0",
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+            "--json",
+            "--no-progress",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["selected_speakers"][0]["decision"] == "failed"
+    assert "simulated database failure" in payload["selected_speakers"][0]["error"]
+    assert existing_clip.read_bytes() == b"previous valid sample"
+    assert list(store_dir.rglob("*.wav")) == [existing_clip]
+
+
+def test_voiceprint_capture_rejects_canonical_person_name_conflict_before_writes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A stale person link must fail before slicing or inserting any sample."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    _write_named_speaker_inputs(project_dir)
+    person = create_voiceprint_person("Canonical Alice", db_path)
+    (project_dir / "speakers" / "speaker_person_map.json").write_text(
+        json.dumps({"0": person.public_id}), encoding="utf-8"
+    )
+    extracted = False
+
+    def unexpected_extract(*args, **kwargs):
+        nonlocal extracted
+        extracted = True
+        raise AssertionError("canonical conflict must fail before slicing")
+
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", unexpected_extract)
+    result = runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--speaker-id",
+            "0",
+            "--store-dir",
+            str(store_dir),
+            "--no-progress",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "conflicts with canonical voiceprint person name" in result.output
+    assert extracted is False
+    refreshed = get_voiceprint_person(person.public_id, db_path)
+    assert refreshed is not None
+    assert refreshed.sample_count == 0
+    assert list(store_dir.rglob("*.wav")) == []
+
+
 def test_voiceprint_delete_sample_accepts_stable_public_id(
     monkeypatch,
     tmp_path: Path,
