@@ -5,6 +5,32 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [0.16.0] - 2026-07-16
+
+### 新增
+
+- **声纹采集支持按项目 speaker 精确筛选**：`voiceprint capture` 新增可重复的 `--speaker-id`、逗号形式 `--speaker-ids`、`--only-needed` 与 `--min-samples`；可只给指定或样本不足的人采集，未传筛选参数时保持原有全场采集行为。
+- **声纹采集新增结构化预览与结果输出**：支持 `--dry-run --json`，逐 speaker 返回现有样本数、capture/skip/fail 决策及原因；实际执行还返回稳定 sample ID、clip、person、speaker 与 embedding 状态。
+- **新增指定 speaker 的声纹学习闭环**：`project speakers learn` 可对确认身份的 speaker 执行定向采集、仅为新增样本生成 embedding、重新匹配并输出前后分数；只有身份和阈值校验通过才安全 apply，否则返回 `needs_review` 和非零退出码。
+- **声纹样本支持稳定 ID 删除**：新增 `voiceprint delete-sample --sample-id vps-...`，兼容 `--keep-clip`，调用方无需再依赖删除后会变化的列表 index。
+- **Web 项目主流程补齐**：项目页新增搜索与状态筛选、待复核标记、下一步指引、多输入 Run、生成纪要、项目合并预览与执行、标题编辑，以及最终产物的页内预览和下载。
+- **Web 全局任务中心与复核能力增强**：长任务支持跨页面查看、SSE 重挂、幂等去重、取消及排队原因说明；speaker review 新增时间轴、新建 speaker、独立重匹配、Top 3 身份候选与项目深链；纠错页新增字符级 diff、批量选择及 accept/discard 完整生命周期；词库页新增详情编辑、歧义管理、停用恢复和永久删除；声纹库补上人物合并入口。
+
+### 变更
+
+- Web 声纹采集统一接入任务进度与失败恢复流程；Modal 补齐焦点圈闭、焦点归还、叠层管理和 IME 防误提交，危险操作默认聚焦取消。
+- Web 导航、错误反馈、token 失效重认证、音频 seek、响应式布局和任务终态恢复统一增强；服务重启或任务消失时不再无限等待。
+- Lexicon upsert 的可选字段改为“未提供即保留原值”，添加别名或恢复词条时不再覆盖既有类别、描述和停用状态。
+
+### 修复
+
+- **保证声纹采集写入一致性**：直接多 speaker 采集按 speaker 独立原子提交，交互 review 批次整体原子提交；speaker 无效、切片或数据库写入失败时恢复原 clip，不遗留半套 sample。
+- 修复确定性 clip 路径覆盖与重复音频 hash 交叉时，文件、数据库元数据和 embedding 可能不一致的问题；批次落库按最终状态去重，并清除失效 embedding。
+- 修复 Web speaker review 在导航、跨项目定位、重匹配和弹窗快捷键下可能静默丢失暂存修改，以及声纹采集结果被动关闭时可能意外回滚的问题。
+- 修复任务取消后立即重跑仍挂接旧任务、迟到快照把终态翻回运行中、损坏的单个 speaker 匹配文件拖垮整个项目列表等稳定性问题。
+- 修复纠错提案应用后仍重复出现、放弃动作缺失，以及 Web 添加词库别名时可能清空词条元数据的问题。
+- 修复完整 `uv build` 在从 sdist 构建 wheel 时重复收录 Web SPA 文件、导致发布构建失败的问题；生成的静态资源改用 Hatchling build artifact 规则按自然包路径收录。
+
 ## [0.15.0] - 2026-07-02
 
 ### 变更
