@@ -1,15 +1,16 @@
 """Hatch build hook: ship the React SPA in the wheel without making it mandatory.
 
 The web UI assets live in ``src/app/web/static`` (a gitignored Vite build output). The
-wheel ships them via a *conditional* force-include set here in ``build_data`` (not an
-unconditional ``pyproject`` force-include), so a base CLI build that has no SPA does not
-fail on a missing path. The CLI imports its web dependencies lazily, so a wheel without
-the SPA is a valid artifact for someone installing just the CLI.
+wheel ships them via a *conditional build artifact* pattern set here in ``build_data``
+(not an unconditional ``pyproject`` artifact), so a base CLI build that has no SPA does
+not fail on a missing path. The CLI imports its web dependencies lazily, so a wheel
+without the SPA is a valid artifact for someone installing just the CLI.
 
 Build behaviour:
 
 * If the assets are already built (the usual case: ``scripts/install-tool.sh`` /
-  ``npm run build`` produced them, or a previous build step), they are force-included.
+  ``npm run build`` produced them, or a previous build step), they are included as
+  build artifacts at their natural package path.
 * Otherwise, the SPA is built from ``web/`` **only when the build explicitly asks for it**
   via ``MEETING_ASR_BUILD_WEB=1`` (set by CI / release / an explicit web install). That is
   the one path that requires ``npm``; a plain ``uv build`` / ``uv tool install .`` of the
@@ -69,7 +70,7 @@ def build_spa(
 
 
 class CustomBuildHook(BuildHookInterface):
-    """Conditionally build + include the SPA into the wheel."""
+    """Conditionally build and include the SPA in the wheel."""
 
     def initialize(self, version: str, build_data: dict) -> None:
         # Only the wheel ships the built SPA; the sdist carries the web/ sources instead and
@@ -83,13 +84,14 @@ class CustomBuildHook(BuildHookInterface):
 
         build_spa(root, build_web=build_web)
 
-        # Ship the SPA only if it exists now. Doing this through build_data (instead of an
-        # unconditional pyproject force-include) is what lets a base build with no static
-        # succeed rather than erroring on a missing force-include path.
+        # Ship the SPA only if it exists now. A build-artifact pattern overrides VCS ignores
+        # while preserving the package's natural ``src/app`` path mapping. Do not use a
+        # directory force_include here: ``uv build`` creates an sdist and then builds its
+        # wheel, where generated static files are also naturally selected; Hatchling would
+        # add every file twice because reserving the directory does not reserve its children.
         if (static_dir / "index.html").is_file():
-            build_data.setdefault("force_include", {})[str(static_dir)] = (
-                "app/web/static"
-            )
+            static_pattern = f"/{static_dir.relative_to(root).as_posix()}/**"
+            build_data.setdefault("artifacts", []).append(static_pattern)
         elif build_web:
             raise RuntimeError(
                 "MEETING_ASR_BUILD_WEB=1 completed but src/app/web/static/index.html "

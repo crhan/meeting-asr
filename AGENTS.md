@@ -65,6 +65,7 @@
 - Historical memory entries that mention raw `uv tool install --editable . --force` are stale. Use `scripts/install-tool.sh`; only pass `--force` for executable conflicts.
 - Local voiceprint embedding uses `local-speechbrain` as the default provider. SpeechBrain, torch, and torchaudio are standard dependencies, not a `local-voiceprint` extra; do not suggest `uv sync --extra local-voiceprint`.
 - Focused tests that invoke `project run` may still open the default voiceprint SQLite through resplit/stabilization even when `match_project_speakers` is mocked. In a sandbox where the developer's XDG data directory is read-only, run them with an isolated writable `XDG_DATA_HOME`; `attempt to write a readonly database` from the ambient store is an environment leak, not a product regression.
+- Release web assets generated under `src/app/web/static` must be registered by `hatch_build.py` through `build_data["artifacts"]`, not a directory `force_include`. `uv build` creates an sdist and then builds its wheel; in that second stage generated static files are naturally selected, while Hatchling only reserves the force-included directory itself, so every child would otherwise be added twice. Verify releases with the full `MEETING_ASR_BUILD_WEB=1 uv build` path, not a direct-wheel-only shortcut.
 
 ## File Copy Notes
 

@@ -94,7 +94,7 @@ cookie/CSRF 面。仍不强制 HTTPS。
 uv run meeting-asr web --port 8765
 # 前端（dev server，代理 /api 到 8765）
 cd web && npm install && npm run dev   # http://localhost:5173
-# 构建（产物落 src/app/web/static/，被 wheel 的 force-include 收录）
+# 构建（产物落 src/app/web/static/，被 wheel 的 build-artifact 规则收录）
 cd web && npm run build
 ```
 

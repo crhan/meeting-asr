@@ -112,14 +112,14 @@ def test_build_hook_refuses_web_wheel_when_spa_missing(
         hook.initialize("0.0.0", {})
 
 
-def test_build_hook_force_includes_existing_spa_at_served_path(
+def test_build_hook_includes_existing_spa_as_natural_path_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Happy path: built static assets are force-included at exactly ``app/web/static``.
+    """Built static assets are included through their natural ``src/app`` package path.
 
-    The server resolves the SPA from ``app/web/static`` next to its own module; a wrong
-    destination here would ship the assets somewhere FastAPI never looks, and nothing else
-    (the hook's own raise, CI's build step) would notice.
+    Artifacts override the VCS ignore without adding a second archive entry when ``uv build``
+    builds a wheel from its sdist. The ``src/app`` package mapping places this pattern at the
+    served ``app/web/static`` path in the wheel.
     """
     static = tmp_path / "src" / "app" / "web" / "static"
     static.mkdir(parents=True)
@@ -130,7 +130,8 @@ def test_build_hook_force_includes_existing_spa_at_served_path(
     build_data: dict = {}
     hook.initialize("0.0.0", build_data)
 
-    assert build_data["force_include"] == {str(static): "app/web/static"}
+    assert build_data["artifacts"] == ["/src/app/web/static/**"]
+    assert "force_include" not in build_data
 
 
 def test_build_hook_skips_non_wheel_targets(

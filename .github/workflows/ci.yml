@@ -28,7 +28,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Node
-        # The wheel force-includes the React SPA; the hatch build hook runs `npm ci &&
+        # The wheel includes the React SPA as a build artifact; the hook runs `npm ci &&
         # npm run build`, so node/npm must be present and pinned for a deterministic build.
         uses: actions/setup-node@v4
         with:
