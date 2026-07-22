@@ -6,8 +6,17 @@ from pathlib import Path
 
 
 from app.commands.project import (
+    _identity_confidence_label,
     _run_polish_skip_reason,
     _run_summary_skip_reason,
+)
+from app.speaker_sample_matching import (
+    SpeakerSampleMatchReport,
+    SpeakerSampleMatchSummary,
+)
+from app.speaker_stabilization import (
+    SpeakerStabilizationIteration,
+    SpeakerStabilizationSummary,
 )
 from app.core.run_pipeline import (
     RunStage,
@@ -137,6 +146,64 @@ def test_summary_skip_reason_gates_on_artifact(tmp_path: Path) -> None:
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text("# memo", encoding="utf-8")
     assert _run_summary_skip_reason(project_dir) == "meeting summary exists"
+
+
+def test_identity_confidence_label_summarizes_final_diagnostics(
+    tmp_path: Path,
+) -> None:
+    """The run summary compresses sentence identity agreement into one line."""
+    assert _identity_confidence_label(None) is None
+    empty = SpeakerStabilizationSummary(iterations=())
+    assert _identity_confidence_label(empty) is None
+
+    stabilization = _stabilization_with_counts(
+        [
+            {"identity-ok": 18, "identity-conflict": 1},
+            {"identity-ok": 6, "identity-ambiguous": 2, "no-assignment": 4},
+        ]
+    )
+    label = _identity_confidence_label(stabilization)
+
+    assert label == "24/27 sentences consistent (89%), 1 conflict, 2 ambiguous"
+
+    unjudged = _stabilization_with_counts([{"no-assignment": 5}])
+    assert _identity_confidence_label(unjudged) is None
+
+
+def _stabilization_with_counts(
+    status_counts_list: list[dict[str, int]],
+) -> SpeakerStabilizationSummary:
+    """Build a stabilization summary with the given per-speaker status counts."""
+    reports = [
+        SpeakerSampleMatchReport(
+            speaker_id=index,
+            label=f"Speaker {index}",
+            assigned_person_id=None,
+            assigned_name=None,
+            sample_count=sum(counts.values()),
+            status_counts=counts,
+            samples=[],
+        )
+        for index, counts in enumerate(status_counts_list)
+    ]
+    sample_summary = SpeakerSampleMatchSummary(
+        report_path=Path("speakers/speaker_sample_matches.json"),
+        provider="local-speechbrain",
+        model="ecapa",
+        threshold=0.45,
+        conflict_margin=0.08,
+        ambiguous_margin=0.05,
+        reports=reports,
+        verdict="ok",
+    )
+    iteration = SpeakerStabilizationIteration(
+        index=1,
+        reassignments=(),
+        apply_result=None,
+        cluster_summary=None,  # type: ignore[arg-type] - unused by the label
+        sample_summary=sample_summary,
+    )
+    return SpeakerStabilizationSummary(iterations=(iteration,))
 
 
 def _make_project(tmp_path: Path) -> Path:

@@ -12,6 +12,7 @@ import sys
 import termios
 import tty
 import wave
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -3395,12 +3396,53 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
         speaker_reassignments=0
         if summary.stabilization is None
         else summary.stabilization.reassignment_count,
+        identity_confidence=_identity_confidence_label(summary.stabilization),
         speaker_matches=speaker_match_rows(
             summary.matches.matches,
             default_threshold=summary.matches.threshold,
             ignored_speaker_ids=ignored_ids,
         ),
     )
+
+
+def _identity_confidence_label(
+    stabilization: SpeakerStabilizationSummary | None,
+) -> str | None:
+    """
+    Summarize sentence-level identity agreement from the final diagnostics.
+
+    The last stabilization pass already scored every usable sentence against
+    the voiceprint library; this compresses that report into one quality
+    signal (how many sentences agree with their assigned speaker) so a run
+    that "completed" with a shaky identity still shows it.
+    """
+    if stabilization is None or not stabilization.iterations:
+        return None
+    sample_summary = stabilization.iterations[-1].sample_summary
+    counts: Counter[str] = Counter()
+    for report in sample_summary.reports:
+        counts.update(report.status_counts)
+    judged = sum(
+        counts[key]
+        for key in (
+            "identity-ok",
+            "identity-conflict",
+            "identity-ambiguous",
+            "identity-weak",
+        )
+    )
+    if judged == 0:
+        return None
+    ok = counts["identity-ok"]
+    parts = [f"{ok}/{judged} sentences consistent ({ok / judged:.0%})"]
+    for key, label in (
+        ("identity-conflict", "conflict"),
+        ("identity-ambiguous", "ambiguous"),
+        ("identity-weak", "weak"),
+    ):
+        if counts[key]:
+            parts.append(f"{counts[key]} {label}")
+    return ", ".join(parts)
 
 
 def _echo_project_created(
