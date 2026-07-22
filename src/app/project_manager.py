@@ -1718,7 +1718,15 @@ def summarize_project(
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
     input_file = _project_input_file(paths.root, manifest)
-    result = load_transcript_result(paths.asr_dir / "sentences.json")
+    # Prefer the corrected transcript and resolved speaker names so the memory
+    # index reflects what the reader will actually see, not the raw ASR text.
+    sentences_path = paths.asr_dir / "sentences_corrected.json"
+    if not sentences_path.exists():
+        sentences_path = paths.asr_dir / "sentences.json"
+    result = load_transcript_result(sentences_path)
+    speaker_names = _load_existing_speaker_mapping(
+        paths.speakers_dir / "speaker_map.json"
+    )
     settings = load_settings(require_oss=False)
     model_label = model or getattr(
         settings, "dashscope_summary_model", "configured-default"
@@ -1740,7 +1748,9 @@ def summarize_project(
     )
     try:
         summary = _run_with_stage_heartbeat(
-            lambda: generate_meeting_summary(result, settings=settings, model=model),
+            lambda: generate_meeting_summary(
+                result, settings=settings, model=model, speaker_names=speaker_names
+            ),
             progress=progress,
             manifest=manifest,
             project_dir=paths.root,

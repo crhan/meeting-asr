@@ -1549,7 +1549,7 @@ def test_summarize_project_writes_summary_and_updates_auto_title(
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary(
+        lambda result, settings, model, speaker_names=None: MeetingSummary(
             "AI 转型研讨",
             "讨论 AI 转型目标和落地路径。",
             ["目标牵引", "路径收敛", "飞轮闭环", "里程碑518", "团队对齐"],
@@ -1576,6 +1576,59 @@ def test_summarize_project_writes_summary_and_updates_auto_title(
     assert "待办" not in rendered
 
 
+def test_summarize_project_prefers_corrected_transcript_and_names(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Summaries read the corrected transcript and resolved speaker names."""
+    source = tmp_path / "meeting.mp4"
+    source.write_bytes(b"fake video")
+    project_dir = tmp_path / "project"
+    create_project(
+        source,
+        title=None,
+        projects_dir=tmp_path / "projects",
+        project_dir=project_dir,
+        meeting_time=None,
+        hash_source=False,
+    )
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    _write_sentences(
+        project_dir / "asr" / "sentences_corrected.json",
+        [
+            {
+                "begin_time_ms": 0,
+                "end_time_ms": 1000,
+                "text": "纠错后的句子。",
+                "speaker_id": 0,
+                "sentence_id": 1,
+            }
+        ],
+    )
+    speaker_map = project_dir / "speakers" / "speaker_map.json"
+    speaker_map.parent.mkdir(parents=True, exist_ok=True)
+    speaker_map.write_text('{"0": "张三"}', encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_summary(result, settings, model, speaker_names=None):
+        captured["full_text"] = result.full_text
+        captured["speaker_names"] = speaker_names
+        return MeetingSummary("标题", "回忆。", ["飞轮POC"], "qwen-test")
+
+    monkeypatch.setattr(
+        "app.project_manager.generate_meeting_summary", fake_summary
+    )
+    monkeypatch.setattr(
+        "app.project_manager.load_settings",
+        lambda require_oss=False: object(),
+    )
+
+    summarize_project(project_dir, model=None, update_title=False)
+
+    assert captured["full_text"] == "纠错后的句子。"
+    assert captured["speaker_names"] == {0: "张三"}
+
+
 def test_summarize_project_prefixes_auto_title_with_meeting_time(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1595,7 +1648,7 @@ def test_summarize_project_prefixes_auto_title_with_meeting_time(
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary(
+        lambda result, settings, model, speaker_names=None: MeetingSummary(
             "AI 转型研讨",
             "讨论 AI 转型目标和落地路径。",
             ["目标牵引", "路径收敛", "飞轮闭环", "里程碑518", "团队对齐"],
@@ -1637,7 +1690,7 @@ def test_summarize_project_replaces_existing_llm_title(
     save_manifest(project_dir, manifest)
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary(
+        lambda result, settings, model, speaker_names=None: MeetingSummary(
             "新自动标题", "回忆提示。", ["关键词1", "关键词2"], "qwen-test"
         ),
     )
@@ -1673,7 +1726,7 @@ def test_summarize_project_preserves_manual_title(
     _write_sample_sentences(project_dir / "asr" / "sentences.json")
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary(
+        lambda result, settings, model, speaker_names=None: MeetingSummary(
             "自动标题", "摘要", [], "qwen-test"
         ),
     )
@@ -1715,7 +1768,7 @@ def test_summarize_project_marks_legacy_custom_unknown_title_as_manual(
     save_manifest(project_dir, manifest)
     monkeypatch.setattr(
         "app.project_manager.generate_meeting_summary",
-        lambda result, settings, model: MeetingSummary(
+        lambda result, settings, model, speaker_names=None: MeetingSummary(
             "自动标题", "摘要", [], "qwen-test"
         ),
     )

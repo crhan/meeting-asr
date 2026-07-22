@@ -1404,24 +1404,9 @@ def _run_project_workflow(
                 execute=_local_correction_stage,
             )
         )
-    if polish:
-        stages.append(
-            RunStage(
-                key="polish",
-                description="Generating transcript polish proposal",
-                execute=_polish_stage,
-                satisfied=lambda: _run_polish_skip_reason(_project_root()),
-            )
-        )
-    if summarize:
-        stages.append(
-            RunStage(
-                key="summary",
-                description="Summarizing meeting",
-                execute=_summary_stage,
-                satisfied=lambda: _run_summary_skip_reason(_project_root()),
-            )
-        )
+    # Speaker identity resolves BEFORE the LLM text stages: polish then gets
+    # real speaker names for context-sensitive disambiguation, and the memory
+    # index summarizes the corrected, named transcript instead of raw ASR.
     stages.append(
         RunStage(
             key="speaker-match",
@@ -1442,6 +1427,24 @@ def _run_project_workflow(
                 key="speaker-stabilization",
                 description="Stabilizing sentence speaker assignments",
                 execute=_stabilize_stage,
+            )
+        )
+    if polish:
+        stages.append(
+            RunStage(
+                key="polish",
+                description="Generating transcript polish proposal",
+                execute=_polish_stage,
+                satisfied=lambda: _run_polish_skip_reason(_project_root()),
+            )
+        )
+    if summarize:
+        stages.append(
+            RunStage(
+                key="summary",
+                description="Summarizing meeting",
+                execute=_summary_stage,
+                satisfied=lambda: _run_summary_skip_reason(_project_root()),
             )
         )
     emit_progress(

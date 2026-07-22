@@ -110,3 +110,39 @@ def test_generate_meeting_summary_uses_single_full_transcript_call(monkeypatch) 
         "钉钉工作形态",
         "LMVK知识图谱",
     ]
+
+
+def test_generate_meeting_summary_prompt_uses_resolved_names(monkeypatch) -> None:
+    """Resolved speaker names replace anonymous labels in the prompt."""
+    prompts = []
+
+    def fake_call(**kwargs):
+        prompts.append(kwargs["messages"][1]["content"])
+        return '{"title":"目标对齐会","summary":"对齐目标。","keywords":["目标对齐会","飞轮POC本地跑通","518里程碑"]}'
+
+    monkeypatch.setattr("app.meeting_summary.generate_chat_text", fake_call)
+    result = TranscriptResult(
+        "大家好。收到。",
+        [
+            SentenceSegment(0, 1000, "大家好。", 0, 1),
+            SentenceSegment(1200, 1800, "收到。", 1, 2),
+        ],
+        [0, 1],
+    )
+
+    generate_meeting_summary(
+        result,
+        settings=Settings(
+            dashscope_api_key="key",
+            dashscope_base_url=None,
+            dashscope_summary_model="qwen-test",
+        ),
+        model=None,
+        speaker_names={0: "张三"},
+    )
+
+    prompt = prompts[0]
+    assert "张三: 大家好。" in prompt
+    # Unresolved speakers keep their anonymous label.
+    assert "Speaker B: 收到。" in prompt
+    assert "Speaker A" not in prompt
