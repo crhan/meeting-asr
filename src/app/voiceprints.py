@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import shutil
 import struct
@@ -24,7 +25,11 @@ from app.project_manager import (
 from app.speaker_labeling import load_transcript_result
 from app.transcript_merge import is_placeholder_name
 from app.voiceprint_audio import trim_embedding_audio_silence
-from app.voiceprint_embedding import embed_audio_file
+from app.voiceprint_embedding import (
+    embed_audio_file,
+    resolve_voiceprint_embedding_options,
+)
+from app.voiceprint_quality import DEFAULT_CRITICAL_SCORE, DEFAULT_MIN_CLUSTER_SIZE
 from app.voiceprint_segment_selection import (
     ScoredVoiceprintSegment,
     select_voiceprint_segments,
@@ -34,10 +39,21 @@ from app.voiceprint_store import (
     get_voiceprint_clip_dir,
     get_voiceprint_db_path,
     list_any_embedded_sample_ids,
+    list_voiceprint_embeddings,
     store_voiceprint_samples_with_rows,
 )
 from app.voiceprint_people import get_voiceprint_person
 from app.voiceprint_models import VoiceprintSampleRow
+
+LOGGER = logging.getLogger(__name__)
+
+# A capture clip must land at least this close to the person's existing
+# library centroid to enter the matching pool directly; below it the clip is
+# stored quarantined for human review. Reuses the quality-diagnostics
+# critical bar so "would be flagged critical later" and "quarantined at
+# capture" stay one concept.
+CAPTURE_IDENTITY_QUARANTINE_SCORE = DEFAULT_CRITICAL_SCORE
+CAPTURE_IDENTITY_MIN_CENTROID_SAMPLES = DEFAULT_MIN_CLUSTER_SIZE
 
 
 @dataclass(frozen=True, slots=True)
@@ -543,7 +559,10 @@ def _persist_voiceprint_speaker(
                     f"No voiceprint clips passed audio quality checks for speaker {speaker.speaker_id}."
                 )
             emit_progress(progress, f"Indexing {speaker.name} voiceprint samples")
-            samples = _stored_samples(project_root, project_id, source, selected)
+            clip_statuses = _identity_precheck_statuses(selected[0], db_path)
+            samples = _stored_samples(
+                project_root, project_id, source, selected, clip_statuses=clip_statuses
+            )
             _database_path, rows = store_voiceprint_samples_with_rows(samples, db_path)
             selected_speaker = selected[0]
             if not rows:
@@ -1269,6 +1288,8 @@ def _stored_samples(
     project_id: str,
     source: Path,
     speakers: list[VoiceprintSpeaker],
+    *,
+    clip_statuses: dict[Path, str] | None = None,
 ) -> list[StoredVoiceprintSample]:
     """
     Build SQLite sample rows for captured clips.
@@ -1278,17 +1299,95 @@ def _stored_samples(
         project_id: Project id.
         source: Source media path.
         speakers: Captured voiceprint speakers.
+        clip_statuses: Optional per-clip lifecycle status overrides.
 
     Returns:
         Samples ready for SQLite storage.
     """
+    statuses = clip_statuses or {}
     samples: list[StoredVoiceprintSample] = []
     for speaker in speakers:
         for clip in speaker.clips:
             samples.append(
-                _stored_sample(project_root, project_id, source, speaker, clip)
+                _stored_sample(
+                    project_root,
+                    project_id,
+                    source,
+                    speaker,
+                    clip,
+                    status=statuses.get(clip.path, "active"),
+                )
             )
     return samples
+
+
+def _identity_precheck_statuses(
+    speaker: VoiceprintSpeaker, db_path: Path
+) -> dict[Path, str]:
+    """
+    Quarantine capture clips that do not sound like the target person.
+
+    Capture trusts the project's speaker naming; a mis-named speaker would
+    otherwise pollute the shared library as ``active`` samples and skew every
+    later match. When the person already has enough embedded library samples
+    to form a centroid, each new clip is embedded and compared against it —
+    clips scoring below the critical bar enter the store as ``quarantined``
+    (review can promote them) instead of joining the matching pool.
+
+    First-time people (no usable centroid) and embedding failures leave the
+    clip ``active``, preserving the historical capture behaviour.
+
+    Args:
+        speaker: Captured speaker with resolved person identity.
+        db_path: Voiceprint SQLite path.
+
+    Returns:
+        Mapping of clip path to overridden status (empty when no check ran).
+    """
+    if speaker.person_id is None:
+        return {}
+    centroid = _existing_person_centroid(speaker.person_id, db_path)
+    if centroid is None:
+        return {}
+    statuses: dict[Path, str] = {}
+    for clip in speaker.clips:
+        try:
+            embedding_path = clip.path.with_name(f"{clip.path.stem}_embedding.wav")
+            if not embedding_path.exists():
+                trim_embedding_audio_silence(clip.path, embedding_path)
+            vector = _normalize_vector(
+                embed_audio_file(embedding_path, provider=None)
+            )
+        except Exception:  # noqa: BLE001 - precheck must not block capture
+            continue
+        score = _cosine(vector, centroid)
+        if score < CAPTURE_IDENTITY_QUARANTINE_SCORE:
+            LOGGER.warning(
+                "Voiceprint capture quarantined a clip for %s: score %.3f < %.2f "
+                "against the existing library centroid (%s)",
+                speaker.name,
+                score,
+                CAPTURE_IDENTITY_QUARANTINE_SCORE,
+                clip.rel_path,
+            )
+            statuses[clip.path] = "quarantined"
+    return statuses
+
+
+def _existing_person_centroid(person_id: int, db_path: Path) -> list[float] | None:
+    """Return the person's normalized library centroid, or ``None`` when the
+    person has too few embedded matching-pool samples to judge against."""
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    vectors = [
+        _normalize_vector(row.vector)
+        for row in list_voiceprint_embeddings(model, db_path)
+        if row.speaker_id == person_id
+    ]
+    if len(vectors) < CAPTURE_IDENTITY_MIN_CENTROID_SAMPLES:
+        return None
+    return _normalize_vector(
+        [sum(values) / len(vectors) for values in zip(*vectors)]
+    )
 
 
 def _stored_sample(
@@ -1297,6 +1396,8 @@ def _stored_sample(
     source: Path,
     speaker: VoiceprintSpeaker,
     clip: VoiceprintClip,
+    *,
+    status: str = "active",
 ) -> StoredVoiceprintSample:
     """
     Build one SQLite sample row.
@@ -1307,6 +1408,7 @@ def _stored_sample(
         source: Source media path.
         speaker: Captured speaker.
         clip: Captured clip.
+        status: Lifecycle status the sample enters the store with.
 
     Returns:
         Sample ready for SQLite storage.
@@ -1325,4 +1427,5 @@ def _stored_sample(
         clip_begin_time_ms=clip.clip_begin_time_ms,
         clip_end_time_ms=clip.clip_end_time_ms,
         transcript_text=clip.text,
+        sample_status=status,
     )

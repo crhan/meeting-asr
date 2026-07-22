@@ -951,7 +951,7 @@ def _sample_values(
         sample.source_end_time_ms,
         sample.clip_begin_time_ms,
         sample.clip_end_time_ms,
-        "active",
+        sample.sample_status,
         sample.transcript_text,
         now,
         now,
