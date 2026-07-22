@@ -2728,6 +2728,12 @@ def _invalidate_downstream_artifacts(
     for key in DOWNSTREAM_SPEAKER_KEYS:
         manifest.speakers.pop(key, None)
     manifest.asr.pop("summary_model", None)
+    # Correction runtime state describes the invalidated transcript; clearing
+    # it re-arms the run pipeline's polish/local-correction skip gates.
+    runtime = dict(manifest.runtime)
+    runtime.pop("polish", None)
+    runtime.pop("local_correction", None)
+    manifest.runtime = runtime
     # Keywords are derived from the transcript; once the transcript is
     # invalidated the keyword list is also stale and must not survive
     # into the next project list render.
