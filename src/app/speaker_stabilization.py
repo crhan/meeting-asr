@@ -146,28 +146,41 @@ def stabilize_project_speakers(
             progress=progress,
         )
         reassignments = tuple(_sentence_reassignments(sample_summary, cluster_summary))
-        apply_result = None
-        if reassignments:
+        if not reassignments:
+            # Converged: the diagnostics found nothing left to move, so later
+            # passes would only repeat the same (embedding-heavy) analysis.
+            results.append(
+                SpeakerStabilizationIteration(
+                    index, reassignments, None, cluster_summary, sample_summary
+                )
+            )
             emit_progress(
                 progress,
-                f"Applying {len(reassignments)} sentence speaker reassignment(s)",
+                f"Speaker stabilization converged after pass {index}/{total}",
+                completed=total,
+                total=total,
             )
-            apply_result = apply_project_sentence_reassignments(
-                project_dir,
-                reassignments,
-                store_dir=store_dir,
-                provider=None,
-                model=model,
-                rematch=True,
-            )
-            _apply_latest_match_names(project_dir, apply_result.match_summary)
-            cluster_summary, sample_summary = _refresh_diagnostics(
-                project_dir,
-                store_dir=store_dir,
-                model=model,
-                sample_workers=sample_workers,
-                progress=progress,
-            )
+            break
+        emit_progress(
+            progress,
+            f"Applying {len(reassignments)} sentence speaker reassignment(s)",
+        )
+        apply_result = apply_project_sentence_reassignments(
+            project_dir,
+            reassignments,
+            store_dir=store_dir,
+            provider=None,
+            model=model,
+            rematch=True,
+        )
+        _apply_latest_match_names(project_dir, apply_result.match_summary)
+        cluster_summary, sample_summary = _refresh_diagnostics(
+            project_dir,
+            store_dir=store_dir,
+            model=model,
+            sample_workers=sample_workers,
+            progress=progress,
+        )
         results.append(
             SpeakerStabilizationIteration(
                 index,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +19,11 @@ from app.project_manager import (
     resolve_project_audio_path,
     save_manifest,
 )
+from app.speaker_clip_embeddings import (
+    clip_embedding_cache_key,
+    read_clip_embedding_cache,
+    write_clip_embedding_cache,
+)
 from app.speaker_labeling import load_speaker_person_mapping, load_transcript_result
 from app.speaker_matching import (
     VoiceprintCandidate,
@@ -31,7 +35,6 @@ from app.speaker_matching import (
 )
 from app.utils import safe_write_json
 from app.voiceprint_audio import (
-    VOICEPRINT_AUDIO_PREPROCESS_VERSION,
     trim_embedding_audio_silence,
 )
 from app.voiceprint_embedding import (
@@ -666,19 +669,26 @@ def _sample_vector(
     cache_lock: Lock,
 ) -> list[float]:
     """Return a cached embedding vector for one transcript sample."""
-    key = _sample_cache_key(context, speaker_id, segment, max_seconds, padding_seconds)
+    key = clip_embedding_cache_key(
+        provider=context.provider,
+        model=context.model,
+        speaker_id=speaker_id,
+        segment=segment,
+        max_seconds=max_seconds,
+        padding_seconds=padding_seconds,
+    )
     with cache_lock:
         cached = cache.get(key)
     if cached is not None:
-        return cached
+        return _normalize(cached)
     clip_path = _sample_clip_path(context.project_root, speaker_id, segment)
     _write_sample_clip(context.source, clip_path, segment, max_seconds, padding_seconds)
     embedding_path = _sample_embedding_clip_path(clip_path)
     trim_embedding_audio_silence(clip_path, embedding_path)
-    vector = _normalize(embed_audio_file(embedding_path, provider=context.provider))
+    raw_vector = embed_audio_file(embedding_path, provider=context.provider)
     with cache_lock:
-        cache[key] = vector
-    return vector
+        cache[key] = raw_vector
+    return _normalize(raw_vector)
 
 
 def _identity_status(
@@ -755,31 +765,6 @@ def _is_low_information_segment(segment: SentenceSegment) -> bool:
     return len(text) < MIN_SAMPLE_TEXT_CHARS and duration_ms < MIN_SAMPLE_DURATION_MS
 
 
-def _sample_cache_key(
-    context: _SampleMatchContext,
-    speaker_id: int,
-    segment: SentenceSegment,
-    max_seconds: float,
-    padding_seconds: float,
-) -> str:
-    """Return a stable embedding cache key for one transcript sample."""
-    payload = {
-        "version": 2,
-        "provider": context.provider,
-        "model": context.model,
-        "audio_preprocess": VOICEPRINT_AUDIO_PREPROCESS_VERSION,
-        "speaker_id": speaker_id,
-        "sentence_id": segment.sentence_id,
-        "begin_time_ms": segment.begin_time_ms,
-        "end_time_ms": segment.end_time_ms,
-        "text": segment.text,
-        "max_seconds": max_seconds,
-        "padding_seconds": padding_seconds,
-    }
-    encoded = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode()
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _sample_clip_path(
@@ -822,48 +807,14 @@ def _write_sample_clip(
     )
 
 
-def _sample_cache_path(project_root: Path) -> Path:
-    """Return the project-local sample embedding cache path."""
-    return project_root / "tmp" / "voiceprint_sample_match" / "sample_embeddings.json"
-
-
-def _cluster_cache_path(project_root: Path) -> Path:
-    """Return the compatible cluster embedding cache path."""
-    return project_root / "tmp" / "speaker_cluster" / "clip_embeddings.json"
-
-
 def _read_sample_cache(project_root: Path) -> dict[str, list[float]]:
-    """Read valid cached sample embeddings, reusing cluster vectors when possible."""
-    cache: dict[str, list[float]] = {}
-    for path in (_cluster_cache_path(project_root), _sample_cache_path(project_root)):
-        cache.update(_read_embedding_cache_file(path))
-    return cache
-
-
-def _read_embedding_cache_file(path: Path) -> dict[str, list[float]]:
-    """Read one embedding cache file."""
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except OSError, json.JSONDecodeError:
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    valid: dict[str, list[float]] = {}
-    for key, value in payload.items():
-        if not isinstance(value, list):
-            continue
-        try:
-            valid[str(key)] = [float(item) for item in value]
-        except TypeError, ValueError:
-            continue
-    return valid
+    """Read the shared clip embedding cache (raw vectors)."""
+    return read_clip_embedding_cache(project_root)
 
 
 def _write_sample_cache(project_root: Path, cache: dict[str, list[float]]) -> None:
-    """Persist sample embedding cache."""
-    safe_write_json(_sample_cache_path(project_root), cache)
+    """Persist the shared clip embedding cache."""
+    write_clip_embedding_cache(project_root, cache)
 
 
 def _summary_verdict(reports: list[SpeakerSampleMatchReport]) -> str:

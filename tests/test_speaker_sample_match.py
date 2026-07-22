@@ -80,15 +80,16 @@ def test_project_speakers_sample_match_reuses_embedding_cache(
     assert after_first > 0
     assert len(calls) == after_first
     assert (
-        project_dir / "tmp" / "voiceprint_sample_match" / "sample_embeddings.json"
+        project_dir / "tmp" / "voiceprint_clips" / "clip_embeddings.json"
     ).exists()
 
 
-def test_project_speakers_sample_match_reuses_cluster_embedding_cache(
+def test_project_speakers_sample_match_preserves_other_stage_cache_entries(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    """Sample matching should reuse compatible vectors produced by cluster diagnostics."""
+    """The shared clip cache is merge-on-write: vectors persisted by another
+    diagnostics stage (probe/cluster) must survive a sample-match rewrite."""
     project_dir = _sample_project(tmp_path)
     calls: list[Path] = []
     _write_sample_match_inputs(project_dir)
@@ -97,17 +98,10 @@ def test_project_speakers_sample_match_reuses_cluster_embedding_cache(
     first = runner.invoke(
         app, ["project", "speakers", "sample-match", str(project_dir), "--no-progress"]
     )
-    sample_cache_path = (
-        project_dir / "tmp" / "voiceprint_sample_match" / "sample_embeddings.json"
-    )
-    cluster_cache_path = (
-        project_dir / "tmp" / "speaker_cluster" / "clip_embeddings.json"
-    )
-    cluster_cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cluster_cache_path.write_text(
-        sample_cache_path.read_text(encoding="utf-8"), encoding="utf-8"
-    )
-    sample_cache_path.unlink()
+    cache_path = project_dir / "tmp" / "voiceprint_clips" / "clip_embeddings.json"
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    payload["other-stage-key"] = [0.25, 0.75]
+    cache_path.write_text(json.dumps(payload), encoding="utf-8")
     calls.clear()
 
     second = runner.invoke(
@@ -117,7 +111,8 @@ def test_project_speakers_sample_match_reuses_cluster_embedding_cache(
     assert first.exit_code == 0
     assert second.exit_code == 0
     assert calls == []
-    assert sample_cache_path.exists()
+    merged = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert merged["other-stage-key"] == [0.25, 0.75]
 
 
 def _sample_project(tmp_path: Path) -> Path:

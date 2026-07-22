@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from app.commands.project import (
     _run_polish_skip_reason,
@@ -12,7 +11,6 @@ from app.commands.project import (
 )
 from app.core.run_pipeline import (
     RunStage,
-    StageRun,
     execute_run_pipeline,
     pipeline_step_descriptions,
 )
