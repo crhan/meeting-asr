@@ -392,7 +392,12 @@ def transcribe(
         help="Show interactive progress on a terminal.",
     ),
 ) -> None:
-    """Transcribe a project and write structured artifacts."""
+    """Transcribe a project and write structured artifacts.
+
+    Reuses an existing transcription result or reattaches an interrupted
+    DashScope task instead of paying for a new one; use ``project rerun``
+    to force a fresh ASR task.
+    """
     _run_project_transcription_command(
         project_dir=project_dir,
         projects_dir=projects_dir,
@@ -408,6 +413,7 @@ def transcribe(
         asr_hotwords=asr_hotwords,
         progress=progress,
         description="Transcribing project",
+        force_asr=False,
     )
 
 
@@ -461,6 +467,7 @@ def rerun(
         asr_hotwords=asr_hotwords,
         progress=progress,
         description="Rerunning project ASR",
+        force_asr=True,
     )
 
 
@@ -480,6 +487,7 @@ def _run_project_transcription_command(
     asr_hotwords: str,
     progress: bool,
     description: str,
+    force_asr: bool,
 ) -> None:
     """Resolve a project and run the ASR transcription command."""
     configure_logging(verbose=should_enable_verbose_logs())
@@ -500,7 +508,7 @@ def _run_project_transcription_command(
     )
     summary = run_with_progress(
         lambda reporter: transcribe_project(
-            resolved_project_dir, options, progress=reporter
+            resolved_project_dir, options, progress=reporter, force_asr=force_asr
         ),
         description=description,
         total=7,
@@ -598,6 +606,12 @@ def run(
     ),
     asr_hotwords: str = typer.Option(
         "auto", "--asr-hotwords", autocompletion=complete_asr_hotwords
+    ),
+    force_asr: bool = typer.Option(
+        False,
+        "--force-asr",
+        help="Submit a fresh DashScope task even when this project already has "
+        "a transcription result or an interrupted task that could be reattached.",
     ),
     store_dir: Optional[Path] = typer.Option(
         None, "--store-dir", file_okay=False, dir_okay=True
@@ -738,6 +752,7 @@ def run(
             meeting_time=meeting_time,
             variant=variant,
             options=options,
+            force_asr=force_asr,
             store_dir=store_dir,
             voiceprint_model=voiceprint_model,
             match_threshold=match_threshold,
@@ -1102,6 +1117,7 @@ def _run_project_workflow(
     meeting_time: str | None,
     variant: str | None,
     options: ProjectTranscribeOptions,
+    force_asr: bool = False,
     store_dir: Path | None,
     lexicon_db: Path | None = None,
     voiceprint_model: str | None,
@@ -1194,6 +1210,7 @@ def _run_project_workflow(
         step_offset=1,
         step_total=step_total,
         lexicon_db=lexicon_db,
+        force_asr=force_asr,
     )
     lexicon_correction_summary = None
     if local_correction:

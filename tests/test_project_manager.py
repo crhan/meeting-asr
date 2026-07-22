@@ -779,6 +779,155 @@ def test_project_run_applies_local_lexicon_corrections(
     assert "PAC保持不变。" in auto_show.output
 
 
+def test_transcribe_project_reuses_existing_transcription(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A project with raw + normalized ASR output must not resubmit ASR."""
+    project_dir = _sample_project(tmp_path)
+    (project_dir / "asr").mkdir(parents=True, exist_ok=True)
+    (project_dir / "asr" / "raw_result.json").write_text("{}", encoding="utf-8")
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    named_transcript = project_dir / "exports" / "transcript_named.txt"
+    named_transcript.parent.mkdir(parents=True, exist_ok=True)
+    named_transcript.write_text("张三: 大家好。\n", encoding="utf-8")
+    manifest = load_manifest(project_dir)
+    manifest.asr = {"task_id": "task-old"}
+    save_manifest(project_dir, manifest)
+
+    def _must_not_submit(**_kwargs):
+        raise AssertionError("submit_transcription must not run on reuse")
+
+    monkeypatch.setattr(project_manager, "submit_transcription", _must_not_submit)
+
+    summary = project_manager.transcribe_project(project_dir, _transcribe_options())
+
+    assert summary.task_id == "task-old"
+    assert summary.file_url_source == "reused-transcript"
+    assert summary.sentence_count == 3
+    assert named_transcript.read_text(encoding="utf-8") == "张三: 大家好。\n"
+
+
+def test_transcribe_project_force_asr_resubmits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """force_asr must bypass reuse and submit a fresh task."""
+    project_dir = _sample_project(tmp_path)
+    (project_dir / "asr").mkdir(parents=True, exist_ok=True)
+    (project_dir / "asr" / "raw_result.json").write_text("{}", encoding="utf-8")
+    _write_sample_sentences(project_dir / "asr" / "sentences.json")
+    audio_path = project_dir / "audio" / "audio.wav"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_path.write_bytes(b"audio")
+    manifest = load_manifest(project_dir)
+    manifest.audio = {"path": "audio/audio.wav", "format": "wav"}
+    save_manifest(project_dir, manifest)
+
+    class FakeTask:
+        output = {"task_id": "task-new"}
+
+    submitted = []
+    monkeypatch.setattr(project_manager, "load_settings", lambda **_: _settings())
+    monkeypatch.setattr(
+        project_manager,
+        "upload_file_to_oss",
+        lambda *_, **__: "https://oss.example.com/audio.wav",
+    )
+    monkeypatch.setattr(project_manager, "record_oss_upload", lambda *_, **__: None)
+    monkeypatch.setattr(
+        project_manager,
+        "submit_transcription",
+        lambda **kwargs: submitted.append(kwargs) or FakeTask(),
+    )
+    monkeypatch.setattr(
+        project_manager,
+        "wait_transcription",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        project_manager, "download_transcription_json", lambda _: {"raw": True}
+    )
+    monkeypatch.setattr(
+        project_manager,
+        "parse_transcription_result",
+        lambda _: TranscriptResult(
+            "大家好。",
+            [SentenceSegment(0, 1000, "大家好。", 0, 1)],
+            [0],
+        ),
+    )
+    monkeypatch.setattr(
+        project_manager,
+        "_resolve_project_asr_hotwords",
+        lambda settings, options, **_kw: AsrHotwordResolution(None, "disabled"),
+    )
+    monkeypatch.setattr(project_manager, "record_dashscope_wait", lambda **_: None)
+
+    summary = project_manager.transcribe_project(
+        project_dir, _transcribe_options(), force_asr=True
+    )
+
+    assert submitted
+    assert summary.task_id == "task-new"
+
+
+def test_transcribe_project_reattaches_interrupted_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An interrupted-but-running DashScope task must be reattached, not resubmitted."""
+    project_dir = _sample_project(tmp_path)
+    audio_path = project_dir / "audio" / "audio.wav"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_path.write_bytes(b"audio")
+    manifest = load_manifest(project_dir)
+    manifest.audio = {"path": "audio/audio.wav", "format": "wav"}
+    runtime = dict(manifest.runtime)
+    runtime["external_ids"] = {"dashscope_task_id": "task-interrupted"}
+    manifest.runtime = runtime
+    save_manifest(project_dir, manifest)
+    waited_tasks = []
+
+    def _must_not_submit(**_kwargs):
+        raise AssertionError("submit_transcription must not run on reattach")
+
+    monkeypatch.setattr(project_manager, "load_settings", lambda **_: _settings())
+    monkeypatch.setattr(
+        project_manager, "probe_transcription", lambda **_kwargs: object()
+    )
+    monkeypatch.setattr(project_manager, "submit_transcription", _must_not_submit)
+    monkeypatch.setattr(
+        project_manager,
+        "wait_transcription",
+        lambda *, settings, task, poll_callback=None, max_wait_seconds=None: (
+            waited_tasks.append(task) or object()
+        ),
+    )
+    monkeypatch.setattr(
+        project_manager, "download_transcription_json", lambda _: {"raw": True}
+    )
+    monkeypatch.setattr(
+        project_manager,
+        "parse_transcription_result",
+        lambda _: TranscriptResult(
+            "大家好。",
+            [SentenceSegment(0, 1000, "大家好。", 0, 1)],
+            [0],
+        ),
+    )
+    monkeypatch.setattr(project_manager, "record_dashscope_wait", lambda **_: None)
+
+    summary = project_manager.transcribe_project(project_dir, _transcribe_options())
+
+    assert waited_tasks == ["task-interrupted"]
+    assert summary.task_id == "task-interrupted"
+    assert summary.file_url_source == "reattached-task"
+    assert not (project_dir / "corrections" / "asr_hotwords.json").exists()
+    saved = load_manifest(project_dir)
+    assert saved.asr["vocabulary_source"] == "reattached-task"
+
+
 def test_asr_polling_heartbeat_redacts_signed_url_query_token(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -802,7 +951,9 @@ def test_asr_polling_heartbeat_redacts_signed_url_query_token(
 
         output = {"task_id": "task-1234567890"}
 
-    def fake_wait_transcription(*, settings, task, poll_callback=None):
+    def fake_wait_transcription(
+        *, settings, task, poll_callback=None, max_wait_seconds=None
+    ):
         if poll_callback is not None:
             poll_callback(
                 TranscriptionPollEvent(

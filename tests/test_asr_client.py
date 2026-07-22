@@ -70,6 +70,58 @@ def test_wait_transcription_fails_on_terminal_status(
         wait_transcription(settings=_settings(), task="task-demo")
 
 
+def test_wait_transcription_times_out_on_wall_clock_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A task stuck in RUNNING must stop polling once the budget elapses."""
+    monkeypatch.setattr(
+        asr_client.Transcription,
+        "fetch",
+        lambda task: FakeResponse({"task_status": "RUNNING"}),
+    )
+    monkeypatch.setattr(asr_client.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(asr_client.TranscriptionWaitTimeout):
+        wait_transcription(
+            settings=_settings(), task="task-demo", max_wait_seconds=0.0
+        )
+
+
+def test_probe_transcription_reattaches_running_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pending or running task should be reported as reattachable."""
+    monkeypatch.setattr(
+        asr_client.Transcription,
+        "fetch",
+        lambda task: FakeResponse({"task_status": "RUNNING"}),
+    )
+
+    response = asr_client.probe_transcription(settings=_settings(), task="task-demo")
+
+    assert response is not None
+    assert response.output["task_status"] == "RUNNING"
+
+
+def test_probe_transcription_rejects_failed_or_unreachable_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failed and unfetchable tasks must fall back to a fresh submission."""
+    monkeypatch.setattr(
+        asr_client.Transcription,
+        "fetch",
+        lambda task: FakeResponse({"task_status": "FAILED"}),
+    )
+    assert asr_client.probe_transcription(settings=_settings(), task="t") is None
+
+    def _boom(task):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(asr_client.Transcription, "fetch", _boom)
+    monkeypatch.setattr(asr_client.time, "sleep", lambda seconds: None)
+    assert asr_client.probe_transcription(settings=_settings(), task="t") is None
+
+
 def test_submit_transcription_passes_vocabulary_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
