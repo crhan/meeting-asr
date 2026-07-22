@@ -35,6 +35,10 @@ from app.speaker_clip_embeddings import (
     write_clip_embedding_cache,
 )
 from app.speaker_match_status import voiceprint_match_status
+from app.speaker_pipeline_params import (
+    STRONG_MARGIN_ACCEPT_MARGIN,
+    STRONG_MARGIN_ACCEPT_SCORE,
+)
 from app.speaker_labeling import load_transcript_result
 from app.utils import safe_write_json
 from app.voiceprint_audio import (
@@ -50,9 +54,6 @@ from app.voiceprint_segment_selection import (
     select_voiceprint_segments,
 )
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
-
-STRONG_MARGIN_ACCEPT_SCORE = 0.65
-STRONG_MARGIN_ACCEPT_MARGIN = 0.25
 
 
 @dataclass(frozen=True, slots=True)

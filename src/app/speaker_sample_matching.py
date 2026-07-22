@@ -33,6 +33,12 @@ from app.speaker_matching import (
     _normalize,
     _ranked_matches,
 )
+from app.speaker_pipeline_params import (
+    DEFAULT_FOREIGN_REASSIGN_THRESHOLD,
+    DEFAULT_IDENTITY_AMBIGUOUS_MARGIN,
+    DEFAULT_IDENTITY_CONFLICT_MARGIN,
+    DEFAULT_SAMPLE_IDENTITY_THRESHOLD as DEFAULT_SAMPLE_IDENTITY_THRESHOLD,
+)
 from app.utils import safe_write_json
 from app.voiceprint_audio import (
     trim_embedding_audio_silence,
@@ -45,17 +51,6 @@ from app.voiceprint_embedding import (
 LOW_INFO_TEXT_CHARS = 4
 MIN_SAMPLE_TEXT_CHARS = 8
 MIN_SAMPLE_DURATION_MS = 1200
-DEFAULT_IDENTITY_CONFLICT_MARGIN = 0.08
-DEFAULT_IDENTITY_AMBIGUOUS_MARGIN = 0.05
-DEFAULT_SAMPLE_IDENTITY_THRESHOLD = 0.45
-# A speaker cluster below the cluster naming threshold has no confirmed
-# identity, so its sentences cannot be compared against an assigned baseline.
-# We still match each sentence against the voiceprint library: when the top
-# match clearly and strongly points at one known person, the sentence is a
-# foreign-speaker candidate that stabilization may reassign. This bar is
-# deliberately higher than the assigned-speaker threshold because the cluster
-# itself is unconfirmed, so we only act on confident, unambiguous matches.
-DEFAULT_FOREIGN_REASSIGN_THRESHOLD = 0.55
 
 
 @dataclass(frozen=True, slots=True)

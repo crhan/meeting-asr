@@ -151,6 +151,12 @@ from app.speaker_learning import (
     speaker_learning_payload,
 )
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
+from app.speaker_pipeline_params import (
+    DEFAULT_MATCH_MAX_SECONDS,
+    DEFAULT_MATCH_PADDING_SECONDS,
+    DEFAULT_MATCH_SAMPLE_COUNT,
+    DEFAULT_MATCH_THRESHOLD,
+)
 from app.speaker_resplit import (
     DEFAULT_CANDIDATE_FLOOR,
     DEFAULT_MIN_GROUP_SECONDS,
@@ -628,7 +634,9 @@ def run(
         "--voiceprint-model",
         autocompletion=complete_voiceprint_model,
     ),
-    match_threshold: float = typer.Option(0.75, "--match-threshold", min=0.0, max=1.0),
+    match_threshold: float = typer.Option(
+        DEFAULT_MATCH_THRESHOLD, "--match-threshold", min=0.0, max=1.0
+    ),
     crosstalk: bool = typer.Option(
         True,
         "--crosstalk/--no-crosstalk",
@@ -1305,9 +1313,9 @@ def _run_project_workflow(
             provider=None,
             model=voiceprint_model,
             threshold=match_threshold,
-            sample_count=2,
-            max_seconds=12.0,
-            padding_seconds=0.5,
+            sample_count=DEFAULT_MATCH_SAMPLE_COUNT,
+            max_seconds=DEFAULT_MATCH_MAX_SECONDS,
+            padding_seconds=DEFAULT_MATCH_PADDING_SECONDS,
             crosstalk_params=crosstalk_params,
             progress=progress,
         )
@@ -2684,7 +2692,9 @@ def speakers_rerun(
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
     ),
-    threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
+    threshold: float = typer.Option(
+        DEFAULT_MATCH_THRESHOLD, "--threshold", min=0.0, max=1.0
+    ),
     sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
@@ -2826,7 +2836,9 @@ def speakers_learn(
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
     ),
-    threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
+    threshold: float = typer.Option(
+        DEFAULT_MATCH_THRESHOLD, "--threshold", min=0.0, max=1.0
+    ),
     sample_count: int = typer.Option(3, "--sample-count", min=1, max=20),
     match_sample_count: int = typer.Option(2, "--match-sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
@@ -2953,7 +2965,9 @@ def speakers_match(
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
     ),
-    threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
+    threshold: float = typer.Option(
+        DEFAULT_MATCH_THRESHOLD, "--threshold", min=0.0, max=1.0
+    ),
     sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),

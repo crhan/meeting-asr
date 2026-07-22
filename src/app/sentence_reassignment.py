@@ -40,6 +40,12 @@ from app.speaker_labeling import (
     load_transcript_result,
 )
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
+from app.speaker_pipeline_params import (
+    DEFAULT_MATCH_MAX_SECONDS,
+    DEFAULT_MATCH_PADDING_SECONDS,
+    DEFAULT_MATCH_SAMPLE_COUNT,
+    DEFAULT_MATCH_THRESHOLD,
+)
 from app.utils import safe_write_text
 from app.voiceprint_models import DeletedVoiceprintSample, VoiceprintSampleRow
 from app.voiceprint_quality import VOICEPRINT_SAMPLE_STATUS_INVALIDATED
@@ -51,10 +57,13 @@ from app.voiceprint_store import (
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_REMATCH_THRESHOLD = 0.75
-DEFAULT_REMATCH_SAMPLE_COUNT = 2
-DEFAULT_REMATCH_MAX_SECONDS = 12.0
-DEFAULT_REMATCH_PADDING_SECONDS = 0.5
+# The post-reassignment rematch MUST run with the same acceptance parameters
+# as the run/match commands, or one stabilization pass could silently flip
+# naming decisions the user already saw; aliases, not copies.
+DEFAULT_REMATCH_THRESHOLD = DEFAULT_MATCH_THRESHOLD
+DEFAULT_REMATCH_SAMPLE_COUNT = DEFAULT_MATCH_SAMPLE_COUNT
+DEFAULT_REMATCH_MAX_SECONDS = DEFAULT_MATCH_MAX_SECONDS
+DEFAULT_REMATCH_PADDING_SECONDS = DEFAULT_MATCH_PADDING_SECONDS
 
 
 @dataclass(frozen=True, slots=True)

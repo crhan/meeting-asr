@@ -31,6 +31,7 @@ from app.voiceprint_audio import (
     VOICEPRINT_AUDIO_PREPROCESS_VERSION,
     normalize_voiceprint_samples,
 )
+from app.voiceprint_calibration import calibrate_voiceprint_thresholds
 from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_people import (
     create_voiceprint_person,
@@ -429,6 +430,64 @@ def list_command(
         typer.echo("No voiceprints recorded.")
         return
     _echo_voiceprint_speaker_table(rows)
+
+
+@app.command("calibrate")
+def calibrate_command(
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    provider: Optional[str] = typer.Option(None, "--provider"),
+    model: Optional[str] = typer.Option(None, "--model"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Compute match-threshold calibration evidence from the library.
+
+    Read-only: compares every embedded sample against its own person
+    (genuine) and the best other person (impostor), then reports the score
+    distributions, the equal-error threshold, and the lowest threshold that
+    keeps impostor acceptance under 1%.
+    """
+    report = run_with_cli_errors(
+        lambda: calibrate_voiceprint_thresholds(
+            store_dir=store_dir, provider=provider, model=model
+        )
+    )
+    if as_json:
+        emit_json(report.to_dict())
+        return
+    typer.echo(f"Model: {report.model}")
+    typer.echo(
+        f"People: {report.person_count} ({report.scored_person_count} with enough "
+        f"samples), embedded samples: {report.sample_count}"
+    )
+    _echo_calibration_distribution("Genuine (same person)", report.genuine)
+    _echo_calibration_distribution("Impostor (best other person)", report.impostor)
+    if report.eer_threshold is not None:
+        typer.echo(
+            f"Equal-error threshold: {report.eer_threshold} "
+            f"(error rate ~{report.eer_rate})"
+        )
+    if report.low_impostor_threshold is not None:
+        typer.echo(
+            "Threshold for <=1% impostor acceptance: "
+            f"{report.low_impostor_threshold}"
+        )
+    typer.echo(f"Current accept threshold: {report.current_threshold}")
+    for warning in report.warnings:
+        typer.echo(f"Warning: {warning}")
+
+
+def _echo_calibration_distribution(label: str, distribution) -> None:
+    """Print one calibration score distribution line."""
+    if distribution is None:
+        typer.echo(f"{label}: no scores available")
+        return
+    typer.echo(
+        f"{label}: n={distribution.count} min={distribution.minimum} "
+        f"p5={distribution.p5} median={distribution.median} "
+        f"p95={distribution.p95} max={distribution.maximum}"
+    )
 
 
 @app.command("browse", hidden=True)

@@ -38,6 +38,12 @@ from app.speaker_labeling import SentenceReassignmentSpec
 from app.sentence_locator import format_sentence_ref
 from app.speaker_match_status import MATCH_STATUS_CROSSTALK
 from app.speaker_matching import match_project_speakers
+from app.speaker_pipeline_params import (
+    DEFAULT_MATCH_MAX_SECONDS,
+    DEFAULT_MATCH_PADDING_SECONDS,
+    DEFAULT_MATCH_SAMPLE_COUNT,
+    DEFAULT_MATCH_THRESHOLD,
+)
 from app.project_manager import load_manifest, project_paths
 from app.transcript_corrections import CorrectionEditOptions
 from app.voiceprint_ids import valid_person_public_id
@@ -439,10 +445,10 @@ async def rematch_review(
             store_dir=settings.voiceprint_store_dir,
             provider=None,
             model=None,
-            threshold=0.75,
-            sample_count=2,
-            max_seconds=12.0,
-            padding_seconds=0.5,
+            threshold=DEFAULT_MATCH_THRESHOLD,
+            sample_count=DEFAULT_MATCH_SAMPLE_COUNT,
+            max_seconds=DEFAULT_MATCH_MAX_SECONDS,
+            padding_seconds=DEFAULT_MATCH_PADDING_SECONDS,
             crosstalk_params=None,
             progress=None,
         )
