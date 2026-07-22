@@ -509,7 +509,9 @@ def test_project_run_stabilizes_sentence_speakers_after_voiceprint_matches(
     def fake_stabilize_project_speakers(project_dir, **kwargs):
         calls["project_dir"] = project_dir
         calls["kwargs"] = kwargs
-        return SimpleNamespace(reassignment_count=2, final_match_summary=None)
+        return SimpleNamespace(
+            reassignment_count=2, final_match_summary=None, iterations=()
+        )
 
     monkeypatch.setattr(project_commands, "transcribe_project", fake_transcribe_project)
     monkeypatch.setattr(
