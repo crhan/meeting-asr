@@ -42,9 +42,10 @@ from app.speaker_labeling import (
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
 from app.utils import safe_write_text
 from app.voiceprint_models import DeletedVoiceprintSample, VoiceprintSampleRow
+from app.voiceprint_quality import VOICEPRINT_SAMPLE_STATUS_INVALIDATED
 from app.voiceprint_store import (
-    delete_voiceprint_samples_by_ids,
     get_voiceprint_db_path,
+    invalidate_voiceprint_samples_by_ids,
     list_voiceprint_samples_for_project,
 )
 
@@ -189,12 +190,15 @@ def _invalidate_overlapping_voiceprint_samples(
     reassignments: Sequence[SentenceReassignmentSpec],
     store_dir: Path | None,
 ) -> list[DeletedVoiceprintSample]:
-    """Delete voiceprint samples whose audio now belongs to another speaker.
+    """Soft-invalidate voiceprint samples whose audio changed speakers.
 
     A sample is considered stale when its source time range overlaps a
     reassigned sentence and its ``project_speaker_id`` matches the sentence's
     original speaker. Samples on other speakers, projects, or time ranges are
-    untouched.
+    untouched. Stale samples are status-flagged out of the matching pool
+    instead of physically deleted, so the operation stays recoverable — the
+    project_id key is content-addressed, and a copied project pointed at the
+    real store must never destroy library samples irreversibly.
 
     Args:
         manifest: Loaded project manifest (used for ``project_id``).
@@ -202,18 +206,20 @@ def _invalidate_overlapping_voiceprint_samples(
         store_dir: Voiceprint store directory.
 
     Returns:
-        Deleted sample summaries (empty when nothing matched).
+        Invalidated sample summaries (empty when nothing matched).
     """
     db_path = get_voiceprint_db_path(store_dir)
-    samples = list_voiceprint_samples_for_project(manifest.project_id, db_path)
+    samples = [
+        sample
+        for sample in list_voiceprint_samples_for_project(manifest.project_id, db_path)
+        if sample.sample_status != VOICEPRINT_SAMPLE_STATUS_INVALIDATED
+    ]
     if not samples:
         return []
     stale_ids = _stale_sample_ids(samples, reassignments)
     if not stale_ids:
         return []
-    return delete_voiceprint_samples_by_ids(
-        stale_ids, db_path=db_path, delete_clips=True
-    )
+    return invalidate_voiceprint_samples_by_ids(stale_ids, db_path=db_path)
 
 
 def _stale_sample_ids(
