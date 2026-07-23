@@ -17,6 +17,12 @@ from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import cli_console
 from app.presentation.cli.plain import echo_plain_table
+from app.presentation.cli.voiceprint_health import (
+    voiceprint_health_action_lines,
+    voiceprint_health_payload,
+    voiceprint_health_summary_lines,
+    voiceprint_health_table,
+)
 from app.presentation.cli.voiceprint_quality import (
     voiceprint_quality_payload,
     voiceprint_quality_summary_lines,
@@ -70,6 +76,10 @@ from app.presentation.tui.voiceprint_quality import (
     run_voiceprint_quality_review_tui,
 )
 from app.voiceprint_embedding import embed_voiceprint_samples
+from app.voiceprint_health import (
+    VoiceprintHealthReport,
+    analyze_voiceprint_health,
+)
 from app.voiceprint_quality import (
     VoiceprintQualityReport,
     analyze_voiceprint_quality,
@@ -772,6 +782,29 @@ def quality_command(
     _echo_voiceprint_quality_report(report)
 
 
+@app.command("health")
+def health_command(
+    speaker: Optional[str] = typer.Argument(None, metavar="[SPEAKER]"),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Check per-person library health: coverage, embeddings, cohesion, separation."""
+    report = run_with_cli_errors(
+        lambda: analyze_voiceprint_health(
+            store_dir=store_dir, speaker=speaker, model=model
+        )
+    )
+    if as_json:
+        emit_json(voiceprint_health_payload(report))
+        return
+    _echo_voiceprint_health_report(report)
+
+
 @app.command("show")
 def show_command(
     speaker: str = typer.Argument(..., metavar="SPEAKER"),
@@ -1117,6 +1150,27 @@ def _echo_voiceprint_quality_report(report: VoiceprintQualityReport) -> None:
         typer.echo(
             "Quarantined samples are kept in the library but excluded from future matching."
         )
+
+
+def _echo_voiceprint_health_report(report: VoiceprintHealthReport) -> None:
+    """
+    Print voiceprint health diagnostics.
+
+    Args:
+        report: Health report.
+    """
+    for line in voiceprint_health_summary_lines(report):
+        typer.echo(line)
+    if not report.people:
+        typer.echo("No voiceprint people found.")
+        return
+    _voiceprint_table_console().print(voiceprint_health_table(report))
+    action_lines = voiceprint_health_action_lines(report)
+    if action_lines:
+        typer.echo("")
+        typer.echo("Suggested actions:")
+        for line in action_lines:
+            typer.echo(f"  {line}")
 
 
 def _embedded_count_text(row: VoiceprintSpeakerRow) -> str:
