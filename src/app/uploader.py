@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 from pathlib import Path
 import warnings
 from uuid import uuid4
 
 from app.config import Settings, load_settings
+
+LOGGER = logging.getLogger(__name__)
 
 SIGNED_URL_EXPIRES_SECONDS = 24 * 60 * 60
 DEFAULT_OSS_PREFIX = "meeting-asr/uploads"
@@ -85,8 +88,31 @@ def upload_file_to_oss(
     resolved_settings = settings or load_settings(require_oss=True)
     bucket = build_oss_bucket(resolved_settings)
     key = object_name or f"{DEFAULT_OSS_PREFIX}/{uuid4().hex}{source.suffix}"
+    _apply_lifecycle_fallback(bucket)
     bucket.put_object_from_file(key, str(source), progress_callback=progress_callback)
     return bucket.sign_url("GET", key, expires_seconds, slash_safe=True)
+
+
+def _apply_lifecycle_fallback(bucket) -> None:
+    """
+    Best-effort: ensure the auto-delete lifecycle rule covers uploaded objects.
+
+    Uploads must never fail because the credential lacks bucket lifecycle
+    permissions, so any error here degrades to a warning.
+
+    Args:
+        bucket: ``oss2.Bucket`` instance the upload will use.
+    """
+    from app.oss_lifecycle import ensure_bucket_lifecycle_rule
+
+    try:
+        ensure_bucket_lifecycle_rule(bucket)
+    except Exception as exc:
+        LOGGER.warning(
+            "Could not ensure OSS auto-delete lifecycle rule; "
+            "uploaded objects may persist until manually removed: %s",
+            exc,
+        )
 
 
 def presign_oss_object(
