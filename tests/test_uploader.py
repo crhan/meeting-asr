@@ -36,6 +36,32 @@ def test_upload_file_to_oss_forwards_progress_callback(
         ("meeting-asr/projects/p-demo/audio.wav", str(source.resolve()))
     ]
     assert events == [(4, 8), (8, 8)]
+    # 兜底：上传时自动补上默认的 auto-delete lifecycle 规则。
+    assert len(bucket.lifecycle_puts) == 1
+    (rule,) = bucket.lifecycle_puts[0].rules
+    assert rule.id == "meeting-asr-auto-delete"
+
+
+def test_upload_survives_lifecycle_permission_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A credential without lifecycle permissions must not block the upload."""
+    source = tmp_path / "audio.wav"
+    source.write_bytes(b"12345678")
+    bucket = _ForbiddenLifecycleBucket()
+    monkeypatch.setattr("app.uploader.build_oss_bucket", lambda settings: bucket)
+
+    url = upload_file_to_oss(
+        source,
+        object_name="meeting-asr/projects/p-demo/audio.wav",
+        settings=_settings(),
+        expires_seconds=600,
+    )
+
+    assert url.startswith("https://signed.example.com/")
+    assert bucket.uploaded == [
+        ("meeting-asr/projects/p-demo/audio.wav", str(source.resolve()))
+    ]
 
 
 class FakeBucket:
@@ -44,6 +70,17 @@ class FakeBucket:
     def __init__(self) -> None:
         """Create an empty fake bucket."""
         self.uploaded: list[tuple[str, str]] = []
+        self.lifecycle_puts: list[object] = []
+
+    def get_bucket_lifecycle(self):
+        """Simulate a bucket that has no lifecycle configured yet."""
+        from app.uploader import import_oss2
+
+        raise import_oss2().exceptions.NoSuchLifecycle(404, {}, b"", {})
+
+    def put_bucket_lifecycle(self, lifecycle) -> None:
+        """Record the lifecycle configuration written by the fallback."""
+        self.lifecycle_puts.append(lifecycle)
 
     def put_object_from_file(
         self, key: str, filename: str, progress_callback=None
@@ -80,6 +117,45 @@ class FakeBucket:
         assert method == "GET"
         assert slash_safe is True
         return f"https://signed.example.com/{key}?expires={expires}"
+
+
+def test_upload_outside_lifecycle_prefix_warns_and_skips_rule(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Custom keys outside the lifecycle prefix must warn, not pretend to expire."""
+    source = tmp_path / "audio.wav"
+    source.write_bytes(b"12345678")
+    bucket = FakeBucket()
+    monkeypatch.setattr("app.uploader.build_oss_bucket", lambda settings: bucket)
+
+    with caplog.at_level("WARNING", logger="app.uploader"):
+        url = upload_file_to_oss(
+            source,
+            object_name="custom/path/audio.wav",
+            settings=_settings(),
+            expires_seconds=600,
+        )
+
+    assert url.startswith("https://signed.example.com/")
+    assert bucket.uploaded == [("custom/path/audio.wav", str(source.resolve()))]
+    # 前缀外的 key 覆盖不到，不 ensure 规则，只警告。
+    assert bucket.lifecycle_puts == []
+    assert any(
+        "outside the auto-delete lifecycle prefix" in record.message
+        for record in caplog.records
+    )
+
+
+class _ForbiddenLifecycleBucket(FakeBucket):
+    """Fake bucket whose credential lacks lifecycle permissions."""
+
+    def get_bucket_lifecycle(self):
+        """Simulate an AccessDenied server error."""
+        from app.uploader import import_oss2
+
+        raise import_oss2().exceptions.ServerError(403, {}, b"", {})
 
 
 def _settings() -> Settings:

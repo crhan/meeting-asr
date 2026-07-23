@@ -414,10 +414,12 @@ asr/sentences.json                       # 标准化逐句结果
 
 ## 9. OSS lifecycle
 
-配置上传对象过期删除：
+每次上传都会自动兜底：若 bucket 上还没有 `meeting-asr-auto-delete` 规则，就补一条默认规则（`meeting-asr/` 前缀，1 天后删除）。已存在同 id 规则时不覆盖，凭证缺少 lifecycle 权限时降级为 warning、不阻塞上传。
+
+手动调整过期时长（覆盖同 id 规则）：
 
 ```bash
 meeting-asr oss lifecycle set --prefix meeting-asr/ --days 7
 ```
 
-这个规则按对象年龄删除，不是按最后访问时间删除。配置时只 upsert 指定 rule，不覆盖 bucket 里其他 lifecycle rule。
+这个规则按对象年龄删除，不是按最后访问时间删除；OSS 按天粒度后台批量执行，实际删除可能滞后到期后最多 24 小时。配置时只 upsert 指定 rule，不覆盖 bucket 里其他 lifecycle rule。

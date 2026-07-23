@@ -9,7 +9,12 @@ import typer
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.typer_context import HELP_CONTEXT, MeetingAsrTyper
 from app.config import load_settings
-from app.oss_lifecycle import set_lifecycle_rule
+from app.oss_lifecycle import (
+    DEFAULT_LIFECYCLE_DAYS,
+    DEFAULT_LIFECYCLE_PREFIX,
+    DEFAULT_LIFECYCLE_RULE_ID,
+    set_lifecycle_rule,
+)
 from app.uploader import (
     SIGNED_URL_EXPIRES_SECONDS,
     build_oss_bucket,
@@ -77,9 +82,9 @@ def presign(
 
 @lifecycle_app.command("set")
 def lifecycle_set(
-    prefix: str = typer.Option("meeting-asr/", "--prefix"),
-    days: int = typer.Option(7, "--days", min=1),
-    rule_id: str = typer.Option("meeting-asr-auto-delete", "--rule-id"),
+    prefix: str = typer.Option(DEFAULT_LIFECYCLE_PREFIX, "--prefix"),
+    days: int = typer.Option(DEFAULT_LIFECYCLE_DAYS, "--days", min=1),
+    rule_id: str = typer.Option(DEFAULT_LIFECYCLE_RULE_ID, "--rule-id"),
 ) -> None:
     """Set an OSS lifecycle rule that deletes matching objects after N days."""
     settings = run_with_cli_errors(lambda: load_settings(require_oss=True))
