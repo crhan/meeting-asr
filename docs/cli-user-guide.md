@@ -382,7 +382,28 @@ meeting-asr voiceprint people list
 
 `voiceprint review PROJECT_ID` 左侧是项目待采样候选，右侧是样本；`Tab` 切换视图，`p` 看项目候选样本，`g` 看全局库，`y` 看质量检查。没有 Project ID 时直接进入全局库视图。质量页可播放样本、隔离离群样本、标记人工确认，并按 `u` 重新计算质量。删除操作保留在显式 CLI，避免 TUI 里误删。
 
-声纹 embedding 只保留本地 `local-speechbrain`，不再提供远端 provider 配置。
+声纹 embedding 全部在本地计算，不提供远端 provider。支持两个本地 provider：
+
+- `local-speechbrain`（默认）：SpeechBrain ECAPA-TDNN（VoxCeleb 训练）。
+- `local-campp`：3D-Speaker CAM++ 中文模型（`iic/speech_campplus_sv_zh-cn_16k-common`），对中文说话人分离度更好；首次使用会从 ModelScope 下载约 28MB 的 checkpoint 并做 sha256 校验。
+
+试用 / 切换 CAM++：
+
+```bash
+# 给全库补 CAM++ 向量（旧模型向量保留，二者并存，可随时 A/B）
+meeting-asr voiceprint embed --provider campp
+
+# 单次匹配用 CAM++（--model 自动选中对应 provider）
+meeting-asr project speakers match PROJECT_ID --model campplus-sv-zh-cn-16k-common+audio-norm-v2
+
+# 用库内样本重新校准该模型下的阈值证据（EER / impostor<1% 点）
+meeting-asr voiceprint calibrate --provider campp
+
+# 验证满意后切全局默认（之后 run/match/resplit 全走 CAM++）
+meeting-asr config set voiceprint.provider local-campp
+```
+
+注意：`--threshold` 等匹配阈值是按分数分布调的，不同 embedding 模型分布不同；切换 provider 前先用 `voiceprint calibrate` 看新模型下的合理阈值。
 
 ## 8. 最终文件
 

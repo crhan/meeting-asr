@@ -45,6 +45,7 @@ uv tool install --python 3.14 --editable .
 - `uv tool install` 可以使用 pyenv 的 Python，但必须显式指定 `--python 3.14`，否则可能选到不满足 `Python>=3.14` 的解释器。
 - Web UI 的 Python 服务依赖是标准依赖；本地开发默认 editable，并构建 SPA 静态资源。
 - 本地声纹 `local-speechbrain` 是标准依赖，不再通过 extra 单独安装。
+- 第二个本地声纹 provider `local-campp`（3D-Speaker CAM++ 中文模型）复用 torch/torchaudio，零新增依赖：网络结构 vendor 在 `src/app/infra/campplus.py`（Apache-2.0，来源与 commit 见模块 docstring），checkpoint 首次使用时从 ModelScope 下载并按 sha256 钉死。默认 provider 由 `voiceprint.provider` 配置键（env `MEETING_ASR_VOICEPRINT_PROVIDER`）决定，未配置时仍为 `local-speechbrain`。
 - `scripts/install-tool.sh --wheel` 只用于发布验证或模拟正式用户安装。
 - wheel 模式依赖 `tool.uv.cache-keys` 跟踪 `src/**/*.py`，避免复用旧 wheel。
 - 安装后脚本会验证 wrapper、Python、源码路径和源码指纹；不一致直接失败。
