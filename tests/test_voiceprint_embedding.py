@@ -125,6 +125,32 @@ def test_resolve_options_infers_provider_from_model_key(
     assert model == LOCAL_SPEECHBRAIN_MODEL
 
 
+def test_resolve_options_rejects_mismatched_provider_and_model(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """An explicit provider contradicting a recognized model key must fail loudly."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    with pytest.raises(ValueError, match="does not match model key"):
+        resolve_voiceprint_embedding_options(
+            provider="local-speechbrain", model=LOCAL_CAMPP_MODEL
+        )
+    with pytest.raises(ValueError, match="does not match model key"):
+        resolve_voiceprint_embedding_options(
+            provider="campp", model=LOCAL_SPEECHBRAIN_MODEL
+        )
+    # Matching explicit combinations and custom keys still pass.
+    provider, model = resolve_voiceprint_embedding_options(
+        provider="campp", model=LOCAL_CAMPP_MODEL
+    )
+    assert provider == VOICEPRINT_PROVIDER_LOCAL_CAMPP
+    assert model == LOCAL_CAMPP_MODEL
+    provider, model = resolve_voiceprint_embedding_options(
+        provider="campp", model="my-custom-eval-key"
+    )
+    assert provider == VOICEPRINT_PROVIDER_LOCAL_CAMPP
+    assert model == "my-custom-eval-key"
+
+
 def test_resolve_provider_reads_global_config_default(
     monkeypatch, tmp_path: Path
 ) -> None:

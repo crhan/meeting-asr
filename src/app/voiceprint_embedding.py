@@ -185,11 +185,25 @@ def resolve_voiceprint_embedding_options(
 
     Returns:
         Normalized provider and model storage key.
+
+    Raises:
+        ValueError: When an explicit provider contradicts a recognized model
+            key. Vectors are namespaced by model key, so storing another
+            provider's embeddings under it would silently corrupt matching.
     """
-    if provider is None and model:
+    if model:
         inferred = _provider_for_model_key(model)
         if inferred is not None:
-            return inferred, model
+            if provider is None:
+                return inferred, model
+            resolved_provider = resolve_voiceprint_provider(provider)
+            if resolved_provider != inferred:
+                raise ValueError(
+                    f"Provider {resolved_provider} does not match model key {model} "
+                    f"(expected {inferred}). Embeddings are stored per model key; "
+                    "mixing providers under one key would corrupt matching."
+                )
+            return resolved_provider, model
     resolved_provider = resolve_voiceprint_provider(provider)
     return resolved_provider, model or _DEFAULT_MODELS[resolved_provider]
 

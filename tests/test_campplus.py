@@ -17,6 +17,56 @@ def test_checkpoint_source_is_pinned() -> None:
     assert len(campplus.CAMPP_CHECKPOINT_SHA256) == 64
 
 
+def test_ensure_checkpoint_discards_corrupted_cache(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A cached checkpoint failing sha256 must be re-downloaded, not trusted."""
+    import hashlib
+
+    good_bytes = b"pretend model weights"
+    monkeypatch.setattr(
+        campplus,
+        "CAMPP_CHECKPOINT_SHA256",
+        hashlib.sha256(good_bytes).hexdigest(),
+    )
+    target = tmp_path / "models" / "campplus" / campplus.CAMPP_CHECKPOINT_FILENAME
+    monkeypatch.setattr(campplus, "get_checkpoint_path", lambda: target)
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"truncated garbage")
+
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int):
+            yield good_bytes
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+    import requests
+
+    monkeypatch.setattr(requests, "get", lambda url, stream, timeout: _FakeResponse())
+
+    resolved = campplus.ensure_checkpoint()
+
+    assert resolved == target
+    assert target.read_bytes() == good_bytes
+
+    # A now-valid cache entry is trusted without another download.
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda url, stream, timeout: (_ for _ in ()).throw(
+            AssertionError("no download")
+        ),
+    )
+    assert campplus.ensure_checkpoint() == target
+
+
 def test_load_waveform_monoizes_and_resamples(tmp_path: Path) -> None:
     """Stereo non-16k input must come out as 16 kHz mono."""
     clip = tmp_path / "clip.wav"

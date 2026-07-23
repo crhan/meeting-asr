@@ -82,12 +82,18 @@ def ensure_checkpoint() -> Path:
     """
     Download and verify the pretrained checkpoint if not cached yet.
 
+    A cached file is re-verified against the pinned sha256 before being
+    trusted; a truncated or tampered cache entry is discarded and
+    re-downloaded instead of being handed to ``torch.load``.
+
     Returns:
         Verified local checkpoint path.
     """
     target = get_checkpoint_path()
     if target.exists():
-        return target
+        if _file_sha256(target) == CAMPP_CHECKPOINT_SHA256:
+            return target
+        target.unlink()
     import requests
 
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +114,23 @@ def ensure_checkpoint() -> Path:
         )
     os.replace(temp_path, target)
     return target
+
+
+def _file_sha256(path: Path) -> str:
+    """
+    Compute the sha256 hex digest of a local file.
+
+    Args:
+        path: File to hash.
+
+    Returns:
+        Hex digest.
+    """
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _load_model() -> "CAMPPlus":
