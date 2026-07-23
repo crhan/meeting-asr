@@ -16,7 +16,7 @@ from app.speaker_matching import (
     _KnownSpeakerVector,
     _ranked_matches,
 )
-from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
+from app.voiceprint_embedding import LOCAL_CAMPP_MODEL
 
 runner = CliRunner()
 
@@ -62,8 +62,8 @@ def test_project_speakers_match_writes_suggestions(
         (project_dir / "speakers" / "speaker_matches.json").read_text(encoding="utf-8")
     )
     assert result.exit_code == 0
-    assert "Provider: local-speechbrain" in result.output
-    assert f"Model: {LOCAL_SPEECHBRAIN_MODEL}" in result.output
+    assert "Provider: local-campp" in result.output
+    assert f"Model: {LOCAL_CAMPP_MODEL}" in result.output
     assert "Speaker A status=matched name=欧丁" in result.output
     assert "Speaker B status=matched name=敬悦" in result.output
     assert payload["matches"][0]["name"] == "欧丁"
@@ -88,8 +88,8 @@ def test_project_speakers_match_writes_suggestions(
     assert payload["matches"][0]["candidates"][0]["score_source"] == "person-centroid"
     assert "probe_segments" in payload["matches"][0]["diagnostics"]
     assert payload["matches"][0]["diagnostics"]["probe_sample_count"] == 1
-    assert payload["provider"] == "local-speechbrain"
-    assert payload["model"] == LOCAL_SPEECHBRAIN_MODEL
+    assert payload["provider"] == "local-campp"
+    assert payload["model"] == LOCAL_CAMPP_MODEL
 
 
 def test_project_speakers_match_keeps_below_threshold_best_candidate(

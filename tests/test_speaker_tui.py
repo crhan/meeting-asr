@@ -66,7 +66,7 @@ from app.voiceprint_evaluation import (
     VoiceprintProjectEvaluation,
     VoiceprintScoreChange,
 )
-from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL, VoiceprintEmbedSummary
+from app.voiceprint_embedding import LOCAL_CAMPP_MODEL, VoiceprintEmbedSummary
 from app.voiceprint_quality import analyze_voiceprint_quality
 from app.speaker_labeling import (
     SentenceReassignmentSpec,
@@ -668,7 +668,7 @@ def test_project_review_tui_embeds_captured_voiceprints(
         embedded.append(kwargs["store_dir"])
         return VoiceprintEmbedSummary(
             db_path=tmp_path / "voiceprints.sqlite",
-            provider="local-speechbrain",
+            provider="local-campp",
             model="test-model",
             embedded_count=2,
             skipped_count=1,
@@ -1020,7 +1020,7 @@ def test_project_review_voiceprint_screen_saves_embeds_and_evaluates(
     def fake_embed(**kwargs) -> VoiceprintEmbedSummary:
         calls.append("embed")
         return VoiceprintEmbedSummary(
-            get_voiceprint_db_path(store_dir), "local-speechbrain", "test-model", 2, 1
+            get_voiceprint_db_path(store_dir), "local-campp", "test-model", 2, 1
         )
 
     def fake_evaluate(project_dir, **kwargs) -> VoiceprintEvaluationSummary:
@@ -1244,7 +1244,7 @@ def test_run_speaker_rematch_refreshes_visible_diagnostics(
     session = _session_for_project(project_dir, project_id="p-current", title="Current")
     summary = SpeakerMatchSummary(
         project_dir / "speakers" / "speaker_matches.json",
-        "local-speechbrain",
+        "local-campp",
         "test-model",
         0.75,
         [
@@ -1344,7 +1344,7 @@ def test_project_review_tui_rematches_speakers_and_refreshes(
     )
     summary = SpeakerMatchSummary(
         current_dir / "speakers" / "speaker_matches.json",
-        "local-speechbrain",
+        "local-campp",
         "test-model",
         0.75,
         [
@@ -1434,7 +1434,7 @@ def test_project_review_tui_rematch_allows_unpersisted_initial_matches(
     )
     summary = SpeakerMatchSummary(
         project_dir / "speakers" / "speaker_matches.json",
-        "local-speechbrain",
+        "local-campp",
         "test-model",
         0.75,
         [
@@ -2458,7 +2458,7 @@ def _project_with_voiceprint_state(tmp_path: Path) -> tuple[Path, Path]:
     )
     upsert_voiceprint_embedding(
         sample_id,
-        LOCAL_SPEECHBRAIN_MODEL,
+        LOCAL_CAMPP_MODEL,
         [0.1, 0.2],
         get_voiceprint_db_path(store_dir),
     )

@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 
 from app.cli import app
 from app.project_manager import create_project, load_manifest
-from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
+from app.voiceprint_embedding import LOCAL_CAMPP_MODEL
 from app.voiceprint_people import (
     create_voiceprint_person,
     get_voiceprint_person,
@@ -383,12 +383,12 @@ def test_voiceprint_embed_stores_sample_embeddings(
         app, ["voiceprint", "list", "--store-dir", str(store_dir)]
     )
     embeddings = list_voiceprint_embeddings(
-        LOCAL_SPEECHBRAIN_MODEL, get_voiceprint_db_path(store_dir)
+        LOCAL_CAMPP_MODEL, get_voiceprint_db_path(store_dir)
     )
 
     assert result.exit_code == 0
-    assert "Provider: local-speechbrain" in result.output
-    assert f"Model: {LOCAL_SPEECHBRAIN_MODEL}" in result.output
+    assert "Provider: local-campp" in result.output
+    assert f"Model: {LOCAL_CAMPP_MODEL}" in result.output
     assert "Embedded: 2" in result.output
     assert len(embeddings) == 2
     assert "Embedded samples: 2/2" in list_result.output
@@ -440,9 +440,9 @@ def test_voiceprint_quality_flags_outliers_and_quarantine_excludes_embedding(
         critical_sample["sample_public_id"], "quarantined", db_path
     )
 
-    active_embeddings = list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)
+    active_embeddings = list_voiceprint_embeddings(LOCAL_CAMPP_MODEL, db_path)
     all_embeddings = list_voiceprint_embeddings(
-        LOCAL_SPEECHBRAIN_MODEL, db_path, include_inactive=True
+        LOCAL_CAMPP_MODEL, db_path, include_inactive=True
     )
     show_result = runner.invoke(
         app, ["voiceprint", "show", "Alice", "--store-dir", str(store_dir)]
@@ -489,7 +489,7 @@ def test_voiceprint_quality_verified_active_keeps_matching_and_keeps_quality_ris
         for sample in verified_payload["people"][0]["samples"]
         if sample["sample_public_id"] == critical_sample["sample_public_id"]
     )
-    active_embeddings = list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)
+    active_embeddings = list_voiceprint_embeddings(LOCAL_CAMPP_MODEL, db_path)
 
     assert verified_result.exit_code == 0
     assert verified_payload["suspicious_count"] == 1
@@ -1105,7 +1105,7 @@ def _quality_store(tmp_path: Path) -> Path:
     vectors = ([1.0, 0.0], [0.98, 0.02], [0.99, 0.01], [0.0, 1.0])
     for row, vector in zip(rows, vectors, strict=True):
         upsert_voiceprint_embedding(
-            row.sample_id, LOCAL_SPEECHBRAIN_MODEL, vector, db_path
+            row.sample_id, LOCAL_CAMPP_MODEL, vector, db_path
         )
     return store_dir
 

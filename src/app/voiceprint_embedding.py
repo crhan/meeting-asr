@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -23,7 +24,7 @@ from app.voiceprint_store import (
 
 VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN = "local-speechbrain"
 VOICEPRINT_PROVIDER_LOCAL_CAMPP = "local-campp"
-DEFAULT_VOICEPRINT_PROVIDER = VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
+DEFAULT_VOICEPRINT_PROVIDER = VOICEPRINT_PROVIDER_LOCAL_CAMPP
 LOCAL_SPEECHBRAIN_BASE_MODEL = "speechbrain-spkrec-ecapa-voxceleb"
 LOCAL_SPEECHBRAIN_MODEL = (
     f"{LOCAL_SPEECHBRAIN_BASE_MODEL}+{VOICEPRINT_AUDIO_PREPROCESS_VERSION}"
@@ -54,6 +55,7 @@ _PROVIDER_BY_BASE_MODEL = {
 }
 _SPEECHBRAIN_CLASSIFIER: Any | None = None
 _SPEECHBRAIN_CLASSIFIER_LOCK = Lock()
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +77,7 @@ def embed_voiceprint_samples(
     rebuild: bool,
     sample_ids: set[int] | None = None,
     progress: CliProgressReporter | None = None,
+    skip_missing_clips: bool = False,
 ) -> VoiceprintEmbedSummary:
     """
     Generate embeddings for stored voiceprint samples.
@@ -87,6 +90,8 @@ def embed_voiceprint_samples(
         sample_ids: Optional registry row ids to embed.  When provided, no
             unrelated library samples are read or modified.
         progress: Optional progress reporter.
+        skip_missing_clips: Skip samples whose clip file is gone instead of
+            raising, so background backfills survive stale registry rows.
 
     Returns:
         Embedding summary.
@@ -116,9 +121,19 @@ def embed_voiceprint_samples(
             skipped_count += 1
             emit_progress(progress, "Skipping existing voiceprint embedding", advance=1)
             continue
-        normalized_path = ensure_normalized_voiceprint_sample(
-            sample, store_dir=store_dir
-        )
+        try:
+            normalized_path = ensure_normalized_voiceprint_sample(
+                sample, store_dir=store_dir
+            )
+        except FileNotFoundError as exc:
+            if not skip_missing_clips:
+                raise
+            _LOGGER.warning("Skipping voiceprint sample without clip: %s", exc)
+            skipped_count += 1
+            emit_progress(
+                progress, "Skipping voiceprint sample without clip", advance=1
+            )
+            continue
         vector = embed_audio_file(normalized_path, provider=resolved_provider)
         upsert_voiceprint_embedding(sample.sample_id, resolved_model, vector, db_path)
         embedded_count += 1
@@ -126,6 +141,35 @@ def embed_voiceprint_samples(
     emit_progress(progress, "Voiceprint embeddings ready")
     return VoiceprintEmbedSummary(
         db_path, resolved_provider, resolved_model, embedded_count, skipped_count
+    )
+
+
+def ensure_library_embeddings(
+    *, store_dir: Path | None, provider: str | None, model: str | None
+) -> VoiceprintEmbedSummary:
+    """
+    Backfill missing library embeddings for the resolved model.
+
+    Matching reads only vectors stored under one model key, so a model the
+    library was never embedded with (typically right after the default
+    provider changed) would silently yield zero candidates. This embeds only
+    the missing samples, keeps other models' vectors untouched, and skips
+    samples whose clip files are gone.
+
+    Args:
+        store_dir: Optional voiceprint store directory.
+        provider: Optional local provider alias.
+        model: Embedding model key for SQLite.
+
+    Returns:
+        Embedding summary.
+    """
+    return embed_voiceprint_samples(
+        store_dir=store_dir,
+        provider=provider,
+        model=model,
+        rebuild=False,
+        skip_missing_clips=True,
     )
 
 

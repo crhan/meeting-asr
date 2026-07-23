@@ -213,7 +213,7 @@ def test_project_speakers_cluster_can_emit_json_without_writing_report(
 
     payload = json.loads(result.output)
     assert result.exit_code == 0
-    assert payload["provider"] == "local-speechbrain"
+    assert payload["provider"] == "local-campp"
     assert payload["speakers"][0]["label"] == "Speaker A"
     assert not (project_dir / "speakers" / "speaker_cluster_quality.json").exists()
 

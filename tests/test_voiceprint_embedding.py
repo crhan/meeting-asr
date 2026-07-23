@@ -131,16 +131,17 @@ def test_resolve_provider_reads_global_config_default(
     """The configured voiceprint.provider must drive the no-override default."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.delenv("MEETING_ASR_VOICEPRINT_PROVIDER", raising=False)
-    assert resolve_voiceprint_provider(None) == VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
+    assert resolve_voiceprint_provider(None) == VOICEPRINT_PROVIDER_LOCAL_CAMPP
 
     from app.config import save_config_values
 
-    save_config_values({"voiceprint.provider": "campp"})
-    assert resolve_voiceprint_provider(None) == VOICEPRINT_PROVIDER_LOCAL_CAMPP
-
-    monkeypatch.setenv("MEETING_ASR_VOICEPRINT_PROVIDER", "local-speechbrain")
+    save_config_values({"voiceprint.provider": "speechbrain"})
     assert resolve_voiceprint_provider(None) == VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
 
+    monkeypatch.setenv("MEETING_ASR_VOICEPRINT_PROVIDER", "local-campp")
+    assert resolve_voiceprint_provider(None) == VOICEPRINT_PROVIDER_LOCAL_CAMPP
+
+    monkeypatch.delenv("MEETING_ASR_VOICEPRINT_PROVIDER", raising=False)
     default_provider, default_model = resolve_voiceprint_embedding_options(
         provider=None, model=None
     )
@@ -170,6 +171,62 @@ def test_embed_audio_file_dispatches_to_campp(monkeypatch, tmp_path: Path) -> No
     assert embedded == [clip_path]
 
 
+def test_ensure_library_embeddings_skips_samples_without_clip(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Match-time backfill must survive stale registry rows with missing clips."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("MEETING_ASR_VOICEPRINT_PROVIDER", raising=False)
+    store_dir = _store(tmp_path)
+    db_path = get_voiceprint_db_path(store_dir)
+    dead_clip = store_dir / "clips" / "project-9" / "speaker_0" / "clip_001.wav"
+    dead_clip.parent.mkdir(parents=True, exist_ok=True)
+    dead_clip.write_bytes(b"gone soon")
+    store_voiceprint_samples(
+        [
+            StoredVoiceprintSample(
+                speaker_name="Ghost",
+                project_id="project-9",
+                project_path=tmp_path / "project-9",
+                project_speaker_id=0,
+                source_path=tmp_path / "meeting.mp4",
+                clip_path=dead_clip,
+                clip_rel_path=str(dead_clip.relative_to(store_dir)),
+                source_begin_time_ms=0,
+                source_end_time_ms=1000,
+                clip_begin_time_ms=0,
+                clip_end_time_ms=1000,
+                transcript_text="ghost",
+            )
+        ],
+        db_path,
+    )
+    dead_clip.unlink()
+
+    def fake_normalize(sample, *, store_dir: Path | None) -> Path:
+        if not sample.clip_path.exists():
+            raise FileNotFoundError(
+                f"Voiceprint sample clip does not exist: {sample.clip_path}"
+            )
+        return sample.clip_path
+
+    monkeypatch.setattr(
+        voiceprint_embedding, "ensure_normalized_voiceprint_sample", fake_normalize
+    )
+    monkeypatch.setattr(
+        voiceprint_embedding, "embed_audio_file", lambda path, *, provider: [1.0]
+    )
+
+    summary = voiceprint_embedding.ensure_library_embeddings(
+        store_dir=store_dir, provider=None, model=None
+    )
+    vectors = list_voiceprint_embeddings(summary.model, db_path)
+
+    assert summary.embedded_count == 1
+    assert summary.skipped_count == 1
+    assert len(vectors) == 1
+
+
 def test_campp_default_model_key_tracks_preprocess_version() -> None:
     """The campp model storage key must embed the audio preprocess version."""
     from app.voiceprint_audio import VOICEPRINT_AUDIO_PREPROCESS_VERSION
@@ -182,6 +239,8 @@ def test_embed_voiceprint_samples_uses_normalized_audio(
     monkeypatch, tmp_path: Path
 ) -> None:
     """Embedding should read the normalized derived clip, not the original clip."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("MEETING_ASR_VOICEPRINT_PROVIDER", raising=False)
     store_dir = _store(tmp_path)
     normalized_path = store_dir / "normalized" / "v-test" / "clip.wav"
     embedded_paths: list[Path] = []
@@ -204,7 +263,7 @@ def test_embed_voiceprint_samples_uses_normalized_audio(
         store_dir=store_dir, provider=None, model=None, rebuild=False
     )
 
-    assert summary.model == LOCAL_SPEECHBRAIN_MODEL
+    assert summary.model == LOCAL_CAMPP_MODEL
     assert embedded_paths == [normalized_path]
 
 
@@ -212,6 +271,8 @@ def test_embed_voiceprint_samples_can_rebuild_only_selected_rows(
     monkeypatch, tmp_path: Path
 ) -> None:
     """Focused embedding must not process or rewrite unrelated library samples."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("MEETING_ASR_VOICEPRINT_PROVIDER", raising=False)
     store_dir = _store(tmp_path)
     db_path = get_voiceprint_db_path(store_dir)
     source_path = tmp_path / "meeting.mp4"
@@ -239,11 +300,9 @@ def test_embed_voiceprint_samples_can_rebuild_only_selected_rows(
     )
     rows = list_all_voiceprint_samples(db_path)
     first, second = rows
+    upsert_voiceprint_embedding(first.sample_id, LOCAL_CAMPP_MODEL, [1.0, 0.0], db_path)
     upsert_voiceprint_embedding(
-        first.sample_id, LOCAL_SPEECHBRAIN_MODEL, [1.0, 0.0], db_path
-    )
-    upsert_voiceprint_embedding(
-        second.sample_id, LOCAL_SPEECHBRAIN_MODEL, [0.0, 1.0], db_path
+        second.sample_id, LOCAL_CAMPP_MODEL, [0.0, 1.0], db_path
     )
     normalized_ids: list[int] = []
 
@@ -269,7 +328,7 @@ def test_embed_voiceprint_samples_can_rebuild_only_selected_rows(
     )
     embeddings = {
         row.sample_id: row.vector
-        for row in list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)
+        for row in list_voiceprint_embeddings(LOCAL_CAMPP_MODEL, db_path)
     }
 
     assert summary.embedded_count == 1
