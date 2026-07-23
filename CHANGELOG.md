@@ -5,6 +5,16 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [0.18.0] - 2026-07-23
+
+### 新增
+
+- **OSS 上传自动兜底生命周期规则**：每次上传前检查 bucket 上是否存在 `meeting-asr-auto-delete` 规则，缺失时自动补一条（`meeting-asr/` 前缀）；已存在同 id 规则（含手动 `oss lifecycle set --days N` 调整过的）绝不覆盖。凭证缺少 `PutBucketLifecycle` 权限时降级为 warning，不阻塞上传；自定义 `--object-name` 落在前缀外时显式警告"不会自动过期"，不静默假装有兜底。
+
+### 变更
+
+- **OSS 对象默认过期时长从 7 天降到 1 天**：OSS lifecycle 粒度最小 1 天（无对象级 TTL），1 天已是可达最小保留期；`oss lifecycle set` 的 CLI 默认值与上传兜底共用同一组常量。
+
 ## [0.17.0] - 2026-07-23
 
 ### 新增
