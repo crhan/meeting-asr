@@ -20,6 +20,19 @@ SUCCESS_STATUSES = {"SUCCEEDED", "SUCCESS", "COMPLETED"}
 FAILED_STATUSES = {"FAILED", "FAILURE", "CANCELED", "CANCELLED", "UNKNOWN"}
 
 
+class TranscriptionWaitTimeout(RuntimeError):
+    """Polling exceeded its wall-clock budget while the task kept running."""
+
+    def __init__(self, elapsed_seconds: float, max_wait_seconds: float) -> None:
+        self.elapsed_seconds = elapsed_seconds
+        self.max_wait_seconds = max_wait_seconds
+        super().__init__(
+            "DashScope transcription polling exceeded "
+            f"{max_wait_seconds:.0f}s (waited {elapsed_seconds:.0f}s); "
+            "the task may still be running server-side."
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class TranscriptionPollEvent:
     """One DashScope transcription polling event."""
@@ -84,37 +97,69 @@ def wait_transcription(
     settings: Settings,
     task: Any,
     poll_callback: PollCallback | None = None,
+    max_wait_seconds: float | None = None,
 ) -> Any:
     """
     Wait for a DashScope transcription task.
 
     Args:
         settings: Runtime settings.
-        task: Submission response.
+        task: Submission response or task id.
         poll_callback: Optional callback invoked after each status fetch.
+        max_wait_seconds: Optional wall-clock budget; ``None`` waits forever.
 
     Returns:
         DashScope wait response.
+
+    Raises:
+        TranscriptionWaitTimeout: When the budget elapses with the task
+            still pending or running.
     """
     _configure_dashscope(settings)
-    wait_seconds = 1.0
-    max_wait_seconds = 5.0
+    poll_seconds = 1.0
+    max_poll_seconds = 5.0
     increment_steps = 3
     step = 0
     started_at = time.monotonic()
     while True:
         step += 1
-        if wait_seconds < max_wait_seconds and step % increment_steps == 0:
-            wait_seconds = min(wait_seconds * 2, max_wait_seconds)
+        if poll_seconds < max_poll_seconds and step % increment_steps == 0:
+            poll_seconds = min(poll_seconds * 2, max_poll_seconds)
         response = _fetch_transcription_status(task)
         _raise_for_task_error(response, stage="wait")
         status = _extract_task_status(response)
         _raise_for_failed_status(status, response)
-        _emit_poll_event(poll_callback, status, started_at, wait_seconds)
+        _emit_poll_event(poll_callback, status, started_at, poll_seconds)
         if _is_success_status(status) or _response_has_no_output(response):
             _check_subtasks(response)
             return response
-        time.sleep(wait_seconds)
+        elapsed = time.monotonic() - started_at
+        if max_wait_seconds is not None and elapsed >= max_wait_seconds:
+            raise TranscriptionWaitTimeout(elapsed, max_wait_seconds)
+        time.sleep(poll_seconds)
+
+
+def probe_transcription(*, settings: Settings, task: Any) -> Any | None:
+    """
+    Probe an existing transcription task for reattachment.
+
+    Args:
+        settings: Runtime settings.
+        task: Prior submission response or task id.
+
+    Returns:
+        The status response when the task is still pending, running, or
+        succeeded server-side; ``None`` when it failed, expired, or cannot
+        be fetched (callers should submit a fresh task).
+    """
+    _configure_dashscope(settings)
+    try:
+        response = _fetch_transcription_status(task)
+    except Exception:  # noqa: BLE001 - any fetch problem means "not reattachable"
+        return None
+    if _extract_task_status(response) in FAILED_STATUSES:
+        return None
+    return response
 
 
 def _fetch_transcription_status(task: Any) -> Any:

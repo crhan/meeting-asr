@@ -468,6 +468,7 @@ def update_voiceprint_sample_status(
         "quarantined",
         "verified-quarantined",
         "rejected",
+        "invalidated",
     }:
         raise ValueError(f"Unsupported voiceprint sample status: {status}")
     database_path = _resolve_db_path(db_path)
@@ -550,6 +551,65 @@ def delete_voiceprint_sample_by_public_id(
         )
         _delete_empty_speaker(connection, row.speaker_id)
     return _deleted_sample(row, delete_clip, database_path.parent)
+
+
+def invalidate_voiceprint_samples_by_ids(
+    sample_ids: list[int],
+    *,
+    db_path: Path | None = None,
+) -> list[DeletedVoiceprintSample]:
+    """Soft-invalidate voiceprint samples by registry row id.
+
+    Used by sentence reassignment when a sample's audio now belongs to a
+    different speaker than the one captured at sample time. Unlike a hard
+    delete, the rows, clip files, and embeddings are all kept: the samples
+    only leave the matching pool (``sample_status = 'invalidated'``), so a
+    mistaken reassignment — or a copied project pointed at the real store —
+    can be recovered by restoring the status instead of re-capturing audio.
+
+    Args:
+        sample_ids: Sample row ids to invalidate.
+        db_path: Optional SQLite path.
+
+    Returns:
+        Invalidated sample summaries with ``clip_deleted=False`` (empty when
+        ``sample_ids`` is empty or contains only unknown ids).
+    """
+    if not sample_ids:
+        return []
+    database_path = _resolve_db_path(db_path)
+    if not database_path.exists():
+        return []
+    placeholders = ",".join("?" for _ in sample_ids)
+    ids = tuple(int(value) for value in sample_ids)
+    with sqlite3.connect(database_path) as connection:
+        _configure_connection(connection)
+        _ensure_schema(connection)
+        rows = connection.execute(
+            f"""
+            SELECT samples.id, samples.public_id,
+                   speakers.id AS speaker_id, speakers.public_id AS speaker_public_id, speakers.name,
+                   samples.project_id, samples.project_speaker_id,
+                   samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
+                   samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.transcript_text, samples.sample_status
+            FROM voiceprint_samples AS samples
+            JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
+            WHERE samples.id IN ({placeholders})
+            """,
+            ids,
+        ).fetchall()
+        sample_rows = [_sample_row(row) for row in rows]
+        if not sample_rows:
+            return []
+        connection.execute(
+            f"""
+            UPDATE voiceprint_samples SET sample_status = 'invalidated', updated_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            (_now_iso(), *ids),
+        )
+    return [_deleted_sample(row, False, database_path.parent) for row in sample_rows]
 
 
 def delete_voiceprint_samples_by_ids(
@@ -891,7 +951,7 @@ def _sample_values(
         sample.source_end_time_ms,
         sample.clip_begin_time_ms,
         sample.clip_end_time_ms,
-        "active",
+        sample.sample_status,
         sample.transcript_text,
         now,
         now,

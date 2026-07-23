@@ -20,8 +20,16 @@ from app.presentation.tui.voiceprint_capture import (
     render_voiceprint_capture_review_summary,
 )
 from app.project_manager import create_project, load_manifest, save_manifest
+from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_people import create_voiceprint_person
-from app.voiceprint_store import get_voiceprint_db_path, list_all_voiceprint_samples
+from app.voiceprint_store import (
+    StoredVoiceprintSample,
+    get_voiceprint_db_path,
+    list_all_voiceprint_samples,
+    list_voiceprint_samples_for_project,
+    store_voiceprint_samples_with_rows,
+    upsert_voiceprint_embedding,
+)
 from app.voiceprints import (
     VoiceprintCaptureSummary,
     VoiceprintClip,
@@ -413,6 +421,125 @@ def test_capture_voiceprints_prefers_embedding_central_candidates(
 
     assert len(texts) == 2
     assert "这是第 4 段适合做声纹的完整表达。" not in texts
+
+
+def test_capture_quarantines_clips_far_from_existing_person_centroid(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """New clips that do not sound like the known person enter quarantined."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    person = create_voiceprint_person("Alice", db_path)
+    _seed_person_embeddings(store_dir, db_path, vector=[1.0, 0.0], count=3)
+
+    def fake_extract_audio_clip(
+        source, output, start_seconds, duration_seconds
+    ) -> Path:
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        _write_wav(Path(output), 1200)
+        return Path(output)
+
+    # New capture clips embed orthogonally to the library centroid.
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", fake_extract_audio_clip)
+    monkeypatch.setattr(
+        "app.voiceprints.embed_audio_file",
+        lambda path, *, provider: [0.0, 1.0],
+    )
+
+    summary = capture_voiceprints(
+        project_dir,
+        sample_count=2,
+        max_seconds=10.0,
+        padding_seconds=0.0,
+        store_dir=store_dir,
+        dry_run=False,
+    )
+
+    assert summary.speakers[0].person_id == person.speaker_id
+    rows = list_voiceprint_samples_for_project(
+        summary.project_id or _project_id_of(project_dir), db_path
+    )
+    assert rows
+    assert {row.sample_status for row in rows} == {"quarantined"}
+
+
+def test_capture_keeps_matching_clips_active_with_existing_centroid(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Clips consistent with the person's centroid keep the active status."""
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    create_voiceprint_person("Alice", db_path)
+    _seed_person_embeddings(store_dir, db_path, vector=[1.0, 0.0], count=3)
+
+    def fake_extract_audio_clip(
+        source, output, start_seconds, duration_seconds
+    ) -> Path:
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        _write_wav(Path(output), 1200)
+        return Path(output)
+
+    monkeypatch.setattr("app.voiceprints.extract_audio_clip", fake_extract_audio_clip)
+    monkeypatch.setattr(
+        "app.voiceprints.embed_audio_file",
+        lambda path, *, provider: [1.0, 0.0],
+    )
+
+    summary = capture_voiceprints(
+        project_dir,
+        sample_count=2,
+        max_seconds=10.0,
+        padding_seconds=0.0,
+        store_dir=store_dir,
+        dry_run=False,
+    )
+
+    project_rows = list_voiceprint_samples_for_project(
+        summary.project_id or _project_id_of(project_dir), db_path
+    )
+    assert project_rows
+    assert {row.sample_status for row in project_rows} == {"active"}
+
+
+def _project_id_of(project_dir: Path) -> str:
+    """Read the project id from the manifest."""
+    return load_manifest(project_dir).project_id
+
+
+def _seed_person_embeddings(
+    store_dir: Path, db_path: Path, *, vector: list[float], count: int
+) -> None:
+    """Store embedded library samples for Alice under the default model."""
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    source = store_dir / "seed-source.mp4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"seed")
+    samples = []
+    for index in range(count):
+        clip_path = store_dir / "clips" / "seed" / f"seed_{index}.wav"
+        clip_path.parent.mkdir(parents=True, exist_ok=True)
+        clip_path.write_bytes(f"seed-{index}".encode())
+        samples.append(
+            StoredVoiceprintSample(
+                speaker_name="Alice",
+                project_id="p-seed",
+                project_path=store_dir,
+                project_speaker_id=0,
+                source_path=source,
+                clip_path=clip_path,
+                clip_rel_path=str(clip_path.relative_to(store_dir)),
+                source_begin_time_ms=index * 1000,
+                source_end_time_ms=index * 1000 + 900,
+                clip_begin_time_ms=0,
+                clip_end_time_ms=900,
+                transcript_text=f"seed {index}",
+            )
+        )
+    _db, rows = store_voiceprint_samples_with_rows(samples, db_path)
+    for row in rows:
+        upsert_voiceprint_embedding(row.sample_id, model, vector, db_path)
 
 
 def test_voiceprint_capture_command_accepts_project_id_for_dry_run(

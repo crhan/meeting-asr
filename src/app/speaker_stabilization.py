@@ -31,16 +31,24 @@ from app.speaker_sample_matching import (
     match_project_speaker_samples,
 )
 from app.project_manager import apply_project_speakers, project_paths
+from app.speaker_pipeline_params import (
+    CLUSTER_MERGE_THRESHOLD,
+    CLUSTER_SAME_SPEAKER_THRESHOLD,
+    DEFAULT_MATCH_MAX_SECONDS,
+    DEFAULT_MATCH_PADDING_SECONDS,
+)
 from app.utils import safe_write_json
 from app.voiceprint_quality import DEFAULT_CRITICAL_SCORE, DEFAULT_WARNING_SCORE
 
 DEFAULT_STABILIZATION_ITERATIONS = 2
 DEFAULT_STABILIZATION_SAMPLE_WORKERS = 4
 DEFAULT_STABILIZATION_CLUSTER_SAMPLE_COUNT = 40
-DEFAULT_STABILIZATION_MATCH_MAX_SECONDS = 12.0
-DEFAULT_STABILIZATION_MATCH_PADDING_SECONDS = 0.5
-DEFAULT_STABILIZATION_CLUSTER_SAME_SPEAKER_THRESHOLD = 0.60
-DEFAULT_STABILIZATION_CLUSTER_MERGE_THRESHOLD = 0.62
+# Stabilization cuts its diagnostic clips with the SAME window as the match
+# probes so the shared clip embedding cache hits across subsystems.
+DEFAULT_STABILIZATION_MATCH_MAX_SECONDS = DEFAULT_MATCH_MAX_SECONDS
+DEFAULT_STABILIZATION_MATCH_PADDING_SECONDS = DEFAULT_MATCH_PADDING_SECONDS
+DEFAULT_STABILIZATION_CLUSTER_SAME_SPEAKER_THRESHOLD = CLUSTER_SAME_SPEAKER_THRESHOLD
+DEFAULT_STABILIZATION_CLUSTER_MERGE_THRESHOLD = CLUSTER_MERGE_THRESHOLD
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,28 +154,41 @@ def stabilize_project_speakers(
             progress=progress,
         )
         reassignments = tuple(_sentence_reassignments(sample_summary, cluster_summary))
-        apply_result = None
-        if reassignments:
+        if not reassignments:
+            # Converged: the diagnostics found nothing left to move, so later
+            # passes would only repeat the same (embedding-heavy) analysis.
+            results.append(
+                SpeakerStabilizationIteration(
+                    index, reassignments, None, cluster_summary, sample_summary
+                )
+            )
             emit_progress(
                 progress,
-                f"Applying {len(reassignments)} sentence speaker reassignment(s)",
+                f"Speaker stabilization converged after pass {index}/{total}",
+                completed=total,
+                total=total,
             )
-            apply_result = apply_project_sentence_reassignments(
-                project_dir,
-                reassignments,
-                store_dir=store_dir,
-                provider=None,
-                model=model,
-                rematch=True,
-            )
-            _apply_latest_match_names(project_dir, apply_result.match_summary)
-            cluster_summary, sample_summary = _refresh_diagnostics(
-                project_dir,
-                store_dir=store_dir,
-                model=model,
-                sample_workers=sample_workers,
-                progress=progress,
-            )
+            break
+        emit_progress(
+            progress,
+            f"Applying {len(reassignments)} sentence speaker reassignment(s)",
+        )
+        apply_result = apply_project_sentence_reassignments(
+            project_dir,
+            reassignments,
+            store_dir=store_dir,
+            provider=None,
+            model=model,
+            rematch=True,
+        )
+        _apply_latest_match_names(project_dir, apply_result.match_summary)
+        cluster_summary, sample_summary = _refresh_diagnostics(
+            project_dir,
+            store_dir=store_dir,
+            model=model,
+            sample_workers=sample_workers,
+            progress=progress,
+        )
         results.append(
             SpeakerStabilizationIteration(
                 index,

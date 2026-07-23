@@ -113,6 +113,43 @@ def test_stabilize_project_speakers_applies_and_refreshes(
     assert summary.final_match_summary is not None
 
 
+def test_stabilize_project_speakers_stops_after_converged_pass(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A pass with zero reassignments ends the loop instead of burning passes."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    refreshes: list[str] = []
+
+    def fake_refresh(*args, **kwargs):
+        refreshes.append("refresh")
+        return (
+            _cluster_summary(status="ok", nearest_speaker_id=None),
+            _sample_summary("identity-ok", None),
+        )
+
+    def fail_apply(*args, **kwargs):
+        raise AssertionError("no reassignment should be applied when converged")
+
+    monkeypatch.setattr("app.speaker_stabilization._refresh_diagnostics", fake_refresh)
+    monkeypatch.setattr(
+        "app.speaker_stabilization.apply_project_sentence_reassignments", fail_apply
+    )
+
+    summary = stabilize_project_speakers(
+        project_dir,
+        store_dir=None,
+        model=None,
+        iterations=3,
+        sample_workers=3,
+        resplit=False,
+    )
+
+    assert refreshes == ["refresh"]
+    assert len(summary.iterations) == 1
+    assert summary.reassignment_count == 0
+
+
 def test_apply_resplit_phase_rerenders_named_for_residue_only(
     monkeypatch, tmp_path: Path
 ) -> None:

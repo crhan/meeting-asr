@@ -137,12 +137,38 @@ def test_apply_invalidates_only_overlapping_voiceprint_samples(tmp_path: Path) -
     assert len(result.deleted_samples) == 1
     deleted_clip_names = {Path(item.clip_path).name for item in result.deleted_samples}
     assert deleted_clip_names == {"clip_overlap.wav"}
-    # Untouched samples should still exist.
-    remaining = list_voiceprint_samples_for_project(
+    # Soft invalidation: the row and clip survive, only the status changes.
+    assert result.deleted_samples[0].clip_deleted is False
+    rows = list_voiceprint_samples_for_project(
         project_id, get_voiceprint_db_path(store_dir)
     )
-    remaining_clips = {row.clip_path.name for row in remaining}
-    assert remaining_clips == {"clip_other.wav", "clip_other_time.wav"}
+    status_by_clip = {row.clip_path.name: row.sample_status for row in rows}
+    assert status_by_clip == {
+        "clip_overlap.wav": "invalidated",
+        "clip_other.wav": "active",
+        "clip_other_time.wav": "active",
+    }
+    invalidated_row = next(
+        row for row in rows if row.clip_path.name == "clip_overlap.wav"
+    )
+    assert invalidated_row.clip_path.exists()
+
+    # A second identical apply must not re-invalidate the same sample.
+    retry = apply_project_sentence_reassignments(
+        project_dir,
+        [
+            SentenceReassignmentSpec(
+                sentence_id=2,
+                begin_time_ms=2000,
+                end_time_ms=2500,
+                new_speaker_id=0,
+                original_speaker_id=1,
+            )
+        ],
+        store_dir=store_dir,
+        rematch=False,
+    )
+    assert retry.deleted_samples == ()
 
 
 def test_stale_reassignment_raises_before_writes_or_sample_deletes(

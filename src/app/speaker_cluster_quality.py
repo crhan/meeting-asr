@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 import re
 from collections import defaultdict
@@ -15,11 +13,15 @@ from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
 from app.project_manager import load_manifest, project_paths, resolve_project_audio_path
+from app.speaker_clip_embeddings import (
+    clip_embedding_cache_key,
+    read_clip_embedding_cache,
+    write_clip_embedding_cache,
+)
 from app.speaker_labeling import load_transcript_result
 from app.utils import safe_write_json
 from app.voiceprint_audio import (
     MIN_EMBEDDING_VOICED_SECONDS,
-    VOICEPRINT_AUDIO_PREPROCESS_VERSION,
     embedding_audio_stats,
     trim_embedding_audio_silence,
 )
@@ -365,8 +367,13 @@ def _embed_selected_segments(
     """Build embedded probe clips for selected segments."""
     clips: list[SpeakerClusterClip] = []
     for index, segment in enumerate(segments, start=1):
-        key = _clip_cache_key(
-            context, speaker_id, segment, max_seconds, padding_seconds
+        key = clip_embedding_cache_key(
+            provider=context.provider,
+            model=context.model,
+            speaker_id=speaker_id,
+            segment=segment,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
         )
         clip_path = _clip_path(context.project_root, speaker_id, index)
         if key not in cache or require_audio_quality:
@@ -375,15 +382,15 @@ def _embed_selected_segments(
             )
         if require_audio_quality and not _audio_quality_ok(clip_path):
             continue
-        vector = cache.get(key)
-        if vector is None:
+        raw_vector = cache.get(key)
+        if raw_vector is None:
             embedding_path = _embedding_clip_path(clip_path)
             trim_embedding_audio_silence(clip_path, embedding_path)
-            vector = _normalize(
-                embed_audio_file(embedding_path, provider=context.provider)
-            )
-            cache[key] = vector
-        clips.append(_cluster_clip(speaker_id, index, segment, vector))
+            raw_vector = embed_audio_file(embedding_path, provider=context.provider)
+            cache[key] = raw_vector
+        clips.append(
+            _cluster_clip(speaker_id, index, segment, _normalize(raw_vector))
+        )
         emit_progress(progress, progress_description, advance=1)
         if max_clips is not None and len(clips) >= max_clips:
             break
@@ -496,33 +503,6 @@ def _segment_identity(segment: SentenceSegment) -> tuple[int | None, int, int]:
     return (segment.sentence_id, segment.begin_time_ms, segment.end_time_ms)
 
 
-def _clip_cache_key(
-    context: _ClusterContext,
-    speaker_id: int,
-    segment: SentenceSegment,
-    max_seconds: float,
-    padding_seconds: float,
-) -> str:
-    """Return a stable embedding cache key for one probe clip."""
-    payload = {
-        "version": 2,
-        "provider": context.provider,
-        "model": context.model,
-        "audio_preprocess": VOICEPRINT_AUDIO_PREPROCESS_VERSION,
-        "speaker_id": speaker_id,
-        "sentence_id": segment.sentence_id,
-        "begin_time_ms": segment.begin_time_ms,
-        "end_time_ms": segment.end_time_ms,
-        "text": segment.text,
-        "max_seconds": max_seconds,
-        "padding_seconds": padding_seconds,
-    }
-    encoded = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode()
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def _clip_path(project_root: Path, speaker_id: int, index: int) -> Path:
     """Return a deterministic cluster probe clip path."""
     return (
@@ -571,40 +551,14 @@ def _audio_quality_ok(path: Path) -> bool:
     )
 
 
-def _cache_path(project_root: Path) -> Path:
-    """Return the project-local cluster embedding cache path."""
-    return project_root / "tmp" / "speaker_cluster" / "clip_embeddings.json"
-
-
 def _read_embedding_cache(project_root: Path) -> dict[str, list[float]]:
-    """Read valid cached cluster embeddings."""
-    path = _cache_path(project_root)
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except OSError, json.JSONDecodeError:
-        return {}
-    return _valid_embedding_cache(payload)
-
-
-def _valid_embedding_cache(payload: object) -> dict[str, list[float]]:
-    """Filter a JSON payload down to valid embedding vectors."""
-    if not isinstance(payload, dict):
-        return {}
-    valid: dict[str, list[float]] = {}
-    for key, value in payload.items():
-        if isinstance(value, list):
-            try:
-                valid[str(key)] = [float(item) for item in value]
-            except TypeError, ValueError:
-                continue
-    return valid
+    """Read the shared clip embedding cache (raw vectors)."""
+    return read_clip_embedding_cache(project_root)
 
 
 def _write_embedding_cache(project_root: Path, cache: dict[str, list[float]]) -> None:
-    """Persist cluster embedding cache."""
-    safe_write_json(_cache_path(project_root), cache)
+    """Persist the shared clip embedding cache."""
+    write_clip_embedding_cache(project_root, cache)
 
 
 def _build_quality_summary(

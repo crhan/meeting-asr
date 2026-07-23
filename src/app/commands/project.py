@@ -12,8 +12,9 @@ import sys
 import termios
 import tty
 import wave
+from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +24,12 @@ from app.commands import project_correct as project_correct_commands
 from app.commands import project_trash as project_trash_commands
 from app.commands import transcript as transcript_commands
 from app.core.progress import CliProgressReporter, emit_progress
+from app.core.run_pipeline import (
+    RunStage,
+    StageRun,
+    execute_run_pipeline,
+    pipeline_step_descriptions,
+)
 from app.presentation.cli.errors import run_with_cli_errors
 from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import should_enable_verbose_logs
@@ -145,6 +152,12 @@ from app.speaker_learning import (
     speaker_learning_payload,
 )
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
+from app.speaker_pipeline_params import (
+    DEFAULT_MATCH_MAX_SECONDS,
+    DEFAULT_MATCH_PADDING_SECONDS,
+    DEFAULT_MATCH_SAMPLE_COUNT,
+    DEFAULT_MATCH_THRESHOLD,
+)
 from app.speaker_resplit import (
     DEFAULT_CANDIDATE_FLOOR,
     DEFAULT_MIN_GROUP_SECONDS,
@@ -265,6 +278,7 @@ class ProjectRunSummary:
     matches: SpeakerMatchSummary
     applied_mapping: dict[int, str]
     stabilization: SpeakerStabilizationSummary | None
+    skipped_stages: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,7 +406,12 @@ def transcribe(
         help="Show interactive progress on a terminal.",
     ),
 ) -> None:
-    """Transcribe a project and write structured artifacts."""
+    """Transcribe a project and write structured artifacts.
+
+    Reuses an existing transcription result or reattaches an interrupted
+    DashScope task instead of paying for a new one; use ``project rerun``
+    to force a fresh ASR task.
+    """
     _run_project_transcription_command(
         project_dir=project_dir,
         projects_dir=projects_dir,
@@ -408,6 +427,7 @@ def transcribe(
         asr_hotwords=asr_hotwords,
         progress=progress,
         description="Transcribing project",
+        force_asr=False,
     )
 
 
@@ -461,6 +481,7 @@ def rerun(
         asr_hotwords=asr_hotwords,
         progress=progress,
         description="Rerunning project ASR",
+        force_asr=True,
     )
 
 
@@ -480,6 +501,7 @@ def _run_project_transcription_command(
     asr_hotwords: str,
     progress: bool,
     description: str,
+    force_asr: bool,
 ) -> None:
     """Resolve a project and run the ASR transcription command."""
     configure_logging(verbose=should_enable_verbose_logs())
@@ -500,7 +522,7 @@ def _run_project_transcription_command(
     )
     summary = run_with_progress(
         lambda reporter: transcribe_project(
-            resolved_project_dir, options, progress=reporter
+            resolved_project_dir, options, progress=reporter, force_asr=force_asr
         ),
         description=description,
         total=7,
@@ -599,6 +621,12 @@ def run(
     asr_hotwords: str = typer.Option(
         "auto", "--asr-hotwords", autocompletion=complete_asr_hotwords
     ),
+    force_asr: bool = typer.Option(
+        False,
+        "--force-asr",
+        help="Submit a fresh DashScope task even when this project already has "
+        "a transcription result or an interrupted task that could be reattached.",
+    ),
     store_dir: Optional[Path] = typer.Option(
         None, "--store-dir", file_okay=False, dir_okay=True
     ),
@@ -607,7 +635,9 @@ def run(
         "--voiceprint-model",
         autocompletion=complete_voiceprint_model,
     ),
-    match_threshold: float = typer.Option(0.75, "--match-threshold", min=0.0, max=1.0),
+    match_threshold: float = typer.Option(
+        DEFAULT_MATCH_THRESHOLD, "--match-threshold", min=0.0, max=1.0
+    ),
     crosstalk: bool = typer.Option(
         True,
         "--crosstalk/--no-crosstalk",
@@ -738,6 +768,7 @@ def run(
             meeting_time=meeting_time,
             variant=variant,
             options=options,
+            force_asr=force_asr,
             store_dir=store_dir,
             voiceprint_model=voiceprint_model,
             match_threshold=match_threshold,
@@ -1102,6 +1133,7 @@ def _run_project_workflow(
     meeting_time: str | None,
     variant: str | None,
     options: ProjectTranscribeOptions,
+    force_asr: bool = False,
     store_dir: Path | None,
     lexicon_db: Path | None = None,
     voiceprint_model: str | None,
@@ -1146,79 +1178,78 @@ def _run_project_workflow(
     Returns:
         Project run summary.
     """
-    step_total = (
-        7
-        + int(local_correction)
-        + int(polish)
-        + int(summarize)
-        + 2
-        + int(speaker_stabilization)
-    )
-    step_descriptions = _project_run_step_descriptions(
-        summarize, polish, local_correction, speaker_stabilization
-    )
-    emit_progress(
-        progress,
-        "Creating or reusing project",
-        step_index=1,
-        step_total=step_total,
-        reset_total=True,
-        step_descriptions=step_descriptions,
-    )
-    project = create_or_reuse_project(
-        input_path,
-        title=title,
-        projects_dir=projects_dir,
-        project_dir=project_dir,
-        meeting_time=meeting_time,
-        hash_source=False,
-        variant=variant,
-        extra_inputs=extra_inputs,
-        progress=progress,
-    )
-    _record_and_emit_run_stage(
-        project.project_dir,
-        input_path,
-        "project created",
-        progress,
-        external_ids={"source": "created" if project.created else "reused"},
-        last_success="project ready",
-        description="Creating or reusing project",
-        step_index=1,
-        step_total=step_total,
-    )
-    transcription = transcribe_project(
-        project.project_dir,
-        options,
-        progress=progress,
-        step_offset=1,
-        step_total=step_total,
-        lexicon_db=lexicon_db,
-    )
-    lexicon_correction_summary = None
-    if local_correction:
-        correction_step = 8
+    project: ProjectCreateSummary | None = None
+    transcription: ProjectTranscribeSummary | None = None
+    lexicon_correction_summary: CorrectionEditSummary | None = None
+    correction_summary: CorrectionEditSummary | None = None
+    meeting_summary: ProjectMeetingSummary | None = None
+    matches: SpeakerMatchSummary | None = None
+    applied_mapping: dict[int, str] = {}
+    stabilization_summary: SpeakerStabilizationSummary | None = None
+
+    def _project_root() -> Path:
+        if project is None:
+            raise RuntimeError("project run pipeline used before the create stage")
+        return project.project_dir
+
+    def _create_stage(ctx: StageRun) -> None:
+        nonlocal project
+        project = create_or_reuse_project(
+            input_path,
+            title=title,
+            projects_dir=projects_dir,
+            project_dir=project_dir,
+            meeting_time=meeting_time,
+            hash_source=False,
+            variant=variant,
+            extra_inputs=extra_inputs,
+            progress=progress,
+        )
         _record_and_emit_run_stage(
             project.project_dir,
+            input_path,
+            "project created",
+            progress,
+            external_ids={"source": "created" if project.created else "reused"},
+            last_success="project ready",
+            description="Creating or reusing project",
+            step_index=ctx.step_index,
+            step_total=ctx.step_total,
+        )
+
+    def _transcribe_stage(ctx: StageRun) -> None:
+        nonlocal transcription
+        transcription = transcribe_project(
+            _project_root(),
+            options,
+            progress=progress,
+            step_offset=ctx.step_index - 1,
+            step_total=ctx.step_total,
+            lexicon_db=lexicon_db,
+            force_asr=force_asr,
+        )
+
+    def _local_correction_stage(ctx: StageRun) -> None:
+        nonlocal lexicon_correction_summary
+        _record_and_emit_run_stage(
+            _project_root(),
             input_path,
             "local correction",
             progress,
             description="Applying local vocabulary corrections",
-            step_index=correction_step,
-            step_total=step_total,
+            step_index=ctx.step_index,
+            step_total=ctx.step_total,
             reset_total=True,
         )
         lexicon_correction_summary = _apply_run_lexicon_corrections(
-            project.project_dir, progress=progress, lexicon_db=lexicon_db
+            _project_root(), progress=progress, lexicon_db=lexicon_db
         )
-        _record_local_correction_runtime(
-            project.project_dir, lexicon_correction_summary
-        )
-    correction_summary = None
-    if polish:
-        polish_step = 8 + int(local_correction)
+        _record_local_correction_runtime(_project_root(), lexicon_correction_summary)
+
+    def _polish_stage(ctx: StageRun) -> None:
+        nonlocal correction_summary
         _record_and_emit_run_stage(
-            project.project_dir,
+            _project_root(),
             input_path,
             "polish",
             progress,
@@ -1227,11 +1258,11 @@ def _run_project_workflow(
                 "concurrency": polish_concurrency or "configured-default",
             },
             description="Generating transcript polish proposal",
-            step_index=polish_step,
-            step_total=step_total,
+            step_index=ctx.step_index,
+            step_total=ctx.step_total,
         )
         correction_summary = _prepare_run_transcript_polish(
-            project.project_dir,
+            _project_root(),
             correction_model,
             polish_concurrency=polish_concurrency,
             polish_legacy=polish_legacy,
@@ -1240,86 +1271,93 @@ def _run_project_workflow(
         )
         if _should_auto_accept_run_polish(correction_summary):
             correction_summary = _accept_run_transcript_polish(
-                project.project_dir, correction_summary
+                _project_root(), correction_summary
             )
-        _record_polish_runtime(project.project_dir, correction_summary)
-    meeting_summary = None
-    if summarize:
-        summary_step = 8 + int(local_correction) + int(polish)
+        _record_polish_runtime(_project_root(), correction_summary)
+
+    def _summary_stage(ctx: StageRun) -> None:
+        nonlocal meeting_summary
         _record_and_emit_run_stage(
-            project.project_dir,
+            _project_root(),
             input_path,
             "summary",
             progress,
             external_ids={"model": summary_model or "configured-default"},
             description="Summarizing meeting",
-            step_index=summary_step,
-            step_total=step_total,
+            step_index=ctx.step_index,
+            step_total=ctx.step_total,
             reset_total=True,
         )
         meeting_summary = summarize_project(
-            project.project_dir,
+            _project_root(),
             model=summary_model,
             update_title=title is None,
             progress=progress,
         )
-    match_step = 8 + int(local_correction) + int(polish) + int(summarize)
-    apply_step = match_step + 1
-    _record_and_emit_run_stage(
-        project.project_dir,
-        input_path,
-        "speaker match",
-        progress,
-        external_ids={"provider": "local-speechbrain"},
-        description="Matching speakers with voiceprints",
-        step_index=match_step,
-        step_total=step_total,
-        reset_total=True,
-    )
-    matches = match_project_speakers(
-        project.project_dir,
-        store_dir=store_dir,
-        provider=None,
-        model=voiceprint_model,
-        threshold=match_threshold,
-        sample_count=2,
-        max_seconds=12.0,
-        padding_seconds=0.5,
-        crosstalk_params=crosstalk_params,
-        progress=progress,
-    )
-    _record_and_emit_run_stage(
-        project.project_dir,
-        input_path,
-        "final artifact write",
-        progress,
-        last_success="speaker matching complete",
-        description="Applying accepted speaker matches",
-        step_index=apply_step,
-        step_total=step_total,
-        reset_total=True,
-    )
-    applied_mapping = matches.accepted_mapping
-    if applied_mapping:
-        apply_project_speakers(
-            project.project_dir,
-            applied_mapping,
-            person_mapping=matches.accepted_person_mapping,
-            person_public_mapping=matches.accepted_person_public_mapping,
-        )
-    # When applied_mapping is empty (e.g. every unresolved speaker is crosstalk),
-    # the anonymous named transcript/subtitle are rendered after stabilization by
-    # _ensure_named_outputs_for_nonblocking_run, so a completed non-blocking run
-    # never lacks its advertised final outputs.
-    stabilization_summary = None
-    # The iterative passes need at least one accepted in-project identity to anchor
-    # reassignments; the re-split phase does not (it works off the global library), so
-    # it should still run on a polluted track that failed the aggregate threshold.
-    should_iterate = _should_stabilize_run_speakers(matches)
-    if speaker_stabilization and (should_iterate or speaker_resplit):
-        stabilization_step = apply_step + 1
+
+    def _match_stage(ctx: StageRun) -> None:
+        nonlocal matches
         _record_and_emit_run_stage(
-            project.project_dir,
+            _project_root(),
+            input_path,
+            "speaker match",
+            progress,
+            external_ids={"provider": "local-speechbrain"},
+            description="Matching speakers with voiceprints",
+            step_index=ctx.step_index,
+            step_total=ctx.step_total,
+            reset_total=True,
+        )
+        matches = match_project_speakers(
+            _project_root(),
+            store_dir=store_dir,
+            provider=None,
+            model=voiceprint_model,
+            threshold=match_threshold,
+            sample_count=DEFAULT_MATCH_SAMPLE_COUNT,
+            max_seconds=DEFAULT_MATCH_MAX_SECONDS,
+            padding_seconds=DEFAULT_MATCH_PADDING_SECONDS,
+            crosstalk_params=crosstalk_params,
+            progress=progress,
+        )
+
+    def _apply_stage(ctx: StageRun) -> None:
+        nonlocal applied_mapping
+        _record_and_emit_run_stage(
+            _project_root(),
+            input_path,
+            "final artifact write",
+            progress,
+            last_success="speaker matching complete",
+            description="Applying accepted speaker matches",
+            step_index=ctx.step_index,
+            step_total=ctx.step_total,
+            reset_total=True,
+        )
+        applied_mapping = matches.accepted_mapping
+        if applied_mapping:
+            apply_project_speakers(
+                _project_root(),
+                applied_mapping,
+                person_mapping=matches.accepted_person_mapping,
+                person_public_mapping=matches.accepted_person_public_mapping,
+            )
+        # When applied_mapping is empty (e.g. every unresolved speaker is
+        # crosstalk), the anonymous named transcript/subtitle are rendered after
+        # stabilization by _ensure_named_outputs_for_nonblocking_run, so a
+        # completed non-blocking run never lacks its advertised final outputs.
+
+    def _stabilize_stage(ctx: StageRun) -> None:
+        nonlocal matches, applied_mapping, stabilization_summary
+        # The iterative passes need at least one accepted in-project identity to
+        # anchor reassignments; the re-split phase does not (it works off the
+        # global library), so it should still run on a polluted track that
+        # failed the aggregate threshold.
+        should_iterate = _should_stabilize_run_speakers(matches)
+        if not (should_iterate or speaker_resplit):
+            return
+        _record_and_emit_run_stage(
+            _project_root(),
             input_path,
             "speaker stabilization",
             progress,
@@ -1329,12 +1367,12 @@ def _run_project_workflow(
             },
             last_success="speaker matching applied",
             description="Stabilizing sentence speaker assignments",
-            step_index=stabilization_step,
-            step_total=step_total,
+            step_index=ctx.step_index,
+            step_total=ctx.step_total,
             reset_total=True,
         )
         stabilization_summary = stabilize_project_speakers(
-            project.project_dir,
+            _project_root(),
             store_dir=store_dir,
             model=voiceprint_model,
             iterations=speaker_stabilization_iterations if should_iterate else 0,
@@ -1345,6 +1383,90 @@ def _run_project_workflow(
         if stabilization_summary.final_match_summary is not None:
             matches = stabilization_summary.final_match_summary
             applied_mapping = matches.accepted_mapping
+
+    stages: list[RunStage] = [
+        RunStage(
+            key="create",
+            description="Creating or reusing project",
+            execute=_create_stage,
+        ),
+        RunStage(
+            key="transcribe",
+            description="Transcribing",
+            execute=_transcribe_stage,
+            step_span=6,
+            sub_descriptions=(
+                "Preparing audio",
+                "Resolving audio URL",
+                "Submitting DashScope task",
+                "Waiting for DashScope ASR",
+                "Downloading transcription result",
+                "Writing transcript artifacts",
+            ),
+        ),
+    ]
+    if local_correction:
+        stages.append(
+            RunStage(
+                key="local-correction",
+                description="Applying local vocabulary corrections",
+                execute=_local_correction_stage,
+            )
+        )
+    # Speaker identity resolves BEFORE the LLM text stages: polish then gets
+    # real speaker names for context-sensitive disambiguation, and the memory
+    # index summarizes the corrected, named transcript instead of raw ASR.
+    stages.append(
+        RunStage(
+            key="speaker-match",
+            description="Matching speakers with voiceprints",
+            execute=_match_stage,
+        )
+    )
+    stages.append(
+        RunStage(
+            key="speaker-apply",
+            description="Applying accepted speaker matches",
+            execute=_apply_stage,
+        )
+    )
+    if speaker_stabilization:
+        stages.append(
+            RunStage(
+                key="speaker-stabilization",
+                description="Stabilizing sentence speaker assignments",
+                execute=_stabilize_stage,
+            )
+        )
+    if polish:
+        stages.append(
+            RunStage(
+                key="polish",
+                description="Generating transcript polish proposal",
+                execute=_polish_stage,
+                satisfied=lambda: _run_polish_skip_reason(_project_root()),
+            )
+        )
+    if summarize:
+        stages.append(
+            RunStage(
+                key="summary",
+                description="Summarizing meeting",
+                execute=_summary_stage,
+                satisfied=lambda: _run_summary_skip_reason(_project_root()),
+            )
+        )
+    emit_progress(
+        progress,
+        "Creating or reusing project",
+        step_index=1,
+        step_total=sum(stage.step_span for stage in stages),
+        reset_total=True,
+        step_descriptions=pipeline_step_descriptions(stages),
+    )
+    skipped_stages = execute_run_pipeline(stages, progress)
+    if project is None or transcription is None or matches is None:
+        raise RuntimeError("project run pipeline did not complete required stages")
     _ensure_named_outputs_for_nonblocking_run(
         project.project_dir, matches, applied_mapping
     )
@@ -1364,49 +1486,42 @@ def _run_project_workflow(
         matches,
         applied_mapping,
         stabilization_summary,
+        skipped_stages,
     )
 
 
-def _project_run_step_descriptions(
-    summarize: bool,
-    polish: bool,
-    local_correction: bool,
-    speaker_stabilization: bool,
-) -> tuple[str, ...]:
+def _run_polish_skip_reason(project_dir: Path) -> str | None:
     """
-    Return the planned step names for ``project run``.
+    Return why the run polish stage can be skipped, or ``None`` to run it.
 
-    Args:
-        summarize: Whether the summary step is enabled.
-        polish: Whether the transcript polish step is enabled.
-        local_correction: Whether local lexicon correction is enabled.
-        speaker_stabilization: Whether sentence speaker stabilization is enabled.
-
-    Returns:
-        Ordered step descriptions.
+    Polish is the most expensive LLM stage, so a repeated ``project run`` must
+    not regenerate work that already exists for the current transcript:
+    an accepted polish, a proposal still awaiting review, or a previous
+    no-change verdict. Re-transcription clears this state via
+    ``_invalidate_downstream_artifacts``, which re-arms the stage.
     """
-    transcription_steps = (
-        "Creating or reusing project",
-        "Preparing audio",
-        "Resolving audio URL",
-        "Submitting DashScope task",
-        "Waiting for DashScope ASR",
-        "Downloading transcription result",
-        "Writing transcript artifacts",
-    )
-    steps = list(transcription_steps)
-    if local_correction:
-        steps.append("Applying local vocabulary corrections")
-    if polish:
-        steps.append("Generating transcript polish proposal")
-    if summarize:
-        steps.append("Summarizing meeting")
-    steps.extend(
-        ("Matching speakers with voiceprints", "Applying accepted speaker matches")
-    )
-    if speaker_stabilization:
-        steps.append("Stabilizing sentence speaker assignments")
-    return tuple(steps)
+    manifest = load_manifest(project_dir)
+    state = manifest.runtime.get("polish")
+    if not isinstance(state, dict):
+        return None
+    status = state.get("status")
+    root = project_paths(project_dir).root
+    if status == "accepted" and (root / "asr" / "sentences_corrected.json").exists():
+        return "polish already accepted"
+    if status == "proposal_ready":
+        proposal = state.get("proposal_json")
+        if isinstance(proposal, str) and proposal and (root / proposal).exists():
+            return "polish proposal pending review (project correct diff/accept)"
+    if status == "no_changes":
+        return "previous polish found no changes"
+    return None
+
+
+def _run_summary_skip_reason(project_dir: Path) -> str | None:
+    """Return why the run summary stage can be skipped, or ``None`` to run it."""
+    if (project_paths(project_dir).exports_dir / "meeting_summary.md").exists():
+        return "meeting summary exists"
+    return None
 
 
 def _should_stabilize_run_speakers(matches: SpeakerMatchSummary) -> bool:
@@ -2578,7 +2693,9 @@ def speakers_rerun(
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
     ),
-    threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
+    threshold: float = typer.Option(
+        DEFAULT_MATCH_THRESHOLD, "--threshold", min=0.0, max=1.0
+    ),
     sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
@@ -2720,7 +2837,9 @@ def speakers_learn(
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
     ),
-    threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
+    threshold: float = typer.Option(
+        DEFAULT_MATCH_THRESHOLD, "--threshold", min=0.0, max=1.0
+    ),
     sample_count: int = typer.Option(3, "--sample-count", min=1, max=20),
     match_sample_count: int = typer.Option(2, "--match-sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
@@ -2847,7 +2966,9 @@ def speakers_match(
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
     ),
-    threshold: float = typer.Option(0.75, "--threshold", min=0.0, max=1.0),
+    threshold: float = typer.Option(
+        DEFAULT_MATCH_THRESHOLD, "--threshold", min=0.0, max=1.0
+    ),
     sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
     padding_seconds: float = typer.Option(0.5, "--padding-seconds", min=0.0),
@@ -3241,6 +3362,8 @@ def _echo_run_summary(summary: ProjectRunSummary) -> None:
     if summary.meeting_summary is not None:
         typer.echo(f"Memory index: {summary.meeting_summary.summary_path.resolve()}")
         typer.echo(f"Memory index JSON: {summary.meeting_summary.json_path.resolve()}")
+    for stage_key, reason in summary.skipped_stages.items():
+        typer.echo(f"Skipped {stage_key}: {reason}")
 
 
 def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
@@ -3273,12 +3396,53 @@ def _run_summary_view(summary: ProjectRunSummary) -> ProjectRunSummaryView:
         speaker_reassignments=0
         if summary.stabilization is None
         else summary.stabilization.reassignment_count,
+        identity_confidence=_identity_confidence_label(summary.stabilization),
         speaker_matches=speaker_match_rows(
             summary.matches.matches,
             default_threshold=summary.matches.threshold,
             ignored_speaker_ids=ignored_ids,
         ),
     )
+
+
+def _identity_confidence_label(
+    stabilization: SpeakerStabilizationSummary | None,
+) -> str | None:
+    """
+    Summarize sentence-level identity agreement from the final diagnostics.
+
+    The last stabilization pass already scored every usable sentence against
+    the voiceprint library; this compresses that report into one quality
+    signal (how many sentences agree with their assigned speaker) so a run
+    that "completed" with a shaky identity still shows it.
+    """
+    if stabilization is None or not stabilization.iterations:
+        return None
+    sample_summary = stabilization.iterations[-1].sample_summary
+    counts: Counter[str] = Counter()
+    for report in sample_summary.reports:
+        counts.update(report.status_counts)
+    judged = sum(
+        counts[key]
+        for key in (
+            "identity-ok",
+            "identity-conflict",
+            "identity-ambiguous",
+            "identity-weak",
+        )
+    )
+    if judged == 0:
+        return None
+    ok = counts["identity-ok"]
+    parts = [f"{ok}/{judged} sentences consistent ({ok / judged:.0%})"]
+    for key, label in (
+        ("identity-conflict", "conflict"),
+        ("identity-ambiguous", "ambiguous"),
+        ("identity-weak", "weak"),
+    ):
+        if counts[key]:
+            parts.append(f"{counts[key]} {label}")
+    return ", ".join(parts)
 
 
 def _echo_project_created(

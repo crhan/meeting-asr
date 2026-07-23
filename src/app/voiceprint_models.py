@@ -89,3 +89,4 @@ class StoredVoiceprintSample:
     clip_end_time_ms: int
     transcript_text: str
     person_id: int | None = None
+    sample_status: str = "active"

@@ -14,8 +14,8 @@ from typing import Any
 from app.config import Settings
 from app.dashscope_chat import generate_chat_text
 from app.models import TranscriptResult
-from app.postprocess import render_speaker_text
-from app.utils import retry
+from app.postprocess import render_speaker_text, speaker_id_to_label
+from app.utils import format_ms_timestamp, retry
 
 # qwen-plus base model has a 131k-token context window. An 80k-character
 # Chinese meeting transcript is roughly 50k tokens, well inside that budget.
@@ -48,6 +48,7 @@ def generate_meeting_summary(
     *,
     settings: Settings,
     model: str | None,
+    speaker_names: dict[int, str] | None = None,
 ) -> MeetingSummary:
     """
     Generate a meeting memory index with one DashScope call.
@@ -56,6 +57,9 @@ def generate_meeting_summary(
         result: Normalized transcript.
         settings: Runtime DashScope settings.
         model: Optional model override.
+        speaker_names: Optional resolved speaker display names; when present
+            the prompt shows who is speaking instead of anonymous labels, so
+            titles/keywords can reference real attendees.
 
     Returns:
         Lightweight meeting memory index.
@@ -65,7 +69,7 @@ def generate_meeting_summary(
         model=resolved_model,
         settings=settings,
         system_prompt=_memory_system_prompt(),
-        prompt=_build_memory_prompt(result),
+        prompt=_build_memory_prompt(result, speaker_names),
     )
     return _parse_summary_text(raw, model=resolved_model)
 
@@ -124,9 +128,14 @@ def _memory_system_prompt() -> str:
     )
 
 
-def _build_memory_prompt(result: TranscriptResult) -> str:
+def _build_memory_prompt(
+    result: TranscriptResult, speaker_names: dict[int, str] | None = None
+) -> str:
     """Build the unified memory-index prompt with the full transcript."""
-    transcript = render_speaker_text(result).strip() or result.full_text.strip()
+    transcript = (
+        _render_named_transcript(result, speaker_names).strip()
+        or result.full_text.strip()
+    )
     transcript = _bound_transcript(transcript)
     return (
         '请根据下面这场会议的真实转写，输出 JSON：{"title": "...", "summary": "...", "keywords": ["...", ...]}。\n'
@@ -155,6 +164,26 @@ def _build_memory_prompt(result: TranscriptResult) -> str:
         f"{transcript}\n"
         "=== 转写结束 ==="
     )
+
+
+def _render_named_transcript(
+    result: TranscriptResult, speaker_names: dict[int, str] | None
+) -> str:
+    """Render the timestamped transcript, using real names when resolved."""
+    if not speaker_names:
+        return render_speaker_text(result)
+    lines: list[str] = []
+    for sentence in result.sentences:
+        text = sentence.text.strip()
+        if not text:
+            continue
+        start = format_ms_timestamp(sentence.begin_time_ms)
+        end = format_ms_timestamp(sentence.end_time_ms)
+        label = speaker_names.get(
+            sentence.speaker_id
+        ) or speaker_id_to_label(sentence.speaker_id)
+        lines.append(f"[{start} - {end}] {label}: {text}")
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def _bound_transcript(transcript: str) -> str:

@@ -29,7 +29,16 @@ from app.speaker_crosstalk import (
     CrosstalkParams,
     is_crosstalk,
 )
+from app.speaker_clip_embeddings import (
+    clip_embedding_cache_key,
+    read_clip_embedding_cache,
+    write_clip_embedding_cache,
+)
 from app.speaker_match_status import voiceprint_match_status
+from app.speaker_pipeline_params import (
+    STRONG_MARGIN_ACCEPT_MARGIN,
+    STRONG_MARGIN_ACCEPT_SCORE,
+)
 from app.speaker_labeling import load_transcript_result
 from app.utils import safe_write_json
 from app.voiceprint_audio import (
@@ -45,9 +54,6 @@ from app.voiceprint_segment_selection import (
     select_voiceprint_segments,
 )
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
-
-STRONG_MARGIN_ACCEPT_SCORE = 0.65
-STRONG_MARGIN_ACCEPT_MARGIN = 0.25
 
 
 @dataclass(frozen=True, slots=True)
@@ -687,16 +693,37 @@ def _probe_speaker_vector(
     cached_vector = _read_probe_cache(project_root, cache_key)
     if cached_vector is not None:
         return _ProbeVector(cached_vector, tuple(selected_segments), cached=True)
+    # Raw per-clip vectors are shared with cluster/sample diagnostics, so a
+    # rematch after stabilization reuses their embeddings instead of paying
+    # for the model again; averaging raw vectors keeps scores unchanged.
+    clip_cache = read_clip_embedding_cache(project_root)
+    new_clip_vectors: dict[str, list[float]] = {}
     vectors: list[list[float]] = []
     for index, candidate in enumerate(selected_segments, start=1):
         segment = candidate.segment
-        clip_path = _probe_clip_path(project_root, speaker_id, index)
-        _write_probe_clip(source, clip_path, segment, max_seconds, padding_seconds)
-        embedding_path = _probe_embedding_clip_path(project_root, speaker_id, index)
-        trim_embedding_audio_silence(clip_path, embedding_path)
-        vectors.append(embed_audio_file(embedding_path, provider=provider))
+        clip_key = clip_embedding_cache_key(
+            provider=provider,
+            model=model,
+            speaker_id=speaker_id,
+            segment=segment,
+            max_seconds=max_seconds,
+            padding_seconds=padding_seconds,
+        )
+        raw_vector = clip_cache.get(clip_key)
+        if raw_vector is None:
+            clip_path = _probe_clip_path(project_root, speaker_id, index)
+            _write_probe_clip(source, clip_path, segment, max_seconds, padding_seconds)
+            embedding_path = _probe_embedding_clip_path(
+                project_root, speaker_id, index
+            )
+            trim_embedding_audio_silence(clip_path, embedding_path)
+            raw_vector = embed_audio_file(embedding_path, provider=provider)
+            new_clip_vectors[clip_key] = raw_vector
+        vectors.append(raw_vector)
     vector = _normalize(_mean_vector(vectors))
     with cache_lock:
+        if new_clip_vectors:
+            write_clip_embedding_cache(project_root, new_clip_vectors)
         _write_probe_cache(project_root, cache_key, vector)
     return _ProbeVector(vector, tuple(selected_segments))
 

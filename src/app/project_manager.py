@@ -63,6 +63,7 @@ from app.core.oss_upload import (
 )
 from app.infra.dashscope_asr import (
     download_transcription_json,
+    probe_transcription,
     submit_transcription,
     wait_transcription,
 )
@@ -1122,6 +1123,7 @@ def transcribe_project(
     step_offset: int = 0,
     step_total: int | None = None,
     lexicon_db: Path | None = None,
+    force_asr: bool = False,
 ) -> ProjectTranscribeSummary:
     """
     Run DashScope transcription for a project.
@@ -1135,6 +1137,8 @@ def transcribe_project(
         lexicon_db: Optional lexicon database for ASR hotword resolution/snapshot. Defaults to
             the XDG lexicon; pass the configured store's lexicon so an isolated ``--store-dir``
             run never reads/syncs hotwords from the wrong (default) lexicon.
+        force_asr: Submit a fresh DashScope task even when a transcription
+            result or an interrupted task already exists for this project.
 
     Returns:
         Transcription summary.
@@ -1142,6 +1146,10 @@ def transcribe_project(
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
     input_file = _project_input_file(paths.root, manifest)
+    if not force_asr and (paths.asr_dir / "raw_result.json").exists():
+        return _finish_transcription_from_existing_raw(
+            paths, manifest, options, progress, input_file=input_file
+        )
     transcribe_steps = step_total or 6
     manifest = record_project_stage(
         paths.root, stage="audio extraction", input_file=input_file
@@ -1159,7 +1167,234 @@ def transcribe_project(
     )
     audio_path = _ensure_project_audio(paths, manifest, options.audio_format, progress)
     should_upload = _parse_project_oss_upload(options.oss_upload, options.file_url)
-    settings = load_settings(require_oss=should_upload)
+    settings = load_settings(require_oss=False)
+    pending_task_id = None if force_asr else _recorded_asr_task_id(manifest)
+    reattached = bool(
+        pending_task_id
+        and probe_transcription(settings=settings, task=pending_task_id) is not None
+    )
+    hotwords: AsrHotwordResolution | None = None
+    if reattached:
+        task_id = str(pending_task_id)
+        wait_task: Any = task_id
+        file_url_source = "reattached-task"
+        manifest = record_project_stage(
+            paths.root,
+            stage="ASR submit",
+            input_file=input_file,
+            external_ids={"dashscope_task_id": task_id, "model": options.model},
+            last_success="existing DashScope task reattached",
+        )
+        _emit_stage_event(
+            progress,
+            manifest=manifest,
+            project_dir=paths.root,
+            stage="ASR submit",
+            input_file=input_file,
+            external_ids={"dashscope_task_id": task_id},
+            description="Reattaching to existing DashScope task",
+            step_index=step_offset + 3,
+            step_total=transcribe_steps,
+            reset_total=True,
+        )
+        emit_progress(
+            progress, f"Reattached DashScope task: {task_id}", completed=1, total=1
+        )
+    else:
+        settings = load_settings(require_oss=should_upload)
+        manifest, wait_task, task_id, file_url_source, hotwords = (
+            _submit_fresh_transcription_task(
+                paths,
+                manifest,
+                options,
+                settings,
+                progress,
+                input_file=input_file,
+                audio_path=audio_path,
+                should_upload=should_upload,
+                step_offset=step_offset,
+                transcribe_steps=transcribe_steps,
+                lexicon_db=lexicon_db,
+            )
+        )
+    audio_duration_seconds = _audio_duration_seconds(paths.root, manifest, audio_path)
+    cost = estimate_asr_cost(
+        model=options.model,
+        base_url=settings.dashscope_base_url,
+        audio_duration_seconds=audio_duration_seconds,
+    )
+    wait_estimate = estimate_dashscope_wait(
+        settings, model=options.model, audio_duration_seconds=audio_duration_seconds
+    )
+    manifest = load_manifest(paths.root)
+    manifest = record_project_stage(
+        paths.root,
+        stage="ASR polling",
+        input_file=input_file,
+        external_ids={"dashscope_task_id": task_id, "model": options.model},
+    )
+    _emit_stage_event(
+        progress,
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="ASR polling",
+        input_file=input_file,
+        external_ids={"dashscope_task_id": task_id, "model": options.model},
+        description=asr_wait_description(task_id, wait_estimate, status=None),
+        step_index=step_offset + 4,
+        step_total=transcribe_steps,
+        total=asr_wait_total(wait_estimate),
+        reset_total=True,
+    )
+    wait_started_at = time.monotonic()
+    wait_status = "failed"
+    heartbeat = _HeartbeatThrottle(PROJECT_HEARTBEAT_INTERVAL_SECONDS)
+    try:
+        wait_response = wait_transcription(
+            settings=settings,
+            task=wait_task,
+            max_wait_seconds=_asr_wait_budget_seconds(audio_duration_seconds),
+            poll_callback=lambda event: _handle_asr_poll_event(
+                progress=progress,
+                paths=paths,
+                manifest=manifest,
+                input_file=input_file,
+                task_id=task_id,
+                model=options.model,
+                estimate=wait_estimate,
+                event=event,
+                heartbeat=heartbeat,
+            ),
+        )
+        wait_status = "succeeded"
+    except Exception as exc:
+        message = _asr_recovery_message(manifest.project_id, task_id, exc)
+        record_project_stage(
+            paths.root,
+            stage="ASR polling",
+            input_file=input_file,
+            external_ids={"dashscope_task_id": task_id, "model": options.model},
+            last_error=message,
+            heartbeat=True,
+        )
+        raise RuntimeError(message) from exc
+    finally:
+        wait_seconds = time.monotonic() - wait_started_at
+        record_dashscope_wait(
+            settings=settings,
+            project_id=manifest.project_id,
+            model=options.model,
+            task_id=task_id,
+            audio_duration_seconds=audio_duration_seconds,
+            wait_seconds=wait_seconds,
+            status=wait_status,
+        )
+    manifest = record_project_stage(
+        paths.root,
+        stage="transcript materialized",
+        input_file=input_file,
+        external_ids={"dashscope_task_id": task_id},
+        last_success="ASR task succeeded",
+    )
+    _emit_stage_event(
+        progress,
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="transcript materialized",
+        input_file=input_file,
+        external_ids={"dashscope_task_id": task_id},
+        last_success="ASR task succeeded",
+        description="Downloading transcription result",
+        step_index=step_offset + 5,
+        step_total=transcribe_steps,
+        reset_total=True,
+    )
+    raw_result = download_transcription_json(wait_response)
+    emit_progress(progress, "Normalizing transcript")
+    parsed_result = parse_transcription_result(raw_result)
+    manifest = record_project_stage(
+        paths.root,
+        stage="final artifact write",
+        input_file=input_file,
+        last_success="transcript normalized",
+    )
+    _emit_stage_event(
+        progress,
+        manifest=manifest,
+        project_dir=paths.root,
+        stage="final artifact write",
+        input_file=input_file,
+        last_success="transcript normalized",
+        description="Writing transcript artifacts",
+        step_index=step_offset + 6,
+        step_total=transcribe_steps,
+        reset_total=True,
+    )
+    _invalidate_downstream_artifacts(paths, manifest)
+    # Record the hotword table submitted with this task. Written after
+    # invalidation (which prunes the previous run's copy) so a freshly
+    # transcribed project shows the biasing terms instead of an empty file.
+    # A reattached task keeps the artifact from its original submission.
+    if hotwords is not None:
+        write_asr_hotword_artifact(
+            paths.root / "corrections" / "asr_hotwords.json", hotwords
+        )
+    _write_project_asr_outputs(paths, raw_result, parsed_result, options.generate_srt)
+    emit_progress(progress, "Transcription complete", completed=1, total=1)
+    _record_asr_metadata(
+        manifest,
+        task_id,
+        file_url_source,
+        options,
+        parsed_result,
+        hotwords or AsrHotwordResolution(vocabulary_id=None, source="reattached-task"),
+        cost,
+    )
+    manifest.status = "transcribed"
+    save_manifest(paths.root, manifest)
+    return ProjectTranscribeSummary(
+        paths.root,
+        task_id,
+        file_url_source,
+        len(parsed_result.detected_speakers),
+        len(parsed_result.sentences),
+        cost,
+    )
+
+
+def _submit_fresh_transcription_task(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    options: ProjectTranscribeOptions,
+    settings,
+    progress: CliProgressReporter | None,
+    *,
+    input_file: str,
+    audio_path: Path,
+    should_upload: bool,
+    step_offset: int,
+    transcribe_steps: int,
+    lexicon_db: Path | None,
+) -> tuple[ProjectManifest, Any, str, str, AsrHotwordResolution]:
+    """
+    Resolve the audio URL and submit a new DashScope transcription task.
+
+    Args:
+        paths: Project paths.
+        manifest: Loaded project manifest.
+        options: Transcription options.
+        settings: Runtime settings with OSS validated when uploading.
+        progress: Optional progress reporter.
+        input_file: Source input path label.
+        audio_path: Prepared project audio path.
+        should_upload: Whether the audio must be uploaded to OSS.
+        step_offset: Number of workflow steps before transcription.
+        transcribe_steps: Total transcription step count.
+        lexicon_db: Optional lexicon database override.
+
+    Returns:
+        Tuple of (manifest, task response, task id, file URL source, hotwords).
+    """
     oss_external = _oss_stage_external_ids(manifest, audio_path, should_upload)
     manifest = record_project_stage(
         paths.root,
@@ -1241,140 +1476,98 @@ def transcribe_project(
     emit_progress(
         progress, f"DashScope task submitted: {task_id}", completed=1, total=1
     )
-    audio_duration_seconds = _audio_duration_seconds(paths.root, manifest, audio_path)
-    cost = estimate_asr_cost(
-        model=options.model,
-        base_url=settings.dashscope_base_url,
-        audio_duration_seconds=audio_duration_seconds,
-    )
-    wait_estimate = estimate_dashscope_wait(
-        settings, model=options.model, audio_duration_seconds=audio_duration_seconds
-    )
-    manifest = load_manifest(paths.root)
-    manifest = record_project_stage(
-        paths.root,
-        stage="ASR polling",
-        input_file=input_file,
-        external_ids={"dashscope_task_id": task_id, "model": options.model},
-    )
-    _emit_stage_event(
-        progress,
-        manifest=manifest,
-        project_dir=paths.root,
-        stage="ASR polling",
-        input_file=input_file,
-        external_ids={"dashscope_task_id": task_id, "model": options.model},
-        description=asr_wait_description(task_id, wait_estimate, status=None),
-        step_index=step_offset + 4,
-        step_total=transcribe_steps,
-        total=asr_wait_total(wait_estimate),
-        reset_total=True,
-    )
-    wait_started_at = time.monotonic()
-    wait_status = "failed"
-    heartbeat = _HeartbeatThrottle(PROJECT_HEARTBEAT_INTERVAL_SECONDS)
-    try:
-        wait_response = wait_transcription(
-            settings=settings,
-            task=task_response,
-            poll_callback=lambda event: _handle_asr_poll_event(
-                progress=progress,
-                paths=paths,
-                manifest=manifest,
-                input_file=input_file,
-                task_id=task_id,
-                model=options.model,
-                estimate=wait_estimate,
-                event=event,
-                heartbeat=heartbeat,
-            ),
-        )
-        wait_status = "succeeded"
-    except Exception as exc:
-        message = _asr_recovery_message(manifest.project_id, task_id, exc)
+    return manifest, task_response, task_id, file_url_source, hotwords
+
+
+def _finish_transcription_from_existing_raw(
+    paths: ProjectPaths,
+    manifest: ProjectManifest,
+    options: ProjectTranscribeOptions,
+    progress: CliProgressReporter | None,
+    *,
+    input_file: str,
+) -> ProjectTranscribeSummary:
+    """
+    Complete transcription from ``asr/raw_result.json`` without a new task.
+
+    When normalized sentences already exist the project is left untouched so
+    downstream artifacts (speaker naming, corrections) survive a repeated
+    ``project run``. When only the raw result exists (an interrupted artifact
+    write), it is re-parsed and the standard outputs are rewritten.
+
+    Args:
+        paths: Project paths.
+        manifest: Loaded project manifest.
+        options: Transcription options.
+        progress: Optional progress reporter.
+        input_file: Source input path label.
+
+    Returns:
+        Transcription summary describing the reused or reparsed result.
+    """
+    raw_path = paths.asr_dir / "raw_result.json"
+    sentences_path = paths.asr_dir / "sentences.json"
+    task_id = _recorded_asr_task_id(manifest) or "unknown"
+    if sentences_path.exists():
+        parsed_result = load_transcript_result(sentences_path)
         record_project_stage(
             paths.root,
-            stage="ASR polling",
+            stage="transcript materialized",
             input_file=input_file,
-            external_ids={"dashscope_task_id": task_id, "model": options.model},
-            last_error=message,
+            last_success="existing transcription reused",
             heartbeat=True,
         )
-        raise RuntimeError(message) from exc
-    finally:
-        wait_seconds = time.monotonic() - wait_started_at
-        record_dashscope_wait(
-            settings=settings,
-            project_id=manifest.project_id,
-            model=options.model,
-            task_id=task_id,
-            audio_duration_seconds=audio_duration_seconds,
-            wait_seconds=wait_seconds,
-            status=wait_status,
+        emit_progress(
+            progress, "Reusing existing transcription result", completed=1, total=1
         )
-    manifest = record_project_stage(
-        paths.root,
-        stage="transcript materialized",
-        input_file=input_file,
-        external_ids={"dashscope_task_id": task_id},
-        last_success="ASR task succeeded",
-    )
-    _emit_stage_event(
-        progress,
-        manifest=manifest,
-        project_dir=paths.root,
-        stage="transcript materialized",
-        input_file=input_file,
-        external_ids={"dashscope_task_id": task_id},
-        last_success="ASR task succeeded",
-        description="Downloading transcription result",
-        step_index=step_offset + 5,
-        step_total=transcribe_steps,
-        reset_total=True,
-    )
-    raw_result = download_transcription_json(wait_response)
-    emit_progress(progress, "Normalizing transcript")
+        return ProjectTranscribeSummary(
+            paths.root,
+            task_id,
+            "reused-transcript",
+            len(parsed_result.detected_speakers),
+            len(parsed_result.sentences),
+            None,
+        )
+    raw_result = json.loads(raw_path.read_text(encoding="utf-8"))
     parsed_result = parse_transcription_result(raw_result)
     manifest = record_project_stage(
         paths.root,
         stage="final artifact write",
         input_file=input_file,
-        last_success="transcript normalized",
-    )
-    _emit_stage_event(
-        progress,
-        manifest=manifest,
-        project_dir=paths.root,
-        stage="final artifact write",
-        input_file=input_file,
-        last_success="transcript normalized",
-        description="Writing transcript artifacts",
-        step_index=step_offset + 6,
-        step_total=transcribe_steps,
-        reset_total=True,
+        last_success="transcript reparsed from raw result",
     )
     _invalidate_downstream_artifacts(paths, manifest)
-    # Record the hotword table submitted with this task. Written after
-    # invalidation (which prunes the previous run's copy) so a freshly
-    # transcribed project shows the biasing terms instead of an empty file.
-    write_asr_hotword_artifact(
-        paths.root / "corrections" / "asr_hotwords.json", hotwords
-    )
     _write_project_asr_outputs(paths, raw_result, parsed_result, options.generate_srt)
-    emit_progress(progress, "Transcription complete", completed=1, total=1)
-    _record_asr_metadata(
-        manifest, task_id, file_url_source, options, parsed_result, hotwords, cost
-    )
     manifest.status = "transcribed"
     save_manifest(paths.root, manifest)
+    emit_progress(
+        progress, "Transcription reparsed from existing raw result", completed=1, total=1
+    )
     return ProjectTranscribeSummary(
         paths.root,
         task_id,
-        file_url_source,
+        "reparsed-raw",
         len(parsed_result.detected_speakers),
         len(parsed_result.sentences),
-        cost,
+        None,
     )
+
+
+def _recorded_asr_task_id(manifest: ProjectManifest) -> str | None:
+    """Return the DashScope task id recorded for this project, if any."""
+    asr = manifest.asr if isinstance(manifest.asr, dict) else {}
+    task_id = asr.get("task_id")
+    if task_id:
+        return str(task_id)
+    external = (manifest.runtime or {}).get("external_ids") or {}
+    value = external.get("dashscope_task_id")
+    return str(value) if value else None
+
+
+def _asr_wait_budget_seconds(audio_duration_seconds: float | None) -> float:
+    """Return the polling wall-clock budget for one transcription wait."""
+    duration = float(audio_duration_seconds or 0.0)
+    return max(1800.0, duration * 6.0)
 
 
 def apply_project_speakers(
@@ -1525,7 +1718,15 @@ def summarize_project(
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(project_dir)
     input_file = _project_input_file(paths.root, manifest)
-    result = load_transcript_result(paths.asr_dir / "sentences.json")
+    # Prefer the corrected transcript and resolved speaker names so the memory
+    # index reflects what the reader will actually see, not the raw ASR text.
+    sentences_path = paths.asr_dir / "sentences_corrected.json"
+    if not sentences_path.exists():
+        sentences_path = paths.asr_dir / "sentences.json"
+    result = load_transcript_result(sentences_path)
+    speaker_names = _load_existing_speaker_mapping(
+        paths.speakers_dir / "speaker_map.json"
+    )
     settings = load_settings(require_oss=False)
     model_label = model or getattr(
         settings, "dashscope_summary_model", "configured-default"
@@ -1547,7 +1748,9 @@ def summarize_project(
     )
     try:
         summary = _run_with_stage_heartbeat(
-            lambda: generate_meeting_summary(result, settings=settings, model=model),
+            lambda: generate_meeting_summary(
+                result, settings=settings, model=model, speaker_names=speaker_names
+            ),
             progress=progress,
             manifest=manifest,
             project_dir=paths.root,
@@ -2091,8 +2294,9 @@ def _asr_recovery_message(project_id: str, task_id: str, error: Exception) -> st
         f"Project run failed: project_id={project_id} stage=ASR polling "
         f"dashscope_task_id={task_id} error={error}. "
         f"Inspect: meeting-asr project show {project_id}. "
-        f"Review: meeting-asr project review {project_id}. "
-        f"Retry ASR: meeting-asr project rerun {project_id}."
+        f"Resume wait (reattaches task {task_id} without paying again): "
+        f"meeting-asr project transcribe {project_id}. "
+        f"Force a new ASR task: meeting-asr project rerun {project_id}."
     )
 
 
@@ -2534,6 +2738,12 @@ def _invalidate_downstream_artifacts(
     for key in DOWNSTREAM_SPEAKER_KEYS:
         manifest.speakers.pop(key, None)
     manifest.asr.pop("summary_model", None)
+    # Correction runtime state describes the invalidated transcript; clearing
+    # it re-arms the run pipeline's polish/local-correction skip gates.
+    runtime = dict(manifest.runtime)
+    runtime.pop("polish", None)
+    runtime.pop("local_correction", None)
+    manifest.runtime = runtime
     # Keywords are derived from the transcript; once the transcript is
     # invalidated the keyword list is also stale and must not survive
     # into the next project list render.

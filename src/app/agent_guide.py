@@ -135,9 +135,11 @@ Speaker review state has two different ignore concepts:
   `manifest.speakers.ignored`. Treat them as intentionally ignored review noise,
   not unresolved identities.
 - Voiceprint samples have lifecycle statuses: `active`, `verified-active`,
-  `quarantined`, and `rejected`. Matching uses only `active` and
+  `quarantined`, `rejected`, and `invalidated`. Matching uses only `active` and
   `verified-active`. `quarantined` and `rejected` samples are retained for audit
-  but must not participate in matching.
+  but must not participate in matching. `invalidated` marks samples whose
+  sentence was reassigned to another speaker; rows, clips, and embeddings are
+  kept so the status can be restored instead of re-capturing audio.
 
 Use `meeting-asr project speakers match <project-id> --json` for machine checks.
 Use `meeting-asr voiceprint review <project-id>` only when the user wants an

@@ -45,6 +45,7 @@ class ProjectRunSummaryView:
     transcription: ProjectTranscribeSummary
     speaker_matches: tuple[SpeakerMatchRow, ...]
     speaker_reassignments: int = 0
+    identity_confidence: str | None = None
 
 
 def render_project_run_summary(view: ProjectRunSummaryView) -> None:
@@ -184,6 +185,8 @@ def _metric_rows(view: ProjectRunSummaryView) -> list[tuple[str, str]]:
                 f"reassigned {view.speaker_reassignments} sentence(s)",
             )
         )
+    if view.identity_confidence:
+        rows.append(("Identity confidence", view.identity_confidence))
     return rows
 
 
