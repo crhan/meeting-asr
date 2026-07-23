@@ -119,6 +119,35 @@ class FakeBucket:
         return f"https://signed.example.com/{key}?expires={expires}"
 
 
+def test_upload_outside_lifecycle_prefix_warns_and_skips_rule(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Custom keys outside the lifecycle prefix must warn, not pretend to expire."""
+    source = tmp_path / "audio.wav"
+    source.write_bytes(b"12345678")
+    bucket = FakeBucket()
+    monkeypatch.setattr("app.uploader.build_oss_bucket", lambda settings: bucket)
+
+    with caplog.at_level("WARNING", logger="app.uploader"):
+        url = upload_file_to_oss(
+            source,
+            object_name="custom/path/audio.wav",
+            settings=_settings(),
+            expires_seconds=600,
+        )
+
+    assert url.startswith("https://signed.example.com/")
+    assert bucket.uploaded == [("custom/path/audio.wav", str(source.resolve()))]
+    # 前缀外的 key 覆盖不到，不 ensure 规则，只警告。
+    assert bucket.lifecycle_puts == []
+    assert any(
+        "outside the auto-delete lifecycle prefix" in record.message
+        for record in caplog.records
+    )
+
+
 class _ForbiddenLifecycleBucket(FakeBucket):
     """Fake bucket whose credential lacks lifecycle permissions."""
 

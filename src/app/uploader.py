@@ -88,23 +88,37 @@ def upload_file_to_oss(
     resolved_settings = settings or load_settings(require_oss=True)
     bucket = build_oss_bucket(resolved_settings)
     key = object_name or f"{DEFAULT_OSS_PREFIX}/{uuid4().hex}{source.suffix}"
-    _apply_lifecycle_fallback(bucket)
+    _apply_lifecycle_fallback(bucket, key)
     bucket.put_object_from_file(key, str(source), progress_callback=progress_callback)
     return bucket.sign_url("GET", key, expires_seconds, slash_safe=True)
 
 
-def _apply_lifecycle_fallback(bucket) -> None:
+def _apply_lifecycle_fallback(bucket, key: str) -> None:
     """
-    Best-effort: ensure the auto-delete lifecycle rule covers uploaded objects.
+    Best-effort: ensure the auto-delete lifecycle rule covers the uploaded key.
 
     Uploads must never fail because the credential lacks bucket lifecycle
-    permissions, so any error here degrades to a warning.
+    permissions, so any error here degrades to a warning. Keys outside the
+    lifecycle prefix cannot be covered by the shared rule; warn instead of
+    silently pretending they expire.
 
     Args:
         bucket: ``oss2.Bucket`` instance the upload will use.
+        key: OSS object key about to be uploaded.
     """
-    from app.oss_lifecycle import ensure_bucket_lifecycle_rule
+    from app.oss_lifecycle import (
+        DEFAULT_LIFECYCLE_PREFIX,
+        ensure_bucket_lifecycle_rule,
+    )
 
+    if not key.startswith(DEFAULT_LIFECYCLE_PREFIX):
+        LOGGER.warning(
+            "OSS object key %r is outside the auto-delete lifecycle prefix %r; "
+            "it will not expire automatically.",
+            key,
+            DEFAULT_LIFECYCLE_PREFIX,
+        )
+        return
     try:
         ensure_bucket_lifecycle_rule(bucket)
     except Exception as exc:
