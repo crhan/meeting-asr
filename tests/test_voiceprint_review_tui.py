@@ -19,7 +19,7 @@ from app.presentation.tui.voiceprint_review import (
     VoiceprintReviewHelpScreen,
     VoiceprintReviewSession,
 )
-from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
+from app.voiceprint_embedding import LOCAL_CAMPP_MODEL
 from app.voiceprint_quality import analyze_voiceprint_quality
 from app.voiceprint_store import (
     StoredVoiceprintSample,
@@ -287,7 +287,7 @@ def test_voiceprint_review_quality_mode_marks_verified_active(tmp_path: Path) ->
             # its lifecycle status is now verified-active.
             assert app.session.quality.suspicious_count == 1
             assert (
-                len(list_voiceprint_embeddings(LOCAL_SPEECHBRAIN_MODEL, db_path)) == 4
+                len(list_voiceprint_embeddings(LOCAL_CAMPP_MODEL, db_path)) == 4
             )
             statuses = [
                 row.sample_status
@@ -526,7 +526,7 @@ def _quality_store(tmp_path: Path) -> Path:
     vectors = ([1.0, 0.0], [0.98, 0.02], [0.99, 0.01], [0.0, 1.0])
     for row, vector in zip(rows, vectors, strict=True):
         upsert_voiceprint_embedding(
-            row.sample_id, LOCAL_SPEECHBRAIN_MODEL, vector, db_path
+            row.sample_id, LOCAL_CAMPP_MODEL, vector, db_path
         )
     return store_dir
 

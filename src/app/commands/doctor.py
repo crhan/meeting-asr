@@ -20,7 +20,10 @@ from app.presentation.cli.doctor import render_doctor_report
 from app.presentation.cli.json_output import emit_json
 from app.uploader import build_oss_bucket, import_oss2
 from app.voiceprint_embedding import (
+    LOCAL_CAMPP_MODEL,
     LOCAL_SPEECHBRAIN_MODEL,
+    VOICEPRINT_PROVIDER_LOCAL_CAMPP,
+    resolve_voiceprint_provider,
 )
 
 
@@ -250,7 +253,54 @@ def _check_voiceprint_embedding_settings(*, required: bool) -> CheckResult:
     except ValueError as exc:
         detail = f"skipped because base config is invalid: {exc}"
         return CheckResult("voiceprint-embedding", "warn", detail)
+    return _check_local_voiceprint_provider(required=required)
+
+
+def _check_local_voiceprint_provider(*, required: bool) -> CheckResult:
+    """
+    Check the configured local voiceprint provider.
+
+    Args:
+        required: Whether provider problems should fail.
+
+    Returns:
+        Diagnostic check result.
+    """
+    try:
+        provider = resolve_voiceprint_provider(None)
+    except ValueError as exc:
+        return _voiceprint_problem(
+            required=required,
+            detail=str(exc),
+            fix="Set a supported provider: meeting-asr config set voiceprint.provider local-speechbrain",
+            verify="meeting-asr doctor --require-voiceprint-embedding",
+        )
+    if provider == VOICEPRINT_PROVIDER_LOCAL_CAMPP:
+        return _check_local_campp(required=required)
     return _check_local_speechbrain(required=required)
+
+
+def _check_local_campp(*, required: bool) -> CheckResult:
+    """
+    Check local CAM++ provider dependencies.
+
+    Args:
+        required: Whether missing dependencies should fail.
+
+    Returns:
+        Diagnostic check result.
+    """
+    missing = _missing_modules(("torch", "torchaudio"))
+    if missing:
+        detail = f"provider=local-campp; missing standard packages: {', '.join(missing)}"
+        return _voiceprint_problem(
+            required=required,
+            detail=detail,
+            fix=_local_speechbrain_fix(),
+            verify="meeting-asr doctor --require-voiceprint-embedding",
+        )
+    detail = f"provider=local-campp; model={LOCAL_CAMPP_MODEL}; dependencies installed"
+    return CheckResult("voiceprint-embedding", "ok", detail)
 
 
 def _check_local_speechbrain(*, required: bool) -> CheckResult:

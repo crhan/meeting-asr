@@ -47,6 +47,7 @@ from app.voiceprint_audio import (
 )
 from app.voiceprint_embedding import (
     embed_audio_file,
+    ensure_library_embeddings,
     resolve_voiceprint_embedding_options,
 )
 from app.voiceprint_segment_selection import (
@@ -247,9 +248,7 @@ def _resolve_crosstalk_params(
         return CrosstalkParams(
             enabled=bool(stored.get("enabled", True)),
             max_samples=int(stored.get("max_samples", DEFAULT_CROSSTALK_MAX_SAMPLES)),
-            score_floor=float(
-                stored.get("score_floor", DEFAULT_CROSSTALK_SCORE_FLOOR)
-            ),
+            score_floor=float(stored.get("score_floor", DEFAULT_CROSSTALK_SCORE_FLOOR)),
             concentration_margin=float(
                 stored.get(
                     "concentration_margin", DEFAULT_CROSSTALK_CONCENTRATION_MARGIN
@@ -376,6 +375,12 @@ def _match_context(
     """
     resolved_provider, resolved_model = resolve_voiceprint_embedding_options(
         provider=provider, model=model
+    )
+    # Library vectors live per model key; a library embedded under another
+    # model (e.g. after a default-provider switch) must be backfilled here or
+    # every cluster would silently match zero candidates.
+    ensure_library_embeddings(
+        store_dir=store_dir, provider=resolved_provider, model=resolved_model
     )
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(paths.root)
@@ -713,9 +718,7 @@ def _probe_speaker_vector(
         if raw_vector is None:
             clip_path = _probe_clip_path(project_root, speaker_id, index)
             _write_probe_clip(source, clip_path, segment, max_seconds, padding_seconds)
-            embedding_path = _probe_embedding_clip_path(
-                project_root, speaker_id, index
-            )
+            embedding_path = _probe_embedding_clip_path(project_root, speaker_id, index)
             trim_embedding_audio_silence(clip_path, embedding_path)
             raw_vector = embed_audio_file(embedding_path, provider=provider)
             new_clip_vectors[clip_key] = raw_vector
@@ -909,10 +912,7 @@ def _ranked_matches(
     Returns:
         Candidates sorted by descending cosine score.
     """
-    candidates = [
-        _candidate_from_known_vector(vector, item)
-        for item in known.values()
-    ]
+    candidates = [_candidate_from_known_vector(vector, item) for item in known.values()]
     return sorted(candidates, key=lambda item: item.score, reverse=True)[:limit]
 
 

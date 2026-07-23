@@ -92,7 +92,7 @@ meeting-asr config set oss.endpoint "<oss-endpoint>"
 meeting-asr doctor --full
 ```
 
-本地声纹 embedding 默认使用 `local-speechbrain`，SpeechBrain/Torch 是标准依赖。正式安装缺依赖或需要刷新 wheel 时重新安装 PyPI 包：
+本地声纹 embedding 默认使用 `local-campp`（3D-Speaker CAM++ 中文模型，首次使用自动下载 checkpoint），`local-speechbrain` 保留可选；Torch/SpeechBrain 是标准依赖。正式安装缺依赖或需要刷新 wheel 时重新安装 PyPI 包：
 
 ```bash
 uv tool install meeting-asr --python 3.14 --reinstall --refresh

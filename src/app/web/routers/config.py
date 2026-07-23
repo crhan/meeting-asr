@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.commands.doctor import (
     _check_editor,
     _check_ffmpeg,
-    _check_local_speechbrain,
     _check_preview_player,
     _check_python,
     _check_python_packages,
@@ -120,7 +119,6 @@ async def doctor(oss: bool = Query(default=False)) -> DoctorOut:
             _check_editor(),
             _check_settings(require_oss=oss),
             _check_voiceprint_embedding_settings(required=False),
-            _check_local_speechbrain(required=False),
         ]
         return results
 

@@ -21,7 +21,7 @@ def test_doctor_warns_when_local_voiceprint_dependencies_are_missing(
 ) -> None:
     """Default doctor should surface missing local voiceprint dependencies without failing."""
     _prepare_doctor(monkeypatch, tmp_path)
-    monkeypatch.setattr(doctor, "_missing_modules", lambda modules: ["speechbrain"])
+    monkeypatch.setattr(doctor, "_missing_modules", lambda modules: ["torch"])
     save_config_values({"dashscope.api_key": "secret"})
 
     result = runner.invoke(app, ["doctor"])
@@ -33,8 +33,8 @@ def test_doctor_warns_when_local_voiceprint_dependencies_are_missing(
     assert "0 FAIL" in result.output
     assert "WARN" in result.output
     assert "voiceprint-embedding" in result.output
-    assert "provider=local-speechbrain" in result.output
-    assert "missing standard packages: speechbrain" in result.output
+    assert "provider=local-campp" in result.output
+    assert "missing standard packages: torch" in result.output
     assert "Repair Prompts" in result.output
     assert "uv sync" in result.output
     assert "Mode" in result.output
@@ -212,6 +212,42 @@ def test_doctor_human_output_can_render_chinese(
     assert "警告" in result.output
     assert "缺少标准依赖： speechbrain" in result.output
     assert "修复提示" in result.output
+
+
+def test_doctor_reports_configured_campp_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Doctor should check the provider selected by voiceprint.provider config."""
+    _prepare_doctor(monkeypatch, tmp_path)
+    monkeypatch.setattr(doctor, "_missing_modules", lambda modules: [])
+    save_config_values(
+        {"dashscope.api_key": "secret", "voiceprint.provider": "campp"}
+    )
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "provider=local-campp" in result.output
+    assert "0 FAIL" in result.output
+
+
+def test_doctor_reports_configured_speechbrain_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Doctor should still check SpeechBrain when configured as provider."""
+    _prepare_doctor(monkeypatch, tmp_path)
+    monkeypatch.setattr(doctor, "_missing_modules", lambda modules: [])
+    save_config_values(
+        {"dashscope.api_key": "secret", "voiceprint.provider": "local-speechbrain"}
+    )
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "provider=local-speechbrain" in result.output
+    assert "0 FAIL" in result.output
 
 
 def _prepare_doctor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

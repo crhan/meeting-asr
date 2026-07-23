@@ -20,7 +20,7 @@ from app.commands.completion import (
     _profile_script,
     _zsh_script,
 )
-from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL
+from app.voiceprint_embedding import LOCAL_CAMPP_MODEL, LOCAL_SPEECHBRAIN_MODEL
 
 runner = CliRunner()
 
@@ -107,7 +107,7 @@ def test_bash_completion_runtime_includes_value_completions() -> None:
 
     assert upload_modes == ["auto", "true", "false"]
     assert hotword_modes == ["auto", "off"]
-    assert voiceprint_models == [LOCAL_SPEECHBRAIN_MODEL]
+    assert voiceprint_models == [LOCAL_CAMPP_MODEL, LOCAL_SPEECHBRAIN_MODEL]
     assert cli_languages == ["auto", "en", "zh"]
     assert "dashscope.api_key" in config_keys
     assert "dashscope.base_url" in config_keys

@@ -47,6 +47,7 @@ class Settings:
     oss_region: str | None = None
     oss_endpoint: str | None = None
     ui_editor: str | None = None
+    voiceprint_provider: str | None = None
     config_path: Path | None = None
 
 
@@ -107,6 +108,11 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ConfigKey("oss.region", "oss_region", "OSS_REGION"),
     ConfigKey("oss.endpoint", "oss_endpoint", "OSS_ENDPOINT"),
     ConfigKey("ui.editor", "ui_editor", "MEETING_ASR_EDITOR"),
+    ConfigKey(
+        "voiceprint.provider",
+        "voiceprint_provider",
+        "MEETING_ASR_VOICEPRINT_PROVIDER",
+    ),
 )
 
 _KEYS_BY_NAME = {item.name: item for item in CONFIG_KEYS}
@@ -316,6 +322,7 @@ def load_settings(
         oss_region=_read_value(values, "oss.region", required=require_oss),
         oss_endpoint=_read_value(values, "oss.endpoint", required=require_oss),
         ui_editor=_read_value(values, "ui.editor", required=False),
+        voiceprint_provider=_read_value(values, "voiceprint.provider", required=False),
         config_path=get_config_path(),
     )
 
@@ -332,6 +339,20 @@ def get_configured_editor(path: Path | None = None) -> str | None:
     """
     values = load_config_values(path)
     return _read_value(values, "ui.editor", required=False)
+
+
+def get_configured_voiceprint_provider(path: Path | None = None) -> str | None:
+    """
+    Return the configured voiceprint provider without requiring cloud credentials.
+
+    Args:
+        path: Optional config path override.
+
+    Returns:
+        Provider name, or None when unset.
+    """
+    values = load_config_values(path)
+    return _read_value(values, "voiceprint.provider", required=False)
 
 
 def visible_config_items(

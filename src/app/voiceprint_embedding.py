@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from app.core.progress import CliProgressReporter, emit_progress
-from app.config import get_cache_dir
+from app.config import get_cache_dir, get_configured_voiceprint_provider
 from app.utils import suppress_noisy_dependency_info_logs
 from app.voiceprint_audio import (
     VOICEPRINT_AUDIO_PREPROCESS_VERSION,
@@ -22,23 +23,39 @@ from app.voiceprint_store import (
 )
 
 VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN = "local-speechbrain"
-DEFAULT_VOICEPRINT_PROVIDER = VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
+VOICEPRINT_PROVIDER_LOCAL_CAMPP = "local-campp"
+DEFAULT_VOICEPRINT_PROVIDER = VOICEPRINT_PROVIDER_LOCAL_CAMPP
 LOCAL_SPEECHBRAIN_BASE_MODEL = "speechbrain-spkrec-ecapa-voxceleb"
 LOCAL_SPEECHBRAIN_MODEL = (
     f"{LOCAL_SPEECHBRAIN_BASE_MODEL}+{VOICEPRINT_AUDIO_PREPROCESS_VERSION}"
 )
-SUPPORTED_VOICEPRINT_PROVIDERS = (VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,)
+LOCAL_CAMPP_BASE_MODEL = "campplus-sv-zh-cn-16k-common"
+LOCAL_CAMPP_MODEL = f"{LOCAL_CAMPP_BASE_MODEL}+{VOICEPRINT_AUDIO_PREPROCESS_VERSION}"
+SUPPORTED_VOICEPRINT_PROVIDERS = (
+    VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
+    VOICEPRINT_PROVIDER_LOCAL_CAMPP,
+)
 
 _PROVIDER_ALIASES = {
     "speechbrain": VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
     "local": VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
     "local-speechbrain": VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
+    "campp": VOICEPRINT_PROVIDER_LOCAL_CAMPP,
+    "campplus": VOICEPRINT_PROVIDER_LOCAL_CAMPP,
+    "cam++": VOICEPRINT_PROVIDER_LOCAL_CAMPP,
+    "local-campp": VOICEPRINT_PROVIDER_LOCAL_CAMPP,
 }
 _DEFAULT_MODELS = {
     VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN: LOCAL_SPEECHBRAIN_MODEL,
+    VOICEPRINT_PROVIDER_LOCAL_CAMPP: LOCAL_CAMPP_MODEL,
+}
+_PROVIDER_BY_BASE_MODEL = {
+    LOCAL_SPEECHBRAIN_BASE_MODEL: VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
+    LOCAL_CAMPP_BASE_MODEL: VOICEPRINT_PROVIDER_LOCAL_CAMPP,
 }
 _SPEECHBRAIN_CLASSIFIER: Any | None = None
 _SPEECHBRAIN_CLASSIFIER_LOCK = Lock()
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +77,7 @@ def embed_voiceprint_samples(
     rebuild: bool,
     sample_ids: set[int] | None = None,
     progress: CliProgressReporter | None = None,
+    skip_missing_clips: bool = False,
 ) -> VoiceprintEmbedSummary:
     """
     Generate embeddings for stored voiceprint samples.
@@ -72,6 +90,8 @@ def embed_voiceprint_samples(
         sample_ids: Optional registry row ids to embed.  When provided, no
             unrelated library samples are read or modified.
         progress: Optional progress reporter.
+        skip_missing_clips: Skip samples whose clip file is gone instead of
+            raising, so background backfills survive stale registry rows.
 
     Returns:
         Embedding summary.
@@ -101,9 +121,19 @@ def embed_voiceprint_samples(
             skipped_count += 1
             emit_progress(progress, "Skipping existing voiceprint embedding", advance=1)
             continue
-        normalized_path = ensure_normalized_voiceprint_sample(
-            sample, store_dir=store_dir
-        )
+        try:
+            normalized_path = ensure_normalized_voiceprint_sample(
+                sample, store_dir=store_dir
+            )
+        except FileNotFoundError as exc:
+            if not skip_missing_clips:
+                raise
+            _LOGGER.warning("Skipping voiceprint sample without clip: %s", exc)
+            skipped_count += 1
+            emit_progress(
+                progress, "Skipping voiceprint sample without clip", advance=1
+            )
+            continue
         vector = embed_audio_file(normalized_path, provider=resolved_provider)
         upsert_voiceprint_embedding(sample.sample_id, resolved_model, vector, db_path)
         embedded_count += 1
@@ -111,6 +141,35 @@ def embed_voiceprint_samples(
     emit_progress(progress, "Voiceprint embeddings ready")
     return VoiceprintEmbedSummary(
         db_path, resolved_provider, resolved_model, embedded_count, skipped_count
+    )
+
+
+def ensure_library_embeddings(
+    *, store_dir: Path | None, provider: str | None, model: str | None
+) -> VoiceprintEmbedSummary:
+    """
+    Backfill missing library embeddings for the resolved model.
+
+    Matching reads only vectors stored under one model key, so a model the
+    library was never embedded with (typically right after the default
+    provider changed) would silently yield zero candidates. This embeds only
+    the missing samples, keeps other models' vectors untouched, and skips
+    samples whose clip files are gone.
+
+    Args:
+        store_dir: Optional voiceprint store directory.
+        provider: Optional local provider alias.
+        model: Embedding model key for SQLite.
+
+    Returns:
+        Embedding summary.
+    """
+    return embed_voiceprint_samples(
+        store_dir=store_dir,
+        provider=provider,
+        model=model,
+        rebuild=False,
+        skip_missing_clips=True,
     )
 
 
@@ -126,7 +185,25 @@ def resolve_voiceprint_embedding_options(
 
     Returns:
         Normalized provider and model storage key.
+
+    Raises:
+        ValueError: When an explicit provider contradicts a recognized model
+            key. Vectors are namespaced by model key, so storing another
+            provider's embeddings under it would silently corrupt matching.
     """
+    if model:
+        inferred = _provider_for_model_key(model)
+        if inferred is not None:
+            if provider is None:
+                return inferred, model
+            resolved_provider = resolve_voiceprint_provider(provider)
+            if resolved_provider != inferred:
+                raise ValueError(
+                    f"Provider {resolved_provider} does not match model key {model} "
+                    f"(expected {inferred}). Embeddings are stored per model key; "
+                    "mixing providers under one key would corrupt matching."
+                )
+            return resolved_provider, model
     resolved_provider = resolve_voiceprint_provider(provider)
     return resolved_provider, model or _DEFAULT_MODELS[resolved_provider]
 
@@ -136,13 +213,17 @@ def resolve_voiceprint_provider(provider: str | None) -> str:
     Resolve a provider override or global provider config.
 
     Args:
-        provider: Optional provider override.
+        provider: Optional provider override. When omitted, the
+            ``voiceprint.provider`` config value (or its environment variable)
+            is used before falling back to the built-in default.
 
     Returns:
         Normalized provider name.
     """
     if provider is None:
-        return VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
+        provider = get_configured_voiceprint_provider()
+    if provider is None:
+        return DEFAULT_VOICEPRINT_PROVIDER
     normalized = _PROVIDER_ALIASES.get(provider.strip().lower())
     if normalized is None:
         supported = ", ".join(SUPPORTED_VOICEPRINT_PROVIDERS)
@@ -150,6 +231,26 @@ def resolve_voiceprint_provider(provider: str | None) -> str:
             f"Unsupported voiceprint embedding provider: {provider}. Supported providers: {supported}"
         )
     return normalized
+
+
+def _provider_for_model_key(model: str) -> str | None:
+    """
+    Infer the embedding provider from a model storage key.
+
+    Model keys are provider-specific (``<base-model>+<preprocess-version>``),
+    so commands that only accept ``--model`` can still address a non-default
+    provider without a separate provider flag.
+
+    Args:
+        model: Model storage key.
+
+    Returns:
+        Provider name, or None for unrecognized custom keys.
+    """
+    for base_model, provider in _PROVIDER_BY_BASE_MODEL.items():
+        if model == base_model or model.startswith(f"{base_model}+"):
+            return provider
+    return None
 
 
 def embed_audio_file(path: Path, *, provider: str | None) -> list[float]:
@@ -164,12 +265,29 @@ def embed_audio_file(path: Path, *, provider: str | None) -> list[float]:
         Embedding vector.
     """
     normalized_provider = resolve_voiceprint_provider(provider)
+    if normalized_provider == VOICEPRINT_PROVIDER_LOCAL_CAMPP:
+        return _embed_audio_with_local_campp(path)
     if normalized_provider != VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN:
         supported = ", ".join(SUPPORTED_VOICEPRINT_PROVIDERS)
         raise ValueError(
             f"Unsupported voiceprint embedding provider: {normalized_provider}. Supported providers: {supported}"
         )
     return _embed_audio_with_local_speechbrain(path)
+
+
+def _embed_audio_with_local_campp(path: Path) -> list[float]:
+    """
+    Generate one embedding with the local CAM++ (3D-Speaker) model.
+
+    Args:
+        path: Local WAV clip.
+
+    Returns:
+        Embedding vector.
+    """
+    from app.infra import campplus
+
+    return campplus.embed_audio(path)
 
 
 def _embed_audio_with_local_speechbrain(path: Path) -> list[float]:
