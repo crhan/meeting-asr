@@ -7,8 +7,18 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 import app.voiceprint_embedding as voiceprint_embedding
-from app.voiceprint_embedding import LOCAL_SPEECHBRAIN_MODEL, embed_voiceprint_samples
+from app.voiceprint_embedding import (
+    LOCAL_CAMPP_MODEL,
+    LOCAL_SPEECHBRAIN_MODEL,
+    VOICEPRINT_PROVIDER_LOCAL_CAMPP,
+    VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
+    embed_voiceprint_samples,
+    resolve_voiceprint_embedding_options,
+    resolve_voiceprint_provider,
+)
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
@@ -89,6 +99,83 @@ def test_speechbrain_loader_hides_model_fetch_info(
     assert classifier == "classifier"
     assert calls["source"] == "speechbrain/spkrec-ecapa-voxceleb"
     assert "Fetch hyperparams.yaml" not in captured.err
+
+
+def test_resolve_provider_accepts_campp_aliases(monkeypatch, tmp_path: Path) -> None:
+    """CAM++ provider aliases should normalize to the canonical provider name."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    for alias in ("campp", "campplus", "cam++", "local-campp", "CAMPP"):
+        assert resolve_voiceprint_provider(alias) == VOICEPRINT_PROVIDER_LOCAL_CAMPP
+
+
+def test_resolve_options_infers_provider_from_model_key(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A provider-specific model key alone must select the matching provider."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    provider, model = resolve_voiceprint_embedding_options(
+        provider=None, model=LOCAL_CAMPP_MODEL
+    )
+    assert provider == VOICEPRINT_PROVIDER_LOCAL_CAMPP
+    assert model == LOCAL_CAMPP_MODEL
+    provider, model = resolve_voiceprint_embedding_options(
+        provider=None, model=LOCAL_SPEECHBRAIN_MODEL
+    )
+    assert provider == VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
+    assert model == LOCAL_SPEECHBRAIN_MODEL
+
+
+def test_resolve_provider_reads_global_config_default(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The configured voiceprint.provider must drive the no-override default."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("MEETING_ASR_VOICEPRINT_PROVIDER", raising=False)
+    assert resolve_voiceprint_provider(None) == VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
+
+    from app.config import save_config_values
+
+    save_config_values({"voiceprint.provider": "campp"})
+    assert resolve_voiceprint_provider(None) == VOICEPRINT_PROVIDER_LOCAL_CAMPP
+
+    monkeypatch.setenv("MEETING_ASR_VOICEPRINT_PROVIDER", "local-speechbrain")
+    assert resolve_voiceprint_provider(None) == VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
+
+    default_provider, default_model = resolve_voiceprint_embedding_options(
+        provider=None, model=None
+    )
+    assert default_provider == VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
+    assert default_model == LOCAL_SPEECHBRAIN_MODEL
+
+    monkeypatch.setenv("MEETING_ASR_VOICEPRINT_PROVIDER", "not-a-provider")
+    with pytest.raises(ValueError, match="Unsupported voiceprint embedding provider"):
+        resolve_voiceprint_provider(None)
+
+
+def test_embed_audio_file_dispatches_to_campp(monkeypatch, tmp_path: Path) -> None:
+    """The campp provider must route through the local CAM++ embedder."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    clip_path = tmp_path / "clip.wav"
+    clip_path.write_bytes(b"fake wav")
+    embedded: list[Path] = []
+    monkeypatch.setattr(
+        voiceprint_embedding,
+        "_embed_audio_with_local_campp",
+        lambda path: embedded.append(path) or [0.5],
+    )
+
+    vector = voiceprint_embedding.embed_audio_file(clip_path, provider="campp")
+
+    assert vector == [0.5]
+    assert embedded == [clip_path]
+
+
+def test_campp_default_model_key_tracks_preprocess_version() -> None:
+    """The campp model storage key must embed the audio preprocess version."""
+    from app.voiceprint_audio import VOICEPRINT_AUDIO_PREPROCESS_VERSION
+
+    assert LOCAL_CAMPP_MODEL.endswith(f"+{VOICEPRINT_AUDIO_PREPROCESS_VERSION}")
+    assert LOCAL_CAMPP_MODEL != LOCAL_SPEECHBRAIN_MODEL
 
 
 def test_embed_voiceprint_samples_uses_normalized_audio(

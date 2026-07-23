@@ -8,7 +8,7 @@ from threading import Lock
 from typing import Any
 
 from app.core.progress import CliProgressReporter, emit_progress
-from app.config import get_cache_dir
+from app.config import get_cache_dir, get_configured_voiceprint_provider
 from app.utils import suppress_noisy_dependency_info_logs
 from app.voiceprint_audio import (
     VOICEPRINT_AUDIO_PREPROCESS_VERSION,
@@ -22,20 +22,35 @@ from app.voiceprint_store import (
 )
 
 VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN = "local-speechbrain"
+VOICEPRINT_PROVIDER_LOCAL_CAMPP = "local-campp"
 DEFAULT_VOICEPRINT_PROVIDER = VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
 LOCAL_SPEECHBRAIN_BASE_MODEL = "speechbrain-spkrec-ecapa-voxceleb"
 LOCAL_SPEECHBRAIN_MODEL = (
     f"{LOCAL_SPEECHBRAIN_BASE_MODEL}+{VOICEPRINT_AUDIO_PREPROCESS_VERSION}"
 )
-SUPPORTED_VOICEPRINT_PROVIDERS = (VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,)
+LOCAL_CAMPP_BASE_MODEL = "campplus-sv-zh-cn-16k-common"
+LOCAL_CAMPP_MODEL = f"{LOCAL_CAMPP_BASE_MODEL}+{VOICEPRINT_AUDIO_PREPROCESS_VERSION}"
+SUPPORTED_VOICEPRINT_PROVIDERS = (
+    VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
+    VOICEPRINT_PROVIDER_LOCAL_CAMPP,
+)
 
 _PROVIDER_ALIASES = {
     "speechbrain": VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
     "local": VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
     "local-speechbrain": VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
+    "campp": VOICEPRINT_PROVIDER_LOCAL_CAMPP,
+    "campplus": VOICEPRINT_PROVIDER_LOCAL_CAMPP,
+    "cam++": VOICEPRINT_PROVIDER_LOCAL_CAMPP,
+    "local-campp": VOICEPRINT_PROVIDER_LOCAL_CAMPP,
 }
 _DEFAULT_MODELS = {
     VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN: LOCAL_SPEECHBRAIN_MODEL,
+    VOICEPRINT_PROVIDER_LOCAL_CAMPP: LOCAL_CAMPP_MODEL,
+}
+_PROVIDER_BY_BASE_MODEL = {
+    LOCAL_SPEECHBRAIN_BASE_MODEL: VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN,
+    LOCAL_CAMPP_BASE_MODEL: VOICEPRINT_PROVIDER_LOCAL_CAMPP,
 }
 _SPEECHBRAIN_CLASSIFIER: Any | None = None
 _SPEECHBRAIN_CLASSIFIER_LOCK = Lock()
@@ -127,6 +142,10 @@ def resolve_voiceprint_embedding_options(
     Returns:
         Normalized provider and model storage key.
     """
+    if provider is None and model:
+        inferred = _provider_for_model_key(model)
+        if inferred is not None:
+            return inferred, model
     resolved_provider = resolve_voiceprint_provider(provider)
     return resolved_provider, model or _DEFAULT_MODELS[resolved_provider]
 
@@ -136,13 +155,17 @@ def resolve_voiceprint_provider(provider: str | None) -> str:
     Resolve a provider override or global provider config.
 
     Args:
-        provider: Optional provider override.
+        provider: Optional provider override. When omitted, the
+            ``voiceprint.provider`` config value (or its environment variable)
+            is used before falling back to the built-in default.
 
     Returns:
         Normalized provider name.
     """
     if provider is None:
-        return VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN
+        provider = get_configured_voiceprint_provider()
+    if provider is None:
+        return DEFAULT_VOICEPRINT_PROVIDER
     normalized = _PROVIDER_ALIASES.get(provider.strip().lower())
     if normalized is None:
         supported = ", ".join(SUPPORTED_VOICEPRINT_PROVIDERS)
@@ -150,6 +173,26 @@ def resolve_voiceprint_provider(provider: str | None) -> str:
             f"Unsupported voiceprint embedding provider: {provider}. Supported providers: {supported}"
         )
     return normalized
+
+
+def _provider_for_model_key(model: str) -> str | None:
+    """
+    Infer the embedding provider from a model storage key.
+
+    Model keys are provider-specific (``<base-model>+<preprocess-version>``),
+    so commands that only accept ``--model`` can still address a non-default
+    provider without a separate provider flag.
+
+    Args:
+        model: Model storage key.
+
+    Returns:
+        Provider name, or None for unrecognized custom keys.
+    """
+    for base_model, provider in _PROVIDER_BY_BASE_MODEL.items():
+        if model == base_model or model.startswith(f"{base_model}+"):
+            return provider
+    return None
 
 
 def embed_audio_file(path: Path, *, provider: str | None) -> list[float]:
@@ -164,12 +207,29 @@ def embed_audio_file(path: Path, *, provider: str | None) -> list[float]:
         Embedding vector.
     """
     normalized_provider = resolve_voiceprint_provider(provider)
+    if normalized_provider == VOICEPRINT_PROVIDER_LOCAL_CAMPP:
+        return _embed_audio_with_local_campp(path)
     if normalized_provider != VOICEPRINT_PROVIDER_LOCAL_SPEECHBRAIN:
         supported = ", ".join(SUPPORTED_VOICEPRINT_PROVIDERS)
         raise ValueError(
             f"Unsupported voiceprint embedding provider: {normalized_provider}. Supported providers: {supported}"
         )
     return _embed_audio_with_local_speechbrain(path)
+
+
+def _embed_audio_with_local_campp(path: Path) -> list[float]:
+    """
+    Generate one embedding with the local CAM++ (3D-Speaker) model.
+
+    Args:
+        path: Local WAV clip.
+
+    Returns:
+        Embedding vector.
+    """
+    from app.infra import campplus
+
+    return campplus.embed_audio(path)
 
 
 def _embed_audio_with_local_speechbrain(path: Path) -> list[float]:

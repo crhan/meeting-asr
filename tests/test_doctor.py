@@ -214,6 +214,24 @@ def test_doctor_human_output_can_render_chinese(
     assert "修复提示" in result.output
 
 
+def test_doctor_reports_configured_campp_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Doctor should check the provider selected by voiceprint.provider config."""
+    _prepare_doctor(monkeypatch, tmp_path)
+    monkeypatch.setattr(doctor, "_missing_modules", lambda modules: [])
+    save_config_values(
+        {"dashscope.api_key": "secret", "voiceprint.provider": "campp"}
+    )
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "provider=local-campp" in result.output
+    assert "0 FAIL" in result.output
+
+
 def _prepare_doctor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """
     Configure deterministic doctor dependencies for tests.
