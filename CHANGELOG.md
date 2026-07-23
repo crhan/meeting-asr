@@ -5,6 +5,23 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [0.19.0] - 2026-07-23
+
+### 新增
+
+- **新增本地声纹嵌入 provider `local-campp`（3D-Speaker CAM++ 中文模型）**：网络结构从 modelscope/3D-Speaker（Apache-2.0）vendor 进 `src/app/infra/campplus.py`，复用既有 torch/torchaudio，零新增依赖；28MB checkpoint 首次使用时从 ModelScope 下载并按 sha256 校验（缓存文件每次加载前复验，损坏自动重下），缓存于 `$XDG_CACHE_HOME/meeting-asr/models/campplus/`。真实库实测对中文说话人分离度显著优于 SpeechBrain ECAPA（同人最低分 0.450→0.546、逐句配对同人均值 0.609→0.701，异人分布相近）。
+- **新增 `voiceprint.provider` 配置键**（env `MEETING_ASR_VOICEPRINT_PROVIDER`）选择默认声纹 provider；`voiceprint embed` 新增 `--provider`；仅有 `--model` 的命令按 model key 前缀自动反推 provider，显式 provider 与可识别 model key 冲突时报错拒绝，防止向量命名空间被污染。doctor / web doctor 按配置的 provider 检查依赖。
+
+### 变更
+
+- **默认声纹 provider 切换为 `local-campp`**：老库无缝迁移——match / sample-match 入口自动为当前模型增量回填缺失的库向量（每样本约 1 秒，一次性），speechbrain 向量原样保留在库中；`config set voiceprint.provider local-speechbrain` 随时切回。两个模型的向量按 model key 并存，可用 `--model` 指定任一模型对比。
+- 后台向量回填遇到 clip 文件已删除的陈旧登记行时跳过并告警，不再使整次匹配失败；`voiceprint embed` 命令保持严格报错语义。
+
+### 修复
+
+- web `/api/doctor` 不再返回两条同名的 voiceprint-embedding 检查项。
+- `project run` 匹配阶段的运行记录不再硬编码 provider 名，按实际解析的 provider 记录。
+
 ## [0.18.0] - 2026-07-23
 
 ### 新增
