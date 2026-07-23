@@ -45,6 +45,7 @@ from app.voiceprint_audio import (
 )
 from app.voiceprint_embedding import (
     embed_audio_file,
+    ensure_library_embeddings,
     resolve_voiceprint_embedding_options,
 )
 
@@ -210,6 +211,11 @@ def _sample_match_context(
     """Resolve project, transcript, voiceprint, and assignment inputs."""
     resolved_provider, resolved_model = resolve_voiceprint_embedding_options(
         provider=provider, model=model
+    )
+    # Same backfill as _match_context: sample matching runs standalone too, and
+    # a library embedded only under another model key must not read as empty.
+    ensure_library_embeddings(
+        store_dir=store_dir, provider=resolved_provider, model=resolved_model
     )
     paths = ensure_project_dirs(project_dir)
     manifest = load_manifest(paths.root)
@@ -760,8 +766,6 @@ def _is_low_information_segment(segment: SentenceSegment) -> bool:
     return len(text) < MIN_SAMPLE_TEXT_CHARS and duration_ms < MIN_SAMPLE_DURATION_MS
 
 
-
-
 def _sample_clip_path(
     project_root: Path, speaker_id: int, segment: SentenceSegment
 ) -> Path:
@@ -825,9 +829,7 @@ def _summary_verdict(reports: list[SpeakerSampleMatchReport]) -> str:
             "identity-conflict: at least one sample matches another known person better"
         )
     if counts["identity-foreign"]:
-        return (
-            "identity-foreign: some sentences in an unassigned cluster match a known person"
-        )
+        return "identity-foreign: some sentences in an unassigned cluster match a known person"
     if counts["identity-ambiguous"]:
         return "identity-ambiguous: some samples are close to another known person"
     if counts["identity-weak"]:

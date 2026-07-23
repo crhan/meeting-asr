@@ -74,6 +74,7 @@ from app.core.project_refs import list_projects, resolve_project_ref
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
+from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_people import get_voiceprint_person
 from app.voiceprint_store import get_voiceprint_db_path
 from app.transcript_merge import (
@@ -1302,7 +1303,11 @@ def _run_project_workflow(
             input_path,
             "speaker match",
             progress,
-            external_ids={"provider": "local-speechbrain"},
+            external_ids={
+                "provider": resolve_voiceprint_embedding_options(
+                    provider=None, model=voiceprint_model
+                )[0]
+            },
             description="Matching speakers with voiceprints",
             step_index=ctx.step_index,
             step_total=ctx.step_total,
