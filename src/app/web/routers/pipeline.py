@@ -24,6 +24,7 @@ from app.core.project_models import ProjectTranscribeOptions
 from app.core.project_refs import _projects_parent_dir
 from app.core.voiceprint_review_service import REGISTRY, CaptureConflictError
 from app.lexicon_store import get_lexicon_db_path
+from app.speaker_pipeline_params import resolve_match_threshold
 from app.project_manager import (
     resolve_project_dir_for_run,
     summarize_project,
@@ -151,7 +152,7 @@ async def run_pipeline(
                 store_dir=settings.voiceprint_store_dir,
                 lexicon_db=lexicon_db,
                 voiceprint_model=None,
-                match_threshold=payload.match_threshold,
+                match_threshold=resolve_match_threshold(payload.match_threshold),
                 summarize=payload.summarize,
                 summary_model=None,
                 polish=payload.polish,

@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 
 from app.core.project_models import ProjectListItem
 from app.core.project_workflow import ProjectWorkflowSummary
-from app.speaker_pipeline_params import DEFAULT_MATCH_THRESHOLD
 
 
 class WorkflowState(BaseModel):
@@ -116,7 +115,9 @@ class RunPipelineIn(BaseModel):
     summarize: bool = True
     polish: bool = True
     local_correction: bool = True
-    match_threshold: float = DEFAULT_MATCH_THRESHOLD
+    # None means "resolve from config at run time"; a literal default here would
+    # freeze the built-in threshold at import and ignore voiceprint.match_threshold.
+    match_threshold: float | None = None
 
 
 class SummarizeIn(BaseModel):

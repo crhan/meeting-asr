@@ -72,6 +72,70 @@ CLUSTER_SAME_SPEAKER_THRESHOLD = 0.60
 # Two track centroids at least this close are merge candidates.
 CLUSTER_MERGE_THRESHOLD = 0.62
 
+
+def resolve_match_threshold(explicit: float | None = None) -> float:
+    """
+    Resolve the acceptance threshold from an explicit override or config.
+
+    ``DEFAULT_MATCH_THRESHOLD`` was tuned for the original embedding model;
+    a different model shifts the whole genuine/impostor score scale, so the
+    acceptance layer is configurable per library via
+    ``voiceprint.match_threshold``. Every entry point that does not take an
+    explicit threshold from the user MUST resolve through here, otherwise a
+    configured threshold would apply to `project run` but not to the rematch
+    that stabilization triggers right after it.
+
+    Args:
+        explicit: Threshold supplied on the command line or API call.
+
+    Returns:
+        Explicit value, else the configured value, else the built-in default.
+    """
+    if explicit is not None:
+        return explicit
+    from app.config import get_configured_match_threshold
+
+    configured = get_configured_match_threshold()
+    if configured is not None:
+        return configured
+    return DEFAULT_MATCH_THRESHOLD
+
+
+def match_threshold_coupling_warnings(threshold: float) -> tuple[str, ...]:
+    """
+    Return contract violations a candidate threshold would introduce.
+
+    The acceptance layer is coupled to the strong-margin rule below it and to
+    the crosstalk score floor below that (see module docstring). Moving the
+    threshold past either boundary does not crash anything — it silently
+    turns a rule into dead code — so callers surface these to the human
+    before writing the value.
+
+    Args:
+        threshold: Candidate acceptance threshold.
+
+    Returns:
+        Human-readable warnings; empty when the threshold is contract-safe.
+    """
+    from app.speaker_crosstalk import DEFAULT_CROSSTALK_SCORE_FLOOR
+
+    warnings: list[str] = []
+    if threshold <= STRONG_MARGIN_ACCEPT_SCORE:
+        warnings.append(
+            f"threshold {threshold:.2f} is at or below the strong-margin accept "
+            f"score {STRONG_MARGIN_ACCEPT_SCORE:.2f}; the strong-margin rescue "
+            "rule becomes dead code because everything it would rescue is "
+            "already accepted outright"
+        )
+    if threshold <= DEFAULT_CROSSTALK_SCORE_FLOOR:
+        warnings.append(
+            f"threshold {threshold:.2f} is at or below the crosstalk score "
+            f"floor {DEFAULT_CROSSTALK_SCORE_FLOOR:.2f}; speakers the acceptance layer "
+            "can now accept would also be eligible for crosstalk flagging"
+        )
+    return tuple(warnings)
+
+
 __all__ = [
     "CLUSTER_MERGE_THRESHOLD",
     "CLUSTER_SAME_SPEAKER_THRESHOLD",
@@ -85,4 +149,6 @@ __all__ = [
     "DEFAULT_SAMPLE_IDENTITY_THRESHOLD",
     "STRONG_MARGIN_ACCEPT_MARGIN",
     "STRONG_MARGIN_ACCEPT_SCORE",
+    "match_threshold_coupling_warnings",
+    "resolve_match_threshold",
 ]

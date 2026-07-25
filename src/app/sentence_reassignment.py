@@ -45,6 +45,7 @@ from app.speaker_pipeline_params import (
     DEFAULT_MATCH_PADDING_SECONDS,
     DEFAULT_MATCH_SAMPLE_COUNT,
     DEFAULT_MATCH_THRESHOLD,
+    resolve_match_threshold,
 )
 from app.utils import safe_write_text
 from app.voiceprint_models import DeletedVoiceprintSample, VoiceprintSampleRow
@@ -60,6 +61,9 @@ LOGGER = logging.getLogger(__name__)
 # The post-reassignment rematch MUST run with the same acceptance parameters
 # as the run/match commands, or one stabilization pass could silently flip
 # naming decisions the user already saw; aliases, not copies.
+# The threshold itself is resolved at call time via `resolve_match_threshold()`
+# so a configured `voiceprint.match_threshold` reaches this rematch too; this
+# constant remains the built-in fallback that resolution ends at.
 DEFAULT_REMATCH_THRESHOLD = DEFAULT_MATCH_THRESHOLD
 DEFAULT_REMATCH_SAMPLE_COUNT = DEFAULT_MATCH_SAMPLE_COUNT
 DEFAULT_REMATCH_MAX_SECONDS = DEFAULT_MATCH_MAX_SECONDS
@@ -305,7 +309,7 @@ def _maybe_rematch_speakers(
             store_dir=store_dir,
             provider=provider,
             model=model,
-            threshold=DEFAULT_REMATCH_THRESHOLD,
+            threshold=resolve_match_threshold(),
             sample_count=DEFAULT_REMATCH_SAMPLE_COUNT,
             max_seconds=DEFAULT_REMATCH_MAX_SECONDS,
             padding_seconds=DEFAULT_REMATCH_PADDING_SECONDS,
