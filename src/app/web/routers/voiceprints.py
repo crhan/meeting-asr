@@ -49,6 +49,10 @@ from app.voiceprint_quality import (
     VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
     analyze_voiceprint_quality,
 )
+from app.voiceprint_sample_sourcing import (
+    SampleSourceReport,
+    find_sample_sources,
+)
 from app.voiceprint_store import (
     delete_voiceprint_sample,
     delete_voiceprint_speaker,
@@ -70,6 +74,7 @@ from app.web.deps import (
 from app.web.jobs import JobManager
 from app.web.locks import LockRegistry, project_lock_key, store_lock_key
 from app.web.schemas import (
+    CandidatePreviewOut,
     CaptureClipOut,
     CapturePlanOut,
     CaptureResultOut,
@@ -98,8 +103,11 @@ from app.web.schemas import (
     QualityReportOut,
     QualitySampleOut,
     RenamePersonIn,
+    SampleSourceOut,
+    SampleSourcesOut,
     SampleStatusIn,
     SelectedCaptureClipIn,
+    SkippedProjectOut,
     VoiceprintLibraryOut,
     VoiceprintPersonOut,
     VoiceprintSampleOut,
@@ -395,6 +403,86 @@ def _clear_match_threshold_config() -> None:
         unset_config_value("voiceprint.match_threshold")
     except Exception:  # noqa: BLE001 - clearing an unset key is not an error
         return
+
+
+@router.get("/people/{ref}/sources", response_model=SampleSourcesOut)
+async def get_sample_sources(
+    ref: str,
+    limit: int = 20,
+    settings: WebSettings = Depends(get_settings),
+) -> SampleSourcesOut:
+    """Rank where more samples for this person can be harvested.
+
+    Scans every project's transcript, so it runs in the executor rather than
+    blocking the event loop on a library with many meetings.
+    """
+    person = get_voiceprint_person(
+        ref, get_voiceprint_db_path(settings.voiceprint_store_dir)
+    )
+    if person is None:
+        raise FileNotFoundError(f"Voiceprint person not found: {ref}")
+    loop = asyncio.get_running_loop()
+    report = await loop.run_in_executor(
+        None,
+        lambda: find_sample_sources(
+            person.public_id,
+            projects_dir=settings.projects_dir,
+            store_dir=settings.voiceprint_store_dir,
+            limit=limit,
+        ),
+    )
+    return _sources_out(report)
+
+
+def _sources_out(report: SampleSourceReport) -> SampleSourcesOut:
+    """Serialize a sample sourcing report."""
+    return SampleSourcesOut(
+        person_public_id=report.person_public_id,
+        person_name=report.person_name,
+        deficits=list(report.deficits),
+        matching_sample_count=(
+            report.health.matching_sample_count if report.health else 0
+        ),
+        matching_seconds=report.health.matching_seconds if report.health else 0.0,
+        project_count=report.health.project_count if report.health else 0,
+        scanned_project_count=report.scanned_project_count,
+        total_candidate_seconds=report.total_candidate_seconds,
+        new_project_count=report.new_project_count,
+        sources=[
+            SampleSourceOut(
+                project_id=source.project_id,
+                title=source.title,
+                meeting_time=source.meeting_time,
+                speaker_id=source.speaker_id,
+                speaker_name=source.speaker_name,
+                evidence=source.evidence,
+                candidate_count=source.candidate_count,
+                candidate_seconds=source.candidate_seconds,
+                best_score=source.best_score,
+                matching_sample_count=source.matching_sample_count,
+                quarantined_sample_count=source.quarantined_sample_count,
+                priority=source.priority,
+                reasons=list(source.reasons),
+                previews=[
+                    CandidatePreviewOut(
+                        begin_time_ms=preview.begin_time_ms,
+                        end_time_ms=preview.end_time_ms,
+                        duration_seconds=preview.duration_seconds,
+                        text=preview.text,
+                        score=preview.score,
+                    )
+                    for preview in source.previews
+                ],
+            )
+            for source in report.sources
+        ],
+        skipped=[
+            SkippedProjectOut(
+                project_id=item.project_id, title=item.title, reason=item.reason
+            )
+            for item in report.skipped
+        ],
+    )
 
 
 @router.get("/embed-backlog", response_model=EmbedBacklogOut)

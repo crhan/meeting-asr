@@ -766,6 +766,62 @@ class EmbedBacklogOut(BaseModel):
     missing_clip_count: int
 
 
+class CandidatePreviewOut(BaseModel):
+    """One harvestable segment, enough to judge a source without opening it."""
+
+    begin_time_ms: int
+    end_time_ms: int
+    duration_seconds: float
+    text: str
+    score: float
+
+
+class SampleSourceOut(BaseModel):
+    """One project holding harvestable speech for a person."""
+
+    project_id: str
+    title: str
+    meeting_time: str | None
+    speaker_id: int
+    speaker_name: str
+    # "person-map" (linked) or "name" (display name only).
+    evidence: str
+    candidate_count: int
+    candidate_seconds: float
+    best_score: float
+    matching_sample_count: int
+    quarantined_sample_count: int
+    priority: float
+    # Reason kinds, re-rendered per locale by the browser.
+    reasons: list[str]
+    previews: list[CandidatePreviewOut]
+
+
+class SkippedProjectOut(BaseModel):
+    """A project the sourcing scan could not read."""
+
+    project_id: str
+    title: str
+    reason: str
+
+
+class SampleSourcesOut(BaseModel):
+    """Ranked places to harvest more samples for one person."""
+
+    person_public_id: str
+    person_name: str
+    # Which health bars this person currently fails; these ordered the sources.
+    deficits: list[str]
+    matching_sample_count: int
+    matching_seconds: float
+    project_count: int
+    scanned_project_count: int
+    total_candidate_seconds: float
+    new_project_count: int
+    sources: list[SampleSourceOut]
+    skipped: list[SkippedProjectOut]
+
+
 class CreatePersonIn(BaseModel):
     """Create a new voiceprint person."""
 

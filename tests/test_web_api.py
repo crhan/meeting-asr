@@ -2112,6 +2112,129 @@ def test_library_health_route_reports_availability(
     assert backlog.json()["missing_sample_count"] == 3
 
 
+def test_sample_sources_route_ranks_harvestable_projects(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """The sources route turns "capture more" into a specific project + speaker.
+
+    Without it the quality page could only send the operator to the project
+    list, which is where the question starts, not where it is answered.
+    """
+    import json
+
+    from app.voiceprint_embedding import resolve_voiceprint_embedding_options
+    from app.voiceprint_store import (
+        StoredVoiceprintSample,
+        get_voiceprint_db_path,
+        store_voiceprint_samples_with_rows,
+        upsert_voiceprint_embedding,
+    )
+
+    store_dir = tmp_path / "store" / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    source = store_dir / "source.mp4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"seed")
+    samples = []
+    for index in range(3):
+        clip = store_dir / "clips" / f"c{index}.wav"
+        clip.parent.mkdir(parents=True, exist_ok=True)
+        clip.write_bytes(f"clip{index}".encode())
+        samples.append(
+            StoredVoiceprintSample(
+                speaker_name="Mei",
+                project_id="p-old",
+                project_path=store_dir,
+                project_speaker_id=0,
+                source_path=source,
+                clip_path=clip,
+                clip_rel_path=str(clip.relative_to(store_dir)),
+                source_begin_time_ms=index * 90_000,
+                source_end_time_ms=index * 90_000 + 5_000,
+                clip_begin_time_ms=0,
+                clip_end_time_ms=5_000,
+                transcript_text=f"Mei {index}",
+            )
+        )
+    _db, rows = store_voiceprint_samples_with_rows(samples, db_path)
+    for offset, row in enumerate(rows):
+        upsert_voiceprint_embedding(row.sample_id, model, [1.0, offset * 0.01], db_path)
+    person_id = rows[0].speaker_public_id
+
+    project_dir = tmp_path / "projects" / "p-new"
+    (project_dir / "asr").mkdir(parents=True)
+    (project_dir / "speakers").mkdir(parents=True)
+    created_at = "2026-05-11T12:00:00+08:00"
+    (project_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": "p-new",
+                "title": "季度评审",
+                "created_at": created_at,
+                "updated_at": created_at,
+                "status": "corrected",
+                "source": {
+                    "path": "source/p-new.mp3",
+                    "filename": "p-new.mp3",
+                    "size_bytes": 1,
+                    "mtime": created_at,
+                    "meeting_time": created_at,
+                },
+                "audio": {"duration_seconds": 3600.0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    sentences = [
+        {
+            "begin_time_ms": index * 20_000,
+            "end_time_ms": index * 20_000 + 8_000,
+            "text": f"这是第{index}句用于声纹采样的完整发言内容，长度足够并且信息量充分。",
+            "speaker_id": 2,
+        }
+        for index in range(10)
+    ]
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(
+            {
+                "full_text": "".join(item["text"] for item in sentences),
+                "sentences": sentences,
+                "detected_speakers": [2],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "speakers" / "speaker_map.json").write_text(
+        json.dumps({"2": "Mei"}, ensure_ascii=False), encoding="utf-8"
+    )
+    (project_dir / "speakers" / "speaker_person_map.json").write_text(
+        json.dumps({"2": person_id}, ensure_ascii=False), encoding="utf-8"
+    )
+
+    resp = client.get(f"/api/voiceprints/people/{person_id}/sources")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["person_name"] == "Mei"
+    assert "single-source" in payload["deficits"]
+    assert payload["new_project_count"] == 1
+    top = payload["sources"][0]
+    assert top["project_id"] == "p-new"
+    assert top["speaker_id"] == 2
+    assert top["evidence"] == "person-map"
+    assert "new-project" in top["reasons"]
+    assert top["candidate_count"] == 10
+    # Previews let the panel show what would be captured without navigating.
+    assert top["previews"] and top["previews"][0]["text"]
+
+    missing = client.get("/api/voiceprints/people/vpp-nope/sources")
+    assert missing.status_code == 404
+
+
 def test_match_threshold_route_round_trips_and_warns(client: TestClient) -> None:
     """Setting the threshold persists it and reports the contracts it breaks."""
     from app.speaker_pipeline_params import DEFAULT_MATCH_THRESHOLD
