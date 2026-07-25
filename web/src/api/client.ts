@@ -488,12 +488,20 @@ export const setMatchThreshold = (threshold: number | null) =>
     body: JSON.stringify({ threshold }),
   });
 
-export interface CandidatePreview {
+/**
+ * One clip a capture run would take, in capture's own identity terms.
+ *
+ * `rel_path` plus the times are exactly what `captureRun` validates against,
+ * so these can be captured directly without loading a plan first.
+ */
+export interface CandidateClip {
+  rel_path: string;
   begin_time_ms: number;
   end_time_ms: number;
   duration_seconds: number;
   text: string;
   score: number;
+  recommended: boolean;
 }
 
 export interface SampleSource {
@@ -502,6 +510,8 @@ export interface SampleSource {
   meeting_time: string | null;
   speaker_id: number;
   speaker_name: string;
+  /** The person the capture plan resolved; echo it back when capturing. */
+  person_public_id: string | null;
   /** "person-map" (linked to this person) or "name" (display name only). */
   evidence: string;
   candidate_count: number;
@@ -512,7 +522,7 @@ export interface SampleSource {
   priority: number;
   /** Reason kinds; re-rendered per locale rather than translated as prose. */
   reasons: string[];
-  previews: CandidatePreview[];
+  clips: CandidateClip[];
 }
 
 export interface SampleSources {

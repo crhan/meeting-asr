@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  captureAccept,
+  captureRollback,
+  captureRollbackUrl,
+  captureRun,
   clipUrl,
   getEmbedBacklog,
   getLibraryHealth,
@@ -10,6 +14,7 @@ import {
   runEmbedBackfill,
   setMatchThreshold,
   type Calibration,
+  type CaptureResult,
   type LibraryHealth,
   type LibraryIssue,
   type PersonHealth,
@@ -20,6 +25,8 @@ import { tr } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm";
 import { useClipAudio } from "../lib/useClipAudio";
 import { useJobStream } from "../lib/useJobStream";
+import { CaptureResultModal } from "../components/CaptureResultModal";
+import { JobProgress } from "../components/JobProgress";
 
 const AVAILABILITY_ORDER = ["unusable", "fragile", "ok"] as const;
 
@@ -1017,23 +1024,138 @@ function IssueQueue(props: {
 }
 
 /**
- * Ranked places to harvest more samples for one person.
+ * Ranked places to harvest more samples for one person, capturable in place.
  *
  * This panel exists because "capture more samples" is only half an
  * instruction. The half that costs the operator an afternoon is *where* --
  * which of a dozen meetings this person actually speaks in, and whether
- * anything is left there worth taking. The backend answers that; this renders
- * the answer as work you can start, so every row ends in a button that opens
- * the capture picker already aimed at one speaker.
+ * anything is left there worth taking.
+ *
+ * Having answered that, sending them to another page to re-pick clips would
+ * waste the answer: the clips are already chosen, already listenable, and
+ * already carry the `rel_path` a capture run accepts. So the rows are
+ * checkboxes and capture happens here. The per-project picker stays one click
+ * away for the cases this view deliberately does not cover -- audio-quality
+ * scores, seek bars, and the other speakers in that meeting.
  */
 function SourcePlan(props: { personId: string; personName: string; onClose: () => void }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const audio = useClipAudio();
   const query = useQuery({
     queryKey: ["vp-sources", props.personId],
     queryFn: () => getSampleSources(props.personId),
   });
   const data = query.data;
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [activeProject, setActiveProject] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [result, setResult] = useState<CaptureResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const job = useJobStream(jobId);
+
+  // Pre-select each source's recommended clips once the plan arrives.
+  useEffect(() => {
+    if (!data) return;
+    const picks = new Set<string>();
+    for (const source of data.sources)
+      for (const clip of source.clips) if (clip.recommended) picks.add(clip.rel_path);
+    setSelected(picks);
+  }, [data]);
+
+  // A completed capture leaves a server-side transaction open until it is
+  // accepted or rolled back, and an unresolved one wedges every later store
+  // write with HTTP 409. Roll back on the way out if the user never decided.
+  const pendingTxnRef = useRef<string | null>(null);
+  useEffect(() => {
+    pendingTxnRef.current = result ? result.transaction_id : null;
+  }, [result]);
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (pendingTxnRef.current) event.preventDefault();
+    };
+    const onPageHide = () => {
+      const txn = pendingTxnRef.current;
+      if (txn) navigator.sendBeacon(captureRollbackUrl(txn));
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("pagehide", onPageHide);
+      const txn = pendingTxnRef.current;
+      if (txn) captureRollback(txn).catch(() => {});
+    };
+  }, []);
+
+  const reportedJobRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!jobId || !job.done) return;
+    if (reportedJobRef.current === jobId) return;
+    reportedJobRef.current = jobId;
+    setJobId(null);
+    setActiveProject(null);
+    if (job.error) {
+      setError(job.error);
+      return;
+    }
+    setResult(job.result as CaptureResult);
+  }, [jobId, job.done, job.error, job.result]);
+
+  const toggle = (relPath: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(relPath)) next.delete(relPath);
+      else next.add(relPath);
+      return next;
+    });
+
+  const capture = async (source: SampleSource) => {
+    const picks = source.clips.filter((clip) => selected.has(clip.rel_path));
+    if (!picks.length) return;
+    setError(null);
+    setActiveProject(source.project_id);
+    try {
+      // Echo each pick's stable (begin,end) and the plan's identity so the
+      // server can refuse a plan that drifted since this panel loaded, rather
+      // than storing the wrong audio under this person.
+      const { job_id, existing } = await captureRun(
+        source.project_id,
+        picks.map((clip) => ({
+          rel_path: clip.rel_path,
+          begin_time_ms: clip.begin_time_ms,
+          end_time_ms: clip.end_time_ms,
+          name: source.speaker_name,
+          person_public_id: source.person_public_id,
+        })),
+      );
+      if (existing) {
+        // The server attached to an in-flight capture; THIS selection did not
+        // run. Presenting its result as ours would be a lie.
+        setActiveProject(null);
+        setError(
+          tr(
+            "A capture for this project is already running; wait for it to finish, then retry.",
+            "该项目已有采集在运行,等它结束后再重试。",
+          ),
+        );
+        return;
+      }
+      setJobId(job_id);
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    } catch (err) {
+      setActiveProject(null);
+      setError(String(err));
+    }
+  };
+
+  const finish = () => {
+    setResult(null);
+    pendingTxnRef.current = null;
+    queryClient.invalidateQueries({ queryKey: ["vp-health"] });
+    queryClient.invalidateQueries({ queryKey: ["vp-sources", props.personId] });
+  };
 
   return (
     <section className="vq-panel vq-panel-plan" id="source-plan">
@@ -1053,6 +1175,24 @@ function SourcePlan(props: { personId: string; personName: string; onClose: () =
         </div>
       )}
       {query.error && <div className="error-box">{String(query.error)}</div>}
+      {error && <div className="error-box">{error}</div>}
+
+      {jobId && (
+        <JobProgress
+          jobId={jobId}
+          onDone={() => {}}
+          onError={(message) => {
+            setError(message);
+            setJobId(null);
+            setActiveProject(null);
+          }}
+          onCancelled={() => {
+            setError(tr("Capture cancelled.", "采集已取消。"));
+            setJobId(null);
+            setActiveProject(null);
+          }}
+        />
+      )}
 
       {data && (
         <>
@@ -1094,7 +1234,12 @@ function SourcePlan(props: { personId: string; personName: string; onClose: () =
                 rank={index + 1}
                 source={source}
                 audio={audio}
-                onOpen={() =>
+                selected={selected}
+                onToggle={toggle}
+                busy={jobId !== null}
+                capturing={activeProject === source.project_id}
+                onCapture={() => void capture(source)}
+                onOpenPicker={() =>
                   navigate(
                     `/projects/${encodeURIComponent(source.project_id)}/capture?speaker=${source.speaker_id}`,
                   )
@@ -1127,6 +1272,20 @@ function SourcePlan(props: { personId: string; personName: string; onClose: () =
           )}
         </>
       )}
+
+      {result && (
+        <CaptureResultModal
+          result={result}
+          onAccept={async () => {
+            await captureAccept(result.transaction_id);
+            finish();
+          }}
+          onRollback={async () => {
+            await captureRollback(result.transaction_id);
+            finish();
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -1135,13 +1294,29 @@ function SourceRow(props: {
   rank: number;
   source: SampleSource;
   audio: ReturnType<typeof useClipAudio>;
-  onOpen: () => void;
+  selected: Set<string>;
+  onToggle: (relPath: string) => void;
+  busy: boolean;
+  capturing: boolean;
+  onCapture: () => void;
+  onOpenPicker: () => void;
 }) {
-  const { source, audio } = props;
+  const { source, audio, selected } = props;
+  const [expanded, setExpanded] = useState(false);
   const chips = source.reasons.map(reasonLabel).filter(Boolean) as {
     text: string;
     tone: string;
   }[];
+  // Default to the pre-selected clips only. The rest are one click away, but
+  // showing a dozen rows per source turns a ranked shortlist back into the
+  // transcript-scrolling this panel exists to replace.
+  const shortlist = source.clips.filter((clip) => clip.recommended);
+  const visible = expanded ? source.clips : shortlist;
+  const hidden = source.clips.length - visible.length;
+  const pickedCount = source.clips.filter((clip) =>
+    selected.has(clip.rel_path),
+  ).length;
+
   return (
     <li className="vq-source">
       <span className="vq-source-rank mono">
@@ -1159,10 +1334,6 @@ function SourceRow(props: {
               ? tr("linked", "已关联")
               : tr("by name", "按名字")}
           </span>
-          <span className="spacer" />
-          <button className="btn" onClick={props.onOpen}>
-            {tr("Pick clips", "去挑选")}
-          </button>
         </div>
 
         <div className="vq-source-supply">
@@ -1203,32 +1374,78 @@ function SourceRow(props: {
           </div>
         )}
 
-        <div className="vq-source-previews">
-          {source.previews.map((preview) => {
-            const key = `src:${source.project_id}:${preview.begin_time_ms}`;
-            const playing = audio.playingKey === key;
-            return (
-              <div className="vq-preview" key={key}>
-                <button
-                  className="play-btn"
-                  aria-label={tr("Play sample", "试听")}
-                  onClick={() =>
-                    audio.toggle(
-                      key,
-                      clipUrl(source.project_id, preview.begin_time_ms, preview.end_time_ms),
-                    )
-                  }
-                >
-                  {playing ? "⏸" : "▶"}
+        {source.clips.length === 0 ? (
+          <p className="vq-plan-note subtle">
+            {tr(
+              "No capture plan for this project — open the picker to see why.",
+              "这个项目建不出采集计划,打开挑选页看原因。",
+            )}
+          </p>
+        ) : (
+          <div className="vq-source-clips">
+            {visible.map((clip) => {
+              const key = `src:${source.project_id}:${clip.begin_time_ms}`;
+              const playing = audio.playingKey === key;
+              const on = selected.has(clip.rel_path);
+              return (
+                <label className={`vq-clip ${on ? "on" : ""}`} key={clip.rel_path}>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    disabled={props.busy}
+                    onChange={() => props.onToggle(clip.rel_path)}
+                  />
+                  <button
+                    type="button"
+                    className="play-btn"
+                    aria-label={tr("Play sample", "试听")}
+                    onClick={(event) => {
+                      // The button sits inside the label; without this the
+                      // click would also toggle the checkbox.
+                      event.preventDefault();
+                      audio.toggle(
+                        key,
+                        clipUrl(source.project_id, clip.begin_time_ms, clip.end_time_ms),
+                      );
+                    }}
+                  >
+                    {playing ? "⏸" : "▶"}
+                  </button>
+                  <span className="mono subtle">
+                    {fmtClock(clip.begin_time_ms)} · {clip.duration_seconds.toFixed(1)}s
+                  </span>
+                  <span className="vq-clip-text">{clip.text}</span>
+                </label>
+              );
+            })}
+
+            <div className="vq-source-actions">
+              {hidden > 0 && (
+                <button className="btn ghost" onClick={() => setExpanded(true)}>
+                  {tr(`+${hidden} more clips`, `再看 ${hidden} 条候选`)}
                 </button>
-                <span className="mono subtle">
-                  {fmtClock(preview.begin_time_ms)} · {preview.duration_seconds.toFixed(1)}s
-                </span>
-                <span className="vq-preview-text">{preview.text}</span>
-              </div>
-            );
-          })}
-        </div>
+              )}
+              {expanded && (
+                <button className="btn ghost" onClick={() => setExpanded(false)}>
+                  {tr("Collapse", "收起")}
+                </button>
+              )}
+              <span className="spacer" />
+              <button className="btn ghost" onClick={props.onOpenPicker}>
+                {tr("Full picker", "完整挑选页")}
+              </button>
+              <button
+                className="btn primary"
+                disabled={props.busy || pickedCount === 0}
+                onClick={props.onCapture}
+              >
+                {props.capturing
+                  ? tr("Capturing…", "采集中…")
+                  : tr(`Capture ${pickedCount}`, `采集 ${pickedCount} 条`)}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </li>
   );

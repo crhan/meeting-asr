@@ -2550,32 +2550,55 @@ tr.clickable {
   margin-top: 7px;
 }
 
-.vq-source-previews {
+.vq-source-clips {
   margin-top: var(--sp-2);
   border-left: 2px solid var(--border-strong);
   padding-left: var(--sp-3);
 }
-.vq-preview {
+.vq-clip {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 3px 0;
+  padding: 4px 6px;
+  margin-left: -6px;
+  border-radius: var(--r-sm);
   font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.vq-clip:hover {
+  background: var(--surface-2);
+}
+.vq-clip.on {
+  background: var(--accent-dim);
+}
+.vq-clip input {
+  flex: none;
+  cursor: pointer;
 }
 /* The timestamp is a flex item, so a narrow viewport breaks "4:33 · 9.9s"
    into one token per line and drives the row three lines tall. */
-.vq-preview > .mono {
+.vq-clip > .mono {
   flex: none;
   white-space: nowrap;
 }
-/* One line per preview: this is a sniff test for "is this the right person",
-   not reading material. Anything longer belongs in the capture picker. */
-.vq-preview-text {
+/* One line per clip: this is a sniff test for "is this the right person",
+   not reading material. The full picker is one click away for the rest. */
+.vq-clip-text {
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+.vq-clip.on .vq-clip-text {
+  color: var(--text);
+}
+.vq-source-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
 }
 
 .vq-plan-note {
