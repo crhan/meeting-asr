@@ -552,3 +552,110 @@ def _seed_person(
     for offset, row in enumerate(rows):
         upsert_voiceprint_embedding(row.sample_id, model, [1.0, offset * 0.01], db_path)
     return list(rows)
+
+
+def test_overlap_risk_clips_are_never_pre_selected(tmp_path: Path) -> None:
+    """A pre-ticked checkbox is a recommendation; never recommend a mixture.
+
+    Measured on a real two-party call, clips taken where the other person is
+    within half a second stored 10-13% of that person's voice and pulled the
+    speaker's centroid toward them. Such clips stay listed and selectable --
+    a thin source may offer nothing else -- but must not arrive checked.
+    """
+    store_dir = tmp_path / "voiceprints"
+    projects_dir = tmp_path / "projects"
+    rows = _seed_person(store_dir, "Ni", sample_count=3, project_id="p-old")
+    person_id = rows[0].speaker_public_id
+    # Speaker 0's turns each butt straight against speaker 1's.
+    sentences: list[dict] = []
+    for index in range(8):
+        base = index * 30_000
+        sentences.append(
+            {
+                "begin_time_ms": base,
+                "end_time_ms": base + 8_000,
+                "text": f"这是第{index}句用于声纹采样的完整发言内容，长度足够信息量充分。",
+                "speaker_id": 0,
+            }
+        )
+        sentences.append(
+            {
+                "begin_time_ms": base + 8_000,
+                "end_time_ms": base + 14_000,
+                "text": f"这是另一个人的第{index}句回应内容，同样足够长且信息充分。",
+                "speaker_id": 1,
+            }
+        )
+    _make_project(
+        projects_dir,
+        "p-crosstalk",
+        sentences=sentences,
+        speaker_map={0: "Ni", 1: "Other"},
+        person_map={0: person_id},
+    )
+
+    report = find_sample_sources(
+        person_id, projects_dir=projects_dir, store_dir=store_dir
+    )
+
+    source = report.sources[0]
+    assert source.clips, "clips should still be offered"
+    assert all(clip.overlap_risk for clip in source.clips)
+    assert not any(clip.recommended for clip in source.clips)
+
+
+def test_clean_clips_win_the_default_picks_over_overlapping_ones(
+    tmp_path: Path,
+) -> None:
+    """With a clean alternative available, the crowded segment loses."""
+    store_dir = tmp_path / "voiceprints"
+    projects_dir = tmp_path / "projects"
+    rows = _seed_person(store_dir, "Ou", sample_count=3, project_id="p-old")
+    person_id = rows[0].speaker_public_id
+    sentences: list[dict] = []
+    # Four clean turns with wide silence around them.
+    for index in range(4):
+        base = index * 60_000
+        sentences.append(
+            {
+                "begin_time_ms": base,
+                "end_time_ms": base + 8_000,
+                "text": f"这是第{index}句独自连续发言的内容，长度足够信息量充分。",
+                "speaker_id": 0,
+            }
+        )
+    # One crowded turn, immediately followed by the other speaker.
+    sentences.append(
+        {
+            "begin_time_ms": 300_000,
+            "end_time_ms": 312_000,
+            "text": "这是一段很长很完整信息量也很充分的发言但紧接着别人就开口了。",
+            "speaker_id": 0,
+        }
+    )
+    sentences.append(
+        {
+            "begin_time_ms": 312_000,
+            "end_time_ms": 318_000,
+            "text": "这是另一个人紧接着说的话，中间没有任何停顿。",
+            "speaker_id": 1,
+        }
+    )
+    _make_project(
+        projects_dir,
+        "p-mixed",
+        sentences=sentences,
+        speaker_map={0: "Ou", 1: "Other"},
+        person_map={0: person_id},
+    )
+
+    report = find_sample_sources(
+        person_id, projects_dir=projects_dir, store_dir=store_dir
+    )
+
+    clips = {clip.begin_time_ms: clip for clip in report.sources[0].clips}
+    crowded = clips[300_000]
+    assert crowded.overlap_risk
+    assert not crowded.recommended
+    picked = [clip for clip in clips.values() if clip.recommended]
+    assert picked and all(not clip.overlap_risk for clip in picked)

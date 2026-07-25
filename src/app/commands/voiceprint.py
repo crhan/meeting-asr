@@ -744,6 +744,13 @@ def health_command(
     store_dir: Optional[Path] = typer.Option(
         None, "--store-dir", file_okay=False, dir_okay=True
     ),
+    projects_dir: Optional[Path] = typer.Option(
+        None,
+        "--projects-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Projects parent directory; enables the speaker-overlap check.",
+    ),
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
     ),
@@ -757,7 +764,9 @@ def health_command(
     with every sample quarantined, reads as clean there and is reported here.
     """
     report = run_with_cli_errors(
-        lambda: analyze_library_health(store_dir=store_dir, model=model)
+        lambda: analyze_library_health(
+            store_dir=store_dir, model=model, projects_dir=projects_dir
+        )
     )
     if as_json:
         emit_json(_library_health_payload(report))

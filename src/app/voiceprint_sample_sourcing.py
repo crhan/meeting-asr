@@ -121,6 +121,12 @@ class CandidateClip:
     text: str
     score: float
     recommended: bool
+    # Another speaker's turn begins or ends within
+    # ``_OVERLAP_RISK_GAP_MS`` of this one. Clip extraction no longer pads into
+    # them, but a gap that short means the two were genuinely talking over each
+    # other, and diarizer boundaries inside the segment cannot be trusted to
+    # be clean either -- measurably worse as a reference.
+    overlap_risk: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,7 +466,10 @@ def _planned_clips(
     ]
     if not fresh:
         return ()
-    picks = _default_picks(fresh)
+    # The planner already judged overlap risk while scoring; recomputing it
+    # here would let the two disagree about the same clip.
+    risky = {clip.rel_path for clip in fresh if clip.overlap_risk}
+    picks = _default_picks(fresh, risky)
     return tuple(
         CandidateClip(
             rel_path=clip.rel_path,
@@ -470,26 +479,36 @@ def _planned_clips(
             text=clip.text.strip(),
             score=round(clip.selection_score, 3),
             recommended=clip.rel_path in picks,
+            overlap_risk=clip.rel_path in risky,
         )
         for clip in fresh
     )
 
 
-def _default_picks(fresh: list) -> set[str]:
+def _default_picks(fresh: list, risky: set[str]) -> set[str]:
     """
     Choose which surviving clips arrive pre-selected.
 
-    The planner's own recommendations come first. When the already-captured
-    filter thinned them out, the gaps are refilled with the qualifying survivor
-    *furthest in time* from what is already picked -- not the next highest
-    score. Spread is what made the planner's picks worth trusting, and topping
-    up by score alone walks straight back into one dense monologue.
+    The planner's own recommendations come first, minus anything flagged for
+    overlap risk: a pre-ticked checkbox is a recommendation, and recommending a
+    clip taken from a stretch where two people talk over each other is how a
+    reference voice quietly acquires someone else's. Risky clips stay listed
+    and selectable -- when a source offers nothing else, a mediocre sample the
+    operator chose knowingly beats no sample at all.
+
+    When the filters thin the default picks out, the gaps are refilled with the
+    qualifying survivor *furthest in time* from what is already picked -- not
+    the next highest score. Spread is what made the planner's picks worth
+    trusting, and topping up by score alone walks straight back into one dense
+    monologue.
     """
-    picked = [clip for clip in fresh if clip.recommended]
+    picked = [clip for clip in fresh if clip.recommended and clip.rel_path not in risky]
     pool = [
         clip
         for clip in fresh
-        if not clip.recommended and clip.selection_score >= MIN_RECOMMENDED_SCORE
+        if clip not in picked
+        and clip.rel_path not in risky
+        and clip.selection_score >= MIN_RECOMMENDED_SCORE
     ]
     while pool and len(picked) < _DEFAULT_PICKS:
         if picked:
@@ -758,6 +777,7 @@ def sample_source_payload(report: SampleSourceReport) -> dict[str, object]:
                         "text": clip.text,
                         "score": clip.score,
                         "recommended": clip.recommended,
+                        "overlap_risk": clip.overlap_risk,
                     }
                     for clip in source.clips
                 ],

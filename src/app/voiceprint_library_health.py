@@ -23,6 +23,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.models import SentenceSegment
+from app.speaker_labeling import load_transcript_result
 from app.voiceprint_audio import resolve_voiceprint_sample_source
 from app.voiceprint_calibration import (
     VoiceprintCalibrationReport,
@@ -30,6 +32,7 @@ from app.voiceprint_calibration import (
 )
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_models import VoiceprintSampleRow
+from app.voiceprint_segment_selection import has_overlap_risk
 from app.voiceprint_quality import (
     DEFAULT_MIN_CLUSTER_SIZE,
     VOICEPRINT_MATCHING_SAMPLE_STATUSES,
@@ -152,6 +155,7 @@ def analyze_library_health(
     store_dir: Path | None = None,
     provider: str | None = None,
     model: str | None = None,
+    projects_dir: Path | None = None,
 ) -> LibraryHealthReport:
     """
     Report which library people are matchable and what blocks the rest.
@@ -160,6 +164,10 @@ def analyze_library_health(
         store_dir: Optional voiceprint store directory.
         provider: Optional embedding provider override.
         model: Optional embedding model key override.
+        projects_dir: Optional projects parent directory. Supplied, each
+            sample is checked against its source transcript for speaker
+            overlap; omitted, that check is simply absent from the report
+            rather than guessed at.
 
     Returns:
         Library health report with a prioritized issue list.
@@ -172,7 +180,8 @@ def analyze_library_health(
     embedded_ids = list_embedded_sample_ids(resolved_model, db_path)
     people = _people_health(samples, embedded_ids, store_dir)
     calibration = _calibration(store_dir, resolved_provider, resolved_model)
-    issues = _issues(people, calibration)
+    overlapped = _overlapped_samples(samples, embedded_ids, projects_dir)
+    issues = _issues(people, calibration, overlapped)
     return LibraryHealthReport(
         db_path=db_path,
         provider=resolved_provider,
@@ -301,14 +310,111 @@ def _availability(matching_sample_count: int) -> str:
 
 
 def _issues(
-    people: tuple[PersonHealth, ...], calibration: VoiceprintCalibrationReport | None
+    people: tuple[PersonHealth, ...],
+    calibration: VoiceprintCalibrationReport | None,
+    overlapped: dict[str, int],
 ) -> tuple[LibraryIssue, ...]:
     """Build the prioritized issue list."""
     issues: list[LibraryIssue] = []
     issues.extend(_threshold_issues(calibration))
     for person in people:
         issues.extend(_person_issues(person))
+        issues.extend(
+            _overlap_issues(person, overlapped.get(person.speaker_public_id, 0))
+        )
     return tuple(sorted(issues, key=_issue_sort_key))
+
+
+def _overlapped_samples(
+    samples: list[VoiceprintSampleRow],
+    embedded_ids: set[int],
+    projects_dir: Path | None,
+) -> dict[str, int]:
+    """
+    Count each person's matching samples taken from a two-people-at-once stretch.
+
+    A voiceprint is only as clean as the audio behind it, and nothing in the
+    store records how crowded that audio was. The answer lives in the source
+    project's transcript, so this joins back to it: for every sample still in
+    the matching pool, does another speaker hold the floor within half a second
+    of it?
+
+    Args:
+        samples: Every stored sample row.
+        embedded_ids: Sample ids with a vector for the active model.
+        projects_dir: Projects parent directory, or None to skip the check.
+
+    Returns:
+        Person public id to overlapped matching-sample count. Empty when no
+        projects directory was supplied, so "not checked" never renders as
+        "checked and clean".
+    """
+    if projects_dir is None:
+        return {}
+    by_project: dict[str, list[VoiceprintSampleRow]] = defaultdict(list)
+    for row in samples:
+        if row.sample_status not in VOICEPRINT_MATCHING_SAMPLE_STATUSES:
+            continue
+        if row.sample_id not in embedded_ids:
+            continue
+        by_project[row.project_id].append(row)
+    counts: dict[str, int] = defaultdict(int)
+    for project_id, rows in by_project.items():
+        segments = _project_segments(projects_dir / project_id)
+        if segments is None:
+            continue
+        for row in rows:
+            probe = SentenceSegment(
+                begin_time_ms=row.source_begin_time_ms,
+                end_time_ms=row.source_end_time_ms,
+                text="",
+                speaker_id=row.project_speaker_id,
+            )
+            if has_overlap_risk(probe, segments):
+                counts[row.speaker_public_id] += 1
+    return dict(counts)
+
+
+def _project_segments(project_dir: Path) -> list[SentenceSegment] | None:
+    """Load a project's normalized transcript, or None when unreadable."""
+    path = project_dir / "asr" / "sentences.json"
+    if not path.is_file():
+        return None
+    try:
+        return load_transcript_result(path).sentences
+    except Exception:  # noqa: BLE001 - one unreadable project must not fail the report
+        return None
+
+
+def _overlap_issues(person: PersonHealth, overlapped: int) -> list[LibraryIssue]:
+    """Report samples recorded while someone else was talking."""
+    if overlapped <= 0:
+        return []
+    return [
+        _person_issue(
+            person,
+            kind="overlapped-samples",
+            severity=SEVERITY_WARNING,
+            title=(
+                f"{person.speaker_name} has {overlapped} sample(s) recorded "
+                "over another speaker"
+            ),
+            detail=(
+                "Another speaker holds the floor within half a second of these "
+                "samples, so the reference audio is a mixture rather than one "
+                "voice. That drags this person's centroid toward whoever they "
+                "were talking to, which is exactly the pair hardest to tell "
+                "apart. Replace them with samples from a stretch where they "
+                "speak uninterrupted."
+            ),
+            action="review-samples",
+            context={
+                "name": person.speaker_name,
+                "overlapped_count": overlapped,
+                "matching_sample_count": person.matching_sample_count,
+            },
+        )
+    ]
 
 
 def _person_issues(person: PersonHealth) -> list[LibraryIssue]:

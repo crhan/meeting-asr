@@ -253,7 +253,10 @@ def get_library_health(
     settings: WebSettings = Depends(get_settings),
 ) -> LibraryHealthOut:
     """Report which library people are matchable and what blocks the rest."""
-    report = analyze_library_health(store_dir=settings.voiceprint_store_dir)
+    report = analyze_library_health(
+        store_dir=settings.voiceprint_store_dir,
+        projects_dir=settings.projects_dir,
+    )
     return _health_out(report)
 
 
@@ -473,6 +476,7 @@ def _sources_out(report: SampleSourceReport) -> SampleSourcesOut:
                         text=clip.text,
                         score=clip.score,
                         recommended=clip.recommended,
+                        overlap_risk=clip.overlap_risk,
                     )
                     for clip in source.clips
                 ],
@@ -834,6 +838,7 @@ def _plan_out(project_ref: str, summary) -> CapturePlanOut:
                     audio_score=c.audio_score,
                     audio_reason=c.audio_reason,
                     recommended=c.recommended,
+                    overlap_risk=c.overlap_risk,
                 )
                 for c in sp.clips
             ],

@@ -392,3 +392,100 @@ def test_embedding_rebases_a_clip_path_from_a_moved_store(tmp_path: Path) -> Non
     moved = _person(report, "Moved")
     assert moved.missing_clip_count == 0
     assert moved.embeddable_count == 2
+
+
+def test_samples_recorded_over_another_speaker_are_reported(tmp_path: Path) -> None:
+    """A reference recorded during crosstalk is a mixture, and nothing said so.
+
+    Consistency and availability both pass such a sample: it has a vector, it
+    is enabled, and it agrees with the other samples of the same contaminated
+    set. The only place the problem is visible is the source transcript, so the
+    check joins back to it.
+    """
+    store_dir = tmp_path / "voiceprints"
+    projects_dir = tmp_path / "projects"
+    _seed_person(store_dir, "Crowded", [[1.0, 0.0], [0.98, 0.05], [0.99, -0.03]])
+    _write_project(
+        projects_dir,
+        "p-crowded",
+        # Speaker 1 takes the floor the instant speaker 0 stops, for every
+        # sample range the fixture seeded (index * 60s, 8s long).
+        sentences=[
+            item
+            for index in range(3)
+            for item in (
+                {
+                    "begin_time_ms": index * 60_000,
+                    "end_time_ms": index * 60_000 + 8_000,
+                    "text": "这是被采样的那个人说的一段完整发言内容。",
+                    "speaker_id": 0,
+                },
+                {
+                    "begin_time_ms": index * 60_000 + 8_000,
+                    "end_time_ms": index * 60_000 + 14_000,
+                    "text": "这是另一个人紧接着说的话，中间没有停顿。",
+                    "speaker_id": 1,
+                },
+            )
+        ],
+    )
+
+    report = analyze_library_health(store_dir=store_dir, projects_dir=projects_dir)
+
+    issue = _issue(report, "overlapped-samples")
+    assert issue.person_name == "Crowded"
+    assert issue.context["overlapped_count"] == 3
+    assert issue.action == "review-samples"
+
+
+def test_overlap_check_is_absent_without_a_projects_directory(
+    tmp_path: Path,
+) -> None:
+    """Not checked must never render as checked and clean."""
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Unknown", [[1.0, 0.0], [0.98, 0.05], [0.99, -0.03]])
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    assert not [item for item in report.issues if item.kind == "overlapped-samples"]
+
+
+def _write_project(root: Path, project_id: str, *, sentences: list[dict]) -> Path:
+    """Write the minimal project files the overlap check reads."""
+    project_dir = root / project_id
+    (project_dir / "asr").mkdir(parents=True)
+    created_at = "2026-05-11T12:00:00+08:00"
+    (project_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": project_id,
+                "title": "会议",
+                "created_at": created_at,
+                "updated_at": created_at,
+                "status": "corrected",
+                "source": {
+                    "path": f"source/{project_id}.mp3",
+                    "filename": f"{project_id}.mp3",
+                    "size_bytes": 1,
+                    "mtime": created_at,
+                    "meeting_time": created_at,
+                },
+                "audio": {"duration_seconds": 3600.0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(
+            {
+                "full_text": "".join(item["text"] for item in sentences),
+                "sentences": sentences,
+                "detected_speakers": sorted({s["speaker_id"] for s in sentences}),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return project_dir

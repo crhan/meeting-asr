@@ -781,6 +781,8 @@ class CandidateClipOut(BaseModel):
     text: str
     score: float
     recommended: bool
+    # Another speaker within half a second: usable, but never pre-selected.
+    overlap_risk: bool = False
 
 
 class SampleSourceOut(BaseModel):
@@ -894,6 +896,8 @@ class CaptureClipOut(BaseModel):
     audio_score: float | None
     audio_reason: str
     recommended: bool
+    # Another speaker within half a second: usable, but never pre-selected.
+    overlap_risk: bool = False
 
 
 class CaptureSpeakerOut(BaseModel):
