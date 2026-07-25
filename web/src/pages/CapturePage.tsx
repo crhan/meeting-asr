@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ApiError,
@@ -25,6 +25,16 @@ function fmtMs(ms: number): string {
 
 export function CapturePage() {
   const { ref = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  // Arriving from the quality page's sourcing panel names one speaker: that
+  // request is "top up this person", not "capture this meeting". Honouring it
+  // is what makes the deep link land aimed instead of on a full plan the
+  // operator has to re-narrow by hand.
+  const focusSpeakerParam = searchParams.get("speaker");
+  const focusSpeakerId =
+    focusSpeakerParam !== null && /^\d+$/.test(focusSpeakerParam)
+      ? Number(focusSpeakerParam)
+      : null;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const audio = useClipAudio();
@@ -75,27 +85,48 @@ export function CapturePage() {
     };
   }, []);
 
-  // Pre-select recommended clips once the plan loads.
+  // Pre-select recommended clips once the plan loads, narrowed to the focused
+  // speaker when one was requested.
   useEffect(() => {
     if (data) {
       const rec = new Set<string>();
-      for (const sp of data.speakers)
+      for (const sp of data.speakers) {
+        if (focusSpeakerId !== null && sp.speaker_id !== focusSpeakerId) continue;
         for (const c of sp.clips) if (c.recommended) rec.add(c.rel_path);
+      }
       setSelected(rec);
     }
-  }, [data]);
+  }, [data, focusSpeakerId]);
+
+  // A focused speaker the plan does not contain means the project changed
+  // since the recommendation was computed; say so rather than silently
+  // showing an unfiltered plan the operator believes is filtered.
+  const focusMissing =
+    focusSpeakerId !== null &&
+    !!data &&
+    !data.speakers.some((sp) => sp.speaker_id === focusSpeakerId);
+
+  // Focus narrows what is shown and what the toolbar counts, but never what
+  // can be captured: the "show all" escape hatch restores the full plan.
+  const visibleSpeakers = useMemo(() => {
+    const speakers = data?.speakers ?? [];
+    if (focusSpeakerId === null || focusMissing) return speakers;
+    return speakers.filter((sp) => sp.speaker_id === focusSpeakerId);
+  }, [data, focusSpeakerId, focusMissing]);
+  const focusedName = visibleSpeakers.length === 1 ? visibleSpeakers[0].name : null;
+  const hiddenSpeakerCount = (data?.speakers.length ?? 0) - visibleSpeakers.length;
 
   const totalSelected = selected.size;
   const allClipRefs = useMemo(
-    () => (data?.speakers ?? []).flatMap((sp) => sp.clips.map((c) => c.rel_path)),
-    [data],
+    () => visibleSpeakers.flatMap((sp) => sp.clips.map((c) => c.rel_path)),
+    [visibleSpeakers],
   );
   const recommendedClipRefs = useMemo(
     () =>
-      (data?.speakers ?? []).flatMap((sp) =>
+      visibleSpeakers.flatMap((sp) =>
         sp.clips.filter((c) => c.recommended).map((c) => c.rel_path),
       ),
-    [data],
+    [visibleSpeakers],
   );
 
   const toggle = (relPath: string) =>
@@ -208,9 +239,12 @@ export function CapturePage() {
       <div className="review-head" style={{ margin: "-18px -18px 14px", borderRadius: 0 }}>
         <div>
           <h1>{tr("Capture voiceprints", "采集声纹")}</h1>
+          {/* Counts describe what is on screen. Reporting the whole plan's 5
+              speakers and 60 clips while showing one speaker's 12 reads as a
+              filter that did not take. */}
           <div className="subtle mono">
-            {ref} · {data.speakers.length} {tr("speakers", "发言人")} ·{" "}
-            {totalSelected}/{data.sample_count} {tr("clips selected", "已选片段")} ·{" "}
+            {ref} · {visibleSpeakers.length} {tr("speakers", "发言人")} ·{" "}
+            {totalSelected}/{allClipRefs.length} {tr("clips selected", "已选片段")} ·{" "}
             {tr("target", "目标")} {data.target_sample_count}
           </div>
         </div>
@@ -274,6 +308,34 @@ export function CapturePage() {
         </div>
       )}
 
+      {focusMissing && (
+        <div className="notice-box" style={{ margin: "10px 0" }}>
+          {tr(
+            `Speaker ${focusSpeakerParam} is no longer in this project's plan — the project changed since it was recommended. Showing every speaker.`,
+            `本项目的采集计划里已经没有 speaker ${focusSpeakerParam} 了——推荐生成之后项目被改过。下面显示全部说话人。`,
+          )}
+        </div>
+      )}
+
+      {focusedName && hiddenSpeakerCount > 0 && (
+        <div className="notice-box" style={{ margin: "10px 0" }}>
+          {tr(
+            `Showing ${focusedName} only, with their recommended clips pre-selected.`,
+            `只显示 ${focusedName}，并已预选其推荐片段。`,
+          )}{" "}
+          <button
+            className="btn ghost"
+            style={{ marginLeft: 8 }}
+            onClick={() => navigate(`/projects/${ref}/capture`)}
+          >
+            {tr(
+              `Show all ${hiddenSpeakerCount + 1} speakers`,
+              `显示全部 ${hiddenSpeakerCount + 1} 位说话人`,
+            )}
+          </button>
+        </div>
+      )}
+
       <div className="capture-toolbar">
         <button className="chip" onClick={selectOnlyRecommended}>
           {tr("Recommended only", "只选推荐")}
@@ -289,7 +351,7 @@ export function CapturePage() {
         </span>
       </div>
 
-      {data.speakers.map((sp) => {
+      {visibleSpeakers.map((sp) => {
         const speakerRefs = sp.clips.map((c) => c.rel_path);
         const speakerSelected = sp.clips.filter((c) => selected.has(c.rel_path)).length;
         const speakerAllSelected = speakerSelected === sp.clips.length && sp.clips.length > 0;

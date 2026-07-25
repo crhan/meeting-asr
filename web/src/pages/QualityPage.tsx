@@ -2,19 +2,23 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  clipUrl,
   getEmbedBacklog,
   getLibraryHealth,
   getMatchThreshold,
+  getSampleSources,
   runEmbedBackfill,
   setMatchThreshold,
   type Calibration,
   type LibraryHealth,
   type LibraryIssue,
   type PersonHealth,
+  type SampleSource,
   type ThresholdCost,
 } from "../api/client";
 import { tr } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm";
+import { useClipAudio } from "../lib/useClipAudio";
 import { useJobStream } from "../lib/useJobStream";
 
 const AVAILABILITY_ORDER = ["unusable", "fragile", "ok"] as const;
@@ -211,6 +215,46 @@ function costAt(calibration: Calibration, threshold: number): ThresholdCost {
   };
 }
 
+function fmtClock(ms: number): string {
+  const total = Math.round(ms / 1000);
+  return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, "0")}`;
+}
+
+/** Restate a person's unmet health bar in the active locale. */
+function deficitLabel(kind: string): string {
+  if (kind === "unusable") return tr("not matchable", "无法参与匹配");
+  if (kind === "fragile-cluster") return tr("too few samples", "样本太少");
+  if (kind === "short-audio") return tr("too little audio", "音频太短");
+  if (kind === "single-source") return tr("one recording only", "只有一场录音");
+  return kind;
+}
+
+/**
+ * Restate why a project earned its rank.
+ *
+ * Same contract as the issue queue: the backend ships reason *kinds*, the
+ * locale lives here. A reason is only worth showing if it changes what the
+ * operator would do, so each one names the consequence, not the metric.
+ */
+function reasonLabel(kind: string): { text: string; tone: string } | null {
+  if (kind === "new-project")
+    return { text: tr("new recording", "新的录音场次"), tone: "good" };
+  if (kind === "retry-quarantined")
+    return {
+      text: tr("last attempt was quarantined", "上次采的样本被隔离了"),
+      tone: "warn",
+    };
+  if (kind === "large-supply")
+    return { text: tr("lots to take", "素材充足"), tone: "good" };
+  if (kind === "thin-supply")
+    return { text: tr("barely any left", "所剩无几"), tone: "warn" };
+  if (kind === "name-only")
+    return { text: tr("matched by name only", "仅按名字匹配"), tone: "warn" };
+  if (kind === "already-harvested")
+    return { text: tr("already sampled here", "这场已采过"), tone: "" };
+  return null;
+}
+
 export function QualityPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -224,6 +268,12 @@ export function QualityPage() {
     queryFn: getEmbedBacklog,
   });
   const [toast, setToast] = useState<string | null>(null);
+  // "Capture more" used to navigate to the project list, which is where the
+  // question starts rather than where it is answered. Hold the person here and
+  // resolve it in place: which meetings hold their speech, and how much.
+  const [sourcingFor, setSourcingFor] = useState<{ id: string; name: string } | null>(
+    null,
+  );
   // Submitting only queues the job; the health numbers cannot change until it
   // finishes. Track it to completion, then refresh and report what it did --
   // otherwise the queue sits there unchanged and reads as a broken button.
@@ -307,7 +357,19 @@ export function QualityPage() {
       return;
     }
     if (issue.action === "capture") {
-      navigate("/projects");
+      if (!issue.person_public_id) {
+        navigate("/projects");
+        return;
+      }
+      setSourcingFor({
+        id: issue.person_public_id,
+        name: issue.person_name ?? issue.person_public_id,
+      });
+      window.requestAnimationFrame(() =>
+        document
+          .getElementById("source-plan")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      );
       return;
     }
     if (issue.action === "set-threshold") {
@@ -367,8 +429,21 @@ export function QualityPage() {
             issues={health.issues}
             onAction={runAction}
             busy={embedMut.isPending || (embedJobId !== null && !embedJob.done)}
+            activePersonId={sourcingFor?.id ?? null}
           />
-          <PeopleMatrix people={health.people} />
+          {sourcingFor && (
+            <SourcePlan
+              personId={sourcingFor.id}
+              personName={sourcingFor.name}
+              onClose={() => setSourcingFor(null)}
+            />
+          )}
+          <PeopleMatrix
+            people={health.people}
+            onFindSources={(person) =>
+              setSourcingFor({ id: person.public_id, name: person.name })
+            }
+          />
         </>
       )}
     </div>
@@ -863,6 +938,8 @@ function IssueQueue(props: {
   issues: LibraryIssue[];
   onAction: (issue: LibraryIssue) => void;
   busy: boolean;
+  /** The person whose sourcing plan is open below, marked so the two connect. */
+  activePersonId: string | null;
 }) {
   const { issues } = props;
   const [showInfo, setShowInfo] = useState(false);
@@ -903,10 +980,14 @@ function IssueQueue(props: {
       <ol className="vq-issues">
         {visible.map((issue, index) => {
           const text = issueText(issue);
+          const active =
+            issue.action === "capture" &&
+            !!issue.person_public_id &&
+            issue.person_public_id === props.activePersonId;
           return (
             <li
               key={`${issue.kind}-${issue.person_public_id ?? "library"}-${index}`}
-              className={`vq-issue sev-${issue.severity}`}
+              className={`vq-issue sev-${issue.severity} ${active ? "on" : ""}`}
             >
               <span className="vq-issue-index mono">
                 {String(index + 1).padStart(2, "0")}
@@ -925,7 +1006,7 @@ function IssueQueue(props: {
                 disabled={props.busy && issue.action === "embed"}
                 onClick={() => props.onAction(issue)}
               >
-                {actionLabel(issue.action)}
+                {active ? tr("Showing", "已展开") : actionLabel(issue.action)}
               </button>
             </li>
           );
@@ -935,7 +1016,228 @@ function IssueQueue(props: {
   );
 }
 
-function PeopleMatrix(props: { people: PersonHealth[] }) {
+/**
+ * Ranked places to harvest more samples for one person.
+ *
+ * This panel exists because "capture more samples" is only half an
+ * instruction. The half that costs the operator an afternoon is *where* --
+ * which of a dozen meetings this person actually speaks in, and whether
+ * anything is left there worth taking. The backend answers that; this renders
+ * the answer as work you can start, so every row ends in a button that opens
+ * the capture picker already aimed at one speaker.
+ */
+function SourcePlan(props: { personId: string; personName: string; onClose: () => void }) {
+  const navigate = useNavigate();
+  const audio = useClipAudio();
+  const query = useQuery({
+    queryKey: ["vp-sources", props.personId],
+    queryFn: () => getSampleSources(props.personId),
+  });
+  const data = query.data;
+
+  return (
+    <section className="vq-panel vq-panel-plan" id="source-plan">
+      <PanelHead
+        eyebrow={tr("Sourcing", "补采")}
+        title={tr(`Where to top up ${props.personName}`, `给 ${props.personName} 补采样本`)}
+      >
+        <span className="spacer" />
+        <button className="btn ghost" onClick={props.onClose}>
+          {tr("Close", "关闭")}
+        </button>
+      </PanelHead>
+
+      {query.isLoading && (
+        <div className="vq-empty">
+          {tr("Reading every project transcript…", "正在读取全部项目的转写…")}
+        </div>
+      )}
+      {query.error && <div className="error-box">{String(query.error)}</div>}
+
+      {data && (
+        <>
+          <div className="vq-plan-state">
+            <span className="mono">
+              {tr(
+                `Has ${data.matching_sample_count} sample(s) · ${fmtSeconds(data.matching_seconds)} · ${data.project_count} recording(s)`,
+                `现有 ${data.matching_sample_count} 条样本 · ${fmtSeconds(data.matching_seconds)} · ${data.project_count} 场录音`,
+              )}
+            </span>
+            {data.deficits.map((kind) => (
+              <span className="vq-chip warn" key={kind}>
+                {deficitLabel(kind)}
+              </span>
+            ))}
+            <span className="spacer" />
+            <span className="subtle mono">
+              {tr(
+                `${data.scanned_project_count} project(s) scanned`,
+                `已扫描 ${data.scanned_project_count} 个项目`,
+              )}
+            </span>
+          </div>
+
+          {data.sources.length === 0 && (
+            <div className="vq-empty">
+              <b>{tr("Nothing to harvest", "没有可采的素材")}</b>
+              {tr(
+                "This person is not named in any project that still has unused speech. Name them during a project review first, then come back.",
+                "没有任何项目里既标着这个人、又还剩可用发言。先在项目 review 里给对应说话人命名,再回来。",
+              )}
+            </div>
+          )}
+
+          <ol className="vq-sources">
+            {data.sources.map((source, index) => (
+              <SourceRow
+                key={`${source.project_id}:${source.speaker_id}`}
+                rank={index + 1}
+                source={source}
+                audio={audio}
+                onOpen={() =>
+                  navigate(
+                    `/projects/${encodeURIComponent(source.project_id)}/capture?speaker=${source.speaker_id}`,
+                  )
+                }
+              />
+            ))}
+          </ol>
+
+          {data.sources.length > 0 &&
+            data.new_project_count === 0 &&
+            data.deficits.includes("single-source") && (
+              <p className="vq-plan-note">
+                {tr(
+                  "Every source above is a meeting that already contributes samples. More clips from the same recording cannot fix a single-source voiceprint — that needs this person in a different meeting.",
+                  "上面每条来源都是已经在贡献样本的那场会。同一场录音里再多采几条,治不了「只有一场录音」——那需要这个人出现在另一场会里。",
+                )}
+              </p>
+            )}
+
+          {data.skipped.length > 0 && (
+            <p className="vq-plan-note subtle">
+              {tr(
+                `Skipped ${data.skipped.length} unreadable project(s): `,
+                `跳过了 ${data.skipped.length} 个读不了的项目:`,
+              )}
+              <span className="mono">
+                {data.skipped.map((item) => item.project_id).join(", ")}
+              </span>
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function SourceRow(props: {
+  rank: number;
+  source: SampleSource;
+  audio: ReturnType<typeof useClipAudio>;
+  onOpen: () => void;
+}) {
+  const { source, audio } = props;
+  const chips = source.reasons.map(reasonLabel).filter(Boolean) as {
+    text: string;
+    tone: string;
+  }[];
+  return (
+    <li className="vq-source">
+      <span className="vq-source-rank mono">
+        {String(props.rank).padStart(2, "0")}
+      </span>
+      <div className="vq-source-body">
+        <div className="vq-source-head">
+          <b>{source.title}</b>
+          <span className="vq-chip">
+            {tr(`Speaker ${source.speaker_id}`, `说话人 ${source.speaker_id}`)}
+            {source.speaker_name ? ` · ${source.speaker_name}` : ""}
+          </span>
+          <span className={`vq-chip ${source.evidence === "person-map" ? "good" : "warn"}`}>
+            {source.evidence === "person-map"
+              ? tr("linked", "已关联")
+              : tr("by name", "按名字")}
+          </span>
+          <span className="spacer" />
+          <button className="btn" onClick={props.onOpen}>
+            {tr("Pick clips", "去挑选")}
+          </button>
+        </div>
+
+        <div className="vq-source-supply">
+          <span className="vq-source-figure mono">
+            {fmtSeconds(source.candidate_seconds)}
+          </span>
+          <span className="subtle">
+            {tr(
+              `across ${source.candidate_count} usable utterance(s)`,
+              `分布在 ${source.candidate_count} 条可用发言里`,
+            )}
+          </span>
+          {source.matching_sample_count > 0 && (
+            <span className="subtle mono">
+              {tr(
+                `· ${source.matching_sample_count} already taken`,
+                `· 已采 ${source.matching_sample_count} 条`,
+              )}
+            </span>
+          )}
+          {source.quarantined_sample_count > 0 && (
+            <span className="subtle mono warn">
+              {tr(
+                `· ${source.quarantined_sample_count} quarantined`,
+                `· ${source.quarantined_sample_count} 条被隔离`,
+              )}
+            </span>
+          )}
+        </div>
+
+        {chips.length > 0 && (
+          <div className="vq-source-reasons">
+            {chips.map((chip) => (
+              <span className={`vq-chip ${chip.tone}`} key={chip.text}>
+                {chip.text}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="vq-source-previews">
+          {source.previews.map((preview) => {
+            const key = `src:${source.project_id}:${preview.begin_time_ms}`;
+            const playing = audio.playingKey === key;
+            return (
+              <div className="vq-preview" key={key}>
+                <button
+                  className="play-btn"
+                  aria-label={tr("Play sample", "试听")}
+                  onClick={() =>
+                    audio.toggle(
+                      key,
+                      clipUrl(source.project_id, preview.begin_time_ms, preview.end_time_ms),
+                    )
+                  }
+                >
+                  {playing ? "⏸" : "▶"}
+                </button>
+                <span className="mono subtle">
+                  {fmtClock(preview.begin_time_ms)} · {preview.duration_seconds.toFixed(1)}s
+                </span>
+                <span className="vq-preview-text">{preview.text}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function PeopleMatrix(props: {
+  people: PersonHealth[];
+  onFindSources: (person: PersonHealth) => void;
+}) {
   const longest = Math.max(1, ...props.people.map((person) => person.matching_seconds));
   return (
     <section className="vq-panel">
@@ -947,6 +1249,7 @@ function PeopleMatrix(props: { people: PersonHealth[] }) {
           <span className="ta-r">{tr("Matching", "匹配样本")}</span>
           <span>{tr("Audio", "有效时长")}</span>
           <span className="ta-r">{tr("Sources", "来源")}</span>
+          <span />
         </div>
         {props.people.map((person) => (
           <div className="vq-matrix-row" key={person.public_id}>
@@ -976,6 +1279,14 @@ function PeopleMatrix(props: { people: PersonHealth[] }) {
             </span>
             <span className="mono ta-r" data-label={tr("sources", "来源")}>
               {person.project_count}
+            </span>
+            <span className="ta-r">
+              <button
+                className="btn ghost vq-matrix-action"
+                onClick={() => props.onFindSources(person)}
+              >
+                {tr("Top up", "补采")}
+              </button>
             </span>
           </div>
         ))}

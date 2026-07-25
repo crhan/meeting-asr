@@ -2329,10 +2329,22 @@ tr.clickable {
 .vq-matrix-head,
 .vq-matrix-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1.6fr) 80px 92px minmax(120px, 1.4fr) 64px;
+  grid-template-columns: minmax(120px, 1.6fr) 80px 92px minmax(120px, 1.4fr) 64px 72px;
   gap: var(--sp-3);
   align-items: center;
   padding: 8px 0;
+}
+/* The per-person action is a quiet affordance, not a call to action: it should
+   read as available once you are already looking at a row, and never compete
+   with the issue queue for attention. */
+.vq-matrix-action {
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+  opacity: 0.55;
+}
+.vq-matrix-row:hover .vq-matrix-action,
+.vq-matrix-action:focus-visible {
+  opacity: 1;
 }
 .vq-matrix-head {
   font-size: var(--fs-xs);
@@ -2428,6 +2440,161 @@ tr.clickable {
   }
   .vq-costs {
     gap: var(--sp-2);
+  }
+}
+
+/* ---- sourcing plan ------------------------------------------------------ */
+/* The panel that answers "capture more samples — but where?". It is a work
+   surface rather than a readout, so it gets the accent rail the calibration
+   panel uses: it appears in response to a click and should be findable
+   without hunting after the page scrolls. */
+.vq-panel-plan {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+  scroll-margin-top: var(--sp-4);
+}
+/* The issue row that opened it, marked so the two read as one action. */
+.vq-issue.on {
+  background: var(--accent-dim);
+  border-radius: var(--r-sm);
+}
+
+.vq-plan-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.vq-chip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--text-muted);
+  background: var(--surface-3);
+  white-space: nowrap;
+}
+.vq-chip.good {
+  color: var(--green);
+  background: var(--green-dim);
+}
+.vq-chip.warn {
+  color: var(--yellow);
+  background: var(--yellow-dim);
+}
+
+.vq-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.vq-source {
+  display: flex;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+.vq-source:last-child {
+  border-bottom: none;
+}
+.vq-source-rank {
+  flex: none;
+  width: 2.2em;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  padding-top: 3px;
+}
+.vq-source:first-child .vq-source-rank {
+  color: var(--accent-bright);
+}
+.vq-source-body {
+  flex: 1;
+  min-width: 0;
+}
+.vq-source-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.vq-source-head b {
+  font-size: var(--fs-base);
+}
+/* Supply is the number the decision turns on, so it is the one thing set in
+   display size — everything else on the row is context for it. */
+.vq-source-supply {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: 5px;
+  font-size: var(--fs-sm);
+}
+.vq-source-figure {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+}
+.vq-source-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.vq-source-previews {
+  margin-top: var(--sp-2);
+  border-left: 2px solid var(--border-strong);
+  padding-left: var(--sp-3);
+}
+.vq-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 3px 0;
+  font-size: var(--fs-sm);
+}
+/* The timestamp is a flex item, so a narrow viewport breaks "4:33 · 9.9s"
+   into one token per line and drives the row three lines tall. */
+.vq-preview > .mono {
+  flex: none;
+  white-space: nowrap;
+}
+/* One line per preview: this is a sniff test for "is this the right person",
+   not reading material. Anything longer belongs in the capture picker. */
+.vq-preview-text {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.vq-plan-note {
+  margin: var(--sp-3) 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 78ch;
+}
+
+@media (max-width: 720px) {
+  .vq-matrix-action {
+    opacity: 1;
+  }
+  .vq-source-head .spacer {
+    display: none;
+  }
+  .vq-source-head .btn {
+    order: 9;
   }
 }
 

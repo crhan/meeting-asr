@@ -488,6 +488,51 @@ export const setMatchThreshold = (threshold: number | null) =>
     body: JSON.stringify({ threshold }),
   });
 
+export interface CandidatePreview {
+  begin_time_ms: number;
+  end_time_ms: number;
+  duration_seconds: number;
+  text: string;
+  score: number;
+}
+
+export interface SampleSource {
+  project_id: string;
+  title: string;
+  meeting_time: string | null;
+  speaker_id: number;
+  speaker_name: string;
+  /** "person-map" (linked to this person) or "name" (display name only). */
+  evidence: string;
+  candidate_count: number;
+  candidate_seconds: number;
+  best_score: number;
+  matching_sample_count: number;
+  quarantined_sample_count: number;
+  priority: number;
+  /** Reason kinds; re-rendered per locale rather than translated as prose. */
+  reasons: string[];
+  previews: CandidatePreview[];
+}
+
+export interface SampleSources {
+  person_public_id: string;
+  person_name: string;
+  /** Which health bars this person fails; these ordered the sources. */
+  deficits: string[];
+  matching_sample_count: number;
+  matching_seconds: number;
+  project_count: number;
+  scanned_project_count: number;
+  total_candidate_seconds: number;
+  new_project_count: number;
+  sources: SampleSource[];
+  skipped: { project_id: string; title: string; reason: string }[];
+}
+
+export const getSampleSources = (ref: string) =>
+  api<SampleSources>(`/api/voiceprints/people/${encodeURIComponent(ref)}/sources`);
+
 export const getEmbedBacklog = () =>
   api<EmbedBacklog>("/api/voiceprints/embed-backlog");
 
