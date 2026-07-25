@@ -50,6 +50,7 @@ from app.voiceprint_people import (
     rename_voiceprint_person,
 )
 from app.voiceprint_quality import (
+    DEFAULT_MIN_CLUSTER_SIZE,
     VOICEPRINT_MATCHING_SAMPLE_STATUSES,
     VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
     analyze_voiceprint_quality,
@@ -652,6 +653,7 @@ def get_quality(settings: WebSettings = Depends(get_settings)) -> QualityReportO
     ]
     return QualityReportOut(
         model=report.model,
+        min_cluster_size=DEFAULT_MIN_CLUSTER_SIZE,
         sample_count=report.sample_count,
         suspicious_count=report.suspicious_count,
         critical_count=report.critical_count,

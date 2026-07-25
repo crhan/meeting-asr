@@ -380,6 +380,9 @@ export interface QualityPerson {
 
 export interface QualityReport {
   model: string;
+  /** Below this many matching samples a centroid describes one recording
+   *  rather than a voice. */
+  min_cluster_size: number;
   sample_count: number;
   suspicious_count: number;
   critical_count: number;

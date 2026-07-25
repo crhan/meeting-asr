@@ -734,6 +734,24 @@ def test_capture_pending_blocks_store_writes(
     assert resp.json()["error"] == "conflict"
 
 
+def test_quality_report_publishes_the_minimum_cluster_size(
+    client: TestClient,
+) -> None:
+    """Clients must be able to refuse an action that drops someone below it.
+
+    The library page offers to exclude contaminated samples; doing so down to
+    one or two leaves a centroid describing a single recording, which is worse
+    than the skew it fixes. Deciding that needs the threshold, and restating
+    the number in the UI would put it in two places that drift.
+    """
+    from app.voiceprint_quality import DEFAULT_MIN_CLUSTER_SIZE
+
+    resp = client.get("/api/voiceprints/quality")
+
+    assert resp.status_code == 200
+    assert resp.json()["min_cluster_size"] == DEFAULT_MIN_CLUSTER_SIZE
+
+
 def test_embed_backfill_goes_through_the_capture_guard(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

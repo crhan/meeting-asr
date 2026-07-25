@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.core.project_models import ProjectListItem
 from app.core.project_workflow import ProjectWorkflowSummary
+from app.voiceprint_quality import DEFAULT_MIN_CLUSTER_SIZE
 
 
 class WorkflowState(BaseModel):
@@ -645,6 +646,10 @@ class QualityReportOut(BaseModel):
     suspicious_count: int
     critical_count: int
     people: list[QualityPersonOut]
+    # Below this many matching samples a centroid describes one recording
+    # rather than a voice. Published so a client can refuse an action that
+    # would drop someone under it, without restating the number.
+    min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE
 
 
 # ---- Voiceprint library health ---------------------------------------------

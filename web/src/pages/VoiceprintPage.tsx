@@ -460,6 +460,7 @@ export function VoiceprintPage() {
               person={selectedPerson}
               sampleFilter={sampleFilter}
               editMode={editMode}
+              minClusterSize={qualityQuery.data?.min_cluster_size ?? 3}
               audio={audio}
               pendingSampleId={
                 statusMut.isPending
@@ -615,6 +616,7 @@ function PersonDetail(props: {
   onSetStatus: (samplePublicId: string, status: string) => void;
   onDeleteSample: (samplePublicId: string, lastSample: boolean) => void;
   onExcludeIssues: (samplePublicIds?: string[]) => void;
+  minClusterSize: number;
   onShowOverlap: () => void;
   onFindSources: () => void;
   onExcludeOverlap: (
@@ -679,6 +681,17 @@ function PersonDetail(props: {
             {person.quality?.mean_score?.toFixed(2) ?? "—"}
           </div>
         </div>
+        <div className="row gap">
+          {/* Always available, and deliberately not inside the contamination
+              notice: hanging it there made it vanish the moment the offending
+              samples were excluded -- which is precisely when this person is
+              shortest on audio and most needs a replacement. Wanting more
+              samples for someone is not conditional on something being wrong
+              with the ones they have. */}
+          <button className="btn" onClick={props.onFindSources}>
+            {tr("Find more samples", "补采样本")}
+          </button>
+        </div>
         {editMode && (
           <div className="row gap">
             <button
@@ -732,6 +745,7 @@ function PersonDetail(props: {
           issueSamples={issueSamples}
           overlapSamples={overlapSamples}
           matchingSampleCount={matchingSampleCount}
+          minClusterSize={props.minClusterSize}
           riskyProjects={riskyProjects}
           editMode={editMode}
           onExcludeIssues={() => props.onExcludeIssues(issueSamples.map((sample) => sample.public_id))}
@@ -783,6 +797,7 @@ function VoiceprintHealthPanel(props: {
   issueSamples: SampleView[];
   overlapSamples: SampleView[];
   matchingSampleCount: number;
+  minClusterSize: number;
   riskyProjects: NonNullable<QualityPerson["projects"]>;
   editMode: boolean;
   onExcludeIssues: () => void;
@@ -800,6 +815,7 @@ function VoiceprintHealthPanel(props: {
     <OverlapNotice
       count={overlapSamples.length}
       matchingSampleCount={props.matchingSampleCount}
+      minClusterSize={props.minClusterSize}
       editMode={editMode}
       busy={props.excludingOverlap}
       onShow={props.onShowOverlap}
@@ -865,22 +881,30 @@ function VoiceprintHealthPanel(props: {
 /**
  * The contamination notice, and the two moves that actually resolve it.
  *
- * Excluding these samples is offered only when something clean would be left
- * behind. Excluding every sample a person has does not make the library more
- * accurate -- it removes the person from matching altogether, which is a worse
- * outcome than a skewed centroid. In that case the only real first step is to
- * capture a replacement, so that is the only thing shown.
+ * Excluding is offered only when enough clean samples would remain to still
+ * describe a voice. Emptying the pool removes the person from matching
+ * entirely, and landing just above that is barely better: a centroid built
+ * from one or two clips is that recording's quirks, which is a worse outcome
+ * than a centroid pulled slightly toward the wrong person. The threshold is
+ * therefore the same minimum cluster size the health report judges by, not
+ * merely "more than zero".
+ *
+ * Capturing is offered from the person header instead of here, because it is
+ * needed most right after these samples are excluded -- when this notice is
+ * gone.
  */
 function OverlapNotice(props: {
   count: number;
   matchingSampleCount: number;
+  minClusterSize: number;
   editMode: boolean;
   busy: boolean;
   onShow: () => void;
   onFindSources: () => void;
   onExclude: () => void;
 }) {
-  const wouldEmptyPool = props.count >= props.matchingSampleCount;
+  const remaining = props.matchingSampleCount - props.count;
+  const wouldEmptyPool = remaining < props.minClusterSize;
   return (
     <div className="vp-health risk vp-health-overlap">
       <div className="vp-health-main">
@@ -900,10 +924,15 @@ function OverlapNotice(props: {
         </div>
         {props.editMode && wouldEmptyPool && (
           <div className="vp-health-line subtle">
-            {tr(
-              "Every matching sample this person has is affected, so excluding them would remove the person from matching entirely. Capture a clean replacement first.",
-              "这个人参与匹配的样本全都受影响,现在排除等于把这个人整个踢出匹配池。先补一条干净的再说。",
-            )}
+            {remaining <= 0
+              ? tr(
+                  "Every matching sample this person has is affected, so excluding them would remove the person from matching entirely. Capture a clean replacement first.",
+                  "这个人参与匹配的样本全都受影响,现在排除等于把这个人整个踢出匹配池。先补一条干净的再说。",
+                )
+              : tr(
+                  `Excluding these would leave only ${remaining} matching sample(s), below the ${props.minClusterSize} a centroid needs to describe a voice rather than one recording. Capture replacements first, then exclude.`,
+                  `排除后只剩 ${remaining} 条参与匹配,低于质心成立所需的 ${props.minClusterSize} 条 —— 那时刻画的是某一次录音而不是这个人的声音,比质心被拉偏更糟。先补采,再排除。`,
+                )}
           </div>
         )}
       </div>
