@@ -23,6 +23,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.voiceprint_audio import resolve_voiceprint_sample_source
 from app.voiceprint_calibration import (
     VoiceprintCalibrationReport,
     calibrate_voiceprint_thresholds,
@@ -66,9 +67,17 @@ class PersonHealth:
     enabled_sample_count: int
     matching_sample_count: int
     missing_embedding_count: int
+    # Of the missing ones, how many cannot be embedded at all because their
+    # clip audio is gone. Backfilling can never fix these.
+    missing_clip_count: int
     matching_seconds: float
     project_count: int
     availability: str
+
+    @property
+    def embeddable_count(self) -> int:
+        """Return missing embeddings a backfill could actually produce."""
+        return self.missing_embedding_count - self.missing_clip_count
 
     @property
     def usable(self) -> bool:
@@ -161,7 +170,7 @@ def analyze_library_health(
     db_path = get_voiceprint_db_path(store_dir)
     samples = list_all_voiceprint_samples(db_path)
     embedded_ids = list_embedded_sample_ids(resolved_model, db_path)
-    people = _people_health(samples, embedded_ids)
+    people = _people_health(samples, embedded_ids, store_dir)
     calibration = _calibration(store_dir, resolved_provider, resolved_model)
     issues = _issues(people, calibration)
     return LibraryHealthReport(
@@ -187,18 +196,24 @@ def _calibration(
 
 
 def _people_health(
-    samples: list[VoiceprintSampleRow], embedded_ids: set[int]
+    samples: list[VoiceprintSampleRow],
+    embedded_ids: set[int],
+    store_dir: Path | None,
 ) -> tuple[PersonHealth, ...]:
     """Build per-person availability facts."""
     grouped: dict[int, list[VoiceprintSampleRow]] = defaultdict(list)
     for sample in samples:
         grouped[sample.speaker_id].append(sample)
-    people = [_person_health(rows, embedded_ids) for rows in grouped.values()]
+    people = [
+        _person_health(rows, embedded_ids, store_dir) for rows in grouped.values()
+    ]
     return tuple(sorted(people, key=_person_sort_key))
 
 
 def _person_health(
-    rows: list[VoiceprintSampleRow], embedded_ids: set[int]
+    rows: list[VoiceprintSampleRow],
+    embedded_ids: set[int],
+    store_dir: Path | None,
 ) -> PersonHealth:
     """Build availability facts for one person."""
     first = rows[0]
@@ -206,6 +221,11 @@ def _person_health(
         row for row in rows if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
     ]
     matching = [row for row in enabled if row.sample_id in embedded_ids]
+    missing = [row for row in enabled if row.sample_id not in embedded_ids]
+    # Only stat the samples a backfill would touch: an issue that offers
+    # "backfill embeddings" must not be raised for clips that no longer exist,
+    # or the button runs, reports success, and changes nothing.
+    missing_clips = [row for row in missing if not _clip_readable(row, store_dir)]
     seconds = sum(
         max(0, row.source_end_time_ms - row.source_begin_time_ms) / 1000.0
         for row in matching
@@ -217,11 +237,20 @@ def _person_health(
         total_sample_count=len(rows),
         enabled_sample_count=len(enabled),
         matching_sample_count=len(matching),
-        missing_embedding_count=len(enabled) - len(matching),
+        missing_embedding_count=len(missing),
+        missing_clip_count=len(missing_clips),
         matching_seconds=round(seconds, 1),
         project_count=len({row.project_id for row in matching}),
         availability=_availability(len(matching)),
     )
+
+
+def _clip_readable(row: VoiceprintSampleRow, store_dir: Path | None) -> bool:
+    """Return whether a sample's clip audio can still be read."""
+    try:
+        return resolve_voiceprint_sample_source(row, store_dir=store_dir).exists()
+    except OSError:
+        return False
 
 
 def _availability(matching_sample_count: int) -> str:
@@ -253,6 +282,8 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
         "enabled_sample_count": person.enabled_sample_count,
         "matching_sample_count": person.matching_sample_count,
         "missing_embedding_count": person.missing_embedding_count,
+        "missing_clip_count": person.missing_clip_count,
+        "embeddable_count": person.embeddable_count,
         "matching_seconds": person.matching_seconds,
         "project_count": person.project_count,
         "min_cluster_size": DEFAULT_MIN_CLUSTER_SIZE,
@@ -275,7 +306,7 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
                 context=facts,
             )
         )
-    elif person.matching_sample_count == 0 and person.missing_embedding_count > 0:
+    elif person.embeddable_count > 0 and person.matching_sample_count == 0:
         issues.append(
             _person_issue(
                 person,
@@ -283,16 +314,16 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
                 severity=SEVERITY_CRITICAL,
                 title=f"{person.speaker_name} has no embeddings for the active model",
                 detail=(
-                    f"{person.missing_embedding_count} enabled sample(s) exist but "
-                    "none are embedded for this model, so this person is absent "
-                    "from the matching pool entirely. This usually means the "
-                    "library was not re-embedded after switching provider."
+                    f"{person.embeddable_count} enabled sample(s) have readable "
+                    "audio but no embedding for this model, so this person is "
+                    "absent from the matching pool entirely. This usually means "
+                    "the library was not re-embedded after switching provider."
                 ),
                 action="embed",
                 context=facts,
             )
         )
-    elif person.missing_embedding_count > 0:
+    elif person.embeddable_count > 0:
         issues.append(
             _person_issue(
                 person,
@@ -300,12 +331,36 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
                 severity=SEVERITY_WARNING,
                 title=f"{person.speaker_name} is missing some embeddings",
                 detail=(
-                    f"{person.missing_embedding_count} of "
+                    f"{person.embeddable_count} of "
                     f"{person.enabled_sample_count} enabled sample(s) are not "
                     "embedded for the active model and do not contribute to "
                     "matching."
                 ),
                 action="embed",
+                context=facts,
+            )
+        )
+    if person.missing_clip_count > 0:
+        # Deliberately NOT action="embed": a backfill cannot read audio that is
+        # gone, so offering it would run, report success and change nothing.
+        issues.append(
+            _person_issue(
+                person,
+                kind="missing-clips",
+                severity=(
+                    SEVERITY_CRITICAL
+                    if person.matching_sample_count == 0
+                    else SEVERITY_WARNING
+                ),
+                title=f"{person.speaker_name} has "
+                f"{person.missing_clip_count} sample(s) whose audio is gone",
+                detail=(
+                    "The registry rows exist but their clip files cannot be read "
+                    "from the active store, so these samples can never be "
+                    "embedded. Delete them, or re-capture this person from a "
+                    "project. Backfilling embeddings will not help."
+                ),
+                action="review-samples",
                 context=facts,
             )
         )

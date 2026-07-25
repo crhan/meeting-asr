@@ -654,6 +654,9 @@ class PersonHealthOut(BaseModel):
     enabled_sample_count: int
     matching_sample_count: int
     missing_embedding_count: int
+    # Missing embeddings whose clip audio is gone; a backfill cannot fix these.
+    missing_clip_count: int
+    embeddable_count: int
     matching_seconds: float
     project_count: int
     availability: str
@@ -757,8 +760,10 @@ class EmbedBacklogOut(BaseModel):
     """How many stored samples still need an embedding for the active model."""
 
     model: str
+    # Only samples a backfill could actually embed (clip audio still readable).
     missing_sample_count: int
     person_count: int
+    missing_clip_count: int
 
 
 class CreatePersonIn(BaseModel):

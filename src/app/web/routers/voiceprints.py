@@ -27,6 +27,7 @@ from app.speaker_pipeline_params import (
     match_threshold_coupling_warnings,
     resolve_match_threshold,
 )
+from app.voiceprint_audio import resolve_voiceprint_sample_source
 from app.voiceprint_calibration import VoiceprintCalibrationReport
 from app.voiceprint_embedding import (
     embed_voiceprint_samples,
@@ -268,6 +269,8 @@ def _health_out(report: LibraryHealthReport) -> LibraryHealthOut:
                 enabled_sample_count=person.enabled_sample_count,
                 matching_sample_count=person.matching_sample_count,
                 missing_embedding_count=person.missing_embedding_count,
+                missing_clip_count=person.missing_clip_count,
+                embeddable_count=person.embeddable_count,
                 matching_seconds=person.matching_seconds,
                 project_count=person.project_count,
                 availability=person.availability,
@@ -408,10 +411,20 @@ def get_embed_backlog(
         if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
         and row.sample_id not in embedded
     ]
+    # Split off rows whose audio is gone: counting them as backlog would promise
+    # a backfill that cannot succeed.
+    embeddable = [
+        row
+        for row in missing
+        if resolve_voiceprint_sample_source(
+            row, store_dir=settings.voiceprint_store_dir
+        ).exists()
+    ]
     return EmbedBacklogOut(
         model=model,
-        missing_sample_count=len(missing),
-        person_count=len({row.speaker_id for row in missing}),
+        missing_sample_count=len(embeddable),
+        person_count=len({row.speaker_id for row in embeddable}),
+        missing_clip_count=len(missing) - len(embeddable),
     )
 
 

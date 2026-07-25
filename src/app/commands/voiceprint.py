@@ -781,6 +781,8 @@ def _library_health_payload(report: LibraryHealthReport) -> dict[str, object]:
                 "enabled_sample_count": person.enabled_sample_count,
                 "matching_sample_count": person.matching_sample_count,
                 "missing_embedding_count": person.missing_embedding_count,
+                "missing_clip_count": person.missing_clip_count,
+                "embeddable_count": person.embeddable_count,
                 "matching_seconds": person.matching_seconds,
                 "project_count": person.project_count,
             }

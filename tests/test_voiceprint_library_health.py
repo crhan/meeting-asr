@@ -324,3 +324,71 @@ def test_health_cli_reports_unusable_people_and_next_command(tmp_path: Path) -> 
     payload = json.loads(as_json.output)
     assert payload["usable_person_count"] == 1
     assert any(i["kind"] == "missing-embeddings" for i in payload["issues"])
+
+
+def test_missing_clip_is_not_offered_a_backfill(tmp_path: Path) -> None:
+    """A sample whose audio is gone must not be reported as "backfill embeddings".
+
+    The backfill physically cannot read the clip, so it would run, report
+    success and change nothing -- the button reads as broken. Report it as an
+    unrecoverable sample that needs deleting or re-capturing instead.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [[1.0, 0.0], [0.98, 0.05], [0.99, -0.03]])
+    rows = _seed_person(store_dir, "Lost", [[0.0, 1.0]] * 3, embed=False)
+    for row in rows:
+        row.clip_path.unlink()
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    lost = _person(report, "Lost")
+    assert lost.availability == AVAILABILITY_UNUSABLE
+    assert lost.missing_embedding_count == 3
+    assert lost.missing_clip_count == 3
+    assert lost.embeddable_count == 0
+    issue = _issue(report, "missing-clips")
+    assert issue.action == "review-samples"
+    assert issue.severity == SEVERITY_CRITICAL
+    # The embed action must NOT be offered for these.
+    assert not [
+        item
+        for item in report.issues
+        if item.person_name == "Lost" and item.action == "embed"
+    ]
+
+
+def test_embedding_rebases_a_clip_path_from_a_moved_store(tmp_path: Path) -> None:
+    """A stale absolute clip_path must not stop embedding when the file is there.
+
+    `clip_path` records the store the clip was first written to; after the
+    library moves (different XDG_DATA_HOME, relocated volume) every row points
+    somewhere that no longer exists while the clips sit intact under the active
+    store. Playback and deletion already rebase via clip_rel_path; embedding
+    must too, or those people stay permanently unmatchable.
+    """
+    from app.voiceprint_audio import resolve_voiceprint_sample_source
+    from app.voiceprint_store import list_voiceprint_samples
+
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Moved", [[1.0, 0.0], [0.0, 1.0]], embed=False)
+    db_path = get_voiceprint_db_path(store_dir)
+    # Rewrite clip_path to a store that no longer exists, keeping clip_rel_path.
+    import sqlite3
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE voiceprint_samples SET clip_path = '/gone/' || clip_rel_path"
+        )
+
+    rows = list_voiceprint_samples("Moved", db_path)
+    for row in rows:
+        assert not row.clip_path.exists()
+        resolved = resolve_voiceprint_sample_source(row, store_dir=store_dir)
+        assert resolved.exists()
+        assert resolved.is_relative_to(store_dir.resolve())
+
+    # Health must therefore treat them as embeddable, not as lost clips.
+    report = analyze_library_health(store_dir=store_dir)
+    moved = _person(report, "Moved")
+    assert moved.missing_clip_count == 0
+    assert moved.embeddable_count == 2

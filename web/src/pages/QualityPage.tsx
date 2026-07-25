@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -15,6 +15,7 @@ import {
 } from "../api/client";
 import { tr } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm";
+import { useJobStream } from "../lib/useJobStream";
 
 const AVAILABILITY_ORDER = ["unusable", "fragile", "ok"] as const;
 
@@ -69,7 +70,18 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
         title: tr(issue.title, `${name} 在当前模型下没有任何向量`),
         detail: tr(
           issue.detail,
-          `有 ${num(c, "missing_embedding_count")} 个可用样本,但没有一个生成了当前模型的向量,因此这个人完全不在匹配池里。通常是切换 provider 后没有重新嵌入。`,
+          `有 ${num(c, "embeddable_count")} 个样本音频可读但没有当前模型的向量,因此这个人完全不在匹配池里。通常是切换 provider 后没有重新嵌入。`,
+        ),
+      };
+    case "missing-clips":
+      return {
+        title: tr(
+          issue.title,
+          `${name} 有 ${num(c, "missing_clip_count")} 个样本的音频已丢失`,
+        ),
+        detail: tr(
+          issue.detail,
+          "库里还有这些样本的记录,但在当前 store 下读不到它们的 clip 文件,因此永远无法嵌入。只能删除这些样本,或者从某个项目重新采集这个人。补齐嵌入解决不了。",
         ),
       };
     case "partial-embeddings":
@@ -77,7 +89,7 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
         title: tr(issue.title, `${name} 有部分样本未嵌入`),
         detail: tr(
           issue.detail,
-          `${num(c, "enabled_sample_count")} 个可用样本中有 ${num(c, "missing_embedding_count")} 个没有当前模型的向量,不参与匹配。`,
+          `${num(c, "enabled_sample_count")} 个可用样本中有 ${num(c, "embeddable_count")} 个没有当前模型的向量,不参与匹配。`,
         ),
       };
     case "fragile-cluster":
@@ -212,19 +224,52 @@ export function QualityPage() {
     queryFn: getEmbedBacklog,
   });
   const [toast, setToast] = useState<string | null>(null);
+  // Submitting only queues the job; the health numbers cannot change until it
+  // finishes. Track it to completion, then refresh and report what it did --
+  // otherwise the queue sits there unchanged and reads as a broken button.
+  const [embedJobId, setEmbedJobId] = useState<string | null>(null);
+  const embedJob = useJobStream(embedJobId);
+  const reportedJobRef = useRef<string | null>(null);
 
   const embedMut = useMutation({
     mutationFn: runEmbedBackfill,
-    onSuccess: () => {
-      setToast(
-        tr(
-          "Embedding started — follow it in the jobs panel.",
-          "已开始补齐嵌入 — 可在任务面板查看进度。",
-        ),
-      );
+    onSuccess: (job) => {
+      setEmbedJobId(job.job_id);
+      setToast(tr("Embedding started…", "正在补齐嵌入…"));
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
     },
   });
+
+  useEffect(() => {
+    if (!embedJobId || !embedJob.done) return;
+    if (reportedJobRef.current === embedJobId) return;
+    reportedJobRef.current = embedJobId;
+    queryClient.invalidateQueries({ queryKey: ["vp-health"] });
+    queryClient.invalidateQueries({ queryKey: ["vp-embed-backlog"] });
+    if (embedJob.error) {
+      setToast(tr(`Embedding failed: ${embedJob.error}`, `补齐嵌入失败:${embedJob.error}`));
+      return;
+    }
+    const result = embedJob.result as
+      | { embedded_count?: number; skipped_count?: number }
+      | null;
+    const embedded = result?.embedded_count ?? 0;
+    if (embedded === 0) {
+      setToast(
+        tr(
+          "Nothing was embedded — the remaining samples have no readable clip audio.",
+          "没有新增任何向量 —— 剩下的样本读不到 clip 音频,补嵌入无法解决。",
+        ),
+      );
+      return;
+    }
+    setToast(
+      tr(
+        `Embedded ${embedded} sample(s).`,
+        `已补齐 ${embedded} 个样本的向量。`,
+      ),
+    );
+  }, [embedJobId, embedJob.done, embedJob.error, embedJob.result, queryClient]);
 
   const thresholdMut = useMutation({
     mutationFn: (value: number | null) => setMatchThreshold(value),
@@ -318,7 +363,7 @@ export function QualityPage() {
           <IssueQueue
             issues={health.issues}
             onAction={runAction}
-            busy={embedMut.isPending}
+            busy={embedMut.isPending || (embedJobId !== null && !embedJob.done)}
           />
           <PeopleMatrix people={health.people} />
         </>

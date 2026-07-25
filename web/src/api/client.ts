@@ -389,6 +389,8 @@ export interface PersonHealth {
   enabled_sample_count: number;
   matching_sample_count: number;
   missing_embedding_count: number;
+  missing_clip_count: number;
+  embeddable_count: number;
   matching_seconds: number;
   project_count: number;
   availability: "ok" | "fragile" | "unusable";
@@ -469,8 +471,10 @@ export interface MatchThreshold {
 
 export interface EmbedBacklog {
   model: string;
+  /** Only samples a backfill could actually embed. */
   missing_sample_count: number;
   person_count: number;
+  missing_clip_count: number;
 }
 
 export const getLibraryHealth = () => api<LibraryHealth>("/api/voiceprints/health");
