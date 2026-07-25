@@ -183,6 +183,44 @@ def analyze_library_health(
     )
 
 
+def person_availability(
+    person_public_id: str,
+    *,
+    store_dir: Path | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> PersonHealth | None:
+    """
+    Return availability facts for one person, without library-wide calibration.
+
+    Callers that only need "how short is this person" (sample sourcing, per-person
+    views) should not pay for the pairwise genuine/impostor sweep that threshold
+    calibration runs over the whole store.
+
+    Args:
+        person_public_id: Library person public id.
+        store_dir: Optional voiceprint store directory.
+        provider: Optional embedding provider override.
+        model: Optional embedding model key override.
+
+    Returns:
+        Availability facts, or None when the person has no samples at all.
+    """
+    _, resolved_model = resolve_voiceprint_embedding_options(
+        provider=provider, model=model
+    )
+    db_path = get_voiceprint_db_path(store_dir)
+    rows = [
+        row
+        for row in list_all_voiceprint_samples(db_path)
+        if row.speaker_public_id == person_public_id
+    ]
+    if not rows:
+        return None
+    embedded_ids = list_embedded_sample_ids(resolved_model, db_path)
+    return _person_health(rows, embedded_ids, store_dir)
+
+
 def _calibration(
     store_dir: Path | None, provider: str, model: str
 ) -> VoiceprintCalibrationReport | None:
