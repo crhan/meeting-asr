@@ -502,6 +502,8 @@ export interface CandidateClip {
   text: string;
   score: number;
   recommended: boolean;
+  /** Another speaker within half a second: usable, never pre-selected. */
+  overlap_risk: boolean;
 }
 
 export interface SampleSource {
@@ -630,6 +632,8 @@ export interface CaptureClip {
   audio_score: number | null;
   audio_reason: string;
   recommended: boolean;
+  /** Another speaker within half a second: usable, never pre-selected. */
+  overlap_risk?: boolean;
 }
 
 export interface CaptureSpeaker {

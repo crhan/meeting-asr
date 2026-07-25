@@ -125,6 +125,17 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
           `决定嵌入稳定性的是有效发声总时长,不是样本条数。建议在多句话中累计到 ${num(c, "min_healthy_seconds").toFixed(0)}s 以上。`,
         ),
       };
+    case "overlapped-samples":
+      return {
+        title: tr(
+          issue.title,
+          `${name} 有 ${num(c, "overlapped_count")} 条样本是在别人说话时录的`,
+        ),
+        detail: tr(
+          issue.detail,
+          `这些样本前后半秒内就有另一个人在说话,参考音频是混合体而不是单一声音。它会把这个人的质心往「跟他对话的那个人」拉——而那恰恰是最难区分的一对。换成他独自连续说话的片段。`,
+        ),
+      };
     case "single-source":
       return {
         title: tr(issue.title, `${name} 只来自一次录音`),
@@ -1414,6 +1425,17 @@ function SourceRow(props: {
                   <span className="mono subtle">
                     {fmtClock(clip.begin_time_ms)} · {clip.duration_seconds.toFixed(1)}s
                   </span>
+                  {clip.overlap_risk && (
+                    <span
+                      className="vq-chip warn"
+                      title={tr(
+                        "Another speaker is within half a second of this clip; the reference audio would be a mixture.",
+                        "这段前后半秒内有另一个人在说话,采进去的参考音频会是混合体。",
+                      )}
+                    >
+                      {tr("overlap", "有他人")}
+                    </span>
+                  )}
                   <span className="vq-clip-text">{clip.text}</span>
                 </label>
               );

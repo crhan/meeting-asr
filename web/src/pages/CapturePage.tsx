@@ -411,6 +411,17 @@ export function CapturePage() {
                             {tr("audio", "音频")} {audioScore}
                           </span>
                         )}
+                        {c.overlap_risk && (
+                          <span
+                            className="score-badge low"
+                            title={tr(
+                              "Another speaker holds the floor within half a second, so this clip stores a mixture of voices rather than one.",
+                              "前后半秒内有另一个人在说话,这段采进去存的是混合音而不是单一声音。",
+                            )}
+                          >
+                            {tr("overlap", "有他人")}
+                          </span>
+                        )}
                         <span className={`badge ${c.recommended ? "status-pill active" : ""}`}>
                           {c.recommended ? tr("recommended", "推荐") : tr("candidate", "候选")}
                         </span>
