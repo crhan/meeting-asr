@@ -335,6 +335,17 @@ export function CapturePage() {
         </div>
       )}
 
+      {/* Nothing pre-selected is a finding, not a broken page: it means every
+          candidate came from a stretch where someone else was talking. */}
+      {allClipRefs.length > 0 && recommendedClipRefs.length === 0 && (
+        <div className="notice-box" style={{ margin: "10px 0" }}>
+          {tr(
+            "Nothing is pre-selected: every candidate here has another speaker within half a second, so capturing one would store a mixture of voices. Prefer a recording where this person speaks uninterrupted; tick a clip below only if this is the only audio you have.",
+            "一条都没预选:这里每条候选前后半秒内都有另一个人在说话,采进去存的会是混合音。优先换一场这个人独自连续说话的录音;只有在实在没有别的素材时,再手动勾选下面的片段。",
+          )}
+        </div>
+      )}
+
       <div className="capture-toolbar">
         <button className="chip" onClick={selectOnlyRecommended}>
           {tr("Recommended only", "只选推荐")}

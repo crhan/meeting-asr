@@ -1385,6 +1385,15 @@ function SourceRow(props: {
           </div>
         )}
 
+        {source.clips.length > 0 && pickedCount === 0 && (
+          <p className="vq-plan-note">
+            {tr(
+              "Nothing pre-selected: every clip here has another speaker within half a second, so capturing one would store a mixture of voices. Prefer a source above with clean audio.",
+              "一条都没预选:这里每条 clip 前后半秒内都有另一个人在说话,采进去存的会是混合音。优先用上面音频干净的来源。",
+            )}
+          </p>
+        )}
+
         {source.clips.length === 0 ? (
           <p className="vq-plan-note subtle">
             {tr(

@@ -83,19 +83,25 @@ def _recommended_segment_ids(
     highest scores overfits toward one speaking style and often clusters around
     long dense monologues, so defaults should cover the speaker's timeline.
 
-    Overlap-risk segments are held back before anything else: a default pick is
-    a recommendation, and recommending audio from a stretch where two people
-    talk over each other is how a reference voice quietly acquires someone
-    else's. They come back only when there is nothing cleaner to offer, since a
-    mediocre sample still beats leaving a person unmatchable.
+    Overlap-risk segments are never picked, not even when nothing else is on
+    offer. A ticked checkbox is a recommendation, and recommending audio from a
+    stretch where two people talk over each other is how a reference voice
+    quietly acquires someone else's. Falling back to them when the clean pool
+    runs short would put the tick back exactly where the audio is worst -- a
+    tight two-party call, where *every* segment is crowded -- which is where
+    the operator most needs to decide for themselves.
+
+    They remain in the returned list and remain selectable, so a source with
+    nothing clean is still usable; it just requires a deliberate click.
     """
     if sample_count <= 0 or not segments:
         return set()
     clean = [item for item in segments if not item.overlap_risk]
-    pool = clean if len(clean) >= sample_count else segments
-    eligible = [item for item in pool if item.score >= MIN_RECOMMENDED_SCORE]
+    if not clean:
+        return set()
+    eligible = [item for item in clean if item.score >= MIN_RECOMMENDED_SCORE]
     if len(eligible) < sample_count:
-        eligible = pool
+        eligible = clean
     return {
         id(item.segment) for item in _spread_segments_by_time(eligible, sample_count)
     }

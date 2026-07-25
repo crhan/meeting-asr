@@ -659,3 +659,53 @@ def test_clean_clips_win_the_default_picks_over_overlapping_ones(
     assert not crowded.recommended
     picked = [clip for clip in clips.values() if clip.recommended]
     assert picked and all(not clip.overlap_risk for clip in picked)
+
+
+def test_a_source_with_only_crowded_clips_pre_selects_nothing(
+    tmp_path: Path,
+) -> None:
+    """Never fall back to recommending a mixture, even as the only option.
+
+    A tight two-party call has crosstalk on *every* segment, so a "nothing
+    clean, recommend anyway" fallback would put the default tick exactly where
+    the audio is worst. The clips stay selectable; the operator just has to
+    decide for themselves.
+    """
+    store_dir = tmp_path / "voiceprints"
+    projects_dir = tmp_path / "projects"
+    rows = _seed_person(store_dir, "Pan", sample_count=3, project_id="p-old")
+    person_id = rows[0].speaker_public_id
+    sentences: list[dict] = []
+    for index in range(6):
+        base = index * 30_000
+        sentences.append(
+            {
+                "begin_time_ms": base,
+                "end_time_ms": base + 9_000,
+                "text": f"这是第{index}句内容完整、时长充足的发言，信息量也很充分。",
+                "speaker_id": 0,
+            }
+        )
+        sentences.append(
+            {
+                "begin_time_ms": base + 9_000,
+                "end_time_ms": base + 15_000,
+                "text": f"这是另一个人紧接着的第{index}句回应，中间没有停顿。",
+                "speaker_id": 1,
+            }
+        )
+    _make_project(
+        projects_dir,
+        "p-only-crowded",
+        sentences=sentences,
+        speaker_map={0: "Pan", 1: "Other"},
+        person_map={0: person_id},
+    )
+
+    report = find_sample_sources(
+        person_id, projects_dir=projects_dir, store_dir=store_dir
+    )
+
+    source = report.sources[0]
+    assert source.clips, "clips must stay selectable"
+    assert not any(clip.recommended for clip in source.clips)
