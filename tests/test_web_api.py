@@ -2238,12 +2238,24 @@ def test_library_health_route_runs_the_overlap_check(
         create_app(settings), base_url="http://127.0.0.1:8765"
     ) as bare_client:
         resp = bare_client.get("/api/voiceprints/health")
+        person_ref = bare_client.get("/api/voiceprints/library").json()["people"][0][
+            "public_id"
+        ]
+        samples = bare_client.get(f"/api/voiceprints/people/{person_ref}/samples")
 
     assert resp.status_code == 200
     kinds = {issue["kind"] for issue in resp.json()["issues"]}
     assert "overlapped-samples" in kinds
     issue = next(i for i in resp.json()["issues"] if i["kind"] == "overlapped-samples")
     assert issue["context"]["overlapped_count"] == 3
+    # The count alone leaves the operator staring at a list of identical-looking
+    # rows. The same check has to reach the individual sample.
+    assert samples.status_code == 200
+    assert [item["overlap_risk"] for item in samples.json()["samples"]] == [
+        True,
+        True,
+        True,
+    ]
 
 
 def test_sample_sources_route_ranks_harvestable_projects(

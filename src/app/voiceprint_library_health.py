@@ -23,8 +23,6 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.models import SentenceSegment
-from app.speaker_labeling import load_transcript_result
 from app.voiceprint_audio import resolve_voiceprint_sample_source
 from app.voiceprint_calibration import (
     VoiceprintCalibrationReport,
@@ -32,7 +30,7 @@ from app.voiceprint_calibration import (
 )
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_models import VoiceprintSampleRow
-from app.voiceprint_segment_selection import has_overlap_risk
+from app.voiceprint_sample_overlap import overlapped_sample_ids
 from app.voiceprint_quality import (
     DEFAULT_MIN_CLUSTER_SIZE,
     VOICEPRINT_MATCHING_SAMPLE_STATUSES,
@@ -333,11 +331,9 @@ def _overlapped_samples(
     """
     Count each person's matching samples taken from a two-people-at-once stretch.
 
-    A voiceprint is only as clean as the audio behind it, and nothing in the
-    store records how crowded that audio was. The answer lives in the source
-    project's transcript, so this joins back to it: for every sample still in
-    the matching pool, does another speaker hold the floor within half a second
-    of it?
+    Only samples that actually reach the matching pool are counted: a
+    quarantined or unembedded sample cannot drag anyone's centroid, so
+    reporting it here would be an issue with no consequence.
 
     Args:
         samples: Every stored sample row.
@@ -349,41 +345,20 @@ def _overlapped_samples(
         projects directory was supplied, so "not checked" never renders as
         "checked and clean".
     """
-    if projects_dir is None:
+    in_pool = [
+        row
+        for row in samples
+        if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
+        and row.sample_id in embedded_ids
+    ]
+    flagged = overlapped_sample_ids(in_pool, projects_dir)
+    if not flagged:
         return {}
-    by_project: dict[str, list[VoiceprintSampleRow]] = defaultdict(list)
-    for row in samples:
-        if row.sample_status not in VOICEPRINT_MATCHING_SAMPLE_STATUSES:
-            continue
-        if row.sample_id not in embedded_ids:
-            continue
-        by_project[row.project_id].append(row)
     counts: dict[str, int] = defaultdict(int)
-    for project_id, rows in by_project.items():
-        segments = _project_segments(projects_dir / project_id)
-        if segments is None:
-            continue
-        for row in rows:
-            probe = SentenceSegment(
-                begin_time_ms=row.source_begin_time_ms,
-                end_time_ms=row.source_end_time_ms,
-                text="",
-                speaker_id=row.project_speaker_id,
-            )
-            if has_overlap_risk(probe, segments):
-                counts[row.speaker_public_id] += 1
+    for row in in_pool:
+        if row.sample_id in flagged:
+            counts[row.speaker_public_id] += 1
     return dict(counts)
-
-
-def _project_segments(project_dir: Path) -> list[SentenceSegment] | None:
-    """Load a project's normalized transcript, or None when unreadable."""
-    path = project_dir / "asr" / "sentences.json"
-    if not path.is_file():
-        return None
-    try:
-        return load_transcript_result(path).sentences
-    except Exception:  # noqa: BLE001 - one unreadable project must not fail the report
-        return None
 
 
 def _overlap_issues(person: PersonHealth, overlapped: int) -> list[LibraryIssue]:

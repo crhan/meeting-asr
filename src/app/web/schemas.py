@@ -562,6 +562,11 @@ class VoiceprintSampleOut(BaseModel):
     identity_confirmed: bool
     matching_enabled: bool
     clip_rel_path: str
+    # Another speaker holds the floor within half a second of this sample's
+    # source audio, so the clip is a mixture rather than one voice. None means
+    # the source project was unavailable and the check did not run -- clients
+    # must not render that as "checked and clean".
+    overlap_risk: bool | None = None
 
 
 class VoiceprintLibraryOut(BaseModel):
