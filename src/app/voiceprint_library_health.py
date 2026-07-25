@@ -647,8 +647,11 @@ def _threshold_issues(
                     f"{current.false_reject_rate:.0%} of correct matches"
                 ),
                 detail=(
+                    # facts["genuine_count"], not len(genuine_scores): the count
+                    # above is scaled to the whole library, so the capped export
+                    # length would read "3000 of 2000".
                     f"{current.false_reject_count} of "
-                    f"{len(calibration.genuine_scores)} same-person scores fall "
+                    f"{facts['genuine_count']} same-person scores fall "
                     "below the current threshold and would need manual naming. "
                     f"Moving to {calibration.suggested_threshold:.3f} recovers "
                     f"{gained} of them while still accepting "

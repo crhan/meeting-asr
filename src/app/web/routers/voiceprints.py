@@ -560,15 +560,27 @@ def run_embed(
     store_dir = settings.voiceprint_store_dir
 
     def work(reporter) -> dict[str, object]:
-        summary = embed_voiceprint_samples(
-            store_dir=store_dir,
-            provider=None,
-            model=None,
-            rebuild=False,
-            progress=reporter,
-            # A registry row whose clip file is gone must not abort the whole
-            # backfill; the remaining people still gain their embeddings.
-            skip_missing_clips=True,
+        # Through the registry guard like every other global-store write: this
+        # job writes embedding rows into the same SQLite file a capture
+        # snapshots. Outside the guard it could land between a capture's
+        # snapshot and its registration, and the eventual rollback would
+        # restore a store without these vectors -- the job having already
+        # reported "embedded N". The guard instead fails the job with a
+        # conflict while a capture is pending, which is a visible answer.
+        # The lock is held for the whole backfill, which matches what a capture
+        # run itself does (its own embed+evaluate runs inside this same lock).
+        summary = REGISTRY.run_store_write(
+            lambda: embed_voiceprint_samples(
+                store_dir=store_dir,
+                provider=None,
+                model=None,
+                rebuild=False,
+                progress=reporter,
+                # A registry row whose clip file is gone must not abort the
+                # whole backfill; the remaining people still gain their
+                # embeddings.
+                skip_missing_clips=True,
+            )
         )
         return {
             "model": summary.model,

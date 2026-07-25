@@ -734,6 +734,48 @@ def test_capture_pending_blocks_store_writes(
     assert resp.json()["error"] == "conflict"
 
 
+def test_embed_backfill_goes_through_the_capture_guard(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backfill writes to the same store a pending capture can roll back.
+
+    Outside the registry guard it could land between a capture's snapshot and
+    its registration, and the rollback would then restore a store without the
+    new vectors -- after the job already reported how many it embedded. The
+    guard must see this write like every other one.
+    """
+    import app.web.routers.voiceprints as voiceprints
+
+    seen: dict[str, bool] = {}
+
+    def spy(fn):
+        seen["guarded"] = True
+        return fn()
+
+    embedded: dict[str, bool] = {}
+
+    def fake_embed(**kwargs):
+        embedded["ran"] = True
+
+        class Summary:
+            model = "m"
+            embedded_count = 0
+            skipped_count = 0
+
+        return Summary()
+
+    monkeypatch.setattr(voiceprints.REGISTRY, "run_store_write", spy)
+    monkeypatch.setattr(voiceprints, "embed_voiceprint_samples", fake_embed)
+
+    resp = client.post("/api/voiceprints/embed")
+    assert resp.status_code == 200
+    snapshot = _drain_job(client, resp.json()["job_id"])
+
+    assert snapshot["status"] == "done"
+    assert seen.get("guarded") is True
+    assert embedded.get("ran") is True
+
+
 def test_speaker_save_marshals_decision(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
