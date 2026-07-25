@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from app.voiceprint_models import VoiceprintSampleRow
-from app.voiceprint_sample_overlap import overlapped_sample_ids
+from app.voiceprint_sample_overlap import check_sample_overlap
 
 
 def _row(sample_id: int, *, begin_ms: int, end_ms: int, project: str) -> VoiceprintSampleRow:
@@ -74,21 +74,22 @@ def test_only_the_crowded_sample_is_flagged(tmp_path: Path) -> None:
         _row(2, begin_ms=60_000, end_ms=68_000, project="p-mixed"),
     ]
 
-    assert overlapped_sample_ids(rows, projects_dir) == frozenset({2})
+    assert check_sample_overlap(rows, projects_dir) == {1: False, 2: True}
 
 
-def test_missing_projects_directory_returns_none_not_empty(tmp_path: Path) -> None:
+def test_unchecked_samples_are_absent_rather_than_clean(tmp_path: Path) -> None:
     """"Not checked" and "checked and clean" must stay distinguishable.
 
-    Both would render as a clean library, which is the exact failure this whole
-    check exists to prevent, so the two answers cannot share a value.
+    Both render as a sample with no warning, which is the exact failure this
+    whole check exists to prevent, so the two answers cannot share a value.
+    A verdict is therefore only recorded for samples actually examined.
     """
     rows = [_row(1, begin_ms=0, end_ms=8_000, project="p-missing")]
 
-    assert overlapped_sample_ids(rows, None) is None
-    # A readable projects dir with no transcript for that project is a real
-    # "nothing found", which is an empty set rather than None.
-    assert overlapped_sample_ids(rows, tmp_path) == frozenset()
+    assert check_sample_overlap(rows, None) == {}
+    # A readable projects dir that holds no transcript for this project is
+    # still "unknown", not "clean": the sample was never examined.
+    assert check_sample_overlap(rows, tmp_path) == {}
 
 
 def test_unreadable_transcript_does_not_fail_the_whole_check(tmp_path: Path) -> None:
@@ -111,4 +112,9 @@ def test_unreadable_transcript_does_not_fail_the_whole_check(tmp_path: Path) -> 
         _row(2, begin_ms=0, end_ms=8_000, project="p-ok"),
     ]
 
-    assert overlapped_sample_ids(rows, projects_dir) == frozenset({2})
+    verdicts = check_sample_overlap(rows, projects_dir)
+
+    # The readable project answers for its sample; the broken one stays absent
+    # instead of being reported clean.
+    assert verdicts == {2: True}
+    assert 1 not in verdicts

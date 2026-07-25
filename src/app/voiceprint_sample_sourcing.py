@@ -53,6 +53,7 @@ from app.voiceprint_library_health import (
 )
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_models import VoiceprintSampleRow
+from app.voiceprint_people import get_voiceprint_person
 from app.voiceprint_quality import DEFAULT_MIN_CLUSTER_SIZE
 from app.voiceprint_segment_selection import (
     MIN_RECOMMENDED_SCORE,
@@ -242,7 +243,7 @@ def find_sample_sources(
         provider=provider, model=model
     )
     embedded_ids = list_embedded_sample_ids(resolved_model, db_path)
-    person_name = health.speaker_name if health else _fallback_name(samples)
+    person_name = _resolve_person_name(person_public_id, health, samples, db_path)
     deficits = _deficits(health)
     matching_project_ids = _matching_project_ids(samples, health, embedded_ids)
     sampled_ranges = _sampled_ranges(samples)
@@ -313,9 +314,27 @@ def _deficits(health: PersonHealth | None) -> tuple[str, ...]:
     return tuple(found)
 
 
-def _fallback_name(samples: list[VoiceprintSampleRow]) -> str:
-    """Return a display name when availability facts are unavailable."""
-    return samples[0].speaker_name if samples else ""
+def _resolve_person_name(
+    person_public_id: str,
+    health: PersonHealth | None,
+    samples: list[VoiceprintSampleRow],
+    db_path: Path,
+) -> str:
+    """
+    Return this person's display name, sample-free people included.
+
+    Availability facts are derived from stored samples, so a person created in
+    the library but never captured has neither health nor samples to read a
+    name from. Leaving it blank would silently disable the display-name half of
+    attribution -- and that is exactly the person the "no samples" issue sends
+    here, whose speakers in past meetings are usually named but not yet linked.
+    """
+    if health is not None:
+        return health.speaker_name
+    if samples:
+        return samples[0].speaker_name
+    row = get_voiceprint_person(person_public_id, db_path)
+    return row.name if row else ""
 
 
 def _is_matchable(row: VoiceprintSampleRow, embedded_ids: set[int]) -> bool:

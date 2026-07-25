@@ -223,10 +223,18 @@ def resolve_voiceprint_sample_source(
     audio and was silently skipped, leaving those people permanently absent
     from the matching pool while the clips sat there intact.
 
-    Prefer the rebased path when it exists (correct for both the moved-library
-    and the isolated-copy case; identical to ``clip_path`` for an untouched
-    store), and fall back to the stored absolute path otherwise so the error
-    message still names what the registry actually recorded.
+    Always return the rebased path when the row can be rebased at all — even
+    when that file is missing. Falling back to ``clip_path`` for a missing
+    rebase would read audio from OUTSIDE the configured store, which is exactly
+    what ``resolve_in_store_clip_path`` exists to prevent: against a
+    ``--store-dir`` copy whose clips were not copied, health would call those
+    samples embeddable and an embed run would quietly consume the real store's
+    audio, so the isolation the copy was made for would hold for writes and
+    leak for reads. A missing clip must read as missing.
+
+    ``clip_path`` is used only when rebasing is impossible (an absolute or
+    escaping ``clip_rel_path``), where naming what the registry recorded is the
+    only useful thing left to say.
 
     Args:
         sample: Stored sample metadata.
@@ -236,9 +244,7 @@ def resolve_voiceprint_sample_source(
         Clip path to read the sample's audio from.
     """
     rebased = resolve_in_store_clip_path(sample, _resolve_store_dir(store_dir))
-    if rebased is not None and rebased.exists():
-        return rebased
-    return sample.clip_path
+    return rebased if rebased is not None else sample.clip_path
 
 
 def normalized_voiceprint_sample_path(

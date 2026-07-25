@@ -10,6 +10,7 @@ from typing import Any
 from app.core.project_refs import list_projects
 from app.project_manager import load_manifest
 from app.speaker_labeling import load_ignored_speakers
+from app.speaker_pipeline_params import resolve_match_threshold
 from app.speaker_match_status import (
     best_candidate_name,
     best_candidate_score,
@@ -138,7 +139,7 @@ def evaluate_voiceprint_embedding(
     store_dir: Path | None,
     provider: str | None,
     model: str | None,
-    threshold: float = 0.75,
+    threshold: float | None = None,
     sample_count: int = 2,
     max_seconds: float = 12.0,
     padding_seconds: float = 0.5,
@@ -152,8 +153,14 @@ def evaluate_voiceprint_embedding(
         project_dir: Current project root.
         store_dir: Optional global voiceprint store.
         provider: Provider override. Model is optional.
+        threshold: Acceptance threshold, or None to read the configured one.
+            A literal default would be baked in at import time, so a configured
+            threshold would apply to project runs but not to the evaluation
+            shown right after a capture -- the same number judged two ways.
     """
     project_root = project_dir.expanduser().resolve()
+    if threshold is None:
+        threshold = resolve_match_threshold()
     current = _current_evaluation(
         project_root,
         store_dir=store_dir,

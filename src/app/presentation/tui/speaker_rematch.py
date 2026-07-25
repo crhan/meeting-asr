@@ -21,6 +21,7 @@ from app.speaker_match_status import (
     voiceprint_match_status,
 )
 from app.speaker_cluster_quality import analyze_project_speaker_clusters
+from app.speaker_pipeline_params import resolve_match_threshold
 from app.speaker_matching import SpeakerMatchSummary, match_project_speakers
 from app.speaker_sample_matching import (
     DEFAULT_IDENTITY_AMBIGUOUS_MARGIN,
@@ -30,7 +31,10 @@ from app.speaker_sample_matching import (
 )
 from app.voiceprint_quality import DEFAULT_CRITICAL_SCORE, DEFAULT_WARNING_SCORE
 
-DEFAULT_REVIEW_MATCH_THRESHOLD = 0.75
+# No threshold constant here: the acceptance threshold is configurable, and a
+# module-level literal is bound at import time, so a TUI rematch would keep
+# using 0.75 while project runs and web rematches used the configured value --
+# the same speaker accepted or rejected depending on which door it came in.
 DEFAULT_REVIEW_MATCH_SAMPLE_COUNT = 2
 DEFAULT_REVIEW_MATCH_MAX_SECONDS = 12.0
 DEFAULT_REVIEW_MATCH_PADDING_SECONDS = 0.5
@@ -162,7 +166,7 @@ def run_speaker_rematch(
         store_dir=store_dir,
         provider=None,
         model=None,
-        threshold=DEFAULT_REVIEW_MATCH_THRESHOLD,
+        threshold=resolve_match_threshold(),
         sample_count=DEFAULT_REVIEW_MATCH_SAMPLE_COUNT,
         max_seconds=DEFAULT_REVIEW_MATCH_MAX_SECONDS,
         padding_seconds=DEFAULT_REVIEW_MATCH_PADDING_SECONDS,

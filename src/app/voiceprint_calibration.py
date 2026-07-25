@@ -55,7 +55,17 @@ class ScoreDistribution:
 
 @dataclass(frozen=True, slots=True)
 class ThresholdCost:
-    """What one candidate threshold costs on the current library."""
+    """What one candidate threshold costs on the current library.
+
+    Strictly a *threshold-only* model: acceptance is ``score >= threshold`` and
+    nothing else. Production matching also rescues a score down to
+    ``STRONG_MARGIN_ACCEPT_SCORE`` when it leads the runner-up by
+    ``STRONG_MARGIN_ACCEPT_MARGIN``, and pricing that would need each probe's
+    best/runner-up pair, which this all-pairs sweep does not have. So these
+    counts are an upper bound on false rejects and a lower bound on false
+    accepts, and callers must present them as the cost of the threshold rule
+    rather than as the decisions the pipeline will actually make.
+    """
 
     threshold: float
     false_reject_count: int

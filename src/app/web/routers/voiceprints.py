@@ -53,7 +53,7 @@ from app.voiceprint_quality import (
     VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
     analyze_voiceprint_quality,
 )
-from app.voiceprint_sample_overlap import overlapped_sample_ids
+from app.voiceprint_sample_overlap import check_sample_overlap
 from app.voiceprint_sample_sourcing import (
     SampleSourceReport,
     find_sample_sources,
@@ -145,7 +145,7 @@ def _person_out(row: VoiceprintSpeakerRow) -> VoiceprintPersonOut:
 def _sample_out(
     index: int,
     row: VoiceprintSampleRow,
-    overlapped: frozenset[int] | None = None,
+    overlap_verdicts: dict[int, bool] | None = None,
 ) -> VoiceprintSampleOut:
     return VoiceprintSampleOut(
         index=index,
@@ -161,7 +161,7 @@ def _sample_out(
         identity_confirmed=_identity_confirmed(row.sample_status),
         matching_enabled=_matching_enabled(row.sample_status),
         clip_rel_path=row.clip_rel_path,
-        overlap_risk=None if overlapped is None else row.sample_id in overlapped,
+        overlap_risk=(overlap_verdicts or {}).get(row.sample_id),
     )
 
 
@@ -227,12 +227,14 @@ def get_person_samples(
     # The library health report says "this person has N contaminated samples";
     # without the per-row flag the operator lands here and every row looks the
     # same. Same check, same rule, resolved down to which row.
-    overlapped = overlapped_sample_ids(
+    overlap_verdicts = check_sample_overlap(
         rows, settings.projects_dir or get_default_projects_dir()
     )
     return VoiceprintSamplesOut(
         person=_person_out(person),
-        samples=[_sample_out(i + 1, row, overlapped) for i, row in enumerate(rows)],
+        samples=[
+            _sample_out(i + 1, row, overlap_verdicts) for i, row in enumerate(rows)
+        ],
     )
 
 

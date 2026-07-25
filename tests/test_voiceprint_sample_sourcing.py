@@ -762,3 +762,32 @@ def test_a_project_whose_samples_lost_their_vectors_is_unharvested_again(
     live = next(item for item in report.sources if item.project_id == "p-live")
     assert live.matching_sample_count == 3
     assert REASON_NEW_PROJECT not in live.reasons
+
+
+def test_a_person_with_no_samples_can_still_be_found_by_name(tmp_path: Path) -> None:
+    """The "no samples" issue sends this person here; it must not dead-end.
+
+    With nothing captured there is no health row and no sample to read a name
+    from, so a sample-derived name would come back empty and silently disable
+    display-name attribution -- leaving the one action offered for that issue
+    with nothing to show unless a project already links the person explicitly.
+    """
+    from app.voiceprint_people import create_voiceprint_person
+
+    store_dir = tmp_path / "voiceprints"
+    projects_dir = tmp_path / "projects"
+    person = create_voiceprint_person("Si", get_voiceprint_db_path(store_dir))
+    _make_project(
+        projects_dir,
+        "p-named",
+        sentences=_speech(0, count=14, speaker_id=0),
+        speaker_map={0: "Si"},
+    )
+
+    report = find_sample_sources(
+        person.public_id, projects_dir=projects_dir, store_dir=store_dir
+    )
+
+    assert report.person_name == "Si"
+    assert [item.project_id for item in report.sources] == ["p-named"]
+    assert report.sources[0].evidence == EVIDENCE_NAME

@@ -604,6 +604,17 @@ function ThresholdCard(props: {
           {suggestionReason(calibration)}
         </p>
       )}
+      {/* These counts price the threshold rule alone. Matching also rescues a
+          clearly-leading score below the threshold, and pricing that would need
+          each probe's runner-up, which this all-pairs sweep does not have --
+          so the numbers bound the outcome rather than predict it. */}
+      <p className="vq-note subtle">
+        <span className="vq-note-tag">{tr("Scope", "口径")}</span>
+        {tr(
+          "Costs model the threshold rule only (accept when score ≥ threshold). Matching additionally rescues a score that clearly leads the runner-up, so real misses are no worse than shown and real wrong names no better.",
+          "这里只按阈值规则计价(分数 ≥ 阈值才接受)。实际匹配还会救回「明显领先第二名」的低分,所以真实误拒不会比这更多、真实误纳不会比这更少。",
+        )}
+      </p>
       {calibration.low_confidence && (
         <p className="vq-note warn">
           <span className="vq-note-tag">{tr("Caveat", "注意")}</span>

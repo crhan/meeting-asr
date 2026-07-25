@@ -30,7 +30,7 @@ from app.voiceprint_calibration import (
 )
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_models import VoiceprintSampleRow, VoiceprintSpeakerRow
-from app.voiceprint_sample_overlap import overlapped_sample_ids
+from app.voiceprint_sample_overlap import check_sample_overlap
 from app.voiceprint_quality import (
     DEFAULT_MIN_CLUSTER_SIZE,
     VOICEPRINT_MATCHING_SAMPLE_STATUSES,
@@ -382,12 +382,10 @@ def _overlapped_samples(
         if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
         and row.sample_id in embedded_ids
     ]
-    flagged = overlapped_sample_ids(in_pool, projects_dir)
-    if not flagged:
-        return {}
+    verdicts = check_sample_overlap(in_pool, projects_dir)
     counts: dict[str, int] = defaultdict(int)
     for row in in_pool:
-        if row.sample_id in flagged:
+        if verdicts.get(row.sample_id):
             counts[row.speaker_public_id] += 1
     return dict(counts)
 

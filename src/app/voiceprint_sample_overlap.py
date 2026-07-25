@@ -24,36 +24,42 @@ from app.voiceprint_models import VoiceprintSampleRow
 from app.voiceprint_segment_selection import has_overlap_risk
 
 
-def overlapped_sample_ids(
+def check_sample_overlap(
     samples: Iterable[VoiceprintSampleRow],
     projects_dir: Path | None,
-) -> frozenset[int] | None:
+) -> dict[int, bool]:
     """
-    Return the ids of samples whose source audio overlaps another speaker.
+    Return per-sample overlap verdicts for the samples that could be checked.
+
+    The result is deliberately *partial*. A sample is absent when its source
+    transcript could not be read -- the project was deleted, is unreadable, or
+    lives outside ``projects_dir`` because it was created with an explicit
+    ``--project-dir``. Absent means "unknown", and callers must carry that
+    through instead of defaulting it to False: rendering an unchecked sample as
+    clean is the exact failure this check exists to catch, and a per-project
+    read failure would otherwise silently whitewash every sample from it.
 
     Args:
         samples: Sample rows to check, from any number of projects.
         projects_dir: Projects parent directory, or None when unavailable.
 
     Returns:
-        Ids of the overlapping samples, or None when the check could not run.
-        None and an empty set mean different things and callers must keep them
-        apart: "not checked" must never be presented as "checked and clean".
+        Sample id to "overlaps another speaker". Empty when no projects
+        directory was given, so nothing is claimed to have been checked.
     """
     if projects_dir is None:
-        return None
+        return {}
     by_project: dict[str, list[VoiceprintSampleRow]] = defaultdict(list)
     for row in samples:
         by_project[row.project_id].append(row)
-    flagged: set[int] = set()
+    verdicts: dict[int, bool] = {}
     for project_id, rows in by_project.items():
         segments = _project_segments(projects_dir / project_id)
         if segments is None:
             continue
         for row in rows:
-            if has_overlap_risk(_probe_segment(row), segments):
-                flagged.add(row.sample_id)
-    return frozenset(flagged)
+            verdicts[row.sample_id] = has_overlap_risk(_probe_segment(row), segments)
+    return verdicts
 
 
 def _probe_segment(row: VoiceprintSampleRow) -> SentenceSegment:
