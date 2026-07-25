@@ -34,7 +34,12 @@ uv run meeting-asr web --port 8765
 - **采集声纹** `/projects/:ref/capture`：候选 clip 勾选 → 采集+嵌入（后台 job）→ 结果对比
   （本项目与历史项目逐发言人分数变化）→ 接受 / 回滚。
 - **Voiceprints** `/voiceprints`：库浏览（人物 + 样本 + 音频）、质量（离群样本 + 状态改判）、
-  人物 CRUD。
+  人物 CRUD。带 `?person=<public_id>` 可直接定位到某人。
+- **库质量** `/quality`：面向「库哪里有病、下一步修什么」，与上面的管理视图分开。
+  库体检卡（可用人数 / 匹配样本 / 有效时长 / 严重问题 + 可用性分层健康条)、
+  阈值卡（同人 vs 异人分数双直方图 + 可拖游标实时定价 + 建议值 + 一键应用/恢复默认）、
+  待办队列（每条问题都挂动作：补齐嵌入 / 查看样本 / 补采样本 / 调整阈值）、人员矩阵。
+  详见 [声纹库质量](voiceprint-quality.md)。
 - **文字纠错** `/projects/:ref/corrections`：生成 polish 提案（LLM job）→ 逐条勾选 diff → 应用。
 - **Lexicon** `/lexicon`：纠错词条增删搜、消歧、ASR 热词。
 - **Settings** `/settings`：配置（DashScope/OSS 凭证，密钥默认脱敏）、环境诊断（等同 `doctor`）。

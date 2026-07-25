@@ -115,6 +115,16 @@
 - **dry-run「零写盘」靠 `analyze_project_resplit(read_only=True)` 兑现，别把它当默认行为删掉**：嵌入本身要落 probe clip（embed 必须读音频文件）+ persist 共享 clip 缓存 `tmp/voiceprint_clips/clip_embeddings.json`（probe/cluster/sample 三方共用,存 raw 向量,见 `speaker_clip_embeddings.py`），默认会写进项目 tmp/。read_only 路径把**暖缓存仍从真实项目读**进内存复用，但把 clip 抽取 + cache persist 整体重定向到一次性 `TemporaryDirectory`（`_ClusterContext.project_root` 换成 scratch，`source` 仍指真实音频；clip 持有的是向量不是文件路径，嵌完即弃）。CLI dry-run 传 `read_only=True`，`project run` / `--apply` 不传（那两条**该**写 cache 暖后续嵌入）。谁要把 read_only 去掉或让 dry-run 也 persist，就破坏了预览契约（实测参考项目 dry-run 后 635 个 tmp/speakers/exports 文件 mtime 零变化）。
 - **排查 resplit 误拆时先回到 raw speaker 入口**：`asr/sentences.json` 可能已经被 resplit / stabilization 改写，不能拿它当 ASR 原始 speaker 数。用 `asr/raw_result.json` 的原始 `speaker_id` 还原临时项目再跑 `analyze_project_resplit(read_only=True)`，否则会把后处理污染当成 ASR 检出问题。未命名 track 的 promotion / residue 判断必须拿候选簇跟 source track centroid 比；只跟 0/None 比会把同一真人的弱声纹片段拆成蜀江/景琦/奕阁这类假 speaker。
 
+## Voiceprint Library Health Notes（库质量:可用性 vs 一致性）
+
+- **`voiceprint_quality` 和 `voiceprint_library_health` 回答的是两个不同问题，别混为一谈。** 前者是**簇内一致性**（样本 vs 本人质心的 cosine），后者是**可用性**（这个人到底能不能进匹配池）。一致性检查对两种静默失活**结构性失明**：①样本没有**当前 model** 的向量（切 provider 后没重跑 `voiceprint embed`）——该人在 `analyze_voiceprint_quality` 的报告里**整行都不出现**；②样本全被 quarantine——报告显示「0 suspicious」，因为**已经没有样本可供挑错**。两种情况都渲染成绿色，而人根本不会被匹配到。实测本机库 7 人里墨泪、李依娜正是第①种。**看到「0 critical」不等于库健康，先看 `voiceprint health`。**
+- **一致性指标在小样本下是自证循环**：3 个样本的人，质心就是这 3 个样本的平均，自洽是必然的，所以**小簇结构上不可能被标 critical**。`fragile`（< `DEFAULT_MIN_CLUSTER_SIZE`）这一档就是为了把「无法证伪」和「已验证健康」区分开。
+- **阈值不再是常量，所有入口必须走 `resolve_match_threshold()`**。`DEFAULT_MATCH_THRESHOLD = 0.75` 只是**兜底默认**，真正生效的是 config key `voiceprint.match_threshold`。**最容易漏的一处是 `sentence_reassignment` 的重指派后 rematch**：它若继续吃常量，配置过的阈值就会「`project run` 时生效、紧接着 stabilization 一跑又变回去」，表现为用户改了阈值却「时灵时不灵」。同理 CLI 的 `typer.Option` 默认值必须是 `None` 而非常量——常量在**模块导入期**求值，配置永远读不到；web 的 `RunPipelineIn.match_threshold` 同理默认 `None`。
+- **阈值是耦合的，改动有静默副作用**：降到 `STRONG_MARGIN_ACCEPT_SCORE`(0.65) 及以下，strong-margin 救援规则变成**死代码**（它要救的都已被直接接受）；降到 crosstalk `score_floor`(0.5) 及以下，接受层能接受的人同时也符合串场标记条件。两者都**不报错**，所以 `match_threshold_coupling_warnings()` / `match_threshold_coupling_kinds()` 必须在写入前显式展示。注意实测建议值 0.557 就会触发前者。
+- **建议阈值取「空档中点」而非 EER**：`max(impostor) + 裕度` 与 `genuine p5` 之间的中点，两侧都留余量。EER 可能紧贴 impostor 上界（本机库 EER 0.525 vs impostor max 0.522，零裕度），不适合直接当工作点。两个分布重叠时才退回 EER，并明确告诉用户**此时该修样本而不是调阈值**。
+- **calibration 导出 genuine/impostor 原始分数数组是刻意的**（`MAX_EXPORTED_SCORES` 等距下采样兜底大库）：前端拖动阈值游标要**本地实时定价**，拖一格打一次后端不可用。`cost_at()` 在前后端各实现一次，两边语义必须一致（接受判据是 `score >= threshold`；余弦有符号且可取到 1.0，写测试边界时别拿 0.0/1.0 当「全部之外」）。
+- **双语文案的分工：后端出英文散文 + `kind` + `context` 数字，前端按 locale 重新组装。** 不要在前端翻译整句（数字会在两处各写一遍，迟早不一致），也不要让后端产出中文（CLI/API 消费者要英文）。新增 issue kind 时必须同时在 `QualityPage.tsx` 的 `issueText()` 里加分支，否则 UI 会 fall through 成英文——可接受的降级，但不是终态。
+
 ## Crosstalk Tier Notes（会后串场/噪音放行档）
 
 - **crosstalk 是「非破坏性广告牌」，不是新的 speaker 操作。** 会尾常混入另一拨人的零碎串场（样本极少、声纹分数极低、候选对不上）。以前这种 cluster 卡在 `below-threshold`，逼下游瞎猜名或整场绕过。crosstalk 档只给它**打一个 advisory 标记**：speaker 仍是匿名 `Speaker N`、句子一字不改、不移动、不改名——与今日 below-threshold 对未命名 cluster 的处理**唯一区别就是换个 label**。所以最坏的误判（把只说「对对对」的真实安静与会者标成串场，见 ASR Postprocess Notes）后果只是多个「疑似串场」徽章，人还在转写里，review 可无视。这正是 **default-ON 安全**的原因。

@@ -35,6 +35,13 @@ from app.voiceprint_audio import (
     normalize_voiceprint_samples,
 )
 from app.voiceprint_calibration import calibrate_voiceprint_thresholds
+from app.voiceprint_library_health import (
+    AVAILABILITY_FRAGILE,
+    AVAILABILITY_OK,
+    AVAILABILITY_UNUSABLE,
+    LibraryHealthReport,
+    analyze_library_health,
+)
 from app.voiceprint_playback import build_voiceprint_play_command
 from app.voiceprint_people import (
     create_voiceprint_person,
@@ -725,6 +732,150 @@ def normalize_command(
     typer.echo(f"Normalized: {summary.normalized_dir}")
     typer.echo(f"Processed: {summary.processed_count}")
     typer.echo(f"Skipped: {summary.skipped_count}")
+
+
+@app.command("health")
+def health_command(
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Report which library people can be matched, and what blocks the rest.
+
+    Complements `voiceprint quality`: that command checks whether a person's
+    samples agree with each other, this one checks whether they reach the
+    matching pool at all. A person with no embeddings for the active model, or
+    with every sample quarantined, reads as clean there and is reported here.
+    """
+    report = run_with_cli_errors(
+        lambda: analyze_library_health(store_dir=store_dir, model=model)
+    )
+    if as_json:
+        emit_json(_library_health_payload(report))
+        return
+    _echo_library_health(report)
+
+
+def _library_health_payload(report: LibraryHealthReport) -> dict[str, object]:
+    """Return a JSON-ready library health payload."""
+    return {
+        "db_path": str(report.db_path),
+        "provider": report.provider,
+        "model": report.model,
+        "person_count": report.person_count,
+        "usable_person_count": report.usable_person_count,
+        "matching_sample_count": report.matching_sample_count,
+        "matching_seconds": round(report.matching_seconds, 1),
+        "critical_count": report.critical_count,
+        "warning_count": report.warning_count,
+        "people": [
+            {
+                "public_id": person.speaker_public_id,
+                "name": person.speaker_name,
+                "availability": person.availability,
+                "total_sample_count": person.total_sample_count,
+                "enabled_sample_count": person.enabled_sample_count,
+                "matching_sample_count": person.matching_sample_count,
+                "missing_embedding_count": person.missing_embedding_count,
+                "matching_seconds": person.matching_seconds,
+                "project_count": person.project_count,
+            }
+            for person in report.people
+        ],
+        "issues": [
+            {
+                "kind": issue.kind,
+                "severity": issue.severity,
+                "title": issue.title,
+                "detail": issue.detail,
+                "action": issue.action,
+                "person_public_id": issue.person_public_id,
+                "person_name": issue.person_name,
+                "context": dict(issue.context),
+            }
+            for issue in report.issues
+        ],
+        "calibration": (
+            report.calibration.to_dict() if report.calibration is not None else None
+        ),
+    }
+
+
+def _echo_library_health(report: LibraryHealthReport) -> None:
+    """Print library availability and the prioritized issue list."""
+    typer.echo(f"Database: {report.db_path}")
+    typer.echo(f"Model: {report.model}")
+    typer.echo(
+        f"People matchable: {report.usable_person_count}/{report.person_count} | "
+        f"Matching samples: {report.matching_sample_count} | "
+        f"Matching audio: {report.matching_seconds:.0f}s"
+    )
+    if not report.people:
+        typer.echo("No voiceprint samples found.")
+        return
+    _voiceprint_table_console().print(_library_health_table(report))
+    if not report.issues:
+        typer.echo("")
+        typer.echo("No blocking issues found.")
+        return
+    typer.echo("")
+    typer.echo(
+        f"Issues: {report.critical_count} critical, {report.warning_count} warning"
+    )
+    for issue in report.issues:
+        typer.echo(f"  [{issue.severity}] {issue.title}")
+        typer.echo(f"      {issue.detail}")
+        typer.echo(f"      -> {_health_action_hint(issue.action)}")
+
+
+def _health_action_hint(action: str) -> str:
+    """Return the command that resolves one issue action."""
+    if action == "embed":
+        return "meeting-asr voiceprint embed"
+    if action == "review-samples":
+        return "meeting-asr voiceprint quality --review"
+    if action == "capture":
+        return "meeting-asr project speakers learn <project> --speaker-id N --apply"
+    if action == "set-threshold":
+        return (
+            "meeting-asr voiceprint calibrate  # then: "
+            "meeting-asr config set voiceprint.match_threshold <value>"
+        )
+    return "meeting-asr voiceprint health"
+
+
+def _library_health_table(report: LibraryHealthReport) -> Table:
+    """Build the per-person availability table."""
+    table = Table(title="Voiceprint library availability")
+    table.add_column("Person ID", style="bold cyan", no_wrap=True)
+    table.add_column("Name")
+    table.add_column("Availability")
+    table.add_column("Matching", justify="right")
+    table.add_column("Audio", justify="right")
+    table.add_column("Sources", justify="right")
+    styles = {
+        AVAILABILITY_UNUSABLE: "red",
+        AVAILABILITY_FRAGILE: "yellow",
+        AVAILABILITY_OK: "green",
+    }
+    for person in report.people:
+        style = styles.get(person.availability, "white")
+        matching = f"{person.matching_sample_count}/{person.enabled_sample_count}"
+        if person.missing_embedding_count:
+            matching = f"{matching} (-{person.missing_embedding_count})"
+        table.add_row(
+            person.speaker_public_id,
+            person.speaker_name,
+            f"[{style}]{person.availability}[/{style}]",
+            matching,
+            f"{person.matching_seconds:.0f}s",
+            str(person.project_count),
+        )
+    return table
 
 
 @app.command("quality")

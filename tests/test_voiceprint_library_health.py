@@ -297,3 +297,30 @@ def test_health_payload_is_json_serializable(tmp_path: Path) -> None:
 
     payload = [issue.context for issue in report.issues]
     assert json.loads(json.dumps(payload)) == payload
+
+
+def test_health_cli_reports_unusable_people_and_next_command(tmp_path: Path) -> None:
+    """`voiceprint health` names the blocked person and the command that fixes it."""
+    from typer.testing import CliRunner
+
+    from app.cli import app
+
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [[1.0, 0.0], [0.98, 0.05], [0.99, -0.03]])
+    _seed_person(store_dir, "Ghost", [[0.0, 1.0]] * 3, embed=False)
+
+    result = CliRunner().invoke(
+        app, ["voiceprint", "health", "--store-dir", str(store_dir)]
+    )
+    as_json = CliRunner().invoke(
+        app, ["voiceprint", "health", "--store-dir", str(store_dir), "--json"]
+    )
+
+    assert result.exit_code == 0
+    assert "People matchable: 1/2" in result.output
+    assert "Ghost" in result.output
+    assert "meeting-asr voiceprint embed" in result.output
+    assert as_json.exit_code == 0
+    payload = json.loads(as_json.output)
+    assert payload["usable_person_count"] == 1
+    assert any(i["kind"] == "missing-embeddings" for i in payload["issues"])
