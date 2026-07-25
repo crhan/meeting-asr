@@ -471,6 +471,10 @@ export interface MatchThreshold {
   default: number;
   warnings: string[];
   warning_kinds: string[];
+  /** Coupling kind -> the threshold at or below which it triggers. Published
+   *  so a candidate can be judged before it is applied, without restating
+   *  the numbers here. */
+  coupling_bounds: Record<string, number>;
 }
 
 export interface EmbedBacklog {

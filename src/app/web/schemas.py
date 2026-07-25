@@ -759,6 +759,10 @@ class MatchThresholdOut(BaseModel):
     default: float
     warnings: list[str]
     warning_kinds: list[str]
+    # Boundaries the coupling rules compare against, so a client can warn about
+    # a candidate value BEFORE it is applied without hardcoding the numbers.
+    # After the PUT is too late: the point of the warning is the decision.
+    coupling_bounds: dict[str, float] = {}
 
 
 class EmbedBacklogOut(BaseModel):

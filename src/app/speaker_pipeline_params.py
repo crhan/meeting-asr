@@ -101,6 +101,23 @@ def resolve_match_threshold(explicit: float | None = None) -> float:
     return DEFAULT_MATCH_THRESHOLD
 
 
+def match_threshold_coupling_bounds() -> dict[str, float]:
+    """
+    Return the boundaries the coupling rules compare a threshold against.
+
+    Exposed so a client can evaluate a *candidate* threshold before applying
+    it. Recomputing the warnings only after the write makes them a receipt
+    rather than a warning, and the alternative -- restating 0.65 and 0.5 in the
+    UI -- puts the numbers in two places that will drift.
+    """
+    from app.speaker_crosstalk import DEFAULT_CROSSTALK_SCORE_FLOOR
+
+    return {
+        "strong-margin-dead": STRONG_MARGIN_ACCEPT_SCORE,
+        "below-crosstalk-floor": DEFAULT_CROSSTALK_SCORE_FLOOR,
+    }
+
+
 def match_threshold_coupling_kinds(threshold: float) -> tuple[str, ...]:
     """
     Return stable identifiers for the contracts a threshold would violate.
@@ -114,14 +131,13 @@ def match_threshold_coupling_kinds(threshold: float) -> tuple[str, ...]:
     Returns:
         Kinds among ``"strong-margin-dead"`` and ``"below-crosstalk-floor"``.
     """
-    from app.speaker_crosstalk import DEFAULT_CROSSTALK_SCORE_FLOOR
-
-    kinds: list[str] = []
-    if threshold <= STRONG_MARGIN_ACCEPT_SCORE:
-        kinds.append("strong-margin-dead")
-    if threshold <= DEFAULT_CROSSTALK_SCORE_FLOOR:
-        kinds.append("below-crosstalk-floor")
-    return tuple(kinds)
+    # Derived from the published bounds so a client evaluating a candidate
+    # threshold cannot reach a different verdict than the server does.
+    return tuple(
+        kind
+        for kind, bound in match_threshold_coupling_bounds().items()
+        if threshold <= bound
+    )
 
 
 def match_threshold_coupling_warnings(threshold: float) -> tuple[str, ...]:

@@ -189,3 +189,33 @@ def test_cost_counts_are_exact_below_the_export_cap() -> None:
 
     assert cost is not None
     assert cost.false_accept_count == 2
+
+
+def test_downsampling_keeps_the_extreme_scores() -> None:
+    """The tail is the whole point; striding must not shave it off.
+
+    A handful of impostors above the threshold is exactly what makes a
+    threshold unsafe, and it lives at the top of the sorted array. Dropping the
+    last element would let `cost_at` price such a threshold at zero false
+    accepts -- the report would be most wrong precisely when it matters.
+    """
+    from app.voiceprint_calibration import MAX_EXPORTED_SCORES, _exported_scores
+
+    population = [i / 10_000 for i in range(MAX_EXPORTED_SCORES * 3)]
+
+    exported = _exported_scores(population)
+
+    assert len(exported) == MAX_EXPORTED_SCORES
+    assert exported[0] == round(min(population), 4)
+    assert exported[-1] == round(max(population), 4)
+
+
+def test_a_lone_high_impostor_survives_downsampling() -> None:
+    """One score above the threshold must not vanish into the sampling grid."""
+    from app.voiceprint_calibration import MAX_EXPORTED_SCORES, _exported_scores
+
+    population = [0.10] * (MAX_EXPORTED_SCORES * 4) + [0.99]
+
+    exported = _exported_scores(population)
+
+    assert 0.99 in exported

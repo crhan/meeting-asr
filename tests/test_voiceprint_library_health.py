@@ -515,3 +515,51 @@ def test_a_person_with_no_samples_at_all_is_reported(tmp_path: Path) -> None:
     assert issue.person_name == "Empty"
     assert issue.severity == SEVERITY_CRITICAL
     assert issue.action == "capture"
+
+
+def test_threshold_issue_counts_describe_the_full_population() -> None:
+    """Scaled costs must be paired with the population they were scaled to.
+
+    The cost counts are scaled back to the whole library, so quoting the capped
+    export length beside them yields sentences like "3000 of 2000 same-person
+    scores were rejected" -- a report that visibly contradicts itself.
+    """
+    from app.voiceprint_calibration import (
+        ScoreDistribution,
+        VoiceprintCalibrationReport,
+    )
+    from app.voiceprint_library_health import _threshold_issues
+
+    calibration = VoiceprintCalibrationReport(
+        model="m",
+        person_count=2,
+        scored_person_count=2,
+        sample_count=10,
+        genuine=ScoreDistribution(
+            count=6_000, minimum=0.5, p5=0.55, median=0.8, p95=0.9, maximum=0.95
+        ),
+        impostor=ScoreDistribution(
+            count=10_000, minimum=0.1, p5=0.2, median=0.4, p95=0.7, maximum=0.8
+        ),
+        eer_threshold=0.65,
+        eer_rate=0.1,
+        low_impostor_threshold=0.82,
+        current_threshold=0.6,
+        warnings=(),
+        # Far fewer exported scores than the populations above: this is exactly
+        # the downsampled state the counts have to survive.
+        genuine_scores=tuple([0.55] * 50 + [0.85] * 50),
+        impostor_scores=tuple([0.3] * 50 + [0.75] * 50),
+        suggested_threshold=0.82,
+        suggested_reason="gap midpoint",
+        suggested_kind="gap",
+    )
+
+    issues = _threshold_issues(calibration)
+
+    assert issues
+    context = issues[0].context
+    assert context["genuine_count"] == 6_000
+    assert context["impostor_count"] == 10_000
+    # And the cost it is quoted beside is on the same scale.
+    assert context["current_false_accept_count"] == 5_000

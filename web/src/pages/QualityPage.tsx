@@ -55,6 +55,14 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
   const c = issue.context;
   const name = String(c.name ?? issue.person_name ?? "");
   switch (issue.kind) {
+    case "no-samples":
+      return {
+        title: tr(issue.title, `${name} 一条声纹样本都没有`),
+        detail: tr(
+          issue.detail,
+          "这个人在库里存在,但从来没有采集过任何样本,因此永远不会被匹配到。去他说过话的项目里采几条,或者把这个条目删掉。",
+        ),
+      };
     case "no-enabled-samples":
       return {
         title: tr(issue.title, `${name} 没有任何样本参与匹配`),
@@ -388,6 +396,7 @@ export function QualityPage() {
               builtinDefault={thresholdQuery.data?.default ?? 0.75}
               warnings={thresholdQuery.data?.warnings ?? []}
               warningKinds={thresholdQuery.data?.warning_kinds ?? []}
+              couplingBounds={thresholdQuery.data?.coupling_bounds ?? {}}
               pending={thresholdMut.isPending}
               onApply={async (value) => {
                 const ok = await confirmDialog({
@@ -530,6 +539,7 @@ function ThresholdCard(props: {
   builtinDefault: number;
   warnings: string[];
   warningKinds: string[];
+  couplingBounds: Record<string, number>;
   pending: boolean;
   onApply: (value: number | null) => void;
 }) {
@@ -540,6 +550,19 @@ function ThresholdCard(props: {
   useEffect(() => {
     setCandidate(calibration.current_threshold);
   }, [calibration.current_threshold]);
+
+  // Same comparison the server makes, against bounds the server published.
+  const candidateWarningKinds = useMemo(
+    () =>
+      Object.entries(props.couplingBounds)
+        .filter(([, bound]) => candidate <= bound)
+        .map(([kind]) => kind),
+    [props.couplingBounds, candidate],
+  );
+  // Reuse the server's English prose when it already described this kind for
+  // the active threshold; otherwise the localized branch carries the meaning.
+  const activeWarningFor = (kind: string) =>
+    warnings[warningKinds.indexOf(kind)] ?? "";
 
   const cost = useMemo(() => costAt(calibration, candidate), [calibration, candidate]);
   const currentCost = calibration.current_cost;
@@ -624,10 +647,15 @@ function ThresholdCard(props: {
           )}
         </p>
       )}
-      {warnings.map((warning, index) => (
-        <p className="vq-note warn" key={warning}>
+      {/* Judged on the CANDIDATE, not the active threshold. Warnings that
+          only appear after the PUT are a receipt; the whole point of a
+          coupling warning is to reach the user while the value is still a
+          proposal. Bounds come from the server so the verdict cannot differ
+          from the one it would reach itself. */}
+      {candidateWarningKinds.map((kind) => (
+        <p className="vq-note warn" key={kind}>
           <span className="vq-note-tag">{tr("Coupling", "耦合")}</span>
-          {couplingWarning(warningKinds[index] ?? "", warning)}
+          {couplingWarning(kind, activeWarningFor(kind))}
         </p>
       ))}
 

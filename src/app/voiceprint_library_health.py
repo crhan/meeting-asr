@@ -605,8 +605,11 @@ def _threshold_issues(
         "suggested_threshold": calibration.suggested_threshold,
         "suggested_false_reject_count": suggested.false_reject_count,
         "suggested_false_accept_count": suggested.false_accept_count,
-        "genuine_count": len(calibration.genuine_scores),
-        "impostor_count": len(calibration.impostor_scores),
+        # The true populations, not len(exported scores): the counts above are
+        # scaled back to the full population, so pairing them with the capped
+        # array length yields sentences like "3000 of 2000 same-person scores".
+        "genuine_count": calibration.genuine.count if calibration.genuine else 0,
+        "impostor_count": calibration.impostor.count if calibration.impostor else 0,
     }
     issues: list[LibraryIssue] = []
     if current.false_accept_count > 0:

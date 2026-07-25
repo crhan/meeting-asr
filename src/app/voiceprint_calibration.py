@@ -340,12 +340,23 @@ def _population(distribution: ScoreDistribution | None) -> int:
 
 
 def _exported_scores(scores: list[float]) -> tuple[float, ...]:
-    """Return sorted scores, evenly downsampled when the population is large."""
+    """
+    Return sorted scores, evenly downsampled when the population is large.
+
+    Both endpoints are kept. Striding by ``int(index * step)`` never lands on
+    the last element, which drops the maximum every time -- and the maximum is
+    the one score that matters most here: a handful of impostors above the
+    threshold is exactly the tail that makes a threshold unsafe, and losing it
+    would let ``cost_at`` price that threshold at zero false accepts.
+    """
     ordered = sorted(round(score, 4) for score in scores)
     if len(ordered) <= MAX_EXPORTED_SCORES:
         return tuple(ordered)
-    step = len(ordered) / MAX_EXPORTED_SCORES
-    return tuple(ordered[int(index * step)] for index in range(MAX_EXPORTED_SCORES))
+    last = len(ordered) - 1
+    return tuple(
+        ordered[round(index * last / (MAX_EXPORTED_SCORES - 1))]
+        for index in range(MAX_EXPORTED_SCORES)
+    )
 
 
 def _equal_error_threshold(

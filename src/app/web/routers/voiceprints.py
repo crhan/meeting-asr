@@ -27,6 +27,7 @@ from app.config import (
 from app.project_manager import load_manifest
 from app.speaker_pipeline_params import (
     DEFAULT_MATCH_THRESHOLD,
+    match_threshold_coupling_bounds,
     match_threshold_coupling_kinds,
     match_threshold_coupling_warnings,
     resolve_match_threshold,
@@ -397,6 +398,7 @@ def get_match_threshold() -> MatchThresholdOut:
         default=DEFAULT_MATCH_THRESHOLD,
         warnings=list(match_threshold_coupling_warnings(effective)),
         warning_kinds=list(match_threshold_coupling_kinds(effective)),
+        coupling_bounds=match_threshold_coupling_bounds(),
     )
 
 
