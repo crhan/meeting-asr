@@ -642,6 +642,121 @@ class QualityReportOut(BaseModel):
     people: list[QualityPersonOut]
 
 
+# ---- Voiceprint library health ---------------------------------------------
+
+
+class PersonHealthOut(BaseModel):
+    """Availability facts for one library person under the active model."""
+
+    public_id: str
+    name: str
+    total_sample_count: int
+    enabled_sample_count: int
+    matching_sample_count: int
+    missing_embedding_count: int
+    matching_seconds: float
+    project_count: int
+    availability: str
+
+
+class LibraryIssueOut(BaseModel):
+    """One actionable library problem."""
+
+    kind: str
+    severity: str
+    title: str
+    detail: str
+    action: str
+    person_public_id: str | None = None
+    person_name: str | None = None
+
+
+class ScoreDistributionOut(BaseModel):
+    """Summary statistics for one calibration score population."""
+
+    count: int
+    min: float
+    p5: float
+    median: float
+    p95: float
+    max: float
+
+
+class ThresholdCostOut(BaseModel):
+    """What one candidate threshold costs on the current library."""
+
+    threshold: float
+    false_reject_count: int
+    false_reject_rate: float
+    false_accept_count: int
+    false_accept_rate: float
+
+
+class CalibrationOut(BaseModel):
+    """Threshold calibration evidence for the active model."""
+
+    model: str
+    person_count: int
+    scored_person_count: int
+    sample_count: int
+    genuine: ScoreDistributionOut | None
+    impostor: ScoreDistributionOut | None
+    eer_threshold: float | None
+    eer_rate: float | None
+    low_impostor_threshold: float | None
+    current_threshold: float
+    warnings: list[str]
+    # Raw populations so the UI can price a dragged threshold locally.
+    genuine_scores: list[float]
+    impostor_scores: list[float]
+    suggested_threshold: float | None
+    suggested_reason: str
+    low_confidence: bool
+    current_cost: ThresholdCostOut | None
+    suggested_cost: ThresholdCostOut | None
+
+
+class LibraryHealthOut(BaseModel):
+    """Voiceprint library availability and threshold health."""
+
+    db_path: str
+    provider: str
+    model: str
+    person_count: int
+    usable_person_count: int
+    matching_sample_count: int
+    matching_seconds: float
+    critical_count: int
+    warning_count: int
+    people: list[PersonHealthOut]
+    issues: list[LibraryIssueOut]
+    calibration: CalibrationOut | None
+
+
+class MatchThresholdIn(BaseModel):
+    """Set or clear the configured voiceprint match threshold."""
+
+    # None clears the config key and restores the built-in default.
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class MatchThresholdOut(BaseModel):
+    """The effective voiceprint match threshold and its coupling warnings."""
+
+    effective: float
+    configured: float | None
+    default: float
+    warnings: list[str]
+
+
+class EmbedBacklogOut(BaseModel):
+    """How many stored samples still need an embedding for the active model."""
+
+    model: str
+    missing_sample_count: int
+    person_count: int
+
+
 class CreatePersonIn(BaseModel):
     """Create a new voiceprint person."""
 

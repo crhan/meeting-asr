@@ -19,7 +19,22 @@ from app.core.voiceprint_review_service import (
     CaptureConflictError,
     plan_capture,
 )
+from app.config import set_config_value, unset_config_value
 from app.project_manager import load_manifest
+from app.speaker_pipeline_params import (
+    DEFAULT_MATCH_THRESHOLD,
+    match_threshold_coupling_warnings,
+    resolve_match_threshold,
+)
+from app.voiceprint_calibration import VoiceprintCalibrationReport
+from app.voiceprint_embedding import (
+    embed_voiceprint_samples,
+    resolve_voiceprint_embedding_options,
+)
+from app.voiceprint_library_health import (
+    LibraryHealthReport,
+    analyze_library_health,
+)
 from app.voiceprint_models import VoiceprintSampleRow, VoiceprintSpeakerRow
 from app.voiceprint_people import (
     create_voiceprint_person,
@@ -36,6 +51,8 @@ from app.voiceprint_store import (
     delete_voiceprint_sample,
     delete_voiceprint_speaker,
     get_voiceprint_db_path,
+    list_all_voiceprint_samples,
+    list_embedded_sample_ids,
     list_voiceprint_samples,
     list_voiceprint_speakers,
     resolve_in_store_clip_path,
@@ -56,13 +73,22 @@ from app.web.schemas import (
     CaptureResultOut,
     CaptureRunIn,
     CaptureSpeakerOut,
+    CalibrationOut,
     CreatePersonIn,
+    EmbedBacklogOut,
     ExcludeQualitySamplesIn,
     ExcludeQualitySamplesOut,
     HistoricalProjectOut,
     JobRef,
+    LibraryHealthOut,
+    LibraryIssueOut,
+    MatchThresholdIn,
+    MatchThresholdOut,
     PendingCaptureOut,
+    PersonHealthOut,
     ScoreChangeOut,
+    ScoreDistributionOut,
+    ThresholdCostOut,
     MergePeopleIn,
     QualityPersonOut,
     QualityNeighborOut,
@@ -207,6 +233,215 @@ def get_sample_clip(
         media_type="audio/wav",
         headers={"Cache-Control": "private, max-age=3600"},
     )
+
+
+# ---- library health --------------------------------------------------------
+
+
+@router.get("/health", response_model=LibraryHealthOut)
+def get_library_health(
+    settings: WebSettings = Depends(get_settings),
+) -> LibraryHealthOut:
+    """Report which library people are matchable and what blocks the rest."""
+    report = analyze_library_health(store_dir=settings.voiceprint_store_dir)
+    return _health_out(report)
+
+
+def _health_out(report: LibraryHealthReport) -> LibraryHealthOut:
+    """Serialize a library health report."""
+    return LibraryHealthOut(
+        db_path=str(report.db_path),
+        provider=report.provider,
+        model=report.model,
+        person_count=report.person_count,
+        usable_person_count=report.usable_person_count,
+        matching_sample_count=report.matching_sample_count,
+        matching_seconds=round(report.matching_seconds, 1),
+        critical_count=report.critical_count,
+        warning_count=report.warning_count,
+        people=[
+            PersonHealthOut(
+                public_id=person.speaker_public_id,
+                name=person.speaker_name,
+                total_sample_count=person.total_sample_count,
+                enabled_sample_count=person.enabled_sample_count,
+                matching_sample_count=person.matching_sample_count,
+                missing_embedding_count=person.missing_embedding_count,
+                matching_seconds=person.matching_seconds,
+                project_count=person.project_count,
+                availability=person.availability,
+            )
+            for person in report.people
+        ],
+        issues=[
+            LibraryIssueOut(
+                kind=issue.kind,
+                severity=issue.severity,
+                title=issue.title,
+                detail=issue.detail,
+                action=issue.action,
+                person_public_id=issue.person_public_id,
+                person_name=issue.person_name,
+            )
+            for issue in report.issues
+        ],
+        calibration=_calibration_out(report.calibration),
+    )
+
+
+def _calibration_out(
+    report: VoiceprintCalibrationReport | None,
+) -> CalibrationOut | None:
+    """Serialize threshold calibration evidence."""
+    if report is None:
+        return None
+    return CalibrationOut(
+        model=report.model,
+        person_count=report.person_count,
+        scored_person_count=report.scored_person_count,
+        sample_count=report.sample_count,
+        genuine=_distribution_out(report.genuine),
+        impostor=_distribution_out(report.impostor),
+        eer_threshold=report.eer_threshold,
+        eer_rate=report.eer_rate,
+        low_impostor_threshold=report.low_impostor_threshold,
+        current_threshold=report.current_threshold,
+        warnings=list(report.warnings),
+        genuine_scores=list(report.genuine_scores),
+        impostor_scores=list(report.impostor_scores),
+        suggested_threshold=report.suggested_threshold,
+        suggested_reason=report.suggested_reason,
+        low_confidence=report.low_confidence,
+        current_cost=_cost_out(report.current_cost),
+        suggested_cost=_cost_out(report.suggested_cost),
+    )
+
+
+def _distribution_out(distribution) -> ScoreDistributionOut | None:
+    """Serialize one score distribution."""
+    if distribution is None:
+        return None
+    return ScoreDistributionOut(
+        count=distribution.count,
+        min=distribution.minimum,
+        p5=distribution.p5,
+        median=distribution.median,
+        p95=distribution.p95,
+        max=distribution.maximum,
+    )
+
+
+def _cost_out(cost) -> ThresholdCostOut | None:
+    """Serialize one threshold cost breakdown."""
+    if cost is None:
+        return None
+    return ThresholdCostOut(
+        threshold=cost.threshold,
+        false_reject_count=cost.false_reject_count,
+        false_reject_rate=cost.false_reject_rate,
+        false_accept_count=cost.false_accept_count,
+        false_accept_rate=cost.false_accept_rate,
+    )
+
+
+@router.get("/threshold", response_model=MatchThresholdOut)
+def get_match_threshold() -> MatchThresholdOut:
+    """Return the effective match threshold and its coupling warnings."""
+    from app.config import get_configured_match_threshold
+
+    configured = get_configured_match_threshold()
+    effective = resolve_match_threshold()
+    return MatchThresholdOut(
+        effective=effective,
+        configured=configured,
+        default=DEFAULT_MATCH_THRESHOLD,
+        warnings=list(match_threshold_coupling_warnings(effective)),
+    )
+
+
+@router.put("/threshold", response_model=MatchThresholdOut)
+async def set_match_threshold(
+    payload: MatchThresholdIn, locks: LockRegistry = Depends(get_locks)
+) -> MatchThresholdOut:
+    """Set or clear the configured match threshold.
+
+    Sending ``threshold: null`` removes the config key so the built-in default
+    applies again; that is the escape hatch from a bad calibration decision.
+    """
+    loop = asyncio.get_running_loop()
+    async with locks.acquire(store_lock_key("config")):
+        if payload.threshold is None:
+            await loop.run_in_executor(
+                None, lambda: _clear_match_threshold_config()
+            )
+        else:
+            await loop.run_in_executor(
+                None,
+                lambda: set_config_value(
+                    "voiceprint.match_threshold", f"{payload.threshold:.3f}"
+                ),
+            )
+    return get_match_threshold()
+
+
+def _clear_match_threshold_config() -> None:
+    """Remove the configured threshold, tolerating an already-unset key."""
+    try:
+        unset_config_value("voiceprint.match_threshold")
+    except Exception:  # noqa: BLE001 - clearing an unset key is not an error
+        return
+
+
+@router.get("/embed-backlog", response_model=EmbedBacklogOut)
+def get_embed_backlog(
+    settings: WebSettings = Depends(get_settings),
+) -> EmbedBacklogOut:
+    """Report how many enabled samples still lack an active-model embedding."""
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
+    embedded = list_embedded_sample_ids(model, db_path)
+    missing = [
+        row
+        for row in list_all_voiceprint_samples(db_path)
+        if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
+        and row.sample_id not in embedded
+    ]
+    return EmbedBacklogOut(
+        model=model,
+        missing_sample_count=len(missing),
+        person_count=len({row.speaker_id for row in missing}),
+    )
+
+
+@router.post("/embed", response_model=JobRef)
+def run_embed(
+    settings: WebSettings = Depends(get_settings),
+    jobs: JobManager = Depends(get_jobs),
+) -> JobRef:
+    """Backfill missing embeddings for the active model as a background job."""
+    store_dir = settings.voiceprint_store_dir
+
+    def work(reporter) -> dict[str, object]:
+        summary = embed_voiceprint_samples(
+            store_dir=store_dir,
+            provider=None,
+            model=None,
+            rebuild=False,
+            progress=reporter,
+            # A registry row whose clip file is gone must not abort the whole
+            # backfill; the remaining people still gain their embeddings.
+            skip_missing_clips=True,
+        )
+        return {
+            "model": summary.model,
+            "embedded_count": summary.embedded_count,
+            "skipped_count": summary.skipped_count,
+        }
+
+    job, existing = jobs.submit(
+        "voiceprint-embed", work, store_locks=[_STORE_LOCK]
+    )
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status, existing=existing)
 
 
 # ---- quality ---------------------------------------------------------------
