@@ -6,6 +6,35 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_config_home(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Point config lookups at an empty directory instead of the developer's.
+
+    Pipeline defaults used to be module constants, so no user setting could
+    reach a test. Now that ``voiceprint.match_threshold`` (and its kin) resolve
+    through the global config file, any test asserting a default reads whatever
+    the developer happens to have configured -- a suite that passes in CI and
+    fails on the machine of whoever actually tuned their threshold, with a diff
+    that blames the product rather than the environment.
+
+    Tests that exercise configuration still write into this sandbox and read it
+    back; they simply never see the real one.
+
+    Args:
+        tmp_path_factory: Session-scoped temp directory factory.
+        monkeypatch: Pytest environment patcher (auto-reverted after the test).
+
+    Returns:
+        None.
+    """
+    monkeypatch.setenv(
+        "XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg-config", numbered=True))
+    )
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_cli_state(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Pin a neutral CLI presentation baseline before every test.
