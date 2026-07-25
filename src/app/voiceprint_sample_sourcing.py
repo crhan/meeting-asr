@@ -51,6 +51,7 @@ from app.voiceprint_library_health import (
     PersonHealth,
     person_availability,
 )
+from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_models import VoiceprintSampleRow
 from app.voiceprint_quality import DEFAULT_MIN_CLUSTER_SIZE
 from app.voiceprint_segment_selection import (
@@ -61,6 +62,7 @@ from app.voiceprint_segment_selection import (
 from app.voiceprint_store import (
     get_voiceprint_db_path,
     list_all_voiceprint_samples,
+    list_embedded_sample_ids,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -236,11 +238,15 @@ def find_sample_sources(
     health = person_availability(
         person_public_id, store_dir=store_dir, provider=provider, model=model
     )
+    _provider, resolved_model = resolve_voiceprint_embedding_options(
+        provider=provider, model=model
+    )
+    embedded_ids = list_embedded_sample_ids(resolved_model, db_path)
     person_name = health.speaker_name if health else _fallback_name(samples)
     deficits = _deficits(health)
-    matching_project_ids = _matching_project_ids(samples, health)
+    matching_project_ids = _matching_project_ids(samples, health, embedded_ids)
     sampled_ranges = _sampled_ranges(samples)
-    by_project_status = _sample_counts_by_project(samples, health)
+    by_project_status = _sample_counts_by_project(samples, embedded_ids)
 
     sources: list[SampleSource] = []
     skipped: list[SkippedProject] = []
@@ -312,8 +318,27 @@ def _fallback_name(samples: list[VoiceprintSampleRow]) -> str:
     return samples[0].speaker_name if samples else ""
 
 
+def _is_matchable(row: VoiceprintSampleRow, embedded_ids: set[int]) -> bool:
+    """Return whether one stored sample actually reaches the matching pool.
+
+    Both conditions are required, and the second is the one that quietly
+    changes under everyone's feet: switching embedding provider or model
+    leaves every row enabled but without a vector for the *active* model, so
+    a status-only test would report a fully harvested library that matches
+    nobody.
+    """
+    from app.voiceprint_quality import VOICEPRINT_MATCHING_SAMPLE_STATUSES
+
+    return (
+        row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
+        and row.sample_id in embedded_ids
+    )
+
+
 def _matching_project_ids(
-    samples: list[VoiceprintSampleRow], health: PersonHealth | None
+    samples: list[VoiceprintSampleRow],
+    health: PersonHealth | None,
+    embedded_ids: set[int],
 ) -> set[str]:
     """
     Return projects already contributing a *matchable* sample.
@@ -324,28 +349,20 @@ def _matching_project_ids(
     """
     if health is None:
         return set()
-    from app.voiceprint_quality import VOICEPRINT_MATCHING_SAMPLE_STATUSES
-
-    return {
-        row.project_id
-        for row in samples
-        if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
-    }
+    return {row.project_id for row in samples if _is_matchable(row, embedded_ids)}
 
 
 def _sample_counts_by_project(
-    samples: list[VoiceprintSampleRow], health: PersonHealth | None
+    samples: list[VoiceprintSampleRow], embedded_ids: set[int]
 ) -> dict[str, _StatusCounts]:
     """Group this person's existing samples by project and matching status."""
-    from app.voiceprint_quality import VOICEPRINT_MATCHING_SAMPLE_STATUSES
-
     counts: dict[str, _StatusCounts] = defaultdict(_StatusCounts)
     for row in samples:
         bucket = counts[row.project_id]
-        if row.sample_status == "quarantined":
-            bucket.quarantined += 1
-        elif row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES:
+        if _is_matchable(row, embedded_ids):
             bucket.matching += 1
+        elif row.sample_status == "quarantined":
+            bucket.quarantined += 1
         else:
             bucket.other += 1
     return dict(counts)

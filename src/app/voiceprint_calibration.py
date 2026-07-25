@@ -114,6 +114,18 @@ class VoiceprintCalibrationReport:
         """
         Price one candidate threshold against the stored score populations.
 
+        Counts are scaled from the exported scores back to the true population.
+        Above ``MAX_EXPORTED_SCORES`` the stored arrays are an evenly
+        downsampled view, so counting them directly would report "2000 wrong
+        matches" for any library large enough to be downsampled -- a number
+        that is really the export cap wearing a cost's clothes. The rate is
+        what the sample measures honestly; the count is that rate applied to
+        ``ScoreDistribution.count``, which is the full population.
+
+        The frontend prices the cursor locally from the same exported arrays
+        and must scale identically, or dragging the slider would disagree with
+        the value the backend put on the page.
+
         Args:
             threshold: Candidate acceptance threshold.
 
@@ -122,18 +134,14 @@ class VoiceprintCalibrationReport:
         """
         if not self.genuine_scores and not self.impostor_scores:
             return None
-        rejected = sum(1 for score in self.genuine_scores if score < threshold)
-        accepted = sum(1 for score in self.impostor_scores if score >= threshold)
+        reject_rate = _rate(self.genuine_scores, lambda score: score < threshold)
+        accept_rate = _rate(self.impostor_scores, lambda score: score >= threshold)
         return ThresholdCost(
             threshold=threshold,
-            false_reject_count=rejected,
-            false_reject_rate=(
-                rejected / len(self.genuine_scores) if self.genuine_scores else 0.0
-            ),
-            false_accept_count=accepted,
-            false_accept_rate=(
-                accepted / len(self.impostor_scores) if self.impostor_scores else 0.0
-            ),
+            false_reject_count=round(reject_rate * _population(self.genuine)),
+            false_reject_rate=reject_rate,
+            false_accept_count=round(accept_rate * _population(self.impostor)),
+            false_accept_rate=accept_rate,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -307,6 +315,18 @@ def _suggested_threshold(
             "overlap",
         )
     return None, "not enough evidence to suggest a threshold", "none"
+
+
+def _rate(scores: tuple[float, ...], predicate) -> float:
+    """Return the share of scores satisfying predicate, 0.0 when empty."""
+    if not scores:
+        return 0.0
+    return sum(1 for score in scores if predicate(score)) / len(scores)
+
+
+def _population(distribution: ScoreDistribution | None) -> int:
+    """Return a distribution's true observation count, 0 when absent."""
+    return distribution.count if distribution else 0
 
 
 def _exported_scores(scores: list[float]) -> tuple[float, ...]:

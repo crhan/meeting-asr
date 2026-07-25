@@ -204,19 +204,30 @@ function couplingWarning(kind: string, fallback: string): string {
  * round trip -- a threshold the user cannot feel out is a threshold they will
  * not touch.
  */
+/** Share of scores satisfying the predicate; 0 for an empty population. */
+function rateOf(scores: number[], predicate: (score: number) => boolean): number {
+  return scores.length ? scores.filter(predicate).length / scores.length : 0;
+}
+
+/**
+ * Price a candidate threshold locally, so dragging the cursor stays instant.
+ *
+ * Must stay identical to `VoiceprintCalibrationReport.cost_at` in
+ * `voiceprint_calibration.py`, including the scaling: above the export cap the
+ * score arrays are an evenly downsampled view of the library, so counting them
+ * directly would report the cap rather than the real number of wrong matches.
+ * The rate comes from the sample, the count from that rate applied to the true
+ * population in `genuine.count` / `impostor.count`.
+ */
 function costAt(calibration: Calibration, threshold: number): ThresholdCost {
-  const rejected = calibration.genuine_scores.filter((s) => s < threshold).length;
-  const accepted = calibration.impostor_scores.filter((s) => s >= threshold).length;
+  const rejectRate = rateOf(calibration.genuine_scores, (s) => s < threshold);
+  const acceptRate = rateOf(calibration.impostor_scores, (s) => s >= threshold);
   return {
     threshold,
-    false_reject_count: rejected,
-    false_reject_rate: calibration.genuine_scores.length
-      ? rejected / calibration.genuine_scores.length
-      : 0,
-    false_accept_count: accepted,
-    false_accept_rate: calibration.impostor_scores.length
-      ? accepted / calibration.impostor_scores.length
-      : 0,
+    false_reject_count: Math.round(rejectRate * (calibration.genuine?.count ?? 0)),
+    false_reject_rate: rejectRate,
+    false_accept_count: Math.round(acceptRate * (calibration.impostor?.count ?? 0)),
+    false_accept_rate: acceptRate,
   };
 }
 

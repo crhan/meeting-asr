@@ -422,11 +422,14 @@ async def set_match_threshold(
 
 
 def _clear_match_threshold_config() -> None:
-    """Remove the configured threshold, tolerating an already-unset key."""
-    try:
-        unset_config_value("voiceprint.match_threshold")
-    except Exception:  # noqa: BLE001 - clearing an unset key is not an error
-        return
+    """Remove the configured threshold.
+
+    Not wrapped in a try/except: ``unset_config_value`` already pops the key
+    with a default, so an already-unset threshold is not an error and anything
+    that does raise here is a real load or write failure. Swallowing it would
+    return HTTP 200 for a reset that never reached disk.
+    """
+    unset_config_value("voiceprint.match_threshold")
 
 
 @router.get("/people/{ref}/sources", response_model=SampleSourcesOut)

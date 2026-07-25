@@ -515,8 +515,13 @@ def _seed_person(
     project_id: str,
     seconds: float = 8.0,
     ranges: list[tuple[int, int]] | None = None,
+    embed: bool = True,
 ) -> list:
-    """Store embedded samples for one person, sourced from one project."""
+    """Store samples for one person, sourced from one project.
+
+    ``embed=False`` reproduces the state right after a provider or model
+    switch: rows are enabled, but none has a vector for the active model.
+    """
     db_path = get_voiceprint_db_path(store_dir)
     _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
     source = store_dir / f"{name}-source.mp4"
@@ -549,8 +554,11 @@ def _seed_person(
             )
         )
     _db, rows = store_voiceprint_samples_with_rows(samples, db_path)
-    for offset, row in enumerate(rows):
-        upsert_voiceprint_embedding(row.sample_id, model, [1.0, offset * 0.01], db_path)
+    if embed:
+        for offset, row in enumerate(rows):
+            upsert_voiceprint_embedding(
+                row.sample_id, model, [1.0, offset * 0.01], db_path
+            )
     return list(rows)
 
 
@@ -709,3 +717,48 @@ def test_a_source_with_only_crowded_clips_pre_selects_nothing(
     source = report.sources[0]
     assert source.clips, "clips must stay selectable"
     assert not any(clip.recommended for clip in source.clips)
+
+
+def test_a_project_whose_samples_lost_their_vectors_is_unharvested_again(
+    tmp_path: Path,
+) -> None:
+    """Switching embedding model empties the matching pool without touching status.
+
+    Every row stays enabled, so a status-only test still calls the project
+    harvested -- suppressing `new-project`, lowering its priority, and claiming
+    matching samples that health correctly reports as absent. Sourcing has to
+    ask the same question health asks: does this sample reach the pool?
+    """
+    store_dir = tmp_path / "voiceprints"
+    projects_dir = tmp_path / "projects"
+    linked = _seed_person(
+        store_dir, "San", sample_count=3, project_id="p-stale", embed=False
+    )
+    person_id = linked[0].speaker_public_id
+    # A second, embedded project keeps the person resolvable by health.
+    _seed_person(
+        store_dir,
+        "San",
+        sample_count=3,
+        project_id="p-live",
+        ranges=[(500_000, 508_000), (510_000, 518_000), (520_000, 528_000)],
+    )
+    for project_id in ("p-stale", "p-live"):
+        _make_project(
+            projects_dir,
+            project_id,
+            sentences=_speech(0, count=14, speaker_id=0),
+            speaker_map={0: "San"},
+            person_map={0: person_id},
+        )
+
+    report = find_sample_sources(
+        person_id, projects_dir=projects_dir, store_dir=store_dir
+    )
+
+    stale = next(item for item in report.sources if item.project_id == "p-stale")
+    assert stale.matching_sample_count == 0
+    assert REASON_NEW_PROJECT in stale.reasons
+    live = next(item for item in report.sources if item.project_id == "p-live")
+    assert live.matching_sample_count == 3
+    assert REASON_NEW_PROJECT not in live.reasons

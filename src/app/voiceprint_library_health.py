@@ -29,7 +29,7 @@ from app.voiceprint_calibration import (
     calibrate_voiceprint_thresholds,
 )
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
-from app.voiceprint_models import VoiceprintSampleRow
+from app.voiceprint_models import VoiceprintSampleRow, VoiceprintSpeakerRow
 from app.voiceprint_sample_overlap import overlapped_sample_ids
 from app.voiceprint_quality import (
     DEFAULT_MIN_CLUSTER_SIZE,
@@ -39,6 +39,7 @@ from app.voiceprint_store import (
     get_voiceprint_db_path,
     list_all_voiceprint_samples,
     list_embedded_sample_ids,
+    list_voiceprint_speakers,
 )
 
 AVAILABILITY_OK = "ok"
@@ -176,7 +177,9 @@ def analyze_library_health(
     db_path = get_voiceprint_db_path(store_dir)
     samples = list_all_voiceprint_samples(db_path)
     embedded_ids = list_embedded_sample_ids(resolved_model, db_path)
-    people = _people_health(samples, embedded_ids, store_dir)
+    people = _people_health(
+        samples, embedded_ids, store_dir, list_voiceprint_speakers(db_path)
+    )
     calibration = _calibration(store_dir, resolved_provider, resolved_model)
     overlapped = _overlapped_samples(samples, embedded_ids, projects_dir)
     issues = _issues(people, calibration, overlapped)
@@ -244,15 +247,43 @@ def _people_health(
     samples: list[VoiceprintSampleRow],
     embedded_ids: set[int],
     store_dir: Path | None,
+    speakers: list[VoiceprintSpeakerRow],
 ) -> tuple[PersonHealth, ...]:
-    """Build per-person availability facts."""
+    """
+    Build per-person availability facts, including people with no samples.
+
+    Grouping by sample would drop anyone created but never captured -- and a
+    person with zero samples is the most unmatchable person in the library, so
+    omitting them lets an "everyone is usable" report coexist with a name in
+    the library that never matches anything.
+    """
     grouped: dict[int, list[VoiceprintSampleRow]] = defaultdict(list)
     for sample in samples:
         grouped[sample.speaker_id].append(sample)
     people = [
         _person_health(rows, embedded_ids, store_dir) for rows in grouped.values()
     ]
+    people.extend(
+        _empty_person_health(row) for row in speakers if row.speaker_id not in grouped
+    )
     return tuple(sorted(people, key=_person_sort_key))
+
+
+def _empty_person_health(row: VoiceprintSpeakerRow) -> PersonHealth:
+    """Build availability facts for a person who has no samples at all."""
+    return PersonHealth(
+        speaker_id=row.speaker_id,
+        speaker_public_id=row.public_id,
+        speaker_name=row.name,
+        total_sample_count=0,
+        enabled_sample_count=0,
+        matching_sample_count=0,
+        missing_embedding_count=0,
+        missing_clip_count=0,
+        matching_seconds=0.0,
+        project_count=0,
+        availability=AVAILABILITY_UNUSABLE,
+    )
 
 
 def _person_health(
@@ -408,7 +439,24 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
         "min_cluster_size": DEFAULT_MIN_CLUSTER_SIZE,
         "min_healthy_seconds": MIN_HEALTHY_MATCHING_SECONDS,
     }
-    if person.enabled_sample_count == 0 and person.total_sample_count > 0:
+    if person.total_sample_count == 0:
+        issues.append(
+            _person_issue(
+                person,
+                kind="no-samples",
+                severity=SEVERITY_CRITICAL,
+                title=f"{person.speaker_name} has no voiceprint samples at all",
+                detail=(
+                    "This person exists in the library but nothing was ever "
+                    "captured for them, so they can never be matched. Capture "
+                    "samples from a project where they speak, or delete the "
+                    "entry."
+                ),
+                action="capture",
+                context=facts,
+            )
+        )
+    elif person.enabled_sample_count == 0:
         issues.append(
             _person_issue(
                 person,

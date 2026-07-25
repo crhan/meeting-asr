@@ -31,11 +31,19 @@ export function PendingCaptureBanner() {
       // capture-plan is included because CapturePage caches its plan with staleTime: Infinity;
       // resolving a capture from here (the cross-page recovery path) changes voiceprint/person
       // bindings, so returning to capture must re-plan rather than show the pre-capture plan.
+      // vp-health / vp-embed-backlog / vp-sources belong here for the same
+      // reason: an open quality page keeps active queries, and an active stale
+      // query does not refetch on its own, so resolving a capture from this
+      // banner would otherwise leave that page showing pre-capture counts
+      // indefinitely.
       for (const key of [
         ["pending-capture"],
         ["vp-library"],
         ["vp-person"],
         ["vp-quality"],
+        ["vp-health"],
+        ["vp-embed-backlog"],
+        ["vp-sources"],
         ["speakers"],
         ["capture-plan"],
       ]) {

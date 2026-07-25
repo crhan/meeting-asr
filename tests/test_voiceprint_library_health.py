@@ -489,3 +489,29 @@ def _write_project(root: Path, project_id: str, *, sentences: list[dict]) -> Pat
         encoding="utf-8",
     )
     return project_dir
+
+
+def test_a_person_with_no_samples_at_all_is_reported(tmp_path: Path) -> None:
+    """Zero samples is the most unmatchable state there is, not an absence.
+
+    Deriving the people list from stored samples drops anyone created but
+    never captured, which lets the report say every person is usable while a
+    name sits in the library matching nothing.
+    """
+    from app.voiceprint_people import create_voiceprint_person
+
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Captured", [[1.0, 0.0], [0.98, 0.05], [0.99, -0.03]])
+    create_voiceprint_person("Empty", get_voiceprint_db_path(store_dir))
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    empty = _person(report, "Empty")
+    assert empty.total_sample_count == 0
+    assert empty.availability == AVAILABILITY_UNUSABLE
+    assert report.person_count == 2
+    assert report.usable_person_count == 1
+    issue = _issue(report, "no-samples")
+    assert issue.person_name == "Empty"
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.action == "capture"
