@@ -137,6 +137,9 @@
 - **排序是缺口驱动，不是「音质最好者胜」。** 缺时长的人加权供给、单一来源的人加权新场次；纯按候选分排序会永远推荐那场**已经采过**的会。供给按 `MIN_RECOMMENDED_SCORE`（不是 `MIN_SELECTION_SCORE`）计——只有「采集页会默认勾上」的片段才算库存，否则等于广告一批用户永远不会选的碎片。已入库样本的时间区间从供给里扣除（`_OVERLAP_TOLERANCE_MS`），不重复推荐同一句。
 - **隔离样本不算「已采过」。** quarantined 不进匹配池，所以「只产出过隔离样本」的项目在 sourcing 眼里仍是**未采之地**（`_matching_project_ids` 只收 matching 状态），额外打 `retry-quarantined` 说明上次是被拒不是没采。把它算作已采会把唯一能救 single-source 的项目藏起来。这类项目往往是质心太窄（只由另一场短会构成）而非选错人——证据是 person-map 关联本身就是人工确认过的。
 - **同一场录音里再多采几条，治不了 single-source。** 当所有来源都是 `already-harvested` 时，CLI 与面板都必须**明说**这一点，否则用户会照着推荐一路采下去而缺口纹丝不动。
+- **候选 clip 必须来自 `plan_voiceprint_capture`，不要再自选一套。** 两个原因：① `rel_path` 是采集运行唯一认的身份（`_validate_capture_selection` 按 `rel_path + 起止 + 名字 + person` 校验），自选的一套还得再 plan 一次才能采；② 计划的 `recommended` 是**刻意跨时间轴散开**的（见 `_recommended_segment_ids` 注释），而按分数取前 N 条会挤进同一段独白——实测自选版取到的三条相隔仅 20 秒，是明显更差的样本。被「已入库」滤掉名额后补足时同理：按**离已选最远**挑，不是按分数。
+- **调 `plan_capture` 必须显式传 `store_dir`。** 它要拿库解析每个说话人的 person，默认下来就会在 `--store-dir` 隔离副本里静默认到真实库的人。
+- **采集是「必答题」不是「报告」**：跑完会留一个待决事务，不 accept/rollback 会让之后所有写库操作 409（直到 6h 清扫）。所以 `CaptureResultModal` 是 `web/src/components/` 下的共享组件而非各页一份，且每个能发起采集的入口都要带 `beforeunload`/`pagehide` 兜底回滚。新增采集入口时别只抄按钮忘了抄这套。
 - 当前只覆盖**已命名**的说话人；完全没命名过的项目里即使有这个人也扫不出来（需按声纹比对未命名 track，更贵）。别把这个局限当 bug 修成「静默返回空」——报告里 `skipped` 会列出读不了的项目，空结果的文案要指向「先去 review 里命名」。
 
 ## Crosstalk Tier Notes（会后串场/噪音放行档）
