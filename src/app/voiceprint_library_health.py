@@ -1,0 +1,452 @@
+"""Voiceprint library health: can this library actually identify people?
+
+:mod:`app.voiceprint_quality` answers "are a person's samples consistent with
+each other" — a within-cluster question. That check is blind to the failure
+modes that silently remove a person from matching altogether:
+
+- a person whose samples were never embedded for the *active* model, so they
+  are in the library but not in the matching pool, and
+- a person whose samples are all quarantined, which the per-sample view
+  reports as "0 suspicious" because there is nothing left to find fault with.
+
+Both render as healthy green in a sample-consistency view while the person is
+simply never matched. This module answers the prior question — *availability* —
+and joins it with the store-wide threshold calibration into one prioritized,
+actionable issue list.
+
+Read-only; nothing here mutates the store.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+
+from app.voiceprint_calibration import (
+    VoiceprintCalibrationReport,
+    calibrate_voiceprint_thresholds,
+)
+from app.voiceprint_embedding import resolve_voiceprint_embedding_options
+from app.voiceprint_models import VoiceprintSampleRow
+from app.voiceprint_quality import (
+    DEFAULT_MIN_CLUSTER_SIZE,
+    VOICEPRINT_MATCHING_SAMPLE_STATUSES,
+)
+from app.voiceprint_store import (
+    get_voiceprint_db_path,
+    list_all_voiceprint_samples,
+    list_embedded_sample_ids,
+)
+
+AVAILABILITY_OK = "ok"
+AVAILABILITY_FRAGILE = "fragile"
+AVAILABILITY_UNUSABLE = "unusable"
+
+SEVERITY_CRITICAL = "critical"
+SEVERITY_WARNING = "warning"
+SEVERITY_INFO = "info"
+
+# A person under this much matching audio is characterized by a handful of
+# short clips; the probe centroid then swings with whatever was said.
+MIN_HEALTHY_MATCHING_SECONDS = 20.0
+# One recording session means one microphone, one room and one mood; scores
+# hold up there and drop on the next meeting.
+MIN_HEALTHY_PROJECT_COUNT = 2
+
+
+@dataclass(frozen=True, slots=True)
+class PersonHealth:
+    """Availability facts for one library person under the active model."""
+
+    speaker_id: int
+    speaker_public_id: str
+    speaker_name: str
+    total_sample_count: int
+    enabled_sample_count: int
+    matching_sample_count: int
+    missing_embedding_count: int
+    matching_seconds: float
+    project_count: int
+    availability: str
+
+    @property
+    def usable(self) -> bool:
+        """Return whether this person can be matched at all."""
+        return self.matching_sample_count > 0
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryIssue:
+    """One actionable library problem."""
+
+    kind: str
+    severity: str
+    title: str
+    detail: str
+    action: str
+    person_public_id: str | None = None
+    person_name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryHealthReport:
+    """Availability and threshold health for the whole voiceprint library."""
+
+    db_path: Path
+    provider: str
+    model: str
+    people: tuple[PersonHealth, ...]
+    issues: tuple[LibraryIssue, ...]
+    calibration: VoiceprintCalibrationReport | None
+
+    @property
+    def person_count(self) -> int:
+        """Return how many people the library holds."""
+        return len(self.people)
+
+    @property
+    def usable_person_count(self) -> int:
+        """Return how many people can actually be matched."""
+        return sum(1 for person in self.people if person.usable)
+
+    @property
+    def matching_sample_count(self) -> int:
+        """Return how many samples participate in matching."""
+        return sum(person.matching_sample_count for person in self.people)
+
+    @property
+    def matching_seconds(self) -> float:
+        """Return total matching audio in the library."""
+        return sum(person.matching_seconds for person in self.people)
+
+    @property
+    def critical_count(self) -> int:
+        """Return the number of critical issues."""
+        return sum(1 for item in self.issues if item.severity == SEVERITY_CRITICAL)
+
+    @property
+    def warning_count(self) -> int:
+        """Return the number of warning issues."""
+        return sum(1 for item in self.issues if item.severity == SEVERITY_WARNING)
+
+
+def analyze_library_health(
+    *,
+    store_dir: Path | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> LibraryHealthReport:
+    """
+    Report which library people are matchable and what blocks the rest.
+
+    Args:
+        store_dir: Optional voiceprint store directory.
+        provider: Optional embedding provider override.
+        model: Optional embedding model key override.
+
+    Returns:
+        Library health report with a prioritized issue list.
+    """
+    resolved_provider, resolved_model = resolve_voiceprint_embedding_options(
+        provider=provider, model=model
+    )
+    db_path = get_voiceprint_db_path(store_dir)
+    samples = list_all_voiceprint_samples(db_path)
+    embedded_ids = list_embedded_sample_ids(resolved_model, db_path)
+    people = _people_health(samples, embedded_ids)
+    calibration = _calibration(store_dir, resolved_provider, resolved_model)
+    issues = _issues(people, calibration)
+    return LibraryHealthReport(
+        db_path=db_path,
+        provider=resolved_provider,
+        model=resolved_model,
+        people=people,
+        issues=issues,
+        calibration=calibration,
+    )
+
+
+def _calibration(
+    store_dir: Path | None, provider: str, model: str
+) -> VoiceprintCalibrationReport | None:
+    """Return threshold calibration, or None when the store cannot supply it."""
+    try:
+        return calibrate_voiceprint_thresholds(
+            store_dir=store_dir, provider=provider, model=model
+        )
+    except Exception:  # noqa: BLE001 - health must render without calibration
+        return None
+
+
+def _people_health(
+    samples: list[VoiceprintSampleRow], embedded_ids: set[int]
+) -> tuple[PersonHealth, ...]:
+    """Build per-person availability facts."""
+    grouped: dict[int, list[VoiceprintSampleRow]] = defaultdict(list)
+    for sample in samples:
+        grouped[sample.speaker_id].append(sample)
+    people = [_person_health(rows, embedded_ids) for rows in grouped.values()]
+    return tuple(sorted(people, key=_person_sort_key))
+
+
+def _person_health(
+    rows: list[VoiceprintSampleRow], embedded_ids: set[int]
+) -> PersonHealth:
+    """Build availability facts for one person."""
+    first = rows[0]
+    enabled = [
+        row for row in rows if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
+    ]
+    matching = [row for row in enabled if row.sample_id in embedded_ids]
+    seconds = sum(
+        max(0, row.source_end_time_ms - row.source_begin_time_ms) / 1000.0
+        for row in matching
+    )
+    return PersonHealth(
+        speaker_id=first.speaker_id,
+        speaker_public_id=first.speaker_public_id,
+        speaker_name=first.speaker_name,
+        total_sample_count=len(rows),
+        enabled_sample_count=len(enabled),
+        matching_sample_count=len(matching),
+        missing_embedding_count=len(enabled) - len(matching),
+        matching_seconds=round(seconds, 1),
+        project_count=len({row.project_id for row in matching}),
+        availability=_availability(len(matching)),
+    )
+
+
+def _availability(matching_sample_count: int) -> str:
+    """Classify a person by how many samples reach the matching pool."""
+    if matching_sample_count == 0:
+        return AVAILABILITY_UNUSABLE
+    if matching_sample_count < DEFAULT_MIN_CLUSTER_SIZE:
+        return AVAILABILITY_FRAGILE
+    return AVAILABILITY_OK
+
+
+def _issues(
+    people: tuple[PersonHealth, ...], calibration: VoiceprintCalibrationReport | None
+) -> tuple[LibraryIssue, ...]:
+    """Build the prioritized issue list."""
+    issues: list[LibraryIssue] = []
+    issues.extend(_threshold_issues(calibration))
+    for person in people:
+        issues.extend(_person_issues(person))
+    return tuple(sorted(issues, key=_issue_sort_key))
+
+
+def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
+    """Build issues for one person, most blocking first."""
+    issues: list[LibraryIssue] = []
+    if person.enabled_sample_count == 0 and person.total_sample_count > 0:
+        issues.append(
+            _person_issue(
+                person,
+                kind="no-enabled-samples",
+                severity=SEVERITY_CRITICAL,
+                title=f"{person.speaker_name} has no samples enabled for matching",
+                detail=(
+                    f"All {person.total_sample_count} sample(s) are quarantined, "
+                    "rejected or invalidated, so this person is never matched. "
+                    "Sample-consistency checks report nothing wrong because there "
+                    "is nothing left to check."
+                ),
+                action="review-samples",
+            )
+        )
+    elif person.matching_sample_count == 0 and person.missing_embedding_count > 0:
+        issues.append(
+            _person_issue(
+                person,
+                kind="missing-embeddings",
+                severity=SEVERITY_CRITICAL,
+                title=f"{person.speaker_name} has no embeddings for the active model",
+                detail=(
+                    f"{person.missing_embedding_count} enabled sample(s) exist but "
+                    "none are embedded for this model, so this person is absent "
+                    "from the matching pool entirely. This usually means the "
+                    "library was not re-embedded after switching provider."
+                ),
+                action="embed",
+            )
+        )
+    elif person.missing_embedding_count > 0:
+        issues.append(
+            _person_issue(
+                person,
+                kind="partial-embeddings",
+                severity=SEVERITY_WARNING,
+                title=f"{person.speaker_name} is missing some embeddings",
+                detail=(
+                    f"{person.missing_embedding_count} of "
+                    f"{person.enabled_sample_count} enabled sample(s) are not "
+                    "embedded for the active model and do not contribute to "
+                    "matching."
+                ),
+                action="embed",
+            )
+        )
+    if person.availability == AVAILABILITY_FRAGILE:
+        issues.append(
+            _person_issue(
+                person,
+                kind="fragile-cluster",
+                severity=SEVERITY_WARNING,
+                title=f"{person.speaker_name} has only "
+                f"{person.matching_sample_count} matching sample(s)",
+                detail=(
+                    f"Below {DEFAULT_MIN_CLUSTER_SIZE} samples the centroid is one "
+                    "recording's quirks rather than a voice, and consistency "
+                    "checks cannot flag an outlier because every sample defines "
+                    "the centroid it is compared against."
+                ),
+                action="capture",
+            )
+        )
+    if person.usable and person.matching_seconds < MIN_HEALTHY_MATCHING_SECONDS:
+        issues.append(
+            _person_issue(
+                person,
+                kind="short-audio",
+                severity=SEVERITY_WARNING,
+                title=f"{person.speaker_name} has only "
+                f"{person.matching_seconds:.0f}s of matching audio",
+                detail=(
+                    "Total voiced duration, not sample count, decides how stable "
+                    f"an embedding is. Aim for at least "
+                    f"{MIN_HEALTHY_MATCHING_SECONDS:.0f}s across several "
+                    "utterances."
+                ),
+                action="capture",
+            )
+        )
+    if person.usable and person.project_count < MIN_HEALTHY_PROJECT_COUNT:
+        issues.append(
+            _person_issue(
+                person,
+                kind="single-source",
+                severity=SEVERITY_INFO,
+                title=f"{person.speaker_name} is characterized by one recording",
+                detail=(
+                    "All matching samples come from a single project, so the "
+                    "voiceprint also encodes that room, microphone and mood. "
+                    "Add samples from another meeting to generalize."
+                ),
+                action="capture",
+            )
+        )
+    return issues
+
+
+def _threshold_issues(
+    calibration: VoiceprintCalibrationReport | None,
+) -> list[LibraryIssue]:
+    """Build issues about the acceptance threshold's fit to this library."""
+    if calibration is None:
+        return []
+    current = calibration.current_cost
+    suggested = calibration.suggested_cost
+    if current is None or suggested is None:
+        return []
+    if calibration.suggested_threshold is None:
+        return []
+    issues: list[LibraryIssue] = []
+    if current.false_accept_count > 0:
+        issues.append(
+            LibraryIssue(
+                kind="threshold-too-low",
+                severity=SEVERITY_CRITICAL,
+                title=(
+                    f"Threshold {current.threshold:.2f} accepts "
+                    f"{current.false_accept_count} wrong-person score(s)"
+                ),
+                detail=(
+                    f"{current.false_accept_rate:.0%} of best-other-person scores "
+                    "reach the current threshold, so the pipeline can attach the "
+                    "wrong name automatically. Suggested threshold "
+                    f"{calibration.suggested_threshold:.3f}: "
+                    f"{calibration.suggested_reason}."
+                ),
+                action="set-threshold",
+            )
+        )
+    elif current.false_reject_count > suggested.false_reject_count:
+        gained = current.false_reject_count - suggested.false_reject_count
+        issues.append(
+            LibraryIssue(
+                kind="threshold-too-high",
+                severity=(
+                    SEVERITY_WARNING
+                    if current.false_reject_rate < 0.2
+                    else SEVERITY_CRITICAL
+                ),
+                title=(
+                    f"Threshold {current.threshold:.2f} rejects "
+                    f"{current.false_reject_rate:.0%} of correct matches"
+                ),
+                detail=(
+                    f"{current.false_reject_count} of "
+                    f"{len(calibration.genuine_scores)} same-person scores fall "
+                    "below the current threshold and would need manual naming. "
+                    f"Moving to {calibration.suggested_threshold:.3f} recovers "
+                    f"{gained} of them while still accepting "
+                    f"{suggested.false_accept_count} wrong-person score(s) — "
+                    f"{calibration.suggested_reason}."
+                ),
+                action="set-threshold",
+            )
+        )
+    return issues
+
+
+def _person_issue(
+    person: PersonHealth,
+    *,
+    kind: str,
+    severity: str,
+    title: str,
+    detail: str,
+    action: str,
+) -> LibraryIssue:
+    """Build one person-scoped issue."""
+    return LibraryIssue(
+        kind=kind,
+        severity=severity,
+        title=title,
+        detail=detail,
+        action=action,
+        person_public_id=person.speaker_public_id,
+        person_name=person.speaker_name,
+    )
+
+
+def _issue_sort_key(issue: LibraryIssue) -> tuple[int, str, str]:
+    """Sort issues by severity, then stably by kind and person."""
+    rank = {SEVERITY_CRITICAL: 0, SEVERITY_WARNING: 1, SEVERITY_INFO: 2}
+    return (rank.get(issue.severity, 3), issue.kind, issue.person_name or "")
+
+
+def _person_sort_key(person: PersonHealth) -> tuple[int, float, str]:
+    """Sort the least usable people first."""
+    rank = {AVAILABILITY_UNUSABLE: 0, AVAILABILITY_FRAGILE: 1, AVAILABILITY_OK: 2}
+    return (
+        rank.get(person.availability, 3),
+        person.matching_seconds,
+        person.speaker_name.casefold(),
+    )
+
+
+__all__ = [
+    "AVAILABILITY_FRAGILE",
+    "AVAILABILITY_OK",
+    "AVAILABILITY_UNUSABLE",
+    "LibraryHealthReport",
+    "LibraryIssue",
+    "PersonHealth",
+    "SEVERITY_CRITICAL",
+    "SEVERITY_INFO",
+    "SEVERITY_WARNING",
+    "analyze_library_health",
+]

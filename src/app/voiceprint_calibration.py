@@ -22,7 +22,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.speaker_pipeline_params import DEFAULT_MATCH_THRESHOLD
+from app.speaker_pipeline_params import resolve_match_threshold
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
 
@@ -31,6 +31,14 @@ SWEEP_START = 0.30
 SWEEP_STOP = 0.95
 SWEEP_STEP = 0.005
 IMPOSTOR_RATE_TARGET = 0.01
+# Raw score populations are shipped to the UI so a threshold slider can price
+# each candidate value locally; cap the payload for large libraries.
+MAX_EXPORTED_SCORES = 2000
+# A suggested threshold must clear the worst impostor by this much, so a single
+# unseen impostor slightly above today's maximum does not immediately match.
+SUGGESTION_IMPOSTOR_MARGIN = 0.02
+# Below this many genuine observations the sweep is anecdote, not statistics.
+LOW_CONFIDENCE_SAMPLE_COUNT = 30
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +51,27 @@ class ScoreDistribution:
     median: float
     p95: float
     maximum: float
+
+
+@dataclass(frozen=True, slots=True)
+class ThresholdCost:
+    """What one candidate threshold costs on the current library."""
+
+    threshold: float
+    false_reject_count: int
+    false_reject_rate: float
+    false_accept_count: int
+    false_accept_rate: float
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-ready payload."""
+        return {
+            "threshold": self.threshold,
+            "false_reject_count": self.false_reject_count,
+            "false_reject_rate": self.false_reject_rate,
+            "false_accept_count": self.false_accept_count,
+            "false_accept_rate": self.false_accept_rate,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,9 +89,54 @@ class VoiceprintCalibrationReport:
     low_impostor_threshold: float | None
     current_threshold: float
     warnings: tuple[str, ...]
+    genuine_scores: tuple[float, ...] = ()
+    impostor_scores: tuple[float, ...] = ()
+    suggested_threshold: float | None = None
+    suggested_reason: str = ""
+    low_confidence: bool = False
+
+    @property
+    def current_cost(self) -> ThresholdCost | None:
+        """Return what the active threshold costs on this library."""
+        return self.cost_at(self.current_threshold)
+
+    @property
+    def suggested_cost(self) -> ThresholdCost | None:
+        """Return what the suggested threshold would cost on this library."""
+        if self.suggested_threshold is None:
+            return None
+        return self.cost_at(self.suggested_threshold)
+
+    def cost_at(self, threshold: float) -> ThresholdCost | None:
+        """
+        Price one candidate threshold against the stored score populations.
+
+        Args:
+            threshold: Candidate acceptance threshold.
+
+        Returns:
+            Cost breakdown, or None when there is nothing to score against.
+        """
+        if not self.genuine_scores and not self.impostor_scores:
+            return None
+        rejected = sum(1 for score in self.genuine_scores if score < threshold)
+        accepted = sum(1 for score in self.impostor_scores if score >= threshold)
+        return ThresholdCost(
+            threshold=threshold,
+            false_reject_count=rejected,
+            false_reject_rate=(
+                rejected / len(self.genuine_scores) if self.genuine_scores else 0.0
+            ),
+            false_accept_count=accepted,
+            false_accept_rate=(
+                accepted / len(self.impostor_scores) if self.impostor_scores else 0.0
+            ),
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-ready payload."""
+        current = self.current_cost
+        suggested = self.suggested_cost
         return {
             "model": self.model,
             "person_count": self.person_count,
@@ -75,6 +149,13 @@ class VoiceprintCalibrationReport:
             "low_impostor_threshold": self.low_impostor_threshold,
             "current_threshold": self.current_threshold,
             "warnings": list(self.warnings),
+            "genuine_scores": list(self.genuine_scores),
+            "impostor_scores": list(self.impostor_scores),
+            "suggested_threshold": self.suggested_threshold,
+            "suggested_reason": self.suggested_reason,
+            "low_confidence": self.low_confidence,
+            "current_cost": current.to_dict() if current else None,
+            "suggested_cost": suggested.to_dict() if suggested else None,
         }
 
 
@@ -140,6 +221,15 @@ def calibrate_voiceprint_thresholds(
             "is unavailable"
         )
     eer_threshold, eer_rate = _equal_error_threshold(genuine_scores, impostor_scores)
+    suggested, reason = _suggested_threshold(
+        genuine_scores, impostor_scores, eer_threshold
+    )
+    low_confidence = len(genuine_scores) < LOW_CONFIDENCE_SAMPLE_COUNT
+    if low_confidence and genuine_scores:
+        warnings.append(
+            f"only {len(genuine_scores)} genuine observations; treat the sweep as "
+            "a direction, not a precise operating point"
+        )
     return VoiceprintCalibrationReport(
         model=resolved_model,
         person_count=len(vectors_by_person),
@@ -150,9 +240,67 @@ def calibrate_voiceprint_thresholds(
         eer_threshold=eer_threshold,
         eer_rate=eer_rate,
         low_impostor_threshold=_low_impostor_threshold(impostor_scores),
-        current_threshold=DEFAULT_MATCH_THRESHOLD,
+        current_threshold=resolve_match_threshold(),
         warnings=tuple(warnings),
+        genuine_scores=_exported_scores(genuine_scores),
+        impostor_scores=_exported_scores(impostor_scores),
+        suggested_threshold=suggested,
+        suggested_reason=reason,
+        low_confidence=low_confidence,
     )
+
+
+def _suggested_threshold(
+    genuine: list[float], impostor: list[float], eer_threshold: float | None
+) -> tuple[float | None, str]:
+    """
+    Suggest an operating threshold from the separation between populations.
+
+    Prefers the midpoint of the gap between the worst impostor (plus a safety
+    margin) and the 5th-percentile genuine score: that centers the threshold in
+    the empty band between the two populations, so both an unusually strong
+    impostor and an unusually weak genuine sample have room before they flip a
+    decision. When the populations overlap there is no such band, and the
+    equal-error point is the least-bad compromise.
+
+    Args:
+        genuine: Same-person leave-one-out scores.
+        impostor: Best-other-person scores.
+        eer_threshold: Equal-error point, when computable.
+
+    Returns:
+        Suggested threshold and a human-readable rationale.
+    """
+    if not genuine:
+        return None, "no genuine observations; add more samples per person first"
+    ceiling = _percentile(sorted(genuine), 0.05)
+    if not impostor:
+        return round(max(ceiling, 0.0), 3), (
+            "only one person has embeddings, so there is no impostor evidence; "
+            "this only protects against rejecting that person"
+        )
+    floor = max(impostor) + SUGGESTION_IMPOSTOR_MARGIN
+    if floor < ceiling:
+        return round((floor + ceiling) / 2, 3), (
+            f"centered in the gap between the worst impostor ({max(impostor):.3f}) "
+            f"and the 5th-percentile genuine score ({ceiling:.3f})"
+        )
+    if eer_threshold is not None:
+        return eer_threshold, (
+            "genuine and impostor scores overlap, so no threshold separates them "
+            "cleanly; this is the equal-error compromise. Fixing sample quality "
+            "will help more than moving the threshold"
+        )
+    return None, "not enough evidence to suggest a threshold"
+
+
+def _exported_scores(scores: list[float]) -> tuple[float, ...]:
+    """Return sorted scores, evenly downsampled when the population is large."""
+    ordered = sorted(round(score, 4) for score in scores)
+    if len(ordered) <= MAX_EXPORTED_SCORES:
+        return tuple(ordered)
+    step = len(ordered) / MAX_EXPORTED_SCORES
+    return tuple(ordered[int(index * step)] for index in range(MAX_EXPORTED_SCORES))
 
 
 def _equal_error_threshold(
@@ -254,6 +402,7 @@ def _cosine(left: list[float], right: list[float]) -> float:
 
 __all__ = [
     "ScoreDistribution",
+    "ThresholdCost",
     "VoiceprintCalibrationReport",
     "calibrate_voiceprint_thresholds",
 ]
