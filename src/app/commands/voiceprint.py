@@ -880,6 +880,7 @@ def _sample_sources_table(report: SampleSourceReport) -> Table:
     table.add_column("Speaker", justify="right")
     table.add_column("Evidence")
     table.add_column("Available", justify="right")
+    table.add_column("Ready", justify="right")
     table.add_column("Have", justify="right")
     table.add_column("Why")
     for source in report.sources:
@@ -887,12 +888,15 @@ def _sample_sources_table(report: SampleSourceReport) -> Table:
         have = str(source.matching_sample_count)
         if source.quarantined_sample_count:
             have += f" (+{source.quarantined_sample_count} quarantined)"
+        picked = sum(1 for clip in source.clips if clip.recommended)
+        ready = f"{picked}/{len(source.clips)}" if source.clips else "-"
         table.add_row(
             source.project_id,
             source.title,
             str(source.speaker_id),
             f"[{style}]{source.evidence}[/{style}]",
             f"{source.candidate_count} / {source.candidate_seconds:.0f}s",
+            ready,
             have,
             ", ".join(source.reasons) or "-",
         )

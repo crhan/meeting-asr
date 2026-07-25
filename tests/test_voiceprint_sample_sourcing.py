@@ -323,6 +323,69 @@ def test_project_without_a_transcript_is_reported_not_swallowed(
     assert report.scanned_project_count == 1
 
 
+def test_sources_offer_capture_plan_clips_from_the_given_store(
+    tmp_path: Path,
+) -> None:
+    """Clips must be the capture plan's own, resolved against the given store.
+
+    Two things ride on this. The clips carry ``rel_path``, which is the only
+    identity a capture run accepts, so a caller can capture them without
+    re-picking. And the planner resolves each speaker's library person from the
+    store — defaulting that lookup would make an isolated ``--store-dir`` run
+    identify people from the real library instead.
+    """
+    store_dir = tmp_path / "voiceprints"
+    projects_dir = tmp_path / "projects"
+    rows = _seed_person(store_dir, "Lin", sample_count=3, project_id="p-old")
+    person_id = rows[0].speaker_public_id
+    _make_project(
+        projects_dir,
+        "p-new",
+        sentences=_speech(0, count=9, speaker_id=0),
+        speaker_map={0: "Lin"},
+        person_map={0: person_id},
+    )
+
+    report = find_sample_sources(
+        person_id, projects_dir=projects_dir, store_dir=store_dir
+    )
+
+    source = report.sources[0]
+    assert source.person_public_id == person_id
+    assert source.clips
+    assert all(clip.rel_path.endswith(".wav") for clip in source.clips)
+    # Pre-selected picks stay spread across the timeline rather than bunching
+    # at the top of the score order.
+    picked = [clip for clip in source.clips if clip.recommended]
+    assert 0 < len(picked) <= 3
+    assert len({clip.begin_time_ms for clip in picked}) == len(picked)
+
+
+def test_sources_survive_a_project_that_cannot_be_planned(tmp_path: Path) -> None:
+    """A source with no capture plan still ranks; it just cannot one-click."""
+    store_dir = tmp_path / "voiceprints"
+    projects_dir = tmp_path / "projects"
+    rows = _seed_person(store_dir, "Ma", sample_count=3, project_id="p-old")
+    project_dir = _make_project(
+        projects_dir,
+        "p-new",
+        sentences=_speech(0, count=8, speaker_id=0),
+        speaker_map={0: "Ma"},
+        person_map={0: rows[0].speaker_public_id},
+    )
+    # A capture plan needs named speakers; remove the names but keep the link
+    # so attribution still succeeds while planning cannot.
+    (project_dir / "speakers" / "speaker_map.json").unlink()
+
+    report = find_sample_sources(
+        rows[0].speaker_public_id, projects_dir=projects_dir, store_dir=store_dir
+    )
+
+    source = report.sources[0]
+    assert source.candidate_count == 8
+    assert source.clips == ()
+
+
 def test_payload_is_json_serializable(tmp_path: Path) -> None:
     """Automation output must survive a JSON round-trip unchanged."""
     store_dir = tmp_path / "voiceprints"
@@ -343,7 +406,7 @@ def test_payload_is_json_serializable(tmp_path: Path) -> None:
 
     assert payload["person_name"] == "Jin"
     assert payload["sources"][0]["project_id"] == "p-new"
-    assert payload["sources"][0]["previews"]
+    assert payload["sources"][0]["clips"]
     assert payload["scanned_project_count"] == 1
 
 

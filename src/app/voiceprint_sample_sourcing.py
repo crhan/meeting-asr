@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.project_refs import list_projects
+from app.core.voiceprint_review_service import plan_capture
 from app.models import SentenceSegment
 from app.speaker_labeling import load_transcript_result
 from app.transcript_merge import is_placeholder_name, name_fold
@@ -92,22 +93,34 @@ REASON_THIN_SUPPLY = "thin-supply"
 _SUPPLY_SATURATION_SECONDS = 120.0
 # Below this a project is worth listing but should not outrank a real source.
 _THIN_SUPPLY_SECONDS = 15.0
-# How many candidates to preview per source. Enough to judge, not a transcript.
-_PREVIEW_COUNT = 3
+# Fallback number of pre-selected clips when the planner's own default picks
+# were all filtered out as already-captured.
+_DEFAULT_PICKS = 3
 # Clips whose time range is within this of an existing sample are the same
 # utterance: re-capturing them adds a duplicate, not a new observation.
 _OVERLAP_TOLERANCE_MS = 250
 
 
 @dataclass(frozen=True, slots=True)
-class CandidatePreview:
-    """One harvestable segment, enough to judge the source without opening it."""
+class CandidateClip:
+    """One clip a capture run would take, identified the way capture identifies it.
 
+    These come from ``plan_voiceprint_capture`` rather than a second selection
+    of our own, for two reasons. The obvious one is that ``rel_path`` is the
+    currency a capture run speaks, so a caller can hand these straight back and
+    capture without re-planning anything. The subtler one is that the planner
+    spreads its picks across the speaker's timeline on purpose -- ranking
+    candidates by score alone clusters them inside a single dense monologue and
+    ends up characterizing one speaking style rather than a voice.
+    """
+
+    rel_path: str
     begin_time_ms: int
     end_time_ms: int
     duration_seconds: float
     text: str
     score: float
+    recommended: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +134,10 @@ class SampleSource:
     created_at: str | None
     speaker_id: int
     speaker_name: str
+    # The library person the capture plan resolved for this speaker. Capture
+    # validates a selection against (rel_path, times, name, person), so a
+    # caller reusing these clips must echo the *plan's* identity, not ours.
+    person_public_id: str | None
     evidence: str
     # Harvestable supply: segments good enough to be a default capture pick,
     # excluding utterances already in the library.
@@ -133,7 +150,8 @@ class SampleSource:
     other_sample_count: int
     priority: float
     reasons: tuple[str, ...]
-    previews: tuple[CandidatePreview, ...] = ()
+    # Directly capturable clips, or empty when the plan could not be built.
+    clips: tuple[CandidateClip, ...] = ()
 
     @property
     def existing_sample_count(self) -> int:
@@ -185,6 +203,7 @@ def find_sample_sources(
     provider: str | None = None,
     model: str | None = None,
     limit: int = 20,
+    with_clips: bool = True,
 ) -> SampleSourceReport:
     """
     Find where more samples for a person can be harvested.
@@ -196,6 +215,8 @@ def find_sample_sources(
         provider: Optional embedding provider override.
         model: Optional embedding model key override.
         limit: Maximum sources to return.
+        with_clips: Also plan each source's capturable clips. Costs one capture
+            plan per candidate project; turn it off for a ranking-only answer.
 
     Returns:
         Ranked harvest opportunities with the deficits that ordered them.
@@ -230,6 +251,8 @@ def find_sample_sources(
                 counts=by_project_status.get(item.project_id, _StatusCounts()),
                 is_matching_project=item.project_id in matching_project_ids,
                 deficits=deficits,
+                with_clips=with_clips,
+                store_dir=store_dir,
             )
         except Exception as error:  # noqa: BLE001 - one bad project must not blind the rest
             LOGGER.warning(
@@ -343,6 +366,8 @@ def _project_sources(
     counts: _StatusCounts,
     is_matching_project: bool,
     deficits: tuple[str, ...],
+    with_clips: bool,
+    store_dir: Path | None,
 ) -> list[SampleSource]:
     """Find this person's harvestable speaker tracks inside one project."""
     speakers_dir = item.project_dir / "speakers"
@@ -358,6 +383,7 @@ def _project_sources(
     all_segments = sorted(
         result.sentences, key=lambda seg: (seg.begin_time_ms, seg.end_time_ms)
     )
+    plan = _capture_plan(item.project_dir, store_dir) if with_clips else None
     sources: list[SampleSource] = []
     for speaker_id, (evidence, speaker_name) in sorted(attributions.items()):
         segments = [seg for seg in all_segments if seg.speaker_id == speaker_id]
@@ -366,13 +392,16 @@ def _project_sources(
         candidates = _harvestable(segments, all_segments, sampled_ranges)
         if not candidates:
             continue
+        planned = _planned_speaker(plan, speaker_id)
         sources.append(
             _build_source(
                 item,
                 speaker_id=speaker_id,
-                speaker_name=speaker_name,
+                speaker_name=planned.name if planned else speaker_name,
+                person_public_id=planned.person_public_id if planned else None,
                 evidence=evidence,
                 candidates=candidates,
+                clips=_planned_clips(planned, sampled_ranges),
                 counts=counts,
                 is_matching_project=is_matching_project,
                 deficits=deficits,
@@ -381,13 +410,112 @@ def _project_sources(
     return sources
 
 
+def _capture_plan(project_dir: Path, store_dir: Path | None):
+    """Plan this project's capture clips, or None when it cannot be planned.
+
+    ``store_dir`` must be threaded through: the planner resolves each speaker's
+    library person against it, so defaulting here would make an isolated
+    ``--store-dir`` run silently identify people from the real library.
+
+    A project with no named speaker raises rather than returning an empty plan,
+    and a plan failure must not lose the source: the row is still worth showing
+    with its supply figures, it just cannot offer one-click capture.
+    """
+    try:
+        return plan_capture(project_dir, store_dir=store_dir)
+    except Exception as error:  # noqa: BLE001 - a source without clips still ranks
+        LOGGER.debug("Capture plan unavailable for %s: %s", project_dir, error)
+        return None
+
+
+def _planned_speaker(plan, speaker_id: int):
+    """Return the planned speaker matching this project speaker id."""
+    if plan is None:
+        return None
+    for speaker in plan.speakers:
+        if speaker.speaker_id == speaker_id:
+            return speaker
+    return None
+
+
+def _planned_clips(
+    planned, sampled_ranges: tuple[tuple[int, int], ...]
+) -> tuple[CandidateClip, ...]:
+    """
+    Return this speaker's planned clips, minus utterances already in the library.
+
+    Re-offering a stored clip wastes the operator's attention and, if taken,
+    stores a duplicate observation that inflates the cluster without adding
+    information. When the filter removes every default pick, the highest-scoring
+    survivors are promoted so the caller still has something pre-selected.
+    """
+    if planned is None:
+        return ()
+    fresh = [
+        clip
+        for clip in planned.clips
+        if not _range_overlaps(
+            clip.source_begin_time_ms, clip.source_end_time_ms, sampled_ranges
+        )
+    ]
+    if not fresh:
+        return ()
+    picks = _default_picks(fresh)
+    return tuple(
+        CandidateClip(
+            rel_path=clip.rel_path,
+            begin_time_ms=clip.source_begin_time_ms,
+            end_time_ms=clip.source_end_time_ms,
+            duration_seconds=round(clip.duration_seconds, 1),
+            text=clip.text.strip(),
+            score=round(clip.selection_score, 3),
+            recommended=clip.rel_path in picks,
+        )
+        for clip in fresh
+    )
+
+
+def _default_picks(fresh: list) -> set[str]:
+    """
+    Choose which surviving clips arrive pre-selected.
+
+    The planner's own recommendations come first. When the already-captured
+    filter thinned them out, the gaps are refilled with the qualifying survivor
+    *furthest in time* from what is already picked -- not the next highest
+    score. Spread is what made the planner's picks worth trusting, and topping
+    up by score alone walks straight back into one dense monologue.
+    """
+    picked = [clip for clip in fresh if clip.recommended]
+    pool = [
+        clip
+        for clip in fresh
+        if not clip.recommended and clip.selection_score >= MIN_RECOMMENDED_SCORE
+    ]
+    while pool and len(picked) < _DEFAULT_PICKS:
+        if picked:
+            chosen = max(
+                pool,
+                key=lambda clip: min(
+                    abs(clip.source_begin_time_ms - other.source_begin_time_ms)
+                    for other in picked
+                ),
+            )
+        else:
+            chosen = max(pool, key=lambda clip: clip.selection_score)
+        picked.append(chosen)
+        pool.remove(chosen)
+    return {clip.rel_path for clip in picked}
+
+
 def _build_source(
     item,
     *,
     speaker_id: int,
     speaker_name: str,
+    person_public_id: str | None,
     evidence: str,
     candidates: list[ScoredVoiceprintSegment],
+    clips: tuple[CandidateClip, ...],
     counts: _StatusCounts,
     is_matching_project: bool,
     deficits: tuple[str, ...],
@@ -417,6 +545,7 @@ def _build_source(
         created_at=item.created_at,
         speaker_id=speaker_id,
         speaker_name=speaker_name,
+        person_public_id=person_public_id,
         evidence=evidence,
         candidate_count=len(candidates),
         candidate_seconds=seconds,
@@ -426,7 +555,7 @@ def _build_source(
         other_sample_count=counts.other,
         priority=priority,
         reasons=reasons,
-        previews=_previews(candidates),
+        clips=clips,
     )
 
 
@@ -456,31 +585,20 @@ def _overlaps(
     segment: SentenceSegment, sampled_ranges: tuple[tuple[int, int], ...]
 ) -> bool:
     """Return whether a segment is an utterance the library already holds."""
+    return _range_overlaps(segment.begin_time_ms, segment.end_time_ms, sampled_ranges)
+
+
+def _range_overlaps(
+    begin_ms: int, end_ms: int, sampled_ranges: tuple[tuple[int, int], ...]
+) -> bool:
+    """Return whether a time range is an utterance the library already holds."""
     for begin, end in sampled_ranges:
         if (
-            segment.begin_time_ms < end + _OVERLAP_TOLERANCE_MS
-            and begin < segment.end_time_ms + _OVERLAP_TOLERANCE_MS
+            begin_ms < end + _OVERLAP_TOLERANCE_MS
+            and begin < end_ms + _OVERLAP_TOLERANCE_MS
         ):
             return True
     return False
-
-
-def _previews(
-    candidates: list[ScoredVoiceprintSegment],
-) -> tuple[CandidatePreview, ...]:
-    """Return the strongest few candidates as a listenable summary."""
-    best = sorted(candidates, key=lambda item: -item.score)[:_PREVIEW_COUNT]
-    ordered = sorted(best, key=lambda item: item.segment.begin_time_ms)
-    return tuple(
-        CandidatePreview(
-            begin_time_ms=item.segment.begin_time_ms,
-            end_time_ms=item.segment.end_time_ms,
-            duration_seconds=round(_seconds(item.segment), 1),
-            text=item.segment.text.strip(),
-            score=round(item.score, 3),
-        )
-        for item in ordered
-    )
 
 
 def _reasons(
@@ -622,6 +740,7 @@ def sample_source_payload(report: SampleSourceReport) -> dict[str, object]:
                 "meeting_time": source.meeting_time,
                 "speaker_id": source.speaker_id,
                 "speaker_name": source.speaker_name,
+                "person_public_id": source.person_public_id,
                 "evidence": source.evidence,
                 "candidate_count": source.candidate_count,
                 "candidate_seconds": source.candidate_seconds,
@@ -630,15 +749,17 @@ def sample_source_payload(report: SampleSourceReport) -> dict[str, object]:
                 "quarantined_sample_count": source.quarantined_sample_count,
                 "priority": source.priority,
                 "reasons": list(source.reasons),
-                "previews": [
+                "clips": [
                     {
-                        "begin_time_ms": preview.begin_time_ms,
-                        "end_time_ms": preview.end_time_ms,
-                        "duration_seconds": preview.duration_seconds,
-                        "text": preview.text,
-                        "score": preview.score,
+                        "rel_path": clip.rel_path,
+                        "begin_time_ms": clip.begin_time_ms,
+                        "end_time_ms": clip.end_time_ms,
+                        "duration_seconds": clip.duration_seconds,
+                        "text": clip.text,
+                        "score": clip.score,
+                        "recommended": clip.recommended,
                     }
-                    for preview in source.previews
+                    for clip in source.clips
                 ],
             }
             for source in report.sources

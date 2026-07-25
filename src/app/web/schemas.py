@@ -766,14 +766,21 @@ class EmbedBacklogOut(BaseModel):
     missing_clip_count: int
 
 
-class CandidatePreviewOut(BaseModel):
-    """One harvestable segment, enough to judge a source without opening it."""
+class CandidateClipOut(BaseModel):
+    """One clip a capture run would take, in capture's own identity terms.
 
+    ``rel_path`` plus the times are exactly what ``POST /capture/{ref}/run``
+    validates a selection against, so a client can capture these directly
+    without re-planning.
+    """
+
+    rel_path: str
     begin_time_ms: int
     end_time_ms: int
     duration_seconds: float
     text: str
     score: float
+    recommended: bool
 
 
 class SampleSourceOut(BaseModel):
@@ -784,6 +791,8 @@ class SampleSourceOut(BaseModel):
     meeting_time: str | None
     speaker_id: int
     speaker_name: str
+    # The person the capture plan resolved; echo it back when capturing.
+    person_public_id: str | None
     # "person-map" (linked) or "name" (display name only).
     evidence: str
     candidate_count: int
@@ -794,7 +803,7 @@ class SampleSourceOut(BaseModel):
     priority: float
     # Reason kinds, re-rendered per locale by the browser.
     reasons: list[str]
-    previews: list[CandidatePreviewOut]
+    clips: list[CandidateClipOut]
 
 
 class SkippedProjectOut(BaseModel):

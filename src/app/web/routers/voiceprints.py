@@ -74,7 +74,7 @@ from app.web.deps import (
 from app.web.jobs import JobManager
 from app.web.locks import LockRegistry, project_lock_key, store_lock_key
 from app.web.schemas import (
-    CandidatePreviewOut,
+    CandidateClipOut,
     CaptureClipOut,
     CapturePlanOut,
     CaptureResultOut,
@@ -455,6 +455,7 @@ def _sources_out(report: SampleSourceReport) -> SampleSourcesOut:
                 meeting_time=source.meeting_time,
                 speaker_id=source.speaker_id,
                 speaker_name=source.speaker_name,
+                person_public_id=source.person_public_id,
                 evidence=source.evidence,
                 candidate_count=source.candidate_count,
                 candidate_seconds=source.candidate_seconds,
@@ -463,15 +464,17 @@ def _sources_out(report: SampleSourceReport) -> SampleSourcesOut:
                 quarantined_sample_count=source.quarantined_sample_count,
                 priority=source.priority,
                 reasons=list(source.reasons),
-                previews=[
-                    CandidatePreviewOut(
-                        begin_time_ms=preview.begin_time_ms,
-                        end_time_ms=preview.end_time_ms,
-                        duration_seconds=preview.duration_seconds,
-                        text=preview.text,
-                        score=preview.score,
+                clips=[
+                    CandidateClipOut(
+                        rel_path=clip.rel_path,
+                        begin_time_ms=clip.begin_time_ms,
+                        end_time_ms=clip.end_time_ms,
+                        duration_seconds=clip.duration_seconds,
+                        text=clip.text,
+                        score=clip.score,
+                        recommended=clip.recommended,
                     )
-                    for preview in source.previews
+                    for clip in source.clips
                 ],
             )
             for source in report.sources

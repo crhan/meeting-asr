@@ -2229,7 +2229,10 @@ def test_sample_sources_route_ranks_harvestable_projects(
     assert "new-project" in top["reasons"]
     assert top["candidate_count"] == 10
     # Previews let the panel show what would be captured without navigating.
-    assert top["previews"] and top["previews"][0]["text"]
+    # Clips carry the capture plan's own rel_path identity, so the panel can
+    # capture them directly instead of sending the operator off to re-pick.
+    assert top["clips"] and top["clips"][0]["rel_path"].endswith(".wav")
+    assert any(clip["recommended"] for clip in top["clips"])
 
     missing = client.get("/api/voiceprints/people/vpp-nope/sources")
     assert missing.status_code == 404
