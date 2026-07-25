@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -318,17 +318,20 @@ export function QualityPage() {
   };
 
   return (
-    <div className="pad quality-page">
-      <div className="vp-head">
-        <h1 style={{ marginRight: 8 }}>{tr("Library quality", "声纹库质量")}</h1>
+    <div className="pad vq-page">
+      <header className="vq-masthead">
+        <div>
+          <span className="vq-eyebrow">{tr("Voiceprint library", "声纹库")}</span>
+          <h1>{tr("Library quality", "声纹库质量")}</h1>
+        </div>
         <span className="spacer" />
         <Link className="btn ghost" to="/voiceprints">
           {tr("Manage library", "管理声纹库")}
         </Link>
-      </div>
+      </header>
 
-      {toast && <div className="notice-box">{toast}</div>}
-      {isLoading && <div className="placeholder">{tr("Loading…", "加载中…")}</div>}
+      {toast && <div className="vq-toast">{toast}</div>}
+      {isLoading && <div className="vq-empty">{tr("Loading…", "加载中…")}</div>}
       {error && <div className="error-box">{String(error)}</div>}
 
       {health && (
@@ -372,6 +375,19 @@ export function QualityPage() {
   );
 }
 
+/** Section eyebrow + title, the page's recurring instrument-panel header. */
+function PanelHead(props: { eyebrow: string; title: string; children?: ReactNode }) {
+  return (
+    <div className="vq-panel-head">
+      <div className="vq-panel-titles">
+        <span className="vq-eyebrow">{props.eyebrow}</span>
+        <h2>{props.title}</h2>
+      </div>
+      {props.children}
+    </div>
+  );
+}
+
 function LibraryVitals(props: {
   health: LibraryHealth;
   backlog?: { missing_sample_count: number; person_count: number };
@@ -382,56 +398,62 @@ function LibraryVitals(props: {
     count: health.people.filter((person) => person.availability === key).length,
   }));
   const total = health.people.length || 1;
+  const blocked = health.person_count - health.usable_person_count;
   return (
-    <section className="quality-card">
-      <div className="quality-card-head">
-        <h2>{tr("Library vitals", "库体检")}</h2>
-        <span className="subtle mono">{health.model}</span>
-      </div>
-      <div className="quality-stats">
-        <Stat
-          value={`${health.usable_person_count}/${health.person_count}`}
-          label={tr("people matchable", "人可参与匹配")}
-          tone={health.usable_person_count < health.person_count ? "bad" : "good"}
+    <section className="vq-panel">
+      <PanelHead eyebrow={tr("Diagnostics", "体检")} title={tr("Library vitals", "库体检")}>
+        <span className="vq-model mono">{health.model}</span>
+      </PanelHead>
+
+      <div className="vq-readouts">
+        <Readout
+          value={`${health.usable_person_count}`}
+          suffix={`/${health.person_count}`}
+          label={tr("matchable", "人可参与匹配")}
+          tone={blocked > 0 ? "bad" : "good"}
         />
-        <Stat
+        <Readout
           value={String(health.matching_sample_count)}
           label={tr("matching samples", "匹配样本")}
         />
-        <Stat
+        <Readout
           value={fmtSeconds(health.matching_seconds)}
           label={tr("matching audio", "匹配音频")}
         />
-        <Stat
+        <Readout
           value={String(health.critical_count)}
-          label={tr("critical issues", "严重问题")}
+          label={tr("critical", "严重问题")}
           tone={health.critical_count > 0 ? "bad" : "good"}
         />
       </div>
-      <div className="quality-healthbar" role="img">
+
+      <div className="vq-healthbar">
         {buckets.map(
           (bucket) =>
             bucket.count > 0 && (
               <span
                 key={bucket.key}
-                className={`quality-healthbar-seg av-${bucket.key}`}
+                className={`vq-healthbar-seg av-${bucket.key}`}
                 style={{ width: `${(bucket.count / total) * 100}%` }}
                 title={`${availabilityLabel(bucket.key)}: ${bucket.count}`}
-              />
+              >
+                <b>{bucket.count}</b>
+              </span>
             ),
         )}
       </div>
-      <div className="row gap quality-legend">
+      <div className="vq-legend">
         {buckets.map((bucket) => (
-          <span key={bucket.key} className="subtle">
-            <i className={`quality-dot av-${bucket.key}`} />
-            {availabilityLabel(bucket.key)} {bucket.count}
+          <span key={bucket.key} className={bucket.count === 0 ? "vq-dim" : ""}>
+            <i className={`vq-dot av-${bucket.key}`} />
+            {availabilityLabel(bucket.key)}
+            <b className="mono">{bucket.count}</b>
           </span>
         ))}
         {backlog && backlog.missing_sample_count > 0 && (
           <span className="warn">
             {tr(
-              `${backlog.missing_sample_count} sample(s) still need embedding`,
+              `${backlog.missing_sample_count} sample(s) awaiting embedding`,
               `${backlog.missing_sample_count} 个样本待嵌入`,
             )}
           </span>
@@ -441,11 +463,19 @@ function LibraryVitals(props: {
   );
 }
 
-function Stat(props: { value: string; label: string; tone?: "good" | "bad" }) {
+function Readout(props: {
+  value: string;
+  suffix?: string;
+  label: string;
+  tone?: "good" | "bad";
+}) {
   return (
-    <div className="quality-stat">
-      <div className={`quality-stat-value ${props.tone ?? ""}`}>{props.value}</div>
-      <div className="quality-stat-label">{props.label}</div>
+    <div className="vq-readout">
+      <div className={`vq-readout-value ${props.tone ?? ""}`}>
+        {props.value}
+        {props.suffix && <span className="vq-readout-suffix">{props.suffix}</span>}
+      </div>
+      <div className="vq-readout-label">{props.label}</div>
     </div>
   );
 }
@@ -473,46 +503,45 @@ function ThresholdCard(props: {
   const dirty = Math.abs(candidate - calibration.current_threshold) > 1e-6;
 
   return (
-    <section className="quality-card" id="threshold-card">
-      <div className="quality-card-head">
-        <h2>{tr("Acceptance threshold", "接受阈值")}</h2>
-        <span className="subtle">
-          {tr(
-            `${calibration.genuine_scores.length} same-person vs ${calibration.impostor_scores.length} wrong-person scores`,
-            `${calibration.genuine_scores.length} 个同人分数 vs ${calibration.impostor_scores.length} 个异人分数`,
-          )}
+    <section className="vq-panel vq-panel-feature" id="threshold-card">
+      <PanelHead
+        eyebrow={tr("Calibration", "校准")}
+        title={tr("Acceptance threshold", "接受阈值")}
+      >
+        <span className="vq-populations mono">
+          <i className="vq-dot pop-genuine" />
+          {calibration.genuine_scores.length} {tr("same", "同人")}
+          <em>·</em>
+          <i className="vq-dot pop-impostor" />
+          {calibration.impostor_scores.length} {tr("other", "异人")}
         </span>
-      </div>
+      </PanelHead>
 
-      <ScoreHistogram
+      <ThresholdInstrument
         calibration={calibration}
         candidate={candidate}
         suggested={suggested}
+        onChange={setCandidate}
       />
 
-      <input
-        className="quality-slider"
-        type="range"
-        min={0.3}
-        max={0.95}
-        step={0.005}
-        value={candidate}
-        onChange={(event) => setCandidate(Number(event.target.value))}
-        aria-label={tr("Candidate threshold", "候选阈值")}
-      />
-
-      <div className="quality-cost-row">
+      <div className="vq-costs">
         <CostReadout
           title={tr("At this threshold", "此阈值下")}
           threshold={candidate}
           cost={cost}
-          highlight
+          variant="candidate"
+          delta={
+            currentCost
+              ? cost.false_reject_count - currentCost.false_reject_count
+              : undefined
+          }
         />
         {currentCost && (
           <CostReadout
             title={tr("Active now", "当前生效")}
             threshold={currentCost.threshold}
             cost={currentCost}
+            variant="current"
           />
         )}
         {suggested !== null && (
@@ -520,40 +549,40 @@ function ThresholdCard(props: {
             title={tr("Suggested", "建议值")}
             threshold={suggested}
             cost={costAt(calibration, suggested)}
+            variant="suggested"
           />
         )}
       </div>
 
       {suggested !== null && (
-        <p className="subtle quality-reason">
-          {tr("Why this suggestion: ", "建议理由:")}
+        <p className="vq-note">
+          <span className="vq-note-tag">{tr("Why", "依据")}</span>
           {suggestionReason(calibration)}
         </p>
       )}
       {calibration.low_confidence && (
-        <p className="warn">
+        <p className="vq-note warn">
+          <span className="vq-note-tag">{tr("Caveat", "注意")}</span>
           {tr(
-            "Small library — treat the suggestion as a direction, not a precise operating point. Adding samples will move it.",
+            "Small library — the suggestion points a direction, not a precise operating point. Adding samples will move it.",
             "库样本量偏小 —— 建议值只指方向,不是精确工作点。补样本后会变化。",
           )}
         </p>
       )}
       {warnings.map((warning, index) => (
-        <p className="warn" key={warning}>
+        <p className="vq-note warn" key={warning}>
+          <span className="vq-note-tag">{tr("Coupling", "耦合")}</span>
           {couplingWarning(warningKinds[index] ?? "", warning)}
         </p>
       ))}
 
-      <div className="row gap">
+      <div className="vq-actions">
         <button
           className="btn primary"
           disabled={!dirty || pending}
           onClick={() => props.onApply(Number(candidate.toFixed(3)))}
         >
-          {tr(
-            `Apply ${candidate.toFixed(3)}`,
-            `应用 ${candidate.toFixed(3)}`,
-          )}
+          {tr(`Apply ${candidate.toFixed(3)}`, `应用 ${candidate.toFixed(3)}`)}
         </button>
         {suggested !== null && (
           <button
@@ -561,7 +590,7 @@ function ThresholdCard(props: {
             disabled={pending}
             onClick={() => setCandidate(suggested)}
           >
-            {tr("Preview suggested", "预览建议值")}
+            {tr("Jump to suggested", "跳到建议值")}
           </button>
         )}
         <button
@@ -576,9 +605,9 @@ function ThresholdCard(props: {
           {tr("Reset to default", "恢复默认")}
         </button>
         <span className="spacer" />
-        <span className="subtle mono">
+        <span className="vq-config-state mono">
           {configured === null
-            ? tr(`unset (default ${builtinDefault})`, `未配置(默认 ${builtinDefault})`)
+            ? tr(`unset · default ${builtinDefault}`, `未配置 · 默认 ${builtinDefault}`)
             : tr(`configured ${configured}`, `已配置 ${configured}`)}
         </span>
       </div>
@@ -590,124 +619,241 @@ function CostReadout(props: {
   title: string;
   threshold: number;
   cost: ThresholdCost;
-  highlight?: boolean;
+  variant: "candidate" | "current" | "suggested";
+  delta?: number;
 }) {
-  const { cost } = props;
+  const { cost, delta } = props;
   return (
-    <div className={`quality-cost ${props.highlight ? "on" : ""}`}>
-      <div className="quality-cost-title">{props.title}</div>
-      <div className="quality-cost-threshold mono">{props.threshold.toFixed(3)}</div>
-      <div className="quality-cost-line">
-        <span className={cost.false_reject_count > 0 ? "warn" : "subtle"}>
-          {tr("misses", "误拒")} {cost.false_reject_count} (
-          {(cost.false_reject_rate * 100).toFixed(0)}%)
-        </span>
+    <div className={`vq-cost ${props.variant}`}>
+      <div className="vq-cost-title">
+        <i className={`vq-dot cur-${props.variant}`} />
+        {props.title}
       </div>
-      <div className="quality-cost-line">
-        <span className={cost.false_accept_count > 0 ? "danger-text" : "subtle"}>
-          {tr("wrong names", "误纳")} {cost.false_accept_count} (
-          {(cost.false_accept_rate * 100).toFixed(0)}%)
+      <div className="vq-cost-threshold">{props.threshold.toFixed(3)}</div>
+      <div className="vq-cost-lines">
+        <span className={cost.false_reject_count > 0 ? "is-bad" : "is-ok"}>
+          <em>{tr("misses", "误拒")}</em>
+          <b>{cost.false_reject_count}</b>
+          <small>{(cost.false_reject_rate * 100).toFixed(0)}%</small>
+          {delta !== undefined && delta !== 0 && (
+            <u className={delta < 0 ? "better" : "worse"}>
+              {delta < 0 ? "▼" : "▲"}
+              {Math.abs(delta)}
+            </u>
+          )}
+        </span>
+        <span className={cost.false_accept_count > 0 ? "is-critical" : "is-ok"}>
+          <em>{tr("wrong names", "误纳")}</em>
+          <b>{cost.false_accept_count}</b>
+          <small>{(cost.false_accept_rate * 100).toFixed(0)}%</small>
         </span>
       </div>
     </div>
   );
 }
 
+const PLOT_MIN = 0.3;
+const PLOT_MAX = 0.95;
+const PLOT_BINS = 26;
+const AXIS_TICKS = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+
+function toPercent(value: number): number {
+  return ((value - PLOT_MIN) / (PLOT_MAX - PLOT_MIN)) * 100;
+}
+
+function fromPercent(percent: number): number {
+  return PLOT_MIN + (percent / 100) * (PLOT_MAX - PLOT_MIN);
+}
+
+function histogram(scores: number[]): number[] {
+  const counts = new Array(PLOT_BINS).fill(0);
+  for (const score of scores) {
+    const clamped = Math.min(Math.max(score, PLOT_MIN), PLOT_MAX - 1e-9);
+    counts[Math.floor(((clamped - PLOT_MIN) / (PLOT_MAX - PLOT_MIN)) * PLOT_BINS)] += 1;
+  }
+  return counts;
+}
+
 /**
- * Two overlaid score histograms with threshold markers.
+ * The page's centrepiece: both score populations on one axis, with the empty
+ * band between them drawn explicitly.
  *
- * The gap between the impostor mass and the genuine mass is the whole story:
- * a threshold sitting inside that gap is safe, one sitting inside the genuine
- * mass is silently rejecting correct matches. Drawing both populations on one
- * axis makes that visible in a way any single summary number cannot.
+ * That band is the whole argument — a threshold inside it separates the two
+ * populations with room to spare, one inside the genuine mass is silently
+ * rejecting correct matches. Every summary statistic we could print instead
+ * (EER, percentiles) asks the reader to reconstruct this picture in their head.
+ *
+ * Geometry is percentage-based end to end (bars, cursors, ticks, handle) and
+ * the drag track is hand-rolled rather than an `<input type=range>`: a native
+ * thumb is inset by half its width, so its centre never lines up with a
+ * percentage-positioned cursor line, and a calibration instrument whose
+ * pointer disagrees with its own plot is worse than no instrument.
  */
-function ScoreHistogram(props: {
+function ThresholdInstrument(props: {
   calibration: Calibration;
   candidate: number;
   suggested: number | null;
+  onChange: (value: number) => void;
 }) {
   const { calibration, candidate, suggested } = props;
-  const min = 0.3;
-  const max = 0.95;
-  const bins = 26;
-  const width = 100;
-  const height = 34;
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const [dragging, setDragging] = useState(false);
 
-  const histogram = (scores: number[]) => {
-    const counts = new Array(bins).fill(0);
-    for (const score of scores) {
-      const clamped = Math.min(Math.max(score, min), max - 1e-9);
-      const index = Math.floor(((clamped - min) / (max - min)) * bins);
-      counts[index] += 1;
-    }
-    return counts;
+  const genuine = useMemo(
+    () => histogram(calibration.genuine_scores),
+    [calibration.genuine_scores],
+  );
+  const impostor = useMemo(
+    () => histogram(calibration.impostor_scores),
+    [calibration.impostor_scores],
+  );
+  const peak = Math.max(1, ...genuine, ...impostor);
+
+  // The safe band: above every impostor observed, below the weak tail of the
+  // genuine ones. Only meaningful when the populations actually separate.
+  const bandStart = calibration.impostor?.max ?? null;
+  const bandEnd = calibration.genuine?.p5 ?? null;
+  const hasBand =
+    bandStart !== null && bandEnd !== null && bandEnd - bandStart > 0.005;
+
+  const setFromClientX = (clientX: number) => {
+    const track = trackRef.current;
+    if (!track) return;
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const ratio = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+    props.onChange(Number(fromPercent(ratio * 100).toFixed(3)));
   };
 
-  const genuine = histogram(calibration.genuine_scores);
-  const impostor = histogram(calibration.impostor_scores);
-  const peak = Math.max(1, ...genuine, ...impostor);
-  const x = (value: number) => ((value - min) / (max - min)) * width;
-
-  const bars = (counts: number[], className: string) =>
-    counts.map((count, index) =>
-      count === 0 ? null : (
-        <rect
-          key={`${className}-${index}`}
-          className={className}
-          x={(index / bins) * width}
-          y={height - (count / peak) * height}
-          width={width / bins - 0.35}
-          height={(count / peak) * height}
-        />
-      ),
+  const nudge = (step: number) => {
+    props.onChange(
+      Number(Math.min(Math.max(candidate + step, PLOT_MIN), PLOT_MAX).toFixed(3)),
     );
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    const large = event.shiftKey ? 0.05 : 0.005;
+    if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+      event.preventDefault();
+      nudge(-large);
+    } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+      event.preventDefault();
+      nudge(large);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      props.onChange(PLOT_MIN);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      props.onChange(PLOT_MAX);
+    }
+  };
+
+  const cursors: { key: string; value: number; label: string }[] = [];
+  cursors.push({
+    key: "current",
+    value: calibration.current_threshold,
+    label: tr("active", "生效"),
+  });
+  if (suggested !== null)
+    cursors.push({ key: "suggested", value: suggested, label: tr("suggested", "建议") });
 
   return (
-    <div className="quality-histogram">
-      <svg viewBox={`0 0 ${width} ${height + 8}`} preserveAspectRatio="none">
-        {bars(impostor, "hist-impostor")}
-        {bars(genuine, "hist-genuine")}
-        {suggested !== null && (
-          <line
-            className="hist-mark suggested"
-            x1={x(suggested)}
-            x2={x(suggested)}
-            y1={0}
-            y2={height}
-          />
+    <div className="vq-instrument">
+      <div className="vq-cursor-labels">
+        {cursors.map((cursor) => (
+          <span
+            key={cursor.key}
+            className={`vq-cursor-label cur-${cursor.key}`}
+            style={{ left: `${toPercent(cursor.value)}%` }}
+          >
+            {cursor.label} {cursor.value.toFixed(3)}
+          </span>
+        ))}
+      </div>
+
+      <div className="vq-plot">
+        {hasBand && (
+          <div
+            className="vq-band"
+            style={{
+              left: `${toPercent(bandStart)}%`,
+              width: `${toPercent(bandEnd) - toPercent(bandStart)}%`,
+            }}
+          >
+            <span className="vq-band-label">{tr("safe band", "安全区")}</span>
+          </div>
         )}
-        <line
-          className="hist-mark current"
-          x1={x(calibration.current_threshold)}
-          x2={x(calibration.current_threshold)}
-          y1={0}
-          y2={height}
+        <div className="vq-gridlines" aria-hidden="true">
+          {AXIS_TICKS.map((tick) => (
+            <i key={tick} style={{ left: `${toPercent(tick)}%` }} />
+          ))}
+        </div>
+        <div className="vq-bars">
+          {genuine.map((_, index) => (
+            <div className="vq-bin" key={index}>
+              <span
+                className="vq-bar impostor"
+                style={{ height: `${(impostor[index] / peak) * 100}%` }}
+              />
+              <span
+                className="vq-bar genuine"
+                style={{ height: `${(genuine[index] / peak) * 100}%` }}
+              />
+            </div>
+          ))}
+        </div>
+        {cursors.map((cursor) => (
+          <i
+            key={cursor.key}
+            className={`vq-cursor cur-${cursor.key}`}
+            style={{ left: `${toPercent(cursor.value)}%` }}
+          />
+        ))}
+        <i
+          className={`vq-cursor cur-candidate ${dragging ? "on" : ""}`}
+          style={{ left: `${toPercent(candidate)}%` }}
         />
-        <line
-          className="hist-mark candidate"
-          x1={x(candidate)}
-          x2={x(candidate)}
-          y1={0}
-          y2={height}
-        />
-      </svg>
-      <div className="quality-histogram-legend subtle">
-        <span>
-          <i className="quality-dot hist-legend-impostor" />
-          {tr("wrong person", "异人")}
-        </span>
-        <span>
-          <i className="quality-dot hist-legend-genuine" />
-          {tr("same person", "同人")}
-        </span>
-        <span>
-          <i className="quality-dot hist-legend-candidate" />
-          {tr("candidate", "候选阈值")}
-        </span>
-        <span className="spacer" />
-        <span className="mono">
-          {min.toFixed(2)} — {max.toFixed(2)}
-        </span>
+      </div>
+
+      <div className="vq-axis" aria-hidden="true">
+        {AXIS_TICKS.map((tick) => (
+          <span key={tick} style={{ left: `${toPercent(tick)}%` }}>
+            {tick.toFixed(2)}
+          </span>
+        ))}
+      </div>
+
+      <div
+        className={`vq-track ${dragging ? "on" : ""}`}
+        ref={trackRef}
+        role="slider"
+        tabIndex={0}
+        aria-label={tr("Candidate threshold", "候选阈值")}
+        aria-valuemin={PLOT_MIN}
+        aria-valuemax={PLOT_MAX}
+        aria-valuenow={candidate}
+        aria-valuetext={candidate.toFixed(3)}
+        onKeyDown={onKeyDown}
+        onPointerDown={(event) => {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setDragging(true);
+          setFromClientX(event.clientX);
+        }}
+        onPointerMove={(event) => {
+          if (!dragging) return;
+          setFromClientX(event.clientX);
+        }}
+        onPointerUp={(event) => {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+          setDragging(false);
+        }}
+        onPointerCancel={() => setDragging(false)}
+      >
+        <div className="vq-track-rail" />
+        <div className="vq-track-fill" style={{ width: `${toPercent(candidate)}%` }} />
+        <div className="vq-handle" style={{ left: `${toPercent(candidate)}%` }}>
+          <span className="vq-handle-readout">{candidate.toFixed(3)}</span>
+        </div>
       </div>
     </div>
   );
@@ -724,111 +870,116 @@ function IssueQueue(props: {
   const infoCount = issues.filter((item) => item.severity === "info").length;
 
   const actionLabel = (action: string) => {
-    if (action === "embed") return tr("Backfill embeddings", "补齐嵌入");
-    if (action === "review-samples") return tr("Review samples", "查看样本");
-    if (action === "capture") return tr("Capture more", "补采样本");
-    if (action === "set-threshold") return tr("Tune threshold", "调整阈值");
+    if (action === "embed") return tr("Backfill", "补齐嵌入");
+    if (action === "review-samples") return tr("Review", "查看样本");
+    if (action === "capture") return tr("Capture", "补采样本");
+    if (action === "set-threshold") return tr("Tune", "调整阈值");
     return tr("Open", "打开");
   };
 
   return (
-    <section className="quality-card">
-      <div className="quality-card-head">
-        <h2>{tr("What to fix", "待办队列")}</h2>
+    <section className="vq-panel">
+      <PanelHead eyebrow={tr("Queue", "队列")} title={tr("What to fix", "待办队列")}>
         <span className="spacer" />
         {infoCount > 0 && (
           <button
             className={`btn ghost ${showInfo ? "on" : ""}`}
             onClick={() => setShowInfo((value) => !value)}
           >
-            {tr(`Show ${infoCount} suggestion(s)`, `显示 ${infoCount} 条提示`)}
+            {showInfo
+              ? tr("Hide suggestions", "隐藏提示")
+              : tr(`+${infoCount} suggestions`, `+${infoCount} 条提示`)}
           </button>
         )}
-      </div>
+      </PanelHead>
+
       {visible.length === 0 && (
-        <div className="placeholder">
-          {tr("Nothing blocking — the library is healthy.", "没有阻塞问题 —— 声纹库健康。")}
+        <div className="vq-empty">
+          <b>{tr("All clear", "一切正常")}</b>
+          {tr("Nothing is blocking matching.", "没有阻塞匹配的问题。")}
         </div>
       )}
-      <div className="quality-issues">
+
+      <ol className="vq-issues">
         {visible.map((issue, index) => {
           const text = issueText(issue);
           return (
-          <div
-            key={`${issue.kind}-${issue.person_public_id ?? "library"}-${index}`}
-            className={`quality-issue sev-${issue.severity}`}
-          >
-            <div className="quality-issue-main">
-              <div className="quality-issue-title">
-                <span className={`badge sev-${issue.severity}`}>
-                  {severityLabel(issue.severity)}
-                </span>
-                {text.title}
-              </div>
-              <div className="quality-issue-detail subtle">{text.detail}</div>
-            </div>
-            <button
-              className="btn"
-              disabled={props.busy && issue.action === "embed"}
-              onClick={() => props.onAction(issue)}
+            <li
+              key={`${issue.kind}-${issue.person_public_id ?? "library"}-${index}`}
+              className={`vq-issue sev-${issue.severity}`}
             >
-              {actionLabel(issue.action)}
-            </button>
-          </div>
+              <span className="vq-issue-index mono">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <div className="vq-issue-body">
+                <div className="vq-issue-title">
+                  <span className={`vq-sev sev-${issue.severity}`}>
+                    {severityLabel(issue.severity)}
+                  </span>
+                  {text.title}
+                </div>
+                <p className="vq-issue-detail">{text.detail}</p>
+              </div>
+              <button
+                className="btn vq-issue-action"
+                disabled={props.busy && issue.action === "embed"}
+                onClick={() => props.onAction(issue)}
+              >
+                {actionLabel(issue.action)}
+              </button>
+            </li>
           );
         })}
-      </div>
+      </ol>
     </section>
   );
 }
 
 function PeopleMatrix(props: { people: PersonHealth[] }) {
+  const longest = Math.max(1, ...props.people.map((person) => person.matching_seconds));
   return (
-    <section className="quality-card">
-      <div className="quality-card-head">
-        <h2>{tr("People", "人员矩阵")}</h2>
+    <section className="vq-panel">
+      <PanelHead eyebrow={tr("Roster", "名册")} title={tr("People", "人员矩阵")} />
+      <div className="vq-matrix">
+        <div className="vq-matrix-head">
+          <span>{tr("Name", "姓名")}</span>
+          <span>{tr("Availability", "可用性")}</span>
+          <span className="ta-r">{tr("Matching", "匹配样本")}</span>
+          <span>{tr("Audio", "有效时长")}</span>
+          <span className="ta-r">{tr("Sources", "来源")}</span>
+        </div>
+        {props.people.map((person) => (
+          <div className="vq-matrix-row" key={person.public_id}>
+            <Link
+              className="vq-matrix-name"
+              to={`/voiceprints?person=${encodeURIComponent(person.public_id)}`}
+            >
+              {person.name}
+            </Link>
+            <span>
+              <span className={`vq-sev av-${person.availability}`}>
+                {availabilityLabel(person.availability)}
+              </span>
+            </span>
+            <span className="mono ta-r" data-label={tr("matching", "匹配")}>
+              {person.matching_sample_count}/{person.enabled_sample_count}
+              {person.missing_embedding_count > 0 && (
+                <b className="warn"> −{person.missing_embedding_count}</b>
+              )}
+            </span>
+            <span className="vq-matrix-audio" data-label={tr("audio", "时长")}>
+              <i
+                style={{ width: `${(person.matching_seconds / longest) * 100}%` }}
+                className={person.matching_seconds < 20 ? "thin" : ""}
+              />
+              <em className="mono">{fmtSeconds(person.matching_seconds)}</em>
+            </span>
+            <span className="mono ta-r" data-label={tr("sources", "来源")}>
+              {person.project_count}
+            </span>
+          </div>
+        ))}
       </div>
-      <table className="quality-table">
-        <thead>
-          <tr>
-            <th>{tr("Name", "姓名")}</th>
-            <th>{tr("Availability", "可用性")}</th>
-            <th>{tr("Matching", "匹配样本")}</th>
-            <th>{tr("Audio", "有效时长")}</th>
-            <th>{tr("Sources", "来源")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {props.people.map((person) => (
-            <tr key={person.public_id}>
-              <td>
-                <Link
-                  className="vp-project-link"
-                  to={`/voiceprints?person=${encodeURIComponent(person.public_id)}`}
-                >
-                  {person.name}
-                </Link>
-              </td>
-              <td>
-                <span className={`badge av-${person.availability}`}>
-                  {availabilityLabel(person.availability)}
-                </span>
-              </td>
-              <td className="mono">
-                {person.matching_sample_count}/{person.enabled_sample_count}
-                {person.missing_embedding_count > 0 && (
-                  <span className="warn">
-                    {" "}
-                    (−{person.missing_embedding_count})
-                  </span>
-                )}
-              </td>
-              <td className="mono">{fmtSeconds(person.matching_seconds)}</td>
-              <td className="mono">{person.project_count}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </section>
   );
 }
