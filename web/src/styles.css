@@ -1716,6 +1716,248 @@ tr.clickable {
   color: var(--red);
 }
 
+/* ---- library quality page ---------------------------------------------- */
+/* Availability is the page's primary axis, so it reuses the app's existing
+   colour semantics rather than inventing a scale: red = cannot be matched at
+   all, yellow = matchable but on thin evidence, green = healthy. */
+.quality-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.quality-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.quality-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+.quality-card-head h2 {
+  margin: 0;
+  font-size: var(--fs-md);
+}
+.quality-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-5);
+}
+.quality-stat-value {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.quality-stat-value.good {
+  color: var(--green);
+}
+.quality-stat-value.bad {
+  color: var(--red);
+}
+.quality-stat-label {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.quality-healthbar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.quality-healthbar-seg.av-ok {
+  background: var(--green);
+}
+.quality-healthbar-seg.av-fragile {
+  background: var(--yellow);
+}
+.quality-healthbar-seg.av-unusable {
+  background: var(--red);
+}
+.quality-legend {
+  font-size: var(--fs-sm);
+  flex-wrap: wrap;
+}
+.quality-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.quality-dot.av-ok,
+.quality-dot.hist-legend-genuine {
+  background: var(--green);
+}
+.quality-dot.av-fragile {
+  background: var(--yellow);
+}
+.quality-dot.av-unusable,
+.quality-dot.hist-legend-impostor {
+  background: var(--red);
+}
+.quality-dot.hist-legend-candidate {
+  background: var(--accent);
+}
+
+.quality-histogram svg {
+  width: 100%;
+  height: 108px;
+  display: block;
+}
+.hist-genuine {
+  fill: var(--green);
+  opacity: 0.75;
+}
+.hist-impostor {
+  fill: var(--red);
+  opacity: 0.75;
+}
+.hist-mark {
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+.hist-mark.current {
+  stroke: var(--text-muted);
+  stroke-dasharray: 2 2;
+}
+.hist-mark.suggested {
+  stroke: var(--yellow);
+  stroke-dasharray: 3 2;
+}
+.hist-mark.candidate {
+  stroke: var(--accent);
+}
+.quality-histogram-legend {
+  display: flex;
+  gap: var(--sp-3);
+  font-size: var(--fs-xs);
+  align-items: center;
+}
+.quality-slider {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.quality-cost-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+.quality-cost {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
+  min-width: 150px;
+  background: var(--surface-2);
+}
+.quality-cost.on {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.quality-cost-title {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.quality-cost-threshold {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+.quality-cost-line {
+  font-size: var(--fs-sm);
+}
+.quality-reason {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.quality-issues {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.quality-issue {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.quality-issue.sev-critical {
+  border-left-color: var(--red);
+}
+.quality-issue.sev-warning {
+  border-left-color: var(--yellow);
+}
+.quality-issue.sev-info {
+  border-left-color: var(--border-strong);
+}
+.quality-issue-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.quality-issue-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-base);
+  font-weight: 600;
+}
+.quality-issue-detail {
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.badge.sev-critical,
+.badge.av-unusable {
+  background: var(--red-dim);
+  color: var(--red);
+}
+.badge.sev-warning,
+.badge.av-fragile {
+  background: var(--yellow-dim);
+  color: var(--yellow);
+}
+.badge.sev-info {
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+.badge.av-ok {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.quality-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-base);
+}
+.quality-table th {
+  text-align: left;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+}
+.quality-table td {
+  padding: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+}
+
 /* ---- accessibility floor ----------------------------------------------- */
 /* Global keyboard-focus fallback: every focusable control gets a visible
    accent outline. Controls that define their own focus ring (.btn via

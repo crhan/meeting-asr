@@ -14,6 +14,7 @@ import { CapturePage } from "./pages/CapturePage";
 import { CorrectionPage } from "./pages/CorrectionPage";
 import { LexiconPage } from "./pages/LexiconPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
+import { QualityPage } from "./pages/QualityPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SpeakerReviewPage } from "./pages/SpeakerReviewPage";
 import { VoiceprintPage } from "./pages/VoiceprintPage";
@@ -99,6 +100,7 @@ function RouteChrome() {
           : tr("Speaker Review", "发言人复核");
       title = `${sub} · ${ref} · meeting-asr`;
     } else if (path.startsWith("/voiceprints")) title = `${tr("Voiceprints", "声纹库")} · meeting-asr`;
+    else if (path.startsWith("/quality")) title = `${tr("Library quality", "声纹库质量")} · meeting-asr`;
     else if (path.startsWith("/lexicon")) title = `${tr("Lexicon", "词库")} · meeting-asr`;
     else if (path.startsWith("/settings")) title = `${tr("Settings", "设置")} · meeting-asr`;
     else if (path.startsWith("/projects")) title = `${tr("Projects", "项目")} · meeting-asr`;
@@ -151,6 +153,7 @@ export function App() {
         <nav>
           <GuardedNavLink to="/projects">{tr("Projects", "项目")}</GuardedNavLink>
           <GuardedNavLink to="/voiceprints">{tr("Voiceprints", "声纹库")}</GuardedNavLink>
+          <GuardedNavLink to="/quality">{tr("Quality", "库质量")}</GuardedNavLink>
           <GuardedNavLink to="/lexicon">{tr("Lexicon", "词库")}</GuardedNavLink>
           <GuardedNavLink to="/settings">{tr("Settings", "设置")}</GuardedNavLink>
         </nav>
@@ -169,6 +172,7 @@ export function App() {
             <Route path="/projects/:ref/capture" element={<CapturePage />} />
             <Route path="/projects/:ref/corrections" element={<CorrectionPage />} />
             <Route path="/voiceprints" element={<VoiceprintPage />} />
+            <Route path="/quality" element={<QualityPage />} />
             <Route path="/lexicon" element={<LexiconPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route

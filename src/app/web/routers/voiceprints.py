@@ -23,6 +23,7 @@ from app.config import set_config_value, unset_config_value
 from app.project_manager import load_manifest
 from app.speaker_pipeline_params import (
     DEFAULT_MATCH_THRESHOLD,
+    match_threshold_coupling_kinds,
     match_threshold_coupling_warnings,
     resolve_match_threshold,
 )
@@ -282,6 +283,7 @@ def _health_out(report: LibraryHealthReport) -> LibraryHealthOut:
                 action=issue.action,
                 person_public_id=issue.person_public_id,
                 person_name=issue.person_name,
+                context=issue.context,
             )
             for issue in report.issues
         ],
@@ -311,6 +313,7 @@ def _calibration_out(
         impostor_scores=list(report.impostor_scores),
         suggested_threshold=report.suggested_threshold,
         suggested_reason=report.suggested_reason,
+        suggested_kind=report.suggested_kind,
         low_confidence=report.low_confidence,
         current_cost=_cost_out(report.current_cost),
         suggested_cost=_cost_out(report.suggested_cost),
@@ -356,6 +359,7 @@ def get_match_threshold() -> MatchThresholdOut:
         configured=configured,
         default=DEFAULT_MATCH_THRESHOLD,
         warnings=list(match_threshold_coupling_warnings(effective)),
+        warning_kinds=list(match_threshold_coupling_kinds(effective)),
     )
 
 

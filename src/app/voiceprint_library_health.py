@@ -20,7 +20,7 @@ Read-only; nothing here mutates the store.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.voiceprint_calibration import (
@@ -78,7 +78,13 @@ class PersonHealth:
 
 @dataclass(frozen=True, slots=True)
 class LibraryIssue:
-    """One actionable library problem."""
+    """One actionable library problem.
+
+    ``title``/``detail`` are English prose for CLI and API consumers. The web
+    UI is bilingual, so it re-renders both from ``kind`` plus the numbers in
+    ``context`` rather than translating sentences — that keeps the numbers
+    single-sourced here and the wording where the locale lives.
+    """
 
     kind: str
     severity: str
@@ -87,6 +93,7 @@ class LibraryIssue:
     action: str
     person_public_id: str | None = None
     person_name: str | None = None
+    context: dict[str, float | int | str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +247,17 @@ def _issues(
 def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
     """Build issues for one person, most blocking first."""
     issues: list[LibraryIssue] = []
+    facts: dict[str, float | int | str] = {
+        "name": person.speaker_name,
+        "total_sample_count": person.total_sample_count,
+        "enabled_sample_count": person.enabled_sample_count,
+        "matching_sample_count": person.matching_sample_count,
+        "missing_embedding_count": person.missing_embedding_count,
+        "matching_seconds": person.matching_seconds,
+        "project_count": person.project_count,
+        "min_cluster_size": DEFAULT_MIN_CLUSTER_SIZE,
+        "min_healthy_seconds": MIN_HEALTHY_MATCHING_SECONDS,
+    }
     if person.enabled_sample_count == 0 and person.total_sample_count > 0:
         issues.append(
             _person_issue(
@@ -254,6 +272,7 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
                     "is nothing left to check."
                 ),
                 action="review-samples",
+                context=facts,
             )
         )
     elif person.matching_sample_count == 0 and person.missing_embedding_count > 0:
@@ -270,6 +289,7 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
                     "library was not re-embedded after switching provider."
                 ),
                 action="embed",
+                context=facts,
             )
         )
     elif person.missing_embedding_count > 0:
@@ -286,6 +306,7 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
                     "matching."
                 ),
                 action="embed",
+                context=facts,
             )
         )
     if person.availability == AVAILABILITY_FRAGILE:
@@ -303,6 +324,7 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
                     "the centroid it is compared against."
                 ),
                 action="capture",
+                context=facts,
             )
         )
     if person.usable and person.matching_seconds < MIN_HEALTHY_MATCHING_SECONDS:
@@ -320,6 +342,7 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
                     "utterances."
                 ),
                 action="capture",
+                context=facts,
             )
         )
     if person.usable and person.project_count < MIN_HEALTHY_PROJECT_COUNT:
@@ -335,6 +358,7 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
                     "Add samples from another meeting to generalize."
                 ),
                 action="capture",
+                context=facts,
             )
         )
     return issues
@@ -352,6 +376,18 @@ def _threshold_issues(
         return []
     if calibration.suggested_threshold is None:
         return []
+    facts: dict[str, float | int | str] = {
+        "current_threshold": current.threshold,
+        "current_false_reject_count": current.false_reject_count,
+        "current_false_reject_rate": current.false_reject_rate,
+        "current_false_accept_count": current.false_accept_count,
+        "current_false_accept_rate": current.false_accept_rate,
+        "suggested_threshold": calibration.suggested_threshold,
+        "suggested_false_reject_count": suggested.false_reject_count,
+        "suggested_false_accept_count": suggested.false_accept_count,
+        "genuine_count": len(calibration.genuine_scores),
+        "impostor_count": len(calibration.impostor_scores),
+    }
     issues: list[LibraryIssue] = []
     if current.false_accept_count > 0:
         issues.append(
@@ -370,6 +406,7 @@ def _threshold_issues(
                     f"{calibration.suggested_reason}."
                 ),
                 action="set-threshold",
+                context=facts,
             )
         )
     elif current.false_reject_count > suggested.false_reject_count:
@@ -396,6 +433,7 @@ def _threshold_issues(
                     f"{calibration.suggested_reason}."
                 ),
                 action="set-threshold",
+                context=facts,
             )
         )
     return issues
@@ -409,6 +447,7 @@ def _person_issue(
     title: str,
     detail: str,
     action: str,
+    context: dict[str, float | int | str],
 ) -> LibraryIssue:
     """Build one person-scoped issue."""
     return LibraryIssue(
@@ -419,6 +458,7 @@ def _person_issue(
         action=action,
         person_public_id=person.speaker_public_id,
         person_name=person.speaker_name,
+        context=dict(context),
     )
 
 

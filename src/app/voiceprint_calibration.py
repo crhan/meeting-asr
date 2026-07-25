@@ -93,6 +93,9 @@ class VoiceprintCalibrationReport:
     impostor_scores: tuple[float, ...] = ()
     suggested_threshold: float | None = None
     suggested_reason: str = ""
+    # Machine-readable counterpart of suggested_reason ("gap" | "single-person"
+    # | "overlap" | "none") so a localized UI can restate it in its own words.
+    suggested_kind: str = "none"
     low_confidence: bool = False
 
     @property
@@ -153,6 +156,7 @@ class VoiceprintCalibrationReport:
             "impostor_scores": list(self.impostor_scores),
             "suggested_threshold": self.suggested_threshold,
             "suggested_reason": self.suggested_reason,
+            "suggested_kind": self.suggested_kind,
             "low_confidence": self.low_confidence,
             "current_cost": current.to_dict() if current else None,
             "suggested_cost": suggested.to_dict() if suggested else None,
@@ -221,7 +225,7 @@ def calibrate_voiceprint_thresholds(
             "is unavailable"
         )
     eer_threshold, eer_rate = _equal_error_threshold(genuine_scores, impostor_scores)
-    suggested, reason = _suggested_threshold(
+    suggested, reason, suggested_kind = _suggested_threshold(
         genuine_scores, impostor_scores, eer_threshold
     )
     low_confidence = len(genuine_scores) < LOW_CONFIDENCE_SAMPLE_COUNT
@@ -246,13 +250,14 @@ def calibrate_voiceprint_thresholds(
         impostor_scores=_exported_scores(impostor_scores),
         suggested_threshold=suggested,
         suggested_reason=reason,
+        suggested_kind=suggested_kind,
         low_confidence=low_confidence,
     )
 
 
 def _suggested_threshold(
     genuine: list[float], impostor: list[float], eer_threshold: float | None
-) -> tuple[float | None, str]:
+) -> tuple[float | None, str, str]:
     """
     Suggest an operating threshold from the separation between populations.
 
@@ -269,29 +274,39 @@ def _suggested_threshold(
         eer_threshold: Equal-error point, when computable.
 
     Returns:
-        Suggested threshold and a human-readable rationale.
+        Suggested threshold, a human-readable rationale, and a stable kind.
     """
     if not genuine:
-        return None, "no genuine observations; add more samples per person first"
+        return (
+            None,
+            "no genuine observations; add more samples per person first",
+            "none",
+        )
     ceiling = _percentile(sorted(genuine), 0.05)
     if not impostor:
-        return round(max(ceiling, 0.0), 3), (
+        return (
+            round(max(ceiling, 0.0), 3),
             "only one person has embeddings, so there is no impostor evidence; "
-            "this only protects against rejecting that person"
+            "this only protects against rejecting that person",
+            "single-person",
         )
     floor = max(impostor) + SUGGESTION_IMPOSTOR_MARGIN
     if floor < ceiling:
-        return round((floor + ceiling) / 2, 3), (
+        return (
+            round((floor + ceiling) / 2, 3),
             f"centered in the gap between the worst impostor ({max(impostor):.3f}) "
-            f"and the 5th-percentile genuine score ({ceiling:.3f})"
+            f"and the 5th-percentile genuine score ({ceiling:.3f})",
+            "gap",
         )
     if eer_threshold is not None:
-        return eer_threshold, (
+        return (
+            eer_threshold,
             "genuine and impostor scores overlap, so no threshold separates them "
             "cleanly; this is the equal-error compromise. Fixing sample quality "
-            "will help more than moving the threshold"
+            "will help more than moving the threshold",
+            "overlap",
         )
-    return None, "not enough evidence to suggest a threshold"
+    return None, "not enough evidence to suggest a threshold", "none"
 
 
 def _exported_scores(scores: list[float]) -> tuple[float, ...]:

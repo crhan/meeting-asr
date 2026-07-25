@@ -382,6 +382,116 @@ export interface QualityReport {
   people: QualityPerson[];
 }
 
+export interface PersonHealth {
+  public_id: string;
+  name: string;
+  total_sample_count: number;
+  enabled_sample_count: number;
+  matching_sample_count: number;
+  missing_embedding_count: number;
+  matching_seconds: number;
+  project_count: number;
+  availability: "ok" | "fragile" | "unusable";
+}
+
+export interface LibraryIssue {
+  kind: string;
+  severity: "critical" | "warning" | "info";
+  title: string;
+  detail: string;
+  action: string;
+  person_public_id: string | null;
+  person_name: string | null;
+  context: Record<string, number | string>;
+}
+
+export interface ScoreDistribution {
+  count: number;
+  min: number;
+  p5: number;
+  median: number;
+  p95: number;
+  max: number;
+}
+
+export interface ThresholdCost {
+  threshold: number;
+  false_reject_count: number;
+  false_reject_rate: number;
+  false_accept_count: number;
+  false_accept_rate: number;
+}
+
+export interface Calibration {
+  model: string;
+  person_count: number;
+  scored_person_count: number;
+  sample_count: number;
+  genuine: ScoreDistribution | null;
+  impostor: ScoreDistribution | null;
+  eer_threshold: number | null;
+  eer_rate: number | null;
+  low_impostor_threshold: number | null;
+  current_threshold: number;
+  warnings: string[];
+  genuine_scores: number[];
+  impostor_scores: number[];
+  suggested_threshold: number | null;
+  suggested_reason: string;
+  suggested_kind: string;
+  low_confidence: boolean;
+  current_cost: ThresholdCost | null;
+  suggested_cost: ThresholdCost | null;
+}
+
+export interface LibraryHealth {
+  db_path: string;
+  provider: string;
+  model: string;
+  person_count: number;
+  usable_person_count: number;
+  matching_sample_count: number;
+  matching_seconds: number;
+  critical_count: number;
+  warning_count: number;
+  people: PersonHealth[];
+  issues: LibraryIssue[];
+  calibration: Calibration | null;
+}
+
+export interface MatchThreshold {
+  effective: number;
+  configured: number | null;
+  default: number;
+  warnings: string[];
+  warning_kinds: string[];
+}
+
+export interface EmbedBacklog {
+  model: string;
+  missing_sample_count: number;
+  person_count: number;
+}
+
+export const getLibraryHealth = () => api<LibraryHealth>("/api/voiceprints/health");
+
+export const getMatchThreshold = () =>
+  api<MatchThreshold>("/api/voiceprints/threshold");
+
+export const setMatchThreshold = (threshold: number | null) =>
+  api<MatchThreshold>("/api/voiceprints/threshold", {
+    method: "PUT",
+    body: JSON.stringify({ threshold }),
+  });
+
+export const getEmbedBacklog = () =>
+  api<EmbedBacklog>("/api/voiceprints/embed-backlog");
+
+export const runEmbedBackfill = () =>
+  api<{ job_id: string; existing: boolean }>("/api/voiceprints/embed", {
+    method: "POST",
+  });
+
 export const getLibrary = () => api<VoiceprintLibrary>("/api/voiceprints/library");
 
 export const getPersonSamples = (ref: string) =>

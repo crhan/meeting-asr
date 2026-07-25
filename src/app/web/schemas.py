@@ -669,6 +669,8 @@ class LibraryIssueOut(BaseModel):
     action: str
     person_public_id: str | None = None
     person_name: str | None = None
+    # Numbers behind title/detail so the bilingual UI can restate them.
+    context: dict[str, float | int | str] = Field(default_factory=dict)
 
 
 class ScoreDistributionOut(BaseModel):
@@ -711,6 +713,7 @@ class CalibrationOut(BaseModel):
     impostor_scores: list[float]
     suggested_threshold: float | None
     suggested_reason: str
+    suggested_kind: str
     low_confidence: bool
     current_cost: ThresholdCostOut | None
     suggested_cost: ThresholdCostOut | None
@@ -747,6 +750,7 @@ class MatchThresholdOut(BaseModel):
     configured: float | None
     default: float
     warnings: list[str]
+    warning_kinds: list[str]
 
 
 class EmbedBacklogOut(BaseModel):

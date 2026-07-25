@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createPerson,
@@ -109,7 +109,13 @@ export function VoiceprintPage() {
   const queryClient = useQueryClient();
   const libraryQuery = useQuery({ queryKey: ["vp-library"], queryFn: getLibrary });
   const qualityQuery = useQuery({ queryKey: ["vp-quality"], queryFn: getQuality });
-  const [selected, setSelected] = useState<string | null>(null);
+  // The quality page links here with ?person=<public_id> so an issue like
+  // "no embeddings for the active model" lands on that person's samples
+  // instead of the list's first row.
+  const [searchParams] = useSearchParams();
+  const [selected, setSelected] = useState<string | null>(
+    searchParams.get("person"),
+  );
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("quality");
   const [sampleFilter, setSampleFilter] = useState<SampleFilter>("all");
