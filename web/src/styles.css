@@ -1412,6 +1412,22 @@ tr.clickable {
 .vp-health-metrics {
   font-size: var(--fs-base);
 }
+/* Contamination reads as red, not amber: unlike a consistency warning it is a
+   measured fact about the audio rather than a score that might yet be fine. */
+.vp-health-overlap {
+  align-items: center;
+  border-left: 2px solid var(--red);
+  background: var(--red-dim);
+}
+.vp-health-overlap .row {
+  flex: none;
+}
+@media (max-width: 720px) {
+  .vp-health-overlap {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
 .vp-project-risk {
   color: var(--yellow);
   border-color: rgba(240, 181, 74, 0.45);

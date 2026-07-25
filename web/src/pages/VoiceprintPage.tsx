@@ -23,10 +23,18 @@ import { confirmDialog } from "../lib/confirm";
 import { promptDialog } from "../lib/prompt";
 import { useClipAudio } from "../lib/useClipAudio";
 import { Modal } from "../components/Modal";
+import { SampleSourcePanel } from "../components/SampleSourcePanel";
 import { SeekBar } from "../components/SeekBar";
 
 type SortMode = "quality" | "name" | "samples";
-type SampleFilter = "all" | "issues" | "matching" | "excluded" | "confirmed" | "unembedded";
+type SampleFilter =
+  | "all"
+  | "issues"
+  | "overlap"
+  | "matching"
+  | "excluded"
+  | "confirmed"
+  | "unembedded";
 type PersonView = VoiceprintPerson & { quality?: QualityPerson };
 type SampleView = VoiceprintSample & { quality?: QualitySample };
 
@@ -87,17 +95,33 @@ function issueRank(person: PersonView): number {
   return (person.quality?.critical_count ?? 0) * 1000 + (person.quality?.suspicious_count ?? 0);
 }
 
+/** A sample recorded over another voice, and still feeding the matching pool. */
+function isOverlapping(sample: SampleView): boolean {
+  return sample.overlap_risk === true && sample.matching_enabled;
+}
+
 function sampleIssueRank(sample: SampleView): number {
   if (sample.quality?.label === "critical") return 0;
-  if (sample.quality?.label === "warning") return 1;
-  if (!sample.quality) return 2;
-  if (!sample.matching_enabled) return 4;
-  if (sample.identity_confirmed) return 5;
-  return 3;
+  // Ranked with the warnings rather than below them: consistency scoring
+  // cannot see this problem at all -- a contaminated sample agrees perfectly
+  // with the other contaminated samples -- so a clean-looking score is not
+  // evidence against it.
+  if (isOverlapping(sample)) return 1;
+  if (sample.quality?.label === "warning") return 2;
+  if (!sample.quality) return 3;
+  if (!sample.matching_enabled) return 5;
+  if (sample.identity_confirmed) return 6;
+  return 4;
 }
 
 function matchesSampleFilter(sample: SampleView, filter: SampleFilter): boolean {
-  if (filter === "issues") return sample.quality?.label === "critical" || sample.quality?.label === "warning";
+  if (filter === "issues")
+    return (
+      sample.quality?.label === "critical" ||
+      sample.quality?.label === "warning" ||
+      isOverlapping(sample)
+    );
+  if (filter === "overlap") return isOverlapping(sample);
   if (filter === "matching") return sample.matching_enabled;
   if (filter === "excluded") return !sample.matching_enabled;
   if (filter === "confirmed") return sample.identity_confirmed;
@@ -111,14 +135,23 @@ export function VoiceprintPage() {
   const qualityQuery = useQuery({ queryKey: ["vp-quality"], queryFn: getQuality });
   // The quality page links here with ?person=<public_id> so an issue like
   // "no embeddings for the active model" lands on that person's samples
-  // instead of the list's first row.
+  // instead of the list's first row. ?filter=overlap narrows further, to the
+  // rows the issue was actually about -- an issue that names a count without
+  // pointing at the rows leaves the operator no better off than before.
   const [searchParams] = useSearchParams();
   const [selected, setSelected] = useState<string | null>(
     searchParams.get("person"),
   );
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("quality");
-  const [sampleFilter, setSampleFilter] = useState<SampleFilter>("all");
+  const [sampleFilter, setSampleFilter] = useState<SampleFilter>(
+    searchParams.get("filter") === "overlap" ? "overlap" : "all",
+  );
+  // Person whose replacement samples are being sourced, held here so the panel
+  // survives a filter change.
+  const [sourcingFor, setSourcingFor] = useState<{ id: string; name: string } | null>(
+    null,
+  );
   const [editMode, setEditMode] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const audio = useClipAudio();
@@ -197,6 +230,32 @@ export function VoiceprintPage() {
         tr(
           `Excluded ${result.updated_count} low-quality sample(s) from matching.`,
           `已将 ${result.updated_count} 条低质样本排除出匹配。`,
+        ),
+      );
+    },
+  });
+
+  // Overlap samples are not what the bulk quality-exclude endpoint acts on --
+  // it filters by consistency label, and a contaminated sample usually scores
+  // fine, so routing them through it would report success and change nothing.
+  // Flip each one explicitly instead.
+  const excludeOverlapMut = useMutation({
+    mutationFn: async ({
+      samples,
+    }: {
+      personRef: string;
+      samples: { public_id: string; identity_confirmed: boolean }[];
+    }) => {
+      for (const sample of samples)
+        await setSampleStatus(sample.public_id, statusForAxes(sample.identity_confirmed, false));
+      return samples.length;
+    },
+    onSuccess: (count, variables) => {
+      invalidatePerson(variables.personRef);
+      setToast(
+        tr(
+          `Excluded ${count} sample(s) recorded over another voice.`,
+          `已把 ${count} 条录到他人的样本排除出匹配。`,
         ),
       );
     },
@@ -309,7 +368,17 @@ export function VoiceprintPage() {
         <div className="vp-control-block">
           <div className="vp-control-label">{tr("Samples", "样本筛选")}</div>
           <div className="vp-control-group">
-            {(["all", "issues", "matching", "excluded", "confirmed", "unembedded"] as const).map((filter) => (
+            {(
+              [
+                "all",
+                "issues",
+                "overlap",
+                "matching",
+                "excluded",
+                "confirmed",
+                "unembedded",
+              ] as const
+            ).map((filter) => (
               <button
                 key={filter}
                 className={`chip ${sampleFilter === filter ? "on" : ""}`}
@@ -319,13 +388,15 @@ export function VoiceprintPage() {
                   ? tr("All", "全部")
                   : filter === "issues"
                     ? tr("Issues", "有问题")
-                    : filter === "matching"
-                      ? tr("Matching", "参与匹配")
-                      : filter === "excluded"
-                        ? tr("Excluded", "不参与")
-                        : filter === "confirmed"
-                          ? tr("Confirmed", "已确认")
-                          : tr("Unembedded", "未嵌入")}
+                    : filter === "overlap"
+                      ? tr("Over another voice", "录到他人")
+                      : filter === "matching"
+                        ? tr("Matching", "参与匹配")
+                        : filter === "excluded"
+                          ? tr("Excluded", "不参与")
+                          : filter === "confirmed"
+                            ? tr("Confirmed", "已确认")
+                            : tr("Unembedded", "未嵌入")}
               </button>
             ))}
           </div>
@@ -384,6 +455,7 @@ export function VoiceprintPage() {
 
         <div className="vp-main">
           {selectedPerson ? (
+            <>
             <PersonDetail
               person={selectedPerson}
               sampleFilter={sampleFilter}
@@ -415,7 +487,40 @@ export function VoiceprintPage() {
                   samplePublicIds,
                 })
               }
+              onShowOverlap={() => setSampleFilter("overlap")}
+              onFindSources={() =>
+                setSourcingFor({
+                  id: selectedPerson.public_id,
+                  name: selectedPerson.name,
+                })
+              }
+              onExcludeOverlap={async (samples) => {
+                if (
+                  await confirmDialog({
+                    message: tr(
+                      `Exclude ${samples.length} sample(s) recorded over another voice from matching? They stay in the library and can be re-enabled.`,
+                      `把这 ${samples.length} 条录到他人的样本排除出匹配？样本仍留在库里，随时可以恢复。`,
+                    ),
+                    confirmLabel: tr("Exclude", "排除"),
+                    danger: true,
+                  })
+                )
+                  excludeOverlapMut.mutate({
+                    personRef: selectedPerson.public_id,
+                    samples,
+                  });
+              }}
+              excludingOverlap={excludeOverlapMut.isPending}
             />
+            {sourcingFor && (
+              <SampleSourcePanel
+                personId={sourcingFor.id}
+                personName={sourcingFor.name}
+                onClose={() => setSourcingFor(null)}
+                onSettled={() => invalidatePerson(sourcingFor.id)}
+              />
+            )}
+            </>
           ) : (
             <div className="placeholder">{tr("No people.", "暂无人物。")}</div>
           )}
@@ -510,6 +615,12 @@ function PersonDetail(props: {
   onSetStatus: (samplePublicId: string, status: string) => void;
   onDeleteSample: (samplePublicId: string, lastSample: boolean) => void;
   onExcludeIssues: (samplePublicIds?: string[]) => void;
+  onShowOverlap: () => void;
+  onFindSources: () => void;
+  onExcludeOverlap: (
+    samples: { public_id: string; identity_confirmed: boolean }[],
+  ) => void;
+  excludingOverlap: boolean;
 }) {
   const { person, sampleFilter, editMode, audio } = props;
   const { data, isLoading, error } = useQuery({
@@ -542,6 +653,14 @@ function PersonDetail(props: {
       allSamples.filter(
         (sample) => sample.quality?.label === "critical" || sample.quality?.label === "warning",
       ),
+    [allSamples],
+  );
+  const overlapSamples = useMemo(
+    () => allSamples.filter(isOverlapping),
+    [allSamples],
+  );
+  const matchingSampleCount = useMemo(
+    () => allSamples.filter((sample) => sample.matching_enabled).length,
     [allSamples],
   );
   const riskyProjects = person.quality?.projects.filter((project) => project.suspicious_count > 0) ?? [];
@@ -607,6 +726,21 @@ function PersonDetail(props: {
           </div>
         )}
       </div>
+      {allSamples.length > 0 && (
+        <VoiceprintHealthPanel
+          person={person}
+          issueSamples={issueSamples}
+          overlapSamples={overlapSamples}
+          matchingSampleCount={matchingSampleCount}
+          riskyProjects={riskyProjects}
+          editMode={editMode}
+          onExcludeIssues={() => props.onExcludeIssues(issueSamples.map((sample) => sample.public_id))}
+          onShowOverlap={props.onShowOverlap}
+          onFindSources={props.onFindSources}
+          onExcludeOverlap={() => props.onExcludeOverlap(overlapSamples)}
+          excludingOverlap={props.excludingOverlap}
+        />
+      )}
       {samples.length === 0 ? (
         <div className="placeholder">
           {allSamples.length === 0 ? (
@@ -623,13 +757,6 @@ function PersonDetail(props: {
         </div>
       ) : (
         <>
-          <VoiceprintHealthPanel
-            person={person}
-            issueSamples={issueSamples}
-            riskyProjects={riskyProjects}
-            editMode={editMode}
-            onExcludeIssues={() => props.onExcludeIssues(issueSamples.map((sample) => sample.public_id))}
-          />
           <div className="segments">
             {samples.map((sample) => (
               <SampleRow
@@ -654,15 +781,37 @@ function PersonDetail(props: {
 function VoiceprintHealthPanel(props: {
   person: PersonView;
   issueSamples: SampleView[];
+  overlapSamples: SampleView[];
+  matchingSampleCount: number;
   riskyProjects: NonNullable<QualityPerson["projects"]>;
   editMode: boolean;
   onExcludeIssues: () => void;
+  onShowOverlap: () => void;
+  onFindSources: () => void;
+  onExcludeOverlap: () => void;
+  excludingOverlap: boolean;
 }) {
-  const { person, issueSamples, riskyProjects, editMode } = props;
+  const { person, issueSamples, overlapSamples, riskyProjects, editMode } = props;
   const q = person.quality;
-  if (!q) return null;
-  const hasRisk = q.suspicious_count > 0 || q.critical_count > 0;
+  // Overlap is visible without any embedding, and it is the one problem a
+  // consistency score structurally cannot report, so this block must not be
+  // gated on quality data being present.
+  const overlapBlock = overlapSamples.length > 0 && (
+    <OverlapNotice
+      count={overlapSamples.length}
+      matchingSampleCount={props.matchingSampleCount}
+      editMode={editMode}
+      busy={props.excludingOverlap}
+      onShow={props.onShowOverlap}
+      onFindSources={props.onFindSources}
+      onExclude={props.onExcludeOverlap}
+    />
+  );
+  if (!q) return overlapBlock || null;
+  const hasRisk =
+    q.suspicious_count > 0 || q.critical_count > 0 || overlapSamples.length > 0;
   return (
+    <>
     <div className={`vp-health ${hasRisk ? "risk" : ""}`}>
       <div className="vp-health-main">
         <div className="vp-health-metrics">
@@ -707,6 +856,72 @@ function VoiceprintHealthPanel(props: {
           {tr("Exclude issue samples", "排除疑点样本")} ({issueSamples.length})
         </button>
       )}
+    </div>
+    {overlapBlock}
+    </>
+  );
+}
+
+/**
+ * The contamination notice, and the two moves that actually resolve it.
+ *
+ * Excluding these samples is offered only when something clean would be left
+ * behind. Excluding every sample a person has does not make the library more
+ * accurate -- it removes the person from matching altogether, which is a worse
+ * outcome than a skewed centroid. In that case the only real first step is to
+ * capture a replacement, so that is the only thing shown.
+ */
+function OverlapNotice(props: {
+  count: number;
+  matchingSampleCount: number;
+  editMode: boolean;
+  busy: boolean;
+  onShow: () => void;
+  onFindSources: () => void;
+  onExclude: () => void;
+}) {
+  const wouldEmptyPool = props.count >= props.matchingSampleCount;
+  return (
+    <div className="vp-health risk vp-health-overlap">
+      <div className="vp-health-main">
+        <div className="vp-health-metrics">
+          <strong className="danger-text">
+            {tr(
+              `${props.count} sample(s) recorded over another voice`,
+              `${props.count} 条样本录到了他人说话`,
+            )}
+          </strong>
+        </div>
+        <div className="vp-health-line subtle">
+          {tr(
+            "These pull this person's centroid toward whoever they were talking to — the pair that is hardest to tell apart to begin with. Sample consistency cannot see it: contaminated samples agree perfectly with each other.",
+            "这类样本把这个人的质心往「跟他对话的那个人」拉,而那本来就是最难区分的一对。一致性检查看不出来 —— 被污染的样本彼此高度自洽。",
+          )}
+        </div>
+        {props.editMode && wouldEmptyPool && (
+          <div className="vp-health-line subtle">
+            {tr(
+              "Every matching sample this person has is affected, so excluding them would remove the person from matching entirely. Capture a clean replacement first.",
+              "这个人参与匹配的样本全都受影响,现在排除等于把这个人整个踢出匹配池。先补一条干净的再说。",
+            )}
+          </div>
+        )}
+      </div>
+      <div className="row gap">
+        <button className="btn ghost" onClick={props.onShow}>
+          {tr("Show them", "只看这些")}
+        </button>
+        <button className="btn primary" onClick={props.onFindSources}>
+          {tr("Find clean samples", "找干净的样本")}
+        </button>
+        {props.editMode && !wouldEmptyPool && (
+          <button className="btn ghost danger" disabled={props.busy} onClick={props.onExclude}>
+            {props.busy
+              ? tr("Excluding…", "排除中…")
+              : tr(`Exclude ${props.count}`, `排除这 ${props.count} 条`)}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -753,6 +968,17 @@ function SampleRow(props: {
           <span className={`badge status-pill ${sample.matching_enabled ? "active" : "quarantined"}`}>
             {matchingLabel(sample)}
           </span>
+          {sample.overlap_risk && (
+            <span
+              className="badge state-broken"
+              title={tr(
+                "Another speaker holds the floor within half a second of this clip, so the stored reference is a mixture of two voices.",
+                "这条 clip 前后半秒内有另一个人在说话,存进库的参考音频是两个人的混合体。",
+              )}
+            >
+              {tr("over another voice", "录到他人")}
+            </span>
+          )}
         </div>
         <div className="segment-text">{sample.transcript_text}</div>
         {sample.quality?.reason && (

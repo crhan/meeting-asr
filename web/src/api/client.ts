@@ -316,6 +316,10 @@ export interface VoiceprintSample {
   identity_confirmed: boolean;
   matching_enabled: boolean;
   clip_rel_path: string;
+  /** Another speaker holds the floor within half a second of this sample's
+   *  source audio. null means the source project was unavailable and the
+   *  check did not run -- which must not be rendered as "clean". */
+  overlap_risk: boolean | null;
 }
 
 export interface VoiceprintLibrary {
