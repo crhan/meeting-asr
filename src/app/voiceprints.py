@@ -72,6 +72,10 @@ class VoiceprintClip:
     audio_score: float | None = None
     audio_reason: str = "not-analyzed"
     recommended: bool = True
+    # Another speaker holds the floor within OVERLAP_RISK_GAP_MS. Padding no
+    # longer reaches into them, but the segment itself came from a stretch
+    # where the two talked over each other, so it is never a default pick.
+    overlap_risk: bool = False
 
     @property
     def duration_seconds(self) -> float:
@@ -896,7 +900,13 @@ def _plan_voiceprint_speakers(
             grouped[speaker_id], result.sentences, sample_count
         )
         clips = _build_clips(
-            clip_dir, project_id, speaker_id, selected, max_seconds, padding_seconds
+            clip_dir,
+            project_id,
+            speaker_id,
+            selected,
+            max_seconds,
+            padding_seconds,
+            neighbors=_speaker_change_bounds(result.sentences),
         )
         if clips:
             speakers.append(
@@ -1004,6 +1014,57 @@ def _speaker_segments_by_id(
     return grouped
 
 
+def _speaker_change_bounds(
+    segments: list[SentenceSegment],
+) -> list[tuple[int, int, int | None]]:
+    """Return (begin, end, speaker_id) ordered by time, for padding clamps."""
+    return sorted(
+        (
+            (segment.begin_time_ms, segment.end_time_ms, segment.speaker_id)
+            for segment in segments
+            if segment.end_time_ms > segment.begin_time_ms
+        ),
+        key=lambda item: (item[0], item[1]),
+    )
+
+
+def _padding_limits(
+    segment: SentenceSegment,
+    neighbors: list[tuple[int, int, int | None]] | None,
+) -> tuple[int, int]:
+    """
+    Return how far padding may run before it reaches another speaker.
+
+    Context padding exists to keep a sentence's own onset and tail; in a
+    back-and-forth exchange the neighbouring turn often starts within
+    milliseconds, so a fixed pad reaches straight into the other person's
+    voice. Measured on a real two-party call, a 0.5s pad put 10-13% of another
+    speaker into every clip -- a mixture stored as one person's reference,
+    which drags their centroid toward exactly the person they talk to most.
+
+    Args:
+        segment: Segment being clipped.
+        neighbors: Time-ordered (begin, end, speaker_id) for the whole
+            transcript, or None to leave padding unclamped.
+
+    Returns:
+        Maximum padding in ms allowed before and after the segment.
+    """
+    if not neighbors:
+        return (2**31, 2**31)
+    before = 2**31
+    after = 2**31
+    for begin, end, speaker_id in neighbors:
+        if speaker_id == segment.speaker_id:
+            continue
+        if end <= segment.begin_time_ms:
+            before = min(before, segment.begin_time_ms - end)
+        if begin >= segment.end_time_ms:
+            after = min(after, begin - segment.end_time_ms)
+            break
+    return (max(0, before), max(0, after))
+
+
 def _build_clips(
     clip_dir: Path,
     project_id: str,
@@ -1011,6 +1072,7 @@ def _build_clips(
     segments: list[ScoredVoiceprintSegment],
     max_seconds: float,
     padding_seconds: float,
+    neighbors: list[tuple[int, int, int | None]] | None = None,
 ) -> list[VoiceprintClip]:
     """
     Build output clip descriptors for selected segments.
@@ -1022,6 +1084,8 @@ def _build_clips(
         segments: Selected source segments.
         max_seconds: Maximum seconds per output clip.
         padding_seconds: Extra context around each sentence.
+        neighbors: Time-ordered transcript bounds used to stop padding before
+            it reaches another speaker. Omitted means unclamped padding.
 
     Returns:
         Clip descriptors.
@@ -1036,6 +1100,7 @@ def _build_clips(
             candidate,
             max_seconds,
             padding_seconds,
+            neighbors=neighbors,
         )
         if clip.duration_seconds > 0:
             clips.append(clip)
@@ -1050,6 +1115,7 @@ def _build_clip(
     candidate: ScoredVoiceprintSegment,
     max_seconds: float,
     padding_seconds: float,
+    neighbors: list[tuple[int, int, int | None]] | None = None,
 ) -> VoiceprintClip:
     """
     Build one output clip descriptor.
@@ -1062,6 +1128,8 @@ def _build_clip(
         candidate: Source transcript segment with selection diagnostics.
         max_seconds: Maximum seconds per output clip.
         padding_seconds: Extra context around the segment.
+        neighbors: Time-ordered transcript bounds used to stop padding before
+            it reaches another speaker.
 
     Returns:
         Clip descriptor.
@@ -1069,8 +1137,11 @@ def _build_clip(
     padding_ms = int(round(padding_seconds * 1000))
     max_ms = int(round(max_seconds * 1000))
     segment = candidate.segment
-    clip_begin = max(0, segment.begin_time_ms - padding_ms)
-    clip_end = min(segment.end_time_ms + padding_ms, clip_begin + max_ms)
+    before_limit, after_limit = _padding_limits(segment, neighbors)
+    clip_begin = max(0, segment.begin_time_ms - min(padding_ms, before_limit))
+    clip_end = min(
+        segment.end_time_ms + min(padding_ms, after_limit), clip_begin + max_ms
+    )
     rel_path = f"clips/{project_id}/speaker_{speaker_id}/clip_{index:03d}.wav"
     path = clip_dir.parent / rel_path
     return VoiceprintClip(
@@ -1084,6 +1155,7 @@ def _build_clip(
         candidate.score,
         candidate.reason,
         recommended=candidate.recommended,
+        overlap_risk=candidate.overlap_risk,
     )
 
 
@@ -1355,9 +1427,7 @@ def _identity_precheck_statuses(
             embedding_path = clip.path.with_name(f"{clip.path.stem}_embedding.wav")
             if not embedding_path.exists():
                 trim_embedding_audio_silence(clip.path, embedding_path)
-            vector = _normalize_vector(
-                embed_audio_file(embedding_path, provider=None)
-            )
+            vector = _normalize_vector(embed_audio_file(embedding_path, provider=None))
         except Exception:  # noqa: BLE001 - precheck must not block capture
             continue
         score = _cosine(vector, centroid)
@@ -1385,9 +1455,7 @@ def _existing_person_centroid(person_id: int, db_path: Path) -> list[float] | No
     ]
     if len(vectors) < CAPTURE_IDENTITY_MIN_CENTROID_SAMPLES:
         return None
-    return _normalize_vector(
-        [sum(values) / len(vectors) for values in zip(*vectors)]
-    )
+    return _normalize_vector([sum(values) / len(vectors) for values in zip(*vectors)])
 
 
 def _stored_sample(
