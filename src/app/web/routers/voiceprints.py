@@ -375,9 +375,7 @@ async def set_match_threshold(
     loop = asyncio.get_running_loop()
     async with locks.acquire(store_lock_key("config")):
         if payload.threshold is None:
-            await loop.run_in_executor(
-                None, lambda: _clear_match_threshold_config()
-            )
+            await loop.run_in_executor(None, lambda: _clear_match_threshold_config())
         else:
             await loop.run_in_executor(
                 None,
@@ -442,9 +440,7 @@ def run_embed(
             "skipped_count": summary.skipped_count,
         }
 
-    job, existing = jobs.submit(
-        "voiceprint-embed", work, store_locks=[_STORE_LOCK]
-    )
+    job, existing = jobs.submit("voiceprint-embed", work, store_locks=[_STORE_LOCK])
     return JobRef(job_id=job.id, kind=job.kind, status=job.status, existing=existing)
 
 
