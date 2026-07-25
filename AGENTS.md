@@ -123,6 +123,9 @@
 - **阈值是耦合的，改动有静默副作用**：降到 `STRONG_MARGIN_ACCEPT_SCORE`(0.65) 及以下，strong-margin 救援规则变成**死代码**（它要救的都已被直接接受）；降到 crosstalk `score_floor`(0.5) 及以下，接受层能接受的人同时也符合串场标记条件。两者都**不报错**，所以 `match_threshold_coupling_warnings()` / `match_threshold_coupling_kinds()` 必须在写入前显式展示。注意实测建议值 0.557 就会触发前者。
 - **建议阈值取「空档中点」而非 EER**：`max(impostor) + 裕度` 与 `genuine p5` 之间的中点，两侧都留余量。EER 可能紧贴 impostor 上界（本机库 EER 0.525 vs impostor max 0.522，零裕度），不适合直接当工作点。两个分布重叠时才退回 EER，并明确告诉用户**此时该修样本而不是调阈值**。
 - **calibration 导出 genuine/impostor 原始分数数组是刻意的**（`MAX_EXPORTED_SCORES` 等距下采样兜底大库）：前端拖动阈值游标要**本地实时定价**，拖一格打一次后端不可用。`cost_at()` 在前后端各实现一次，两边语义必须一致（接受判据是 `score >= threshold`；余弦有符号且可取到 1.0，写测试边界时别拿 0.0/1.0 当「全部之外」）。
+- **`clip_path` 是入库时那个 store 的绝对路径，会失效；要读样本音频一律走 `resolve_voiceprint_sample_source()`。** 库搬家（换 `XDG_DATA_HOME`、迁数据卷）或用 `--store-dir` 跑隔离副本后，该路径指向别处，但 clip 文件其实好端端在当前 store 下（靠 `clip_rel_path` rebase 得到）。播放/删除早就用 `resolve_in_store_clip_path` 做了 rebase，**嵌入曾经漏掉**，于是 `FileNotFoundError` → `skip_missing_clips` 静默跳过 → 那些人永久缺席匹配池，而 `voiceprint embed` 照样报成功（`Embedded: 0`）。实测本机库 6 个样本因此哑掉。新增任何读样本音频的代码路径时，别再直接用 `sample.clip_path`。
+- **待办/动作按钮必须是「能成功的」才给。** clip 已丢失的样本不给 `embed` 动作（跑完必然零变化，用户只会以为按钮坏了），而是报 `missing-clips` + 「查看样本」。同理 `embed-backlog` 只统计音频可读的。判据是 `PersonHealth.embeddable_count`（= missing_embedding − missing_clip），不是 `missing_embedding_count`。
+- **提交 job ≠ 事情做完。** web 上任何「点一下起个后台 job」的动作，submit 只是入队，此刻刷新数据毫无意义。必须用 `useJobStream` 跟到终态再 invalidate，并**如实报告结果**（embedded=0 要明说没变），否则 UI 表现为「任务闪一下、列表纹丝不动」，和坏掉无法区分。
 - **双语文案的分工：后端出英文散文 + `kind` + `context` 数字，前端按 locale 重新组装。** 不要在前端翻译整句（数字会在两处各写一遍，迟早不一致），也不要让后端产出中文（CLI/API 消费者要英文）。新增 issue kind 时必须同时在 `QualityPage.tsx` 的 `issueText()` 里加分支，否则 UI 会 fall through 成英文——可接受的降级，但不是终态。
 
 ## Crosstalk Tier Notes（会后串场/噪音放行档）
