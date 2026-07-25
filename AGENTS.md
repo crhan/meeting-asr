@@ -128,6 +128,17 @@
 - **提交 job ≠ 事情做完。** web 上任何「点一下起个后台 job」的动作，submit 只是入队，此刻刷新数据毫无意义。必须用 `useJobStream` 跟到终态再 invalidate，并**如实报告结果**（embedded=0 要明说没变），否则 UI 表现为「任务闪一下、列表纹丝不动」，和坏掉无法区分。
 - **双语文案的分工：后端出英文散文 + `kind` + `context` 数字，前端按 locale 重新组装。** 不要在前端翻译整句（数字会在两处各写一遍，迟早不一致），也不要让后端产出中文（CLI/API 消费者要英文）。新增 issue kind 时必须同时在 `QualityPage.tsx` 的 `issueText()` 里加分支，否则 UI 会 fall through 成英文——可接受的降级，但不是终态。
 
+- **把常量改成可配置，会让所有断言该常量的测试变成「看开发者心情」。** `voiceprint.match_threshold` 走 config 之后，没隔离 `XDG_CONFIG_HOME` 的测试会读到开发者本机真实配置：CI 全绿，而**恰恰是认真调过阈值的人**本机挂，且 diff 指向产品而非环境（实测配 0.561 后 `test_speaker_match` 立刻红）。`tests/conftest.py` 现有 autouse fixture `_hermetic_config_home` 把 config home 指向 tmp 沙箱兜住这一类。**以后再把任何默认值改成读配置，先想清楚有没有测试在断言它。**（`XDG_DATA_HOME` 尚未全局隔离，各测试自己 monkeypatch；碰声纹库的新测试务必自己隔离，否则会动到真实库。）
+
+## Sample Sourcing Notes（「补采样本」到底去哪采）
+
+- **`voiceprint_sample_sourcing` 补的是 health 提得出、却答不了的那一问。** health 说「某人只有 14s 音频 / 只有一场录音」，动作只能写 `capture`——只有动词没有宾语，于是 UI 只能 `navigate("/projects")`，把人送到问题的**起点**。sourcing 扫全部项目回答「去哪采、能采多少、为什么值得开」，前端据此深链 `/projects/<id>/capture?speaker=N`（挑选 UI 早就有了，缺的一直是这一步）。
+- **归属必须同时认「关联」和「显示名」**，优先级同 merge 那套身份键：`speaker_person_map.json` 指向此人（强）> `speaker_map.json` 显示名相同且**该 speaker 没被关联到别人**（弱）。只认关联会漏掉「已命名但从没关联过 person」的人——实测本机库里就有。占位名（`待确认发言人N`）走 `is_placeholder_name` 排除，绝不按名字归属。
+- **排序是缺口驱动，不是「音质最好者胜」。** 缺时长的人加权供给、单一来源的人加权新场次；纯按候选分排序会永远推荐那场**已经采过**的会。供给按 `MIN_RECOMMENDED_SCORE`（不是 `MIN_SELECTION_SCORE`）计——只有「采集页会默认勾上」的片段才算库存，否则等于广告一批用户永远不会选的碎片。已入库样本的时间区间从供给里扣除（`_OVERLAP_TOLERANCE_MS`），不重复推荐同一句。
+- **隔离样本不算「已采过」。** quarantined 不进匹配池，所以「只产出过隔离样本」的项目在 sourcing 眼里仍是**未采之地**（`_matching_project_ids` 只收 matching 状态），额外打 `retry-quarantined` 说明上次是被拒不是没采。把它算作已采会把唯一能救 single-source 的项目藏起来。这类项目往往是质心太窄（只由另一场短会构成）而非选错人——证据是 person-map 关联本身就是人工确认过的。
+- **同一场录音里再多采几条，治不了 single-source。** 当所有来源都是 `already-harvested` 时，CLI 与面板都必须**明说**这一点，否则用户会照着推荐一路采下去而缺口纹丝不动。
+- 当前只覆盖**已命名**的说话人；完全没命名过的项目里即使有这个人也扫不出来（需按声纹比对未命名 track，更贵）。别把这个局限当 bug 修成「静默返回空」——报告里 `skipped` 会列出读不了的项目，空结果的文案要指向「先去 review 里命名」。
+
 ## Crosstalk Tier Notes（会后串场/噪音放行档）
 
 - **crosstalk 是「非破坏性广告牌」，不是新的 speaker 操作。** 会尾常混入另一拨人的零碎串场（样本极少、声纹分数极低、候选对不上）。以前这种 cluster 卡在 `below-threshold`，逼下游瞎猜名或整场绕过。crosstalk 档只给它**打一个 advisory 标记**：speaker 仍是匿名 `Speaker N`、句子一字不改、不移动、不改名——与今日 below-threshold 对未命名 cluster 的处理**唯一区别就是换个 label**。所以最坏的误判（把只说「对对对」的真实安静与会者标成串场，见 ASR Postprocess Notes）后果只是多个「疑似串场」徽章，人还在转写里，review 可无视。这正是 **default-ON 安全**的原因。
