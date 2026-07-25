@@ -2112,6 +2112,140 @@ def test_library_health_route_reports_availability(
     assert backlog.json()["missing_sample_count"] == 3
 
 
+def test_library_health_route_runs_the_overlap_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The route must resolve the default projects dir, not forward a None.
+
+    ``WebSettings.projects_dir`` is None whenever the server started without an
+    explicit ``--projects-dir`` -- the common case -- and every other route
+    reaches the real directory through the same default. Forwarding that None
+    skipped the overlap check entirely and rendered "not checked" as a clean
+    library, so this test must build the server *without* a projects dir or it
+    exercises nothing.
+    """
+    import json
+
+    from app.config import get_default_projects_dir
+
+    from app.voiceprint_embedding import resolve_voiceprint_embedding_options
+    from app.voiceprint_store import (
+        StoredVoiceprintSample,
+        get_voiceprint_db_path,
+        store_voiceprint_samples_with_rows,
+        upsert_voiceprint_embedding,
+    )
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    store_dir = tmp_path / "store" / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    source = store_dir / "source.mp4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"seed")
+    samples = []
+    for index in range(3):
+        clip = store_dir / "clips" / f"c{index}.wav"
+        clip.parent.mkdir(parents=True, exist_ok=True)
+        clip.write_bytes(f"clip{index}".encode())
+        samples.append(
+            StoredVoiceprintSample(
+                speaker_name="Crowded",
+                project_id="p-crowded",
+                project_path=store_dir,
+                project_speaker_id=0,
+                source_path=source,
+                clip_path=clip,
+                clip_rel_path=str(clip.relative_to(store_dir)),
+                source_begin_time_ms=index * 60_000,
+                source_end_time_ms=index * 60_000 + 8_000,
+                clip_begin_time_ms=0,
+                clip_end_time_ms=8_000,
+                transcript_text=f"Crowded {index}",
+            )
+        )
+    _db, rows = store_voiceprint_samples_with_rows(samples, db_path)
+    for offset, row in enumerate(rows):
+        upsert_voiceprint_embedding(row.sample_id, model, [1.0, offset * 0.01], db_path)
+
+    project_dir = get_default_projects_dir() / "p-crowded"
+    (project_dir / "asr").mkdir(parents=True)
+    created_at = "2026-05-11T12:00:00+08:00"
+    (project_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": "p-crowded",
+                "title": "会议",
+                "created_at": created_at,
+                "updated_at": created_at,
+                "status": "corrected",
+                "source": {
+                    "path": "source/p-crowded.mp3",
+                    "filename": "p-crowded.mp3",
+                    "size_bytes": 1,
+                    "mtime": created_at,
+                    "meeting_time": created_at,
+                },
+                "audio": {"duration_seconds": 3600.0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    sentences = [
+        item
+        for index in range(3)
+        for item in (
+            {
+                "begin_time_ms": index * 60_000,
+                "end_time_ms": index * 60_000 + 8_000,
+                "text": "这是被采样的那个人说的一段完整发言内容。",
+                "speaker_id": 0,
+            },
+            {
+                "begin_time_ms": index * 60_000 + 8_000,
+                "end_time_ms": index * 60_000 + 14_000,
+                "text": "这是另一个人紧接着说的话，中间没有停顿。",
+                "speaker_id": 1,
+            },
+        )
+    ]
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(
+            {
+                "full_text": "".join(item["text"] for item in sentences),
+                "sentences": sentences,
+                "detected_speakers": [0, 1],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    settings = WebSettings(
+        host="127.0.0.1",
+        port=0,
+        projects_dir=None,
+        store_dir=tmp_path / "store",
+        open_browser=False,
+        token=None,
+    )
+    with TestClient(
+        create_app(settings), base_url="http://127.0.0.1:8765"
+    ) as bare_client:
+        resp = bare_client.get("/api/voiceprints/health")
+
+    assert resp.status_code == 200
+    kinds = {issue["kind"] for issue in resp.json()["issues"]}
+    assert "overlapped-samples" in kinds
+    issue = next(i for i in resp.json()["issues"] if i["kind"] == "overlapped-samples")
+    assert issue["context"]["overlapped_count"] == 3
+
+
 def test_sample_sources_route_ranks_harvestable_projects(
     client: TestClient, tmp_path: Path
 ) -> None:

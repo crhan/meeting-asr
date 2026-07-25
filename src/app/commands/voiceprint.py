@@ -28,6 +28,7 @@ from app.completion_helpers import (
     complete_voiceprint_model,
     complete_voiceprint_provider,
 )
+from app.config import get_default_projects_dir
 from app.core.project_refs import resolve_project_ref
 from app.utils import format_ms_timestamp
 from app.voiceprint_audio import (
@@ -749,7 +750,7 @@ def health_command(
         "--projects-dir",
         file_okay=False,
         dir_okay=True,
-        help="Projects parent directory; enables the speaker-overlap check.",
+        help="Projects parent directory for the speaker-overlap check.",
     ),
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
@@ -765,7 +766,12 @@ def health_command(
     """
     report = run_with_cli_errors(
         lambda: analyze_library_health(
-            store_dir=store_dir, model=model, projects_dir=projects_dir
+            store_dir=store_dir,
+            model=model,
+            # Default to the standard projects directory rather than skipping:
+            # a health report that quietly omits the overlap check reads as a
+            # clean bill of health for samples nobody looked at.
+            projects_dir=projects_dir or get_default_projects_dir(),
         )
     )
     if as_json:

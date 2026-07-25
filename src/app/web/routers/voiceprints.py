@@ -19,7 +19,11 @@ from app.core.voiceprint_review_service import (
     CaptureConflictError,
     plan_capture,
 )
-from app.config import set_config_value, unset_config_value
+from app.config import (
+    get_default_projects_dir,
+    set_config_value,
+    unset_config_value,
+)
 from app.project_manager import load_manifest
 from app.speaker_pipeline_params import (
     DEFAULT_MATCH_THRESHOLD,
@@ -253,9 +257,14 @@ def get_library_health(
     settings: WebSettings = Depends(get_settings),
 ) -> LibraryHealthOut:
     """Report which library people are matchable and what blocks the rest."""
+    # settings.projects_dir is None whenever the server was started without an
+    # explicit --projects-dir, and everything else on this server reaches the
+    # real directory through the same default. Passing the None straight
+    # through would silently skip the overlap check and render "not checked"
+    # as a clean bill of health.
     report = analyze_library_health(
         store_dir=settings.voiceprint_store_dir,
-        projects_dir=settings.projects_dir,
+        projects_dir=settings.projects_dir or get_default_projects_dir(),
     )
     return _health_out(report)
 
