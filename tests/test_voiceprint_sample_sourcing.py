@@ -12,6 +12,7 @@ from app.voiceprint_sample_sourcing import (
     DEFICIT_SHORT_AUDIO,
     DEFICIT_SINGLE_SOURCE,
     EVIDENCE_NAME,
+    REASON_CROWDED_ONLY,
     EVIDENCE_PERSON_MAP,
     REASON_ALREADY_HARVESTED,
     REASON_NAME_ONLY,
@@ -791,3 +792,67 @@ def test_a_person_with_no_samples_can_still_be_found_by_name(tmp_path: Path) -> 
     assert report.person_name == "Si"
     assert [item.project_id for item in report.sources] == ["p-named"]
     assert report.sources[0].evidence == EVIDENCE_NAME
+
+
+def test_crowded_segments_do_not_inflate_a_source_ranking(tmp_path: Path) -> None:
+    """Supply must count what the picker would actually tick.
+
+    The picker never pre-selects a segment with another voice beside it, so
+    counting those as recommended-grade supply lets a wholly crowded project
+    outrank a clean one, advertise "lots to take", and then show nothing ticked
+    beside a warning not to use it.
+    """
+    store_dir = tmp_path / "voiceprints"
+    projects_dir = tmp_path / "projects"
+    seeded = _seed_person(store_dir, "Wu", sample_count=3, project_id="p-seed")
+    person_id = seeded[0].speaker_public_id
+    # Every utterance is answered within 100ms by another speaker.
+    crowded: list[dict] = []
+    for index in range(10):
+        begin = index * 30_000
+        crowded.append(
+            {
+                "begin_time_ms": begin,
+                "end_time_ms": begin + 9_000,
+                "text": f"这是第{index}句用于声纹采样的完整发言内容，长度足够并且信息量充分。",
+                "speaker_id": 0,
+            }
+        )
+        crowded.append(
+            {
+                "begin_time_ms": begin + 9_100,
+                "end_time_ms": begin + 12_000,
+                "text": "另一个人紧接着插话进来，中间几乎没有停顿。",
+                "speaker_id": 1,
+            }
+        )
+    _make_project(
+        projects_dir,
+        "p-crowded",
+        sentences=crowded,
+        speaker_map={0: "Wu"},
+        person_map={0: person_id},
+    )
+    _make_project(
+        projects_dir,
+        "p-clean",
+        sentences=_speech(0, count=4, speaker_id=0),
+        speaker_map={0: "Wu"},
+        person_map={0: person_id},
+    )
+
+    report = find_sample_sources(
+        person_id, projects_dir=projects_dir, store_dir=store_dir
+    )
+
+    clean = next(item for item in report.sources if item.project_id == "p-clean")
+    crowded_source = next(
+        item for item in report.sources if item.project_id == "p-crowded"
+    )
+    # The clean source has 4 usable utterances against the crowded one's 10, and
+    # still has to win: none of those 10 would ever be ticked.
+    assert crowded_source.candidate_seconds == 0.0
+    assert clean.candidate_seconds > crowded_source.candidate_seconds
+    assert report.sources[0].project_id == "p-clean"
+    # Still listed, still pickable by hand -- and labelled for what it is.
+    assert REASON_CROWDED_ONLY in crowded_source.reasons

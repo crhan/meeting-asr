@@ -51,6 +51,11 @@ function reasonLabel(kind: string): { text: string; tone: string } | null {
     return { text: tr("matched by name only", "仅按名字匹配"), tone: "warn" };
   if (kind === "already-harvested")
     return { text: tr("already sampled here", "这场已采过"), tone: "" };
+  if (kind === "crowded-only")
+    return {
+      text: tr("every clip has another voice", "每条都录到他人"),
+      tone: "warn",
+    };
   return null;
 }
 

@@ -89,6 +89,8 @@ REASON_LARGE_SUPPLY = "large-supply"
 REASON_RETRY_QUARANTINED = "retry-quarantined"
 REASON_NAME_ONLY = "name-only"
 REASON_ALREADY_HARVESTED = "already-harvested"
+# Every usable utterance here has another speaker within half a second of it.
+REASON_CROWDED_ONLY = "crowded-only"
 REASON_THIN_SUPPLY = "thin-supply"
 
 # Supply saturates here: past two minutes of good speech a project is not a
@@ -575,8 +577,21 @@ def _build_source(
     is_matching_project: bool,
     deficits: tuple[str, ...],
 ) -> SampleSource:
-    """Assemble one ranked source row from its harvestable candidates."""
-    seconds = round(sum(_seconds(item.segment) for item in candidates), 1)
+    """Assemble one ranked source row from its harvestable candidates.
+
+    Supply is counted over the *clean* candidates only. The picker never
+    pre-selects a segment with another speaker beside it, so counting those
+    would let a project whose every utterance is answered within half a second
+    outrank a clean one, advertise "lots to take", and then show nothing ticked
+    next to a warning against using it -- the ranking recommending exactly what
+    the selection refuses.
+
+    The crowded ones stay in ``candidates`` so the row is still listed and its
+    clips remain pickable by hand; a source with nothing else is still worth
+    knowing about, it just must not be sold as plentiful.
+    """
+    supply = [item for item in candidates if not item.overlap_risk]
+    seconds = round(sum(_seconds(item.segment) for item in supply), 1)
     best = max(candidate.score for candidate in candidates)
     reasons = _reasons(
         evidence=evidence,
@@ -584,10 +599,12 @@ def _build_source(
         counts=counts,
         is_matching_project=is_matching_project,
     )
+    if not supply:
+        reasons = (*reasons, REASON_CROWDED_ONLY)
     priority = _priority(
         evidence=evidence,
         seconds=seconds,
-        candidates=candidates,
+        candidates=supply,
         is_matching_project=is_matching_project,
         counts=counts,
         deficits=deficits,
@@ -602,7 +619,7 @@ def _build_source(
         speaker_name=speaker_name,
         person_public_id=person_public_id,
         evidence=evidence,
-        candidate_count=len(candidates),
+        candidate_count=len(supply),
         candidate_seconds=seconds,
         best_score=round(best, 3),
         matching_sample_count=counts.matching,
@@ -626,6 +643,10 @@ def _harvestable(
     floor: a source is only as good as the clips a capture run would default
     to, so counting barely-passable fragments would advertise audio the picker
     would never check.
+
+    Crowded segments stay in the list -- a thin source may have nothing else,
+    and a deliberate pick beats no sample -- but they are excluded from the
+    supply figures by :func:`_build_source`. See there for why.
     """
     fresh = [segment for segment in segments if not _overlaps(segment, sampled_ranges)]
     if not fresh:
@@ -698,8 +719,12 @@ def _priority(
     audio quality alone would keep recommending the meeting already harvested.
     """
     supply = min(1.0, seconds / _SUPPLY_SATURATION_SECONDS)
-    quality = sum(item.score for item in sorted(candidates, key=lambda c: -c.score)[:5])
-    quality /= min(5, len(candidates))
+    # Empty when every candidate was crowded out: the source is still listed and
+    # still pickable by hand, it just scores no supply and no quality.
+    quality = 0.0
+    if candidates:
+        top = sorted(candidates, key=lambda c: -c.score)[:5]
+        quality = sum(item.score for item in top) / len(top)
     diversity = 0.0
     if not is_matching_project:
         diversity = 1.0 if DEFICIT_SINGLE_SOURCE in deficits else 0.6

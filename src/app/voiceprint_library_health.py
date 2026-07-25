@@ -302,10 +302,7 @@ def _person_health(
     # "backfill embeddings" must not be raised for clips that no longer exist,
     # or the button runs, reports success, and changes nothing.
     missing_clips = [row for row in missing if not _clip_readable(row, store_dir)]
-    seconds = sum(
-        max(0, row.source_end_time_ms - row.source_begin_time_ms) / 1000.0
-        for row in matching
-    )
+    seconds = sum(row.embedded_duration_ms / 1000.0 for row in matching)
     return PersonHealth(
         speaker_id=first.speaker_id,
         speaker_public_id=first.speaker_public_id,

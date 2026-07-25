@@ -269,6 +269,7 @@ def list_voiceprint_samples(
                    samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.clip_begin_time_ms, samples.clip_end_time_ms,
                    samples.transcript_text, samples.sample_status
             FROM voiceprint_samples AS samples
             JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
@@ -305,6 +306,7 @@ def list_all_voiceprint_samples(
                    samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.clip_begin_time_ms, samples.clip_end_time_ms,
                    samples.transcript_text, samples.sample_status
             FROM voiceprint_samples AS samples
             JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
@@ -340,6 +342,7 @@ def list_voiceprint_samples_for_project(
                    samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.clip_begin_time_ms, samples.clip_end_time_ms,
                    samples.transcript_text, samples.sample_status
             FROM voiceprint_samples AS samples
             JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
@@ -592,6 +595,7 @@ def invalidate_voiceprint_samples_by_ids(
                    samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.clip_begin_time_ms, samples.clip_end_time_ms,
                    samples.transcript_text, samples.sample_status
             FROM voiceprint_samples AS samples
             JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
@@ -649,6 +653,7 @@ def delete_voiceprint_samples_by_ids(
                    samples.project_id, samples.project_speaker_id,
                    samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                    samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.clip_begin_time_ms, samples.clip_end_time_ms,
                    samples.transcript_text, samples.sample_status
             FROM voiceprint_samples AS samples
             JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
@@ -1156,9 +1161,25 @@ def _sample_row(row: sqlite3.Row) -> VoiceprintSampleRow:
         clip_sha256=str(row["clip_sha256"]),
         source_begin_time_ms=int(row["source_begin_time_ms"]),
         source_end_time_ms=int(row["source_end_time_ms"]),
+        clip_begin_time_ms=_optional_int(row, "clip_begin_time_ms"),
+        clip_end_time_ms=_optional_int(row, "clip_end_time_ms"),
         transcript_text=str(row["transcript_text"]),
         sample_status=str(row["sample_status"]),
     )
+
+
+def _optional_int(row: sqlite3.Row, column: str) -> int | None:
+    """Read one column, or None when this query did not select it.
+
+    Absent must stay distinguishable from zero: a missing clip interval means
+    "this query does not know", while a zero-length clip would mean "no audio"
+    and would make every affected person look starved of samples.
+    """
+    try:
+        value = row[column]
+    except (IndexError, KeyError):
+        return None
+    return None if value is None else int(value)
 
 
 def _speaker_row(row: sqlite3.Row) -> VoiceprintSpeakerRow:
@@ -1201,6 +1222,7 @@ def _embedding_rows_sql(*, include_inactive: bool = False) -> str:
                speakers.id AS speaker_id, speakers.public_id AS speaker_public_id,
                speakers.name, samples.clip_path, samples.project_id,
                samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.clip_begin_time_ms, samples.clip_end_time_ms,
                samples.transcript_text, samples.sample_status,
                embeddings.model, embeddings.vector
         FROM voiceprint_embeddings AS embeddings
@@ -1225,6 +1247,7 @@ def _sample_by_public_id_sql() -> str:
                samples.project_id, samples.project_speaker_id,
                samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.clip_begin_time_ms, samples.clip_end_time_ms,
                samples.transcript_text, samples.sample_status
         FROM voiceprint_samples AS samples
         JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id
@@ -1240,6 +1263,7 @@ def _sample_by_clip_path_sql() -> str:
                samples.project_id, samples.project_speaker_id,
                samples.clip_path, samples.clip_rel_path, samples.clip_sha256,
                samples.source_begin_time_ms, samples.source_end_time_ms,
+                   samples.clip_begin_time_ms, samples.clip_end_time_ms,
                samples.transcript_text, samples.sample_status
         FROM voiceprint_samples AS samples
         JOIN voiceprint_speakers AS speakers ON speakers.id = samples.speaker_id

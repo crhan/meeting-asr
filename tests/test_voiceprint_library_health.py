@@ -248,6 +248,7 @@ def _seed_person(
     *,
     embed: bool = True,
     seconds: float = 8.0,
+    clip_seconds: float | None = None,
     projects: tuple[str, ...] = (),
 ) -> list:
     """Store samples for one person, optionally without embedding them."""
@@ -277,7 +278,11 @@ def _seed_person(
                 source_begin_time_ms=index * 60_000,
                 source_end_time_ms=index * 60_000 + duration_ms,
                 clip_begin_time_ms=0,
-                clip_end_time_ms=duration_ms,
+                clip_end_time_ms=(
+                    duration_ms
+                    if clip_seconds is None
+                    else int(clip_seconds * 1000)
+                ),
                 transcript_text=f"{name} sample {index}",
             )
         )
@@ -563,3 +568,28 @@ def test_threshold_issue_counts_describe_the_full_population() -> None:
     assert context["impostor_count"] == 10_000
     # And the cost it is quoted beside is on the same scale.
     assert context["current_false_accept_count"] == 5_000
+
+
+def test_matching_seconds_counts_the_clip_not_the_sentence(tmp_path: Path) -> None:
+    """Capture truncates a long sentence; health must not credit the whole one.
+
+    A 40s utterance stored as a 12s clip contributed 12s of reference audio.
+    Counting 40 would silence a "too little audio" warning that is still true,
+    and would mis-rank sourcing, which reads the same number.
+    """
+    store_dir = tmp_path / "voiceprints"
+    # Three 40s sentences, each stored as a 12s clip.
+    _seed_person(
+        store_dir,
+        "Truncated",
+        [[1.0, 0.0], [0.98, 0.05], [0.99, -0.03]],
+        seconds=40.0,
+        clip_seconds=12.0,
+    )
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    person = _person(report, "Truncated")
+    assert person.matching_seconds == 36.0
+    # 36s still clears the healthy bar; 120s would have been claimed before.
+    assert person.matching_seconds < 3 * 40.0
