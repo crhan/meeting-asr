@@ -117,7 +117,7 @@
 
 ## Voiceprint Library Health Notes（库质量:可用性 vs 一致性）
 
-- **`voiceprint_quality` 和 `voiceprint_library_health` 回答的是两个不同问题，别混为一谈。** 前者是**簇内一致性**（样本 vs 本人质心的 cosine），后者是**可用性**（这个人到底能不能进匹配池）。一致性检查对两种静默失活**结构性失明**：①样本没有**当前 model** 的向量（切 provider 后没重跑 `voiceprint embed`）——该人在 `analyze_voiceprint_quality` 的报告里**整行都不出现**；②样本全被 quarantine——报告显示「0 suspicious」，因为**已经没有样本可供挑错**。两种情况都渲染成绿色，而人根本不会被匹配到。实测本机库 7 人里墨泪、李依娜正是第①种。**看到「0 critical」不等于库健康，先看 `voiceprint health`。**
+- **`voiceprint_quality` 和 `voiceprint_library_health` 回答的是两个不同问题，别混为一谈。** 前者是**簇内一致性**（样本 vs 本人质心的 cosine），后者是**可用性**（这个人到底能不能进匹配池）。一致性检查对两种静默失活**结构性失明**：①样本没有**当前 model** 的向量（切 provider 后没重跑 `voiceprint embed`）——该人在 `analyze_voiceprint_quality` 的报告里**整行都不出现**；②样本全被 quarantine——报告显示「0 suspicious」，因为**已经没有样本可供挑错**。两种情况都渲染成绿色，而人根本不会被匹配到。实测本机库 7 人里有 2 人正是第①种。**看到「0 critical」不等于库健康，先看 `voiceprint health`。**
 - **一致性指标在小样本下是自证循环**：3 个样本的人，质心就是这 3 个样本的平均，自洽是必然的，所以**小簇结构上不可能被标 critical**。`fragile`（< `DEFAULT_MIN_CLUSTER_SIZE`）这一档就是为了把「无法证伪」和「已验证健康」区分开。
 - **阈值不再是常量，所有入口必须走 `resolve_match_threshold()`**。`DEFAULT_MATCH_THRESHOLD = 0.75` 只是**兜底默认**，真正生效的是 config key `voiceprint.match_threshold`。**最容易漏的一处是 `sentence_reassignment` 的重指派后 rematch**：它若继续吃常量，配置过的阈值就会「`project run` 时生效、紧接着 stabilization 一跑又变回去」，表现为用户改了阈值却「时灵时不灵」。同理 CLI 的 `typer.Option` 默认值必须是 `None` 而非常量——常量在**模块导入期**求值，配置永远读不到；web 的 `RunPipelineIn.match_threshold` 同理默认 `None`。
 - **阈值是耦合的，改动有静默副作用**：降到 `STRONG_MARGIN_ACCEPT_SCORE`(0.65) 及以下，strong-margin 救援规则变成**死代码**（它要救的都已被直接接受）；降到 crosstalk `score_floor`(0.5) 及以下，接受层能接受的人同时也符合串场标记条件。两者都**不报错**，所以 `match_threshold_coupling_warnings()` / `match_threshold_coupling_kinds()` 必须在写入前显式展示。注意实测建议值 0.557 就会触发前者。
