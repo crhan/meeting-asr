@@ -2041,3 +2041,103 @@ def test_artifact_manifest_path_escaping_project_is_refused(
 
     resp = client.get(f"/api/projects/{project_id}/artifacts/transcript_named")
     assert resp.status_code == 404
+
+
+def test_library_health_route_reports_availability(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """The health route surfaces people who cannot be matched under the active model."""
+    from app.voiceprint_embedding import resolve_voiceprint_embedding_options
+    from app.voiceprint_store import (
+        StoredVoiceprintSample,
+        get_voiceprint_db_path,
+        store_voiceprint_samples_with_rows,
+        upsert_voiceprint_embedding,
+    )
+
+    store_dir = tmp_path / "store" / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    source = store_dir / "source.mp4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"seed")
+
+    def seed(name: str, vectors: list[list[float]], embed: bool) -> None:
+        samples = []
+        for index, _vector in enumerate(vectors):
+            clip = store_dir / "clips" / name / f"c{index}.wav"
+            clip.parent.mkdir(parents=True, exist_ok=True)
+            clip.write_bytes(f"{name}{index}".encode())
+            samples.append(
+                StoredVoiceprintSample(
+                    speaker_name=name,
+                    project_id=f"p-{name}",
+                    project_path=store_dir,
+                    project_speaker_id=0,
+                    source_path=source,
+                    clip_path=clip,
+                    clip_rel_path=str(clip.relative_to(store_dir)),
+                    source_begin_time_ms=index * 10_000,
+                    source_end_time_ms=index * 10_000 + 8_000,
+                    clip_begin_time_ms=0,
+                    clip_end_time_ms=8_000,
+                    transcript_text=f"{name} {index}",
+                )
+            )
+        _db, rows = store_voiceprint_samples_with_rows(samples, db_path)
+        if embed:
+            for row, vector in zip(rows, vectors):
+                upsert_voiceprint_embedding(row.sample_id, model, vector, db_path)
+
+    seed("alice", [[1.0, 0.0], [0.98, 0.05], [0.99, -0.03]], embed=True)
+    seed("ghost", [[0.0, 1.0], [0.03, 0.97], [-0.02, 0.99]], embed=False)
+
+    resp = client.get("/api/voiceprints/health")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["person_count"] == 2
+    assert payload["usable_person_count"] == 1
+    ghost = next(p for p in payload["people"] if p["name"] == "ghost")
+    assert ghost["availability"] == "unusable"
+    assert ghost["missing_embedding_count"] == 3
+    kinds = {issue["kind"] for issue in payload["issues"]}
+    assert "missing-embeddings" in kinds
+    # Context travels as plain JSON so the bilingual UI can restate the numbers.
+    missing = next(i for i in payload["issues"] if i["kind"] == "missing-embeddings")
+    assert missing["context"]["missing_embedding_count"] == 3
+
+    backlog = client.get("/api/voiceprints/embed-backlog")
+    assert backlog.status_code == 200
+    assert backlog.json()["missing_sample_count"] == 3
+
+
+def test_match_threshold_route_round_trips_and_warns(client: TestClient) -> None:
+    """Setting the threshold persists it and reports the contracts it breaks."""
+    from app.speaker_pipeline_params import DEFAULT_MATCH_THRESHOLD
+
+    initial = client.get("/api/voiceprints/threshold")
+    assert initial.status_code == 200
+    assert initial.json()["configured"] is None
+    assert initial.json()["effective"] == DEFAULT_MATCH_THRESHOLD
+
+    lowered = client.put("/api/voiceprints/threshold", json={"threshold": 0.6})
+    assert lowered.status_code == 200
+    assert lowered.json()["configured"] == 0.6
+    assert lowered.json()["effective"] == 0.6
+    # 0.60 is at/below the strong-margin accept score, which silently kills that rule.
+    assert "strong-margin-dead" in lowered.json()["warning_kinds"]
+
+    # Clearing restores the built-in default; that is the escape hatch.
+    cleared = client.put("/api/voiceprints/threshold", json={"threshold": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["configured"] is None
+    assert cleared.json()["effective"] == DEFAULT_MATCH_THRESHOLD
+    assert cleared.json()["warning_kinds"] == []
+
+
+def test_match_threshold_route_rejects_out_of_range(client: TestClient) -> None:
+    """A score threshold outside [0, 1] is a validation error, not a stored value."""
+    resp = client.put("/api/voiceprints/threshold", json={"threshold": 1.4})
+    assert resp.status_code == 422
+    assert client.get("/api/voiceprints/threshold").json()["configured"] is None
