@@ -48,6 +48,7 @@ class Settings:
     oss_endpoint: str | None = None
     ui_editor: str | None = None
     voiceprint_provider: str | None = None
+    voiceprint_match_threshold: float | None = None
     config_path: Path | None = None
 
 
@@ -112,6 +113,11 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "voiceprint.provider",
         "voiceprint_provider",
         "MEETING_ASR_VOICEPRINT_PROVIDER",
+    ),
+    ConfigKey(
+        "voiceprint.match_threshold",
+        "voiceprint_match_threshold",
+        "MEETING_ASR_VOICEPRINT_MATCH_THRESHOLD",
     ),
 )
 
@@ -323,6 +329,9 @@ def load_settings(
         oss_endpoint=_read_value(values, "oss.endpoint", required=require_oss),
         ui_editor=_read_value(values, "ui.editor", required=False),
         voiceprint_provider=_read_value(values, "voiceprint.provider", required=False),
+        voiceprint_match_threshold=_read_threshold_value(
+            values, "voiceprint.match_threshold"
+        ),
         config_path=get_config_path(),
     )
 
@@ -353,6 +362,20 @@ def get_configured_voiceprint_provider(path: Path | None = None) -> str | None:
     """
     values = load_config_values(path)
     return _read_value(values, "voiceprint.provider", required=False)
+
+
+def get_configured_match_threshold(path: Path | None = None) -> float | None:
+    """
+    Return the configured speaker match acceptance threshold.
+
+    Args:
+        path: Optional config path override.
+
+    Returns:
+        Threshold in [0, 1], or None when unset.
+    """
+    values = load_config_values(path)
+    return _read_threshold_value(values, "voiceprint.match_threshold")
 
 
 def visible_config_items(
@@ -441,6 +464,24 @@ def _read_int_value(
     if parsed < minimum or parsed > maximum:
         raise ValueError(
             f"Config value {key} must be between {minimum} and {maximum}, got {parsed}"
+        )
+    return parsed
+
+
+def _read_threshold_value(config_values: dict[str, str], key: str) -> float | None:
+    """Read and validate one score-threshold config value."""
+    value = _read_value(config_values, key, required=False)
+    if value is None:
+        return None
+    try:
+        parsed = float(value.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Config value {key} must be a number, got {value!r}"
+        ) from exc
+    if not 0.0 <= parsed <= 1.0:
+        raise ValueError(
+            f"Config value {key} must be between 0 and 1, got {parsed}"
         )
     return parsed
 

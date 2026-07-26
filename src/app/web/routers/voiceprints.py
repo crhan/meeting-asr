@@ -19,7 +19,29 @@ from app.core.voiceprint_review_service import (
     CaptureConflictError,
     plan_capture,
 )
+from app.config import (
+    get_default_projects_dir,
+    set_config_value,
+    unset_config_value,
+)
 from app.project_manager import load_manifest
+from app.speaker_pipeline_params import (
+    DEFAULT_MATCH_THRESHOLD,
+    match_threshold_coupling_bounds,
+    match_threshold_coupling_kinds,
+    match_threshold_coupling_warnings,
+    resolve_match_threshold,
+)
+from app.voiceprint_audio import resolve_voiceprint_sample_source
+from app.voiceprint_calibration import VoiceprintCalibrationReport
+from app.voiceprint_embedding import (
+    embed_voiceprint_samples,
+    resolve_voiceprint_embedding_options,
+)
+from app.voiceprint_library_health import (
+    LibraryHealthReport,
+    analyze_library_health,
+)
 from app.voiceprint_models import VoiceprintSampleRow, VoiceprintSpeakerRow
 from app.voiceprint_people import (
     create_voiceprint_person,
@@ -28,14 +50,26 @@ from app.voiceprint_people import (
     rename_voiceprint_person,
 )
 from app.voiceprint_quality import (
+    DEFAULT_MIN_CLUSTER_SIZE,
     VOICEPRINT_MATCHING_SAMPLE_STATUSES,
     VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
     analyze_voiceprint_quality,
+)
+from app.voiceprint_sample_overlap import (
+    SampleSourceFacts,
+    check_project_sources,
+    inspect_sample_sources,
+)
+from app.voiceprint_sample_sourcing import (
+    SampleSourceReport,
+    find_sample_sources,
 )
 from app.voiceprint_store import (
     delete_voiceprint_sample,
     delete_voiceprint_speaker,
     get_voiceprint_db_path,
+    list_all_voiceprint_samples,
+    list_embedded_sample_ids,
     list_voiceprint_samples,
     list_voiceprint_speakers,
     resolve_in_store_clip_path,
@@ -51,18 +85,28 @@ from app.web.deps import (
 from app.web.jobs import JobManager
 from app.web.locks import LockRegistry, project_lock_key, store_lock_key
 from app.web.schemas import (
+    CandidateClipOut,
     CaptureClipOut,
     CapturePlanOut,
     CaptureResultOut,
     CaptureRunIn,
     CaptureSpeakerOut,
+    CalibrationOut,
     CreatePersonIn,
+    EmbedBacklogOut,
     ExcludeQualitySamplesIn,
     ExcludeQualitySamplesOut,
     HistoricalProjectOut,
     JobRef,
+    LibraryHealthOut,
+    LibraryIssueOut,
+    MatchThresholdIn,
+    MatchThresholdOut,
     PendingCaptureOut,
+    PersonHealthOut,
     ScoreChangeOut,
+    ScoreDistributionOut,
+    ThresholdCostOut,
     MergePeopleIn,
     QualityPersonOut,
     QualityNeighborOut,
@@ -70,8 +114,11 @@ from app.web.schemas import (
     QualityReportOut,
     QualitySampleOut,
     RenamePersonIn,
+    SampleSourceOut,
+    SampleSourcesOut,
     SampleStatusIn,
     SelectedCaptureClipIn,
+    SkippedProjectOut,
     VoiceprintLibraryOut,
     VoiceprintPersonOut,
     VoiceprintSampleOut,
@@ -101,7 +148,11 @@ def _person_out(row: VoiceprintSpeakerRow) -> VoiceprintPersonOut:
     )
 
 
-def _sample_out(index: int, row: VoiceprintSampleRow) -> VoiceprintSampleOut:
+def _sample_out(
+    index: int,
+    row: VoiceprintSampleRow,
+    sources: SampleSourceFacts | None = None,
+) -> VoiceprintSampleOut:
     return VoiceprintSampleOut(
         index=index,
         sample_id=row.sample_id,
@@ -116,6 +167,10 @@ def _sample_out(index: int, row: VoiceprintSampleRow) -> VoiceprintSampleOut:
         identity_confirmed=_identity_confirmed(row.sample_status),
         matching_enabled=_matching_enabled(row.sample_status),
         clip_rel_path=row.clip_rel_path,
+        overlap_risk=None if sources is None else sources.overlap.get(row.sample_id),
+        source_available=(
+            None if sources is None else sources.available.get(row.project_id)
+        ),
     )
 
 
@@ -178,9 +233,15 @@ def get_person_samples(
     if person is None:
         raise FileNotFoundError(f"Voiceprint person not found: {ref}")
     rows = list_voiceprint_samples(ref, db_path)
+    # The library health report says "this person has N contaminated samples";
+    # without the per-row flag the operator lands here and every row looks the
+    # same. Same check, same rule, resolved down to which row.
+    sources = inspect_sample_sources(
+        rows, settings.projects_dir or get_default_projects_dir()
+    )
     return VoiceprintSamplesOut(
         person=_person_out(person),
-        samples=[_sample_out(i + 1, row) for i, row in enumerate(rows)],
+        samples=[_sample_out(i + 1, row, sources) for i, row in enumerate(rows)],
     )
 
 
@@ -209,6 +270,334 @@ def get_sample_clip(
     )
 
 
+# ---- library health --------------------------------------------------------
+
+
+@router.get("/health", response_model=LibraryHealthOut)
+def get_library_health(
+    settings: WebSettings = Depends(get_settings),
+) -> LibraryHealthOut:
+    """Report which library people are matchable and what blocks the rest."""
+    # settings.projects_dir is None whenever the server was started without an
+    # explicit --projects-dir, and everything else on this server reaches the
+    # real directory through the same default. Passing the None straight
+    # through would silently skip the overlap check and render "not checked"
+    # as a clean bill of health.
+    report = analyze_library_health(
+        store_dir=settings.voiceprint_store_dir,
+        projects_dir=settings.projects_dir or get_default_projects_dir(),
+    )
+    return _health_out(report)
+
+
+def _health_out(report: LibraryHealthReport) -> LibraryHealthOut:
+    """Serialize a library health report."""
+    return LibraryHealthOut(
+        db_path=str(report.db_path),
+        provider=report.provider,
+        model=report.model,
+        person_count=report.person_count,
+        usable_person_count=report.usable_person_count,
+        matching_sample_count=report.matching_sample_count,
+        matching_seconds=round(report.matching_seconds, 1),
+        critical_count=report.critical_count,
+        warning_count=report.warning_count,
+        people=[
+            PersonHealthOut(
+                public_id=person.speaker_public_id,
+                name=person.speaker_name,
+                total_sample_count=person.total_sample_count,
+                enabled_sample_count=person.enabled_sample_count,
+                matching_sample_count=person.matching_sample_count,
+                missing_embedding_count=person.missing_embedding_count,
+                missing_clip_count=person.missing_clip_count,
+                embeddable_count=person.embeddable_count,
+                matching_seconds=person.matching_seconds,
+                project_count=person.project_count,
+                availability=person.availability,
+            )
+            for person in report.people
+        ],
+        issues=[
+            LibraryIssueOut(
+                kind=issue.kind,
+                severity=issue.severity,
+                title=issue.title,
+                detail=issue.detail,
+                action=issue.action,
+                person_public_id=issue.person_public_id,
+                person_name=issue.person_name,
+                context=issue.context,
+            )
+            for issue in report.issues
+        ],
+        calibration=_calibration_out(report.calibration),
+    )
+
+
+def _calibration_out(
+    report: VoiceprintCalibrationReport | None,
+) -> CalibrationOut | None:
+    """Serialize threshold calibration evidence."""
+    if report is None:
+        return None
+    return CalibrationOut(
+        model=report.model,
+        person_count=report.person_count,
+        scored_person_count=report.scored_person_count,
+        sample_count=report.sample_count,
+        genuine=_distribution_out(report.genuine),
+        impostor=_distribution_out(report.impostor),
+        eer_threshold=report.eer_threshold,
+        eer_rate=report.eer_rate,
+        low_impostor_threshold=report.low_impostor_threshold,
+        current_threshold=report.current_threshold,
+        warnings=list(report.warnings),
+        genuine_scores=list(report.genuine_scores),
+        impostor_scores=list(report.impostor_scores),
+        suggested_threshold=report.suggested_threshold,
+        suggested_reason=report.suggested_reason,
+        suggested_kind=report.suggested_kind,
+        low_confidence=report.low_confidence,
+        current_cost=_cost_out(report.current_cost),
+        suggested_cost=_cost_out(report.suggested_cost),
+    )
+
+
+def _distribution_out(distribution) -> ScoreDistributionOut | None:
+    """Serialize one score distribution."""
+    if distribution is None:
+        return None
+    return ScoreDistributionOut(
+        count=distribution.count,
+        min=distribution.minimum,
+        p5=distribution.p5,
+        median=distribution.median,
+        p95=distribution.p95,
+        max=distribution.maximum,
+    )
+
+
+def _cost_out(cost) -> ThresholdCostOut | None:
+    """Serialize one threshold cost breakdown."""
+    if cost is None:
+        return None
+    return ThresholdCostOut(
+        threshold=cost.threshold,
+        false_reject_count=cost.false_reject_count,
+        false_reject_rate=cost.false_reject_rate,
+        false_accept_count=cost.false_accept_count,
+        false_accept_rate=cost.false_accept_rate,
+    )
+
+
+@router.get("/threshold", response_model=MatchThresholdOut)
+def get_match_threshold() -> MatchThresholdOut:
+    """Return the effective match threshold and its coupling warnings."""
+    from app.config import get_configured_match_threshold
+
+    configured = get_configured_match_threshold()
+    effective = resolve_match_threshold()
+    return MatchThresholdOut(
+        effective=effective,
+        configured=configured,
+        default=DEFAULT_MATCH_THRESHOLD,
+        warnings=list(match_threshold_coupling_warnings(effective)),
+        warning_kinds=list(match_threshold_coupling_kinds(effective)),
+        coupling_bounds=match_threshold_coupling_bounds(),
+    )
+
+
+@router.put("/threshold", response_model=MatchThresholdOut)
+async def set_match_threshold(
+    payload: MatchThresholdIn, locks: LockRegistry = Depends(get_locks)
+) -> MatchThresholdOut:
+    """Set or clear the configured match threshold.
+
+    Sending ``threshold: null`` removes the config key so the built-in default
+    applies again; that is the escape hatch from a bad calibration decision.
+    """
+    loop = asyncio.get_running_loop()
+    async with locks.acquire(store_lock_key("config")):
+        if payload.threshold is None:
+            await loop.run_in_executor(None, lambda: _clear_match_threshold_config())
+        else:
+            await loop.run_in_executor(
+                None,
+                lambda: set_config_value(
+                    "voiceprint.match_threshold", f"{payload.threshold:.3f}"
+                ),
+            )
+    return get_match_threshold()
+
+
+def _clear_match_threshold_config() -> None:
+    """Remove the configured threshold.
+
+    Not wrapped in a try/except: ``unset_config_value`` already pops the key
+    with a default, so an already-unset threshold is not an error and anything
+    that does raise here is a real load or write failure. Swallowing it would
+    return HTTP 200 for a reset that never reached disk.
+    """
+    unset_config_value("voiceprint.match_threshold")
+
+
+@router.get("/people/{ref}/sources", response_model=SampleSourcesOut)
+async def get_sample_sources(
+    ref: str,
+    limit: int = 20,
+    settings: WebSettings = Depends(get_settings),
+) -> SampleSourcesOut:
+    """Rank where more samples for this person can be harvested.
+
+    Scans every project's transcript, so it runs in the executor rather than
+    blocking the event loop on a library with many meetings.
+    """
+    person = get_voiceprint_person(
+        ref, get_voiceprint_db_path(settings.voiceprint_store_dir)
+    )
+    if person is None:
+        raise FileNotFoundError(f"Voiceprint person not found: {ref}")
+    loop = asyncio.get_running_loop()
+    report = await loop.run_in_executor(
+        None,
+        lambda: find_sample_sources(
+            person.public_id,
+            projects_dir=settings.projects_dir,
+            store_dir=settings.voiceprint_store_dir,
+            limit=limit,
+        ),
+    )
+    return _sources_out(report)
+
+
+def _sources_out(report: SampleSourceReport) -> SampleSourcesOut:
+    """Serialize a sample sourcing report."""
+    return SampleSourcesOut(
+        person_public_id=report.person_public_id,
+        person_name=report.person_name,
+        deficits=list(report.deficits),
+        matching_sample_count=(
+            report.health.matching_sample_count if report.health else 0
+        ),
+        matching_seconds=report.health.matching_seconds if report.health else 0.0,
+        project_count=report.health.project_count if report.health else 0,
+        scanned_project_count=report.scanned_project_count,
+        total_candidate_seconds=report.total_candidate_seconds,
+        new_project_count=report.new_project_count,
+        sources=[
+            SampleSourceOut(
+                project_id=source.project_id,
+                title=source.title,
+                meeting_time=source.meeting_time,
+                speaker_id=source.speaker_id,
+                speaker_name=source.speaker_name,
+                person_public_id=source.person_public_id,
+                evidence=source.evidence,
+                candidate_count=source.candidate_count,
+                candidate_seconds=source.candidate_seconds,
+                best_score=source.best_score,
+                matching_sample_count=source.matching_sample_count,
+                quarantined_sample_count=source.quarantined_sample_count,
+                priority=source.priority,
+                reasons=list(source.reasons),
+                clips=[
+                    CandidateClipOut(
+                        rel_path=clip.rel_path,
+                        begin_time_ms=clip.begin_time_ms,
+                        end_time_ms=clip.end_time_ms,
+                        duration_seconds=clip.duration_seconds,
+                        text=clip.text,
+                        score=clip.score,
+                        recommended=clip.recommended,
+                        overlap_risk=clip.overlap_risk,
+                    )
+                    for clip in source.clips
+                ],
+            )
+            for source in report.sources
+        ],
+        skipped=[
+            SkippedProjectOut(
+                project_id=item.project_id, title=item.title, reason=item.reason
+            )
+            for item in report.skipped
+        ],
+    )
+
+
+@router.get("/embed-backlog", response_model=EmbedBacklogOut)
+def get_embed_backlog(
+    settings: WebSettings = Depends(get_settings),
+) -> EmbedBacklogOut:
+    """Report how many enabled samples still lack an active-model embedding."""
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    db_path = get_voiceprint_db_path(settings.voiceprint_store_dir)
+    embedded = list_embedded_sample_ids(model, db_path)
+    missing = [
+        row
+        for row in list_all_voiceprint_samples(db_path)
+        if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
+        and row.sample_id not in embedded
+    ]
+    # Split off rows whose audio is gone: counting them as backlog would promise
+    # a backfill that cannot succeed.
+    embeddable = [
+        row
+        for row in missing
+        if resolve_voiceprint_sample_source(
+            row, store_dir=settings.voiceprint_store_dir
+        ).exists()
+    ]
+    return EmbedBacklogOut(
+        model=model,
+        missing_sample_count=len(embeddable),
+        person_count=len({row.speaker_id for row in embeddable}),
+        missing_clip_count=len(missing) - len(embeddable),
+    )
+
+
+@router.post("/embed", response_model=JobRef)
+def run_embed(
+    settings: WebSettings = Depends(get_settings),
+    jobs: JobManager = Depends(get_jobs),
+) -> JobRef:
+    """Backfill missing embeddings for the active model as a background job."""
+    store_dir = settings.voiceprint_store_dir
+
+    def work(reporter) -> dict[str, object]:
+        # Through the registry guard like every other global-store write: this
+        # job writes embedding rows into the same SQLite file a capture
+        # snapshots. Outside the guard it could land between a capture's
+        # snapshot and its registration, and the eventual rollback would
+        # restore a store without these vectors -- the job having already
+        # reported "embedded N". The guard instead fails the job with a
+        # conflict while a capture is pending, which is a visible answer.
+        # The lock is held for the whole backfill, which matches what a capture
+        # run itself does (its own embed+evaluate runs inside this same lock).
+        summary = REGISTRY.run_store_write(
+            lambda: embed_voiceprint_samples(
+                store_dir=store_dir,
+                provider=None,
+                model=None,
+                rebuild=False,
+                progress=reporter,
+                # A registry row whose clip file is gone must not abort the
+                # whole backfill; the remaining people still gain their
+                # embeddings.
+                skip_missing_clips=True,
+            )
+        )
+        return {
+            "model": summary.model,
+            "embedded_count": summary.embedded_count,
+            "skipped_count": summary.skipped_count,
+        }
+
+    job, existing = jobs.submit("voiceprint-embed", work, store_locks=[_STORE_LOCK])
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status, existing=existing)
+
+
 # ---- quality ---------------------------------------------------------------
 
 
@@ -216,6 +605,13 @@ def get_sample_clip(
 def get_quality(settings: WebSettings = Depends(get_settings)) -> QualityReportOut:
     """Analyze outlier samples across the voiceprint library."""
     report = analyze_voiceprint_quality(store_dir=settings.voiceprint_store_dir)
+    # Every project id the report mentions, resolved once: the per-project
+    # rollups are rendered as links to speaker review, and a project deleted
+    # since capture would send the operator to that page's error instead.
+    available = check_project_sources(
+        (project.project_id for person in report.people for project in person.projects),
+        settings.projects_dir or get_default_projects_dir(),
+    )
     people = [
         QualityPersonOut(
             speaker_id=p.speaker_id,
@@ -236,6 +632,7 @@ def get_quality(settings: WebSettings = Depends(get_settings)) -> QualityReportO
                     critical_count=project.critical_count,
                     mean_score=project.mean_score,
                     min_score=project.min_score,
+                    source_available=available.get(project.project_id),
                 )
                 for project in p.projects
             ],
@@ -269,6 +666,7 @@ def get_quality(settings: WebSettings = Depends(get_settings)) -> QualityReportO
     ]
     return QualityReportOut(
         model=report.model,
+        min_cluster_size=DEFAULT_MIN_CLUSTER_SIZE,
         sample_count=report.sample_count,
         suspicious_count=report.suspicious_count,
         critical_count=report.critical_count,
@@ -495,6 +893,7 @@ def _plan_out(project_ref: str, summary) -> CapturePlanOut:
                     audio_score=c.audio_score,
                     audio_reason=c.audio_reason,
                     recommended=c.recommended,
+                    overlap_risk=c.overlap_risk,
                 )
                 for c in sp.clips
             ],

@@ -117,3 +117,105 @@ def _seed_person(store_dir: Path, name: str, vectors: list[list[float]]) -> None
     _db, rows = store_voiceprint_samples_with_rows(samples, db_path)
     for row, vector in zip(rows, vectors):
         upsert_voiceprint_embedding(row.sample_id, model, vector, db_path)
+
+
+def test_cost_counts_scale_past_the_export_cap() -> None:
+    """A downsampled export must not report the cap as the real cost.
+
+    Above ``MAX_EXPORTED_SCORES`` the stored score arrays are an evenly spaced
+    view of the library, so counting them directly would tell a large library
+    it has exactly 2000 wrong matches -- the export limit wearing a cost's
+    clothes. The rate is what the sample measures; the count is that rate
+    applied to the true population.
+    """
+    from app.voiceprint_calibration import (
+        ScoreDistribution,
+        VoiceprintCalibrationReport,
+    )
+
+    # 100 exported impostor scores standing in for 10_000 real observations,
+    # half of them at or above 0.60.
+    exported = tuple([0.4] * 50 + [0.8] * 50)
+    report = VoiceprintCalibrationReport(
+        model="m",
+        person_count=2,
+        scored_person_count=2,
+        sample_count=10,
+        genuine=None,
+        impostor=ScoreDistribution(
+            count=10_000, minimum=0.4, p5=0.4, median=0.6, p95=0.8, maximum=0.8
+        ),
+        eer_threshold=None,
+        eer_rate=None,
+        low_impostor_threshold=None,
+        current_threshold=0.6,
+        warnings=(),
+        impostor_scores=exported,
+    )
+
+    cost = report.cost_at(0.6)
+
+    assert cost is not None
+    assert cost.false_accept_rate == pytest.approx(0.5)
+    assert cost.false_accept_count == 5000
+
+
+def test_cost_counts_are_exact_below_the_export_cap() -> None:
+    """Small libraries are not downsampled, so scaling must be a no-op there."""
+    from app.voiceprint_calibration import (
+        ScoreDistribution,
+        VoiceprintCalibrationReport,
+    )
+
+    exported = (0.4, 0.4, 0.8, 0.8)
+    report = VoiceprintCalibrationReport(
+        model="m",
+        person_count=2,
+        scored_person_count=2,
+        sample_count=4,
+        genuine=None,
+        impostor=ScoreDistribution(
+            count=4, minimum=0.4, p5=0.4, median=0.6, p95=0.8, maximum=0.8
+        ),
+        eer_threshold=None,
+        eer_rate=None,
+        low_impostor_threshold=None,
+        current_threshold=0.6,
+        warnings=(),
+        impostor_scores=exported,
+    )
+
+    cost = report.cost_at(0.6)
+
+    assert cost is not None
+    assert cost.false_accept_count == 2
+
+
+def test_downsampling_keeps_the_extreme_scores() -> None:
+    """The tail is the whole point; striding must not shave it off.
+
+    A handful of impostors above the threshold is exactly what makes a
+    threshold unsafe, and it lives at the top of the sorted array. Dropping the
+    last element would let `cost_at` price such a threshold at zero false
+    accepts -- the report would be most wrong precisely when it matters.
+    """
+    from app.voiceprint_calibration import MAX_EXPORTED_SCORES, _exported_scores
+
+    population = [i / 10_000 for i in range(MAX_EXPORTED_SCORES * 3)]
+
+    exported = _exported_scores(population)
+
+    assert len(exported) == MAX_EXPORTED_SCORES
+    assert exported[0] == round(min(population), 4)
+    assert exported[-1] == round(max(population), 4)
+
+
+def test_a_lone_high_impostor_survives_downsampling() -> None:
+    """One score above the threshold must not vanish into the sampling grid."""
+    from app.voiceprint_calibration import MAX_EXPORTED_SCORES, _exported_scores
+
+    population = [0.10] * (MAX_EXPORTED_SCORES * 4) + [0.99]
+
+    exported = _exported_scores(population)
+
+    assert 0.99 in exported

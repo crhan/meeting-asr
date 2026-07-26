@@ -316,6 +316,13 @@ export interface VoiceprintSample {
   identity_confirmed: boolean;
   matching_enabled: boolean;
   clip_rel_path: string;
+  /** Another speaker holds the floor within half a second of this sample's
+   *  source audio. null means the source project was unavailable and the
+   *  check did not run -- which must not be rendered as "clean". */
+  overlap_risk: boolean | null;
+  /** Whether the source project can still be opened for review. false means a
+   *  link there lands on the review page's "nothing to review" error. */
+  source_available: boolean | null;
 }
 
 export interface VoiceprintLibrary {
@@ -350,6 +357,8 @@ export interface QualityProject {
   critical_count: number;
   mean_score: number | null;
   min_score: number | null;
+  /** Whether this project can still be opened for review. */
+  source_available: boolean | null;
 }
 
 export interface QualityNeighbor {
@@ -376,11 +385,189 @@ export interface QualityPerson {
 
 export interface QualityReport {
   model: string;
+  /** Below this many matching samples a centroid describes one recording
+   *  rather than a voice. */
+  min_cluster_size: number;
   sample_count: number;
   suspicious_count: number;
   critical_count: number;
   people: QualityPerson[];
 }
+
+export interface PersonHealth {
+  public_id: string;
+  name: string;
+  total_sample_count: number;
+  enabled_sample_count: number;
+  matching_sample_count: number;
+  missing_embedding_count: number;
+  missing_clip_count: number;
+  embeddable_count: number;
+  matching_seconds: number;
+  project_count: number;
+  availability: "ok" | "fragile" | "unusable";
+}
+
+export interface LibraryIssue {
+  kind: string;
+  severity: "critical" | "warning" | "info";
+  title: string;
+  detail: string;
+  action: string;
+  person_public_id: string | null;
+  person_name: string | null;
+  context: Record<string, number | string>;
+}
+
+export interface ScoreDistribution {
+  count: number;
+  min: number;
+  p5: number;
+  median: number;
+  p95: number;
+  max: number;
+}
+
+export interface ThresholdCost {
+  threshold: number;
+  false_reject_count: number;
+  false_reject_rate: number;
+  false_accept_count: number;
+  false_accept_rate: number;
+}
+
+export interface Calibration {
+  model: string;
+  person_count: number;
+  scored_person_count: number;
+  sample_count: number;
+  genuine: ScoreDistribution | null;
+  impostor: ScoreDistribution | null;
+  eer_threshold: number | null;
+  eer_rate: number | null;
+  low_impostor_threshold: number | null;
+  current_threshold: number;
+  warnings: string[];
+  genuine_scores: number[];
+  impostor_scores: number[];
+  suggested_threshold: number | null;
+  suggested_reason: string;
+  suggested_kind: string;
+  low_confidence: boolean;
+  current_cost: ThresholdCost | null;
+  suggested_cost: ThresholdCost | null;
+}
+
+export interface LibraryHealth {
+  db_path: string;
+  provider: string;
+  model: string;
+  person_count: number;
+  usable_person_count: number;
+  matching_sample_count: number;
+  matching_seconds: number;
+  critical_count: number;
+  warning_count: number;
+  people: PersonHealth[];
+  issues: LibraryIssue[];
+  calibration: Calibration | null;
+}
+
+export interface MatchThreshold {
+  effective: number;
+  configured: number | null;
+  default: number;
+  warnings: string[];
+  warning_kinds: string[];
+  /** Coupling kind -> the threshold at or below which it triggers. Published
+   *  so a candidate can be judged before it is applied, without restating
+   *  the numbers here. */
+  coupling_bounds: Record<string, number>;
+}
+
+export interface EmbedBacklog {
+  model: string;
+  /** Only samples a backfill could actually embed. */
+  missing_sample_count: number;
+  person_count: number;
+  missing_clip_count: number;
+}
+
+export const getLibraryHealth = () => api<LibraryHealth>("/api/voiceprints/health");
+
+export const getMatchThreshold = () =>
+  api<MatchThreshold>("/api/voiceprints/threshold");
+
+export const setMatchThreshold = (threshold: number | null) =>
+  api<MatchThreshold>("/api/voiceprints/threshold", {
+    method: "PUT",
+    body: JSON.stringify({ threshold }),
+  });
+
+/**
+ * One clip a capture run would take, in capture's own identity terms.
+ *
+ * `rel_path` plus the times are exactly what `captureRun` validates against,
+ * so these can be captured directly without loading a plan first.
+ */
+export interface CandidateClip {
+  rel_path: string;
+  begin_time_ms: number;
+  end_time_ms: number;
+  duration_seconds: number;
+  text: string;
+  score: number;
+  recommended: boolean;
+  /** Another speaker within half a second: usable, never pre-selected. */
+  overlap_risk: boolean;
+}
+
+export interface SampleSource {
+  project_id: string;
+  title: string;
+  meeting_time: string | null;
+  speaker_id: number;
+  speaker_name: string;
+  /** The person the capture plan resolved; echo it back when capturing. */
+  person_public_id: string | null;
+  /** "person-map" (linked to this person) or "name" (display name only). */
+  evidence: string;
+  candidate_count: number;
+  candidate_seconds: number;
+  best_score: number;
+  matching_sample_count: number;
+  quarantined_sample_count: number;
+  priority: number;
+  /** Reason kinds; re-rendered per locale rather than translated as prose. */
+  reasons: string[];
+  clips: CandidateClip[];
+}
+
+export interface SampleSources {
+  person_public_id: string;
+  person_name: string;
+  /** Which health bars this person fails; these ordered the sources. */
+  deficits: string[];
+  matching_sample_count: number;
+  matching_seconds: number;
+  project_count: number;
+  scanned_project_count: number;
+  total_candidate_seconds: number;
+  new_project_count: number;
+  sources: SampleSource[];
+  skipped: { project_id: string; title: string; reason: string }[];
+}
+
+export const getSampleSources = (ref: string) =>
+  api<SampleSources>(`/api/voiceprints/people/${encodeURIComponent(ref)}/sources`);
+
+export const getEmbedBacklog = () =>
+  api<EmbedBacklog>("/api/voiceprints/embed-backlog");
+
+export const runEmbedBackfill = () =>
+  api<{ job_id: string; existing: boolean }>("/api/voiceprints/embed", {
+    method: "POST",
+  });
 
 export const getLibrary = () => api<VoiceprintLibrary>("/api/voiceprints/library");
 
@@ -461,6 +648,8 @@ export interface CaptureClip {
   audio_score: number | null;
   audio_reason: string;
   recommended: boolean;
+  /** Another speaker within half a second: usable, never pre-selected. */
+  overlap_risk?: boolean;
 }
 
 export interface CaptureSpeaker {

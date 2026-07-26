@@ -388,6 +388,19 @@ table.projects tr:hover td {
 .vp-project-link:hover {
   color: var(--accent);
 }
+/* Source project deleted. Deliberately muted rather than red: the clip is
+   still in the library and still matches, so this states a fact about
+   provenance, not a defect in the sample. It is also never a link -- the
+   review page has nothing to show for a project that is gone. */
+.vp-project-gone {
+  color: var(--text-dim);
+  cursor: help;
+}
+.badge.state-gone {
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+  background: transparent;
+}
 a.badge {
   text-decoration: none;
 }
@@ -1412,10 +1425,32 @@ tr.clickable {
 .vp-health-metrics {
   font-size: var(--fs-base);
 }
+/* Contamination reads as red, not amber: unlike a consistency warning it is a
+   measured fact about the audio rather than a score that might yet be fine. */
+.vp-health-overlap {
+  align-items: center;
+  border-left: 2px solid var(--red);
+  background: var(--red-dim);
+}
+.vp-health-overlap .row {
+  flex: none;
+}
+@media (max-width: 720px) {
+  .vp-health-overlap {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
 .vp-project-risk {
   color: var(--yellow);
   border-color: rgba(240, 181, 74, 0.45);
   background: var(--yellow-dim);
+}
+.vp-project-risk.gone {
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+  background: transparent;
+  cursor: help;
 }
 .vp-sample-actions {
   display: flex;
@@ -1714,6 +1749,911 @@ tr.clickable {
 }
 .auth-card .auth-error {
   color: var(--red);
+}
+
+/* ---- library quality: the calibration instrument ------------------------
+   This page reads as a bench instrument rather than a dashboard: a hairline
+   panel frame, an eyebrow/title header pair, monospace readouts with tabular
+   figures, and one真 plot whose geometry is percentage-based end to end so the
+   bars, gridlines, cursors, axis ticks and drag handle all share one axis.
+   Colour semantics are the app's existing ones (green=same person / healthy,
+   red=wrong person / unusable, accent=the thing you are moving).            */
+
+.vq-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  max-width: 1180px;
+}
+
+.vq-eyebrow {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.vq-masthead .spacer,
+.vq-panel-head .spacer,
+.vq-actions .spacer {
+  flex: 1;
+}
+
+.vq-masthead {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--border);
+}
+.vq-masthead h1 {
+  margin: 2px 0 0;
+  font-size: var(--fs-xl);
+  letter-spacing: -0.01em;
+}
+
+.vq-panel {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 120px),
+    var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4) var(--sp-4) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+/* The threshold panel is the page's centre of gravity; give it the accent
+   hairline so the eye lands there before the lists below. */
+.vq-panel-feature {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 1px rgba(79, 157, 255, 0.05) inset;
+}
+.vq-panel-feature::before {
+  content: "";
+  position: absolute;
+  inset: -1px auto auto -1px;
+  width: 44px;
+  height: 2px;
+  border-radius: var(--r-lg) 0 0 0;
+  background: linear-gradient(90deg, var(--accent), transparent);
+}
+
+.vq-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+.vq-panel-titles h2 {
+  margin: 1px 0 0;
+  font-size: var(--fs-md);
+  letter-spacing: -0.005em;
+}
+.vq-model,
+.vq-config-state {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+.vq-populations {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.vq-populations em {
+  color: var(--text-dim);
+  font-style: normal;
+}
+
+/* ---- readouts ---- */
+.vq-readouts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-5);
+}
+.vq-readout-value {
+  font-family: var(--font-mono);
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+.vq-readout-value.good {
+  color: var(--green);
+}
+.vq-readout-value.bad {
+  color: var(--red);
+}
+.vq-readout-suffix {
+  font-size: 17px;
+  color: var(--text-dim);
+  font-weight: 400;
+}
+.vq-readout-label {
+  margin-top: 3px;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.vq-healthbar {
+  display: flex;
+  height: 18px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--surface-2);
+  gap: 2px;
+}
+.vq-healthbar-seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--bg);
+}
+.vq-healthbar-seg.av-ok {
+  background: var(--green);
+}
+.vq-healthbar-seg.av-fragile {
+  background: var(--yellow);
+}
+.vq-healthbar-seg.av-unusable {
+  background: var(--red);
+}
+
+.vq-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.vq-legend b {
+  margin-left: 6px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.vq-legend .vq-dim {
+  opacity: 0.42;
+}
+.vq-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 7px;
+  vertical-align: middle;
+}
+.vq-dot.av-ok,
+.vq-dot.pop-genuine {
+  background: var(--green);
+}
+.vq-dot.av-fragile {
+  background: var(--yellow);
+}
+.vq-dot.av-unusable,
+.vq-dot.pop-impostor {
+  background: var(--red);
+}
+.vq-dot.cur-candidate {
+  background: var(--accent);
+}
+.vq-dot.cur-current {
+  background: var(--text-muted);
+}
+.vq-dot.cur-suggested {
+  background: var(--yellow);
+}
+
+/* ---- the instrument ---- */
+.vq-instrument {
+  --plot-h: 132px;
+  user-select: none;
+}
+.vq-cursor-labels {
+  position: relative;
+  height: 20px;
+}
+.vq-cursor-label {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.vq-cursor-label.cur-current {
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+.vq-cursor-label.cur-suggested {
+  color: var(--yellow);
+  background: var(--yellow-dim);
+}
+
+.vq-plot {
+  position: relative;
+  height: var(--plot-h);
+  border-bottom: 1px solid var(--border-strong);
+}
+.vq-band {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(
+    180deg,
+    rgba(53, 207, 139, 0.13),
+    rgba(53, 207, 139, 0.03)
+  );
+  border-left: 1px dashed rgba(53, 207, 139, 0.5);
+  border-right: 1px dashed rgba(53, 207, 139, 0.5);
+}
+.vq-band-label {
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--green);
+  opacity: 0.85;
+}
+.vq-gridlines i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+  opacity: 0.55;
+}
+.vq-bars {
+  position: absolute;
+  inset: 20px 0 0;
+  display: flex;
+  align-items: flex-end;
+}
+.vq-bin {
+  position: relative;
+  flex: 1 1 0;
+  height: 100%;
+}
+.vq-bar {
+  position: absolute;
+  bottom: 0;
+  left: 8%;
+  right: 8%;
+  border-radius: 2px 2px 0 0;
+}
+.vq-bar.impostor {
+  background: linear-gradient(180deg, var(--red), rgba(242, 101, 93, 0.55));
+}
+.vq-bar.genuine {
+  background: linear-gradient(180deg, var(--green), rgba(53, 207, 139, 0.55));
+}
+.vq-cursor {
+  position: absolute;
+  top: -4px;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed var(--text-muted);
+}
+.vq-cursor.cur-suggested {
+  border-left: 1px dashed var(--yellow);
+}
+.vq-cursor.cur-candidate {
+  border-left: 2px solid var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+  transition: left 60ms linear;
+}
+.vq-cursor.cur-candidate.on {
+  transition: none;
+}
+.vq-cursor.cur-candidate::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: -5px;
+  border: 5px solid transparent;
+  border-top-color: var(--accent);
+}
+
+.vq-axis {
+  position: relative;
+  height: 16px;
+  margin-top: 5px;
+}
+.vq-axis span {
+  position: absolute;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.vq-track {
+  position: relative;
+  height: 30px;
+  margin-top: 2px;
+  cursor: grab;
+  touch-action: none;
+}
+.vq-track.on {
+  cursor: grabbing;
+}
+.vq-track-rail,
+.vq-track-fill {
+  position: absolute;
+  top: 13px;
+  height: 4px;
+  border-radius: 999px;
+}
+.vq-track-rail {
+  left: 0;
+  right: 0;
+  background: var(--surface-3);
+}
+.vq-track-fill {
+  left: 0;
+  background: linear-gradient(90deg, rgba(79, 157, 255, 0.35), var(--accent));
+}
+.vq-handle {
+  position: absolute;
+  top: 7px;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 12px var(--accent-glow);
+}
+.vq-track:focus-visible {
+  outline: none;
+}
+.vq-track:focus-visible .vq-handle {
+  box-shadow:
+    0 0 0 2px var(--accent-bright),
+    0 0 16px var(--accent-glow);
+}
+.vq-handle-readout {
+  position: absolute;
+  top: 17px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-bright);
+  white-space: nowrap;
+}
+
+/* ---- cost readouts ---- */
+.vq-costs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+}
+.vq-cost {
+  flex: 1 1 168px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 9px 12px 10px;
+  background: var(--surface-2);
+}
+.vq-cost.candidate {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.vq-cost-title {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.vq-cost-threshold {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  margin: 1px 0 4px;
+}
+.vq-cost-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-sm);
+}
+.vq-cost-lines span {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.vq-cost-lines em {
+  font-style: normal;
+  color: var(--text-dim);
+  min-width: 3.2em;
+}
+.vq-cost-lines b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.vq-cost-lines small {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+.vq-cost-lines .is-ok b {
+  color: var(--green);
+}
+.vq-cost-lines .is-bad b {
+  color: var(--yellow);
+}
+.vq-cost-lines .is-critical b {
+  color: var(--red);
+}
+.vq-cost-lines u {
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.vq-cost-lines u.better {
+  color: var(--green);
+  background: var(--green-dim);
+}
+.vq-cost-lines u.worse {
+  color: var(--red);
+  background: var(--red-dim);
+}
+
+.vq-note {
+  display: flex;
+  gap: var(--sp-2);
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+.vq-note.warn {
+  color: var(--yellow);
+}
+.vq-note-tag {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding-top: 1px;
+}
+.vq-note.warn .vq-note-tag {
+  color: var(--yellow);
+  opacity: 0.75;
+}
+
+.vq-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border);
+}
+
+/* ---- issue queue ---- */
+.vq-issues {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.vq-issue {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--border);
+}
+.vq-issue:first-child {
+  border-top: none;
+}
+.vq-issue-index {
+  flex: none;
+  width: 2.2em;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  padding-top: 2px;
+}
+.vq-issue.sev-critical .vq-issue-index {
+  color: var(--red);
+}
+.vq-issue.sev-warning .vq-issue-index {
+  color: var(--yellow);
+}
+.vq-issue-body {
+  flex: 1;
+  min-width: 0;
+}
+.vq-issue-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-base);
+  font-weight: 600;
+}
+.vq-issue-detail {
+  margin: 4px 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 78ch;
+}
+.vq-issue-action {
+  flex: none;
+}
+.vq-sev {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.vq-sev.sev-critical,
+.vq-sev.av-unusable {
+  color: var(--red);
+  background: var(--red-dim);
+}
+.vq-sev.sev-warning,
+.vq-sev.av-fragile {
+  color: var(--yellow);
+  background: var(--yellow-dim);
+}
+.vq-sev.sev-info {
+  color: var(--text-muted);
+  background: var(--surface-3);
+}
+.vq-sev.av-ok {
+  color: var(--green);
+  background: var(--green-dim);
+}
+
+.vq-empty {
+  padding: var(--sp-4);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.vq-empty b {
+  display: block;
+  color: var(--green);
+  font-size: var(--fs-md);
+  margin-bottom: 3px;
+}
+
+.vq-toast {
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  border-radius: var(--r-md);
+  padding: 9px 13px;
+  font-size: var(--fs-sm);
+}
+
+/* ---- people matrix ---- */
+.vq-matrix {
+  display: flex;
+  flex-direction: column;
+}
+.vq-matrix-head,
+.vq-matrix-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.6fr) 80px 92px minmax(120px, 1.4fr) 64px 72px;
+  gap: var(--sp-3);
+  align-items: center;
+  padding: 8px 0;
+}
+/* The per-person action is a quiet affordance, not a call to action: it should
+   read as available once you are already looking at a row, and never compete
+   with the issue queue for attention. */
+.vq-matrix-action {
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+  opacity: 0.55;
+}
+.vq-matrix-row:hover .vq-matrix-action,
+.vq-matrix-action:focus-visible {
+  opacity: 1;
+}
+.vq-matrix-head {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border-strong);
+}
+.vq-matrix-row {
+  border-bottom: 1px solid var(--border);
+}
+.vq-matrix-row:last-child {
+  border-bottom: none;
+}
+.ta-r {
+  text-align: right;
+}
+.vq-matrix-name {
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  justify-self: start;
+}
+.vq-matrix-name:hover {
+  color: var(--accent-bright);
+  border-bottom-color: var(--accent);
+}
+/* Duration is a magnitude, so show it as one: the inline bar makes "14s vs
+   31s" comparable at a glance in a way a right-aligned number is not. */
+.vq-matrix-audio {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.vq-matrix-audio i {
+  height: 5px;
+  min-width: 2px;
+  border-radius: 999px;
+  background: var(--green);
+  opacity: 0.75;
+}
+.vq-matrix-audio i.thin {
+  background: var(--yellow);
+}
+.vq-matrix-audio em {
+  font-style: normal;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  /* Without the header row the cells lose their meaning, so each carries its
+     own label; the name takes a full line and the metrics wrap beneath it. */
+  .vq-matrix-head {
+    display: none;
+  }
+  .vq-matrix-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px var(--sp-3);
+    padding: 10px 0;
+  }
+  .vq-matrix-name {
+    flex: 1 1 100%;
+    font-weight: 600;
+  }
+  .vq-matrix-audio {
+    flex: 1 1 110px;
+  }
+  .vq-matrix-row .ta-r {
+    text-align: left;
+  }
+  .vq-matrix-row [data-label]::before {
+    content: attr(data-label) " ";
+    /* The audio cell is a flex row, so its label is a flex item and would be
+       squeezed to one glyph per line without this. */
+    flex: none;
+    white-space: nowrap;
+    font-family: var(--font-ui);
+    font-size: var(--fs-xs);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-right: 4px;
+  }
+  .vq-readouts {
+    gap: var(--sp-4);
+  }
+  .vq-readout-value {
+    font-size: 24px;
+  }
+  .vq-costs {
+    gap: var(--sp-2);
+  }
+}
+
+/* ---- sourcing plan ------------------------------------------------------ */
+/* The panel that answers "capture more samples — but where?". It is a work
+   surface rather than a readout, so it gets the accent rail the calibration
+   panel uses: it appears in response to a click and should be findable
+   without hunting after the page scrolls. */
+.vq-panel-plan {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+  scroll-margin-top: var(--sp-4);
+}
+/* The issue row that opened it, marked so the two read as one action. */
+.vq-issue.on {
+  background: var(--accent-dim);
+  border-radius: var(--r-sm);
+}
+
+.vq-plan-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.vq-chip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--text-muted);
+  background: var(--surface-3);
+  white-space: nowrap;
+}
+.vq-chip.good {
+  color: var(--green);
+  background: var(--green-dim);
+}
+.vq-chip.warn {
+  color: var(--yellow);
+  background: var(--yellow-dim);
+}
+
+.vq-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.vq-source {
+  display: flex;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+.vq-source:last-child {
+  border-bottom: none;
+}
+.vq-source-rank {
+  flex: none;
+  width: 2.2em;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  padding-top: 3px;
+}
+.vq-source:first-child .vq-source-rank {
+  color: var(--accent-bright);
+}
+.vq-source-body {
+  flex: 1;
+  min-width: 0;
+}
+.vq-source-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.vq-source-head b {
+  font-size: var(--fs-base);
+}
+/* Supply is the number the decision turns on, so it is the one thing set in
+   display size — everything else on the row is context for it. */
+.vq-source-supply {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: 5px;
+  font-size: var(--fs-sm);
+}
+.vq-source-figure {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+}
+.vq-source-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.vq-source-clips {
+  margin-top: var(--sp-2);
+  border-left: 2px solid var(--border-strong);
+  padding-left: var(--sp-3);
+}
+.vq-clip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px 6px;
+  margin-left: -6px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.vq-clip:hover {
+  background: var(--surface-2);
+}
+.vq-clip.on {
+  background: var(--accent-dim);
+}
+.vq-clip input {
+  flex: none;
+  cursor: pointer;
+}
+/* The timestamp is a flex item, so a narrow viewport breaks "4:33 · 9.9s"
+   into one token per line and drives the row three lines tall. */
+.vq-clip > .mono {
+  flex: none;
+  white-space: nowrap;
+}
+/* One line per clip: this is a sniff test for "is this the right person",
+   not reading material. The full picker is one click away for the rest. */
+.vq-clip-text {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.vq-clip.on .vq-clip-text {
+  color: var(--text);
+}
+.vq-source-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+.vq-plan-note {
+  margin: var(--sp-3) 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 78ch;
+}
+
+@media (max-width: 720px) {
+  .vq-matrix-action {
+    opacity: 1;
+  }
+  .vq-source-head .spacer {
+    display: none;
+  }
+  .vq-source-head .btn {
+    order: 9;
+  }
 }
 
 /* ---- accessibility floor ----------------------------------------------- */

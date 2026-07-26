@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.voiceprint_models import VoiceprintSampleRow
-from app.voiceprint_store import get_voiceprint_db_path, list_all_voiceprint_samples
+from app.voiceprint_store import (
+    get_voiceprint_db_path,
+    list_all_voiceprint_samples,
+    resolve_in_store_clip_path,
+)
 
 VOICEPRINT_AUDIO_PREPROCESS_VERSION = "audio-norm-v2"
 VOICEPRINT_NORMALIZED_DIR = "normalized"
@@ -59,10 +63,10 @@ def normalize_voiceprint_samples(
         normalized_path = normalized_voiceprint_sample_path(
             sample, store_dir=resolved_store_dir
         )
-        if (
-            _normalized_sample_is_current(sample.clip_path, normalized_path)
-            and not rebuild
-        ):
+        source_path = resolve_voiceprint_sample_source(
+            sample, store_dir=resolved_store_dir
+        )
+        if _normalized_sample_is_current(source_path, normalized_path) and not rebuild:
             skipped_count += 1
             continue
         normalize_voiceprint_sample(sample, store_dir=resolved_store_dir)
@@ -93,8 +97,9 @@ def normalize_voiceprint_sample(
     temp_path = output_path.with_name(
         f"{output_path.stem}.norm-tmp{output_path.suffix}"
     )
+    source_path = resolve_voiceprint_sample_source(sample, store_dir=store_dir)
     try:
-        _run_ffmpeg(_normalize_command(sample.clip_path, temp_path))
+        _run_ffmpeg(_normalize_command(source_path, temp_path))
         trim_embedding_audio_silence(temp_path, output_path)
     finally:
         temp_path.unlink(missing_ok=True)
@@ -197,9 +202,49 @@ def ensure_normalized_voiceprint_sample(
         Current normalized WAV path.
     """
     output_path = normalized_voiceprint_sample_path(sample, store_dir=store_dir)
-    if _normalized_sample_is_current(sample.clip_path, output_path):
+    source_path = resolve_voiceprint_sample_source(sample, store_dir=store_dir)
+    if _normalized_sample_is_current(source_path, output_path):
         return output_path
     return normalize_voiceprint_sample(sample, store_dir=store_dir)
+
+
+def resolve_voiceprint_sample_source(
+    sample: VoiceprintSampleRow, *, store_dir: Path | None
+) -> Path:
+    """
+    Return a sample's clip path resolved against the *active* store.
+
+    ``clip_path`` is the absolute path of the store the clip was first written
+    to. It goes stale whenever the library moves — a different
+    ``XDG_DATA_HOME``, a relocated data volume — and it points OUTSIDE the
+    active store whenever one runs against a ``--store-dir`` copy. Playback and
+    deletion already rebase through ``resolve_in_store_clip_path``; embedding
+    did not, so after any such move every affected sample failed to read its
+    audio and was silently skipped, leaving those people permanently absent
+    from the matching pool while the clips sat there intact.
+
+    Always return the rebased path when the row can be rebased at all — even
+    when that file is missing. Falling back to ``clip_path`` for a missing
+    rebase would read audio from OUTSIDE the configured store, which is exactly
+    what ``resolve_in_store_clip_path`` exists to prevent: against a
+    ``--store-dir`` copy whose clips were not copied, health would call those
+    samples embeddable and an embed run would quietly consume the real store's
+    audio, so the isolation the copy was made for would hold for writes and
+    leak for reads. A missing clip must read as missing.
+
+    ``clip_path`` is used only when rebasing is impossible (an absolute or
+    escaping ``clip_rel_path``), where naming what the registry recorded is the
+    only useful thing left to say.
+
+    Args:
+        sample: Stored sample metadata.
+        store_dir: Optional voiceprint store directory.
+
+    Returns:
+        Clip path to read the sample's audio from.
+    """
+    rebased = resolve_in_store_clip_path(sample, _resolve_store_dir(store_dir))
+    return rebased if rebased is not None else sample.clip_path
 
 
 def normalized_voiceprint_sample_path(

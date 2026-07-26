@@ -11,6 +11,18 @@ MIN_SELECTION_SCORE = 0.30
 MIN_RECOMMENDED_SCORE = 0.55
 DEFAULT_CANDIDATE_FLOOR = 12
 
+# A different speaker's turn this close to a segment means the two were
+# talking over each other rather than taking turns.
+#
+# Measured on a real two-party call: every segment in a dense exchange sat
+# 0.00-0.25s from the other person, clip padding of 0.5s put 10-13% of their
+# voice into each clip, and the resulting samples pulled the speaker's
+# centroid toward the person they were talking to (cosine 0.225 -> 0.323).
+# Trimming the padding recovers most of that, but not all -- diarizer
+# boundaries inside such a stretch are not trustworthy either -- so segments
+# like these are excluded from the default picks rather than merely discounted.
+OVERLAP_RISK_GAP_MS = 500
+
 
 @dataclass(frozen=True, slots=True)
 class ScoredVoiceprintSegment:
@@ -20,6 +32,10 @@ class ScoredVoiceprintSegment:
     score: float
     reason: str
     recommended: bool = False
+    # Another speaker takes the floor within OVERLAP_RISK_GAP_MS on either
+    # side. Still selectable -- a thin source may offer nothing else -- but
+    # never a default pick.
+    overlap_risk: bool = False
 
 
 def select_voiceprint_segments(
@@ -46,7 +62,11 @@ def select_voiceprint_segments(
     recommended_ids = _recommended_segment_ids(selected, sample_count)
     marked = [
         ScoredVoiceprintSegment(
-            item.segment, item.score, item.reason, id(item.segment) in recommended_ids
+            item.segment,
+            item.score,
+            item.reason,
+            id(item.segment) in recommended_ids,
+            item.overlap_risk,
         )
         for item in selected
     ]
@@ -62,12 +82,26 @@ def _recommended_segment_ids(
     The score is a usability gate, not a target to maximize. Always taking the
     highest scores overfits toward one speaking style and often clusters around
     long dense monologues, so defaults should cover the speaker's timeline.
+
+    Overlap-risk segments are never picked, not even when nothing else is on
+    offer. A ticked checkbox is a recommendation, and recommending audio from a
+    stretch where two people talk over each other is how a reference voice
+    quietly acquires someone else's. Falling back to them when the clean pool
+    runs short would put the tick back exactly where the audio is worst -- a
+    tight two-party call, where *every* segment is crowded -- which is where
+    the operator most needs to decide for themselves.
+
+    They remain in the returned list and remain selectable, so a source with
+    nothing clean is still usable; it just requires a deliberate click.
     """
     if sample_count <= 0 or not segments:
         return set()
-    eligible = [item for item in segments if item.score >= MIN_RECOMMENDED_SCORE]
+    clean = [item for item in segments if not item.overlap_risk]
+    if not clean:
+        return set()
+    eligible = [item for item in clean if item.score >= MIN_RECOMMENDED_SCORE]
     if len(eligible) < sample_count:
-        eligible = segments
+        eligible = clean
     return {
         id(item.segment) for item in _spread_segments_by_time(eligible, sample_count)
     }
@@ -156,7 +190,51 @@ def score_voiceprint_segment(
     boundary_score = _boundary_score(segment, all_segments)
     score = round(0.45 * duration_score + 0.35 * text_score + 0.20 * boundary_score, 3)
     reason = f"duration={duration_score:.2f}, text={text_score:.2f}, boundary={boundary_score:.2f}"
-    return ScoredVoiceprintSegment(segment, score, reason)
+    return ScoredVoiceprintSegment(
+        segment,
+        score,
+        reason,
+        overlap_risk=has_overlap_risk(segment, all_segments),
+    )
+
+
+def has_overlap_risk(
+    segment: SentenceSegment,
+    all_segments: list[SentenceSegment],
+    *,
+    gap_ms: int = OVERLAP_RISK_GAP_MS,
+) -> bool:
+    """
+    Return whether another speaker holds the floor within ``gap_ms``.
+
+    Deliberately a separate boolean rather than another term folded into the
+    score: the boundary term already discounts this, but at 0.20 weight the
+    worst possible boundary costs 0.11 of a 1.0 score, which is not enough to
+    stop a long, articulate, contaminated segment from outranking a short clean
+    one. Callers need to be able to refuse it outright.
+
+    Args:
+        segment: Segment being judged.
+        all_segments: Every transcript segment, any order.
+        gap_ms: Silence required on both sides before the segment counts clean.
+
+    Returns:
+        Whether a different speaker is within ``gap_ms`` on either side.
+    """
+    for other in all_segments:
+        if other.speaker_id == segment.speaker_id:
+            continue
+        if other.end_time_ms <= segment.begin_time_ms:
+            if segment.begin_time_ms - other.end_time_ms <= gap_ms:
+                return True
+        elif other.begin_time_ms >= segment.end_time_ms:
+            if other.begin_time_ms - segment.end_time_ms <= gap_ms:
+                return True
+        else:
+            # Genuinely overlapping timestamps: the strongest form of the same
+            # problem, so it can never read as clean.
+            return True
+    return False
 
 
 def _duration_score(duration_ms: int) -> float:

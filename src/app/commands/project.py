@@ -157,7 +157,7 @@ from app.speaker_pipeline_params import (
     DEFAULT_MATCH_MAX_SECONDS,
     DEFAULT_MATCH_PADDING_SECONDS,
     DEFAULT_MATCH_SAMPLE_COUNT,
-    DEFAULT_MATCH_THRESHOLD,
+    resolve_match_threshold,
 )
 from app.speaker_resplit import (
     DEFAULT_CANDIDATE_FLOOR,
@@ -636,8 +636,13 @@ def run(
         "--voiceprint-model",
         autocompletion=complete_voiceprint_model,
     ),
-    match_threshold: float = typer.Option(
-        DEFAULT_MATCH_THRESHOLD, "--match-threshold", min=0.0, max=1.0
+    match_threshold: Optional[float] = typer.Option(
+        None,
+        "--match-threshold",
+        min=0.0,
+        max=1.0,
+        help="Voiceprint acceptance threshold. Defaults to the configured "
+        "voiceprint.match_threshold, else the built-in default.",
     ),
     crosstalk: bool = typer.Option(
         True,
@@ -772,7 +777,7 @@ def run(
             force_asr=force_asr,
             store_dir=store_dir,
             voiceprint_model=voiceprint_model,
-            match_threshold=match_threshold,
+            match_threshold=resolve_match_threshold(match_threshold),
             crosstalk_params=crosstalk_params,
             summarize=summarize,
             summary_model=summary_model,
@@ -2698,8 +2703,13 @@ def speakers_rerun(
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
     ),
-    threshold: float = typer.Option(
-        DEFAULT_MATCH_THRESHOLD, "--threshold", min=0.0, max=1.0
+    threshold: Optional[float] = typer.Option(
+        None,
+        "--threshold",
+        min=0.0,
+        max=1.0,
+        help="Voiceprint acceptance threshold. Defaults to the configured "
+        "voiceprint.match_threshold, else the built-in default.",
     ),
     sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
@@ -2741,6 +2751,7 @@ def speakers_rerun(
     ),
 ) -> None:
     """Rebuild speaker outputs from raw ASR without rerunning ASR."""
+    threshold = resolve_match_threshold(threshold)
     resolved_project_dir = run_with_cli_errors(
         lambda: resolve_project_ref(project_dir, projects_dir)
     )
@@ -2842,8 +2853,13 @@ def speakers_learn(
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
     ),
-    threshold: float = typer.Option(
-        DEFAULT_MATCH_THRESHOLD, "--threshold", min=0.0, max=1.0
+    threshold: Optional[float] = typer.Option(
+        None,
+        "--threshold",
+        min=0.0,
+        max=1.0,
+        help="Voiceprint acceptance threshold. Defaults to the configured "
+        "voiceprint.match_threshold, else the built-in default.",
     ),
     sample_count: int = typer.Option(3, "--sample-count", min=1, max=20),
     match_sample_count: int = typer.Option(2, "--match-sample-count", min=1, max=20),
@@ -2874,6 +2890,7 @@ def speakers_learn(
     ),
 ) -> None:
     """Learn selected confirmed speakers and optionally close embed/rematch/apply."""
+    threshold = resolve_match_threshold(threshold)
     selected = _parse_learning_speaker_ids(speaker_id, speaker_ids)
     if selected is None:
         raise typer.BadParameter(
@@ -2971,8 +2988,13 @@ def speakers_match(
     model: Optional[str] = typer.Option(
         None, "--model", autocompletion=complete_voiceprint_model
     ),
-    threshold: float = typer.Option(
-        DEFAULT_MATCH_THRESHOLD, "--threshold", min=0.0, max=1.0
+    threshold: Optional[float] = typer.Option(
+        None,
+        "--threshold",
+        min=0.0,
+        max=1.0,
+        help="Voiceprint acceptance threshold. Defaults to the configured "
+        "voiceprint.match_threshold, else the built-in default.",
     ),
     sample_count: int = typer.Option(2, "--sample-count", min=1, max=20),
     max_seconds: float = typer.Option(12.0, "--max-seconds", min=0.1),
@@ -2997,6 +3019,7 @@ def speakers_match(
     ),
 ) -> None:
     """Match project speakers against the cross-project voiceprint library."""
+    threshold = resolve_match_threshold(threshold)
     resolved_project_dir = run_with_cli_errors(
         lambda: resolve_project_ref(project_dir, projects_dir)
     )

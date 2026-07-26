@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.core.project_models import ProjectListItem
 from app.core.project_workflow import ProjectWorkflowSummary
-from app.speaker_pipeline_params import DEFAULT_MATCH_THRESHOLD
+from app.voiceprint_quality import DEFAULT_MIN_CLUSTER_SIZE
 
 
 class WorkflowState(BaseModel):
@@ -116,7 +116,9 @@ class RunPipelineIn(BaseModel):
     summarize: bool = True
     polish: bool = True
     local_correction: bool = True
-    match_threshold: float = DEFAULT_MATCH_THRESHOLD
+    # None means "resolve from config at run time"; a literal default here would
+    # freeze the built-in threshold at import and ignore voiceprint.match_threshold.
+    match_threshold: float | None = None
 
 
 class SummarizeIn(BaseModel):
@@ -561,6 +563,16 @@ class VoiceprintSampleOut(BaseModel):
     identity_confirmed: bool
     matching_enabled: bool
     clip_rel_path: str
+    # Another speaker holds the floor within half a second of this sample's
+    # source audio, so the clip is a mixture rather than one voice. None means
+    # the source project was unavailable and the check did not run -- clients
+    # must not render that as "checked and clean".
+    overlap_risk: bool | None = None
+    # Whether the source project can still be opened for review. False means
+    # linking there lands on the review page's "nothing to review" error, so
+    # clients should say the project is gone instead of offering the link.
+    # None means availability itself was not established.
+    source_available: bool | None = None
 
 
 class VoiceprintLibraryOut(BaseModel):
@@ -603,6 +615,9 @@ class QualityProjectOut(BaseModel):
     critical_count: int
     mean_score: float | None
     min_score: float | None
+    # Same meaning as on a sample row: False means this project can no longer
+    # be opened for review, so it must not be rendered as a link.
+    source_available: bool | None = None
 
 
 class QualityNeighborOut(BaseModel):
@@ -639,6 +654,205 @@ class QualityReportOut(BaseModel):
     suspicious_count: int
     critical_count: int
     people: list[QualityPersonOut]
+    # Below this many matching samples a centroid describes one recording
+    # rather than a voice. Published so a client can refuse an action that
+    # would drop someone under it, without restating the number.
+    min_cluster_size: int = DEFAULT_MIN_CLUSTER_SIZE
+
+
+# ---- Voiceprint library health ---------------------------------------------
+
+
+class PersonHealthOut(BaseModel):
+    """Availability facts for one library person under the active model."""
+
+    public_id: str
+    name: str
+    total_sample_count: int
+    enabled_sample_count: int
+    matching_sample_count: int
+    missing_embedding_count: int
+    # Missing embeddings whose clip audio is gone; a backfill cannot fix these.
+    missing_clip_count: int
+    embeddable_count: int
+    matching_seconds: float
+    project_count: int
+    availability: str
+
+
+class LibraryIssueOut(BaseModel):
+    """One actionable library problem."""
+
+    kind: str
+    severity: str
+    title: str
+    detail: str
+    action: str
+    person_public_id: str | None = None
+    person_name: str | None = None
+    # Numbers behind title/detail so the bilingual UI can restate them.
+    context: dict[str, float | int | str] = Field(default_factory=dict)
+
+
+class ScoreDistributionOut(BaseModel):
+    """Summary statistics for one calibration score population."""
+
+    count: int
+    min: float
+    p5: float
+    median: float
+    p95: float
+    max: float
+
+
+class ThresholdCostOut(BaseModel):
+    """What one candidate threshold costs on the current library."""
+
+    threshold: float
+    false_reject_count: int
+    false_reject_rate: float
+    false_accept_count: int
+    false_accept_rate: float
+
+
+class CalibrationOut(BaseModel):
+    """Threshold calibration evidence for the active model."""
+
+    model: str
+    person_count: int
+    scored_person_count: int
+    sample_count: int
+    genuine: ScoreDistributionOut | None
+    impostor: ScoreDistributionOut | None
+    eer_threshold: float | None
+    eer_rate: float | None
+    low_impostor_threshold: float | None
+    current_threshold: float
+    warnings: list[str]
+    # Raw populations so the UI can price a dragged threshold locally.
+    genuine_scores: list[float]
+    impostor_scores: list[float]
+    suggested_threshold: float | None
+    suggested_reason: str
+    suggested_kind: str
+    low_confidence: bool
+    current_cost: ThresholdCostOut | None
+    suggested_cost: ThresholdCostOut | None
+
+
+class LibraryHealthOut(BaseModel):
+    """Voiceprint library availability and threshold health."""
+
+    db_path: str
+    provider: str
+    model: str
+    person_count: int
+    usable_person_count: int
+    matching_sample_count: int
+    matching_seconds: float
+    critical_count: int
+    warning_count: int
+    people: list[PersonHealthOut]
+    issues: list[LibraryIssueOut]
+    calibration: CalibrationOut | None
+
+
+class MatchThresholdIn(BaseModel):
+    """Set or clear the configured voiceprint match threshold."""
+
+    # None clears the config key and restores the built-in default.
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class MatchThresholdOut(BaseModel):
+    """The effective voiceprint match threshold and its coupling warnings."""
+
+    effective: float
+    configured: float | None
+    default: float
+    warnings: list[str]
+    warning_kinds: list[str]
+    # Boundaries the coupling rules compare against, so a client can warn about
+    # a candidate value BEFORE it is applied without hardcoding the numbers.
+    # After the PUT is too late: the point of the warning is the decision.
+    coupling_bounds: dict[str, float] = {}
+
+
+class EmbedBacklogOut(BaseModel):
+    """How many stored samples still need an embedding for the active model."""
+
+    model: str
+    # Only samples a backfill could actually embed (clip audio still readable).
+    missing_sample_count: int
+    person_count: int
+    missing_clip_count: int
+
+
+class CandidateClipOut(BaseModel):
+    """One clip a capture run would take, in capture's own identity terms.
+
+    ``rel_path`` plus the times are exactly what ``POST /capture/{ref}/run``
+    validates a selection against, so a client can capture these directly
+    without re-planning.
+    """
+
+    rel_path: str
+    begin_time_ms: int
+    end_time_ms: int
+    duration_seconds: float
+    text: str
+    score: float
+    recommended: bool
+    # Another speaker within half a second: usable, but never pre-selected.
+    overlap_risk: bool = False
+
+
+class SampleSourceOut(BaseModel):
+    """One project holding harvestable speech for a person."""
+
+    project_id: str
+    title: str
+    meeting_time: str | None
+    speaker_id: int
+    speaker_name: str
+    # The person the capture plan resolved; echo it back when capturing.
+    person_public_id: str | None
+    # "person-map" (linked) or "name" (display name only).
+    evidence: str
+    candidate_count: int
+    candidate_seconds: float
+    best_score: float
+    matching_sample_count: int
+    quarantined_sample_count: int
+    priority: float
+    # Reason kinds, re-rendered per locale by the browser.
+    reasons: list[str]
+    clips: list[CandidateClipOut]
+
+
+class SkippedProjectOut(BaseModel):
+    """A project the sourcing scan could not read."""
+
+    project_id: str
+    title: str
+    reason: str
+
+
+class SampleSourcesOut(BaseModel):
+    """Ranked places to harvest more samples for one person."""
+
+    person_public_id: str
+    person_name: str
+    # Which health bars this person currently fails; these ordered the sources.
+    deficits: list[str]
+    matching_sample_count: int
+    matching_seconds: float
+    project_count: int
+    scanned_project_count: int
+    total_candidate_seconds: float
+    new_project_count: int
+    sources: list[SampleSourceOut]
+    skipped: list[SkippedProjectOut]
 
 
 class CreatePersonIn(BaseModel):
@@ -704,6 +918,8 @@ class CaptureClipOut(BaseModel):
     audio_score: float | None
     audio_reason: str
     recommended: bool
+    # Another speaker within half a second: usable, but never pre-selected.
+    overlap_risk: bool = False
 
 
 class CaptureSpeakerOut(BaseModel):

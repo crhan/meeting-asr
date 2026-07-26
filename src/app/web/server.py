@@ -197,14 +197,122 @@ def resolve_token(host: str, explicit_token: str | None) -> str | None:
     return secrets.token_urlsafe(24)
 
 
+# Addresses that mean "every interface" to the kernel and nothing to a browser.
+_WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", ""})
+
+
+def is_wildcard_host(host: str) -> bool:
+    """Return whether this host is a bind-any address rather than a reachable one."""
+    return host.strip() in _WILDCARD_HOSTS
+
+
+def reachable_hosts(host: str) -> list[str]:
+    """
+    Return addresses a browser can actually open for this bind.
+
+    ``0.0.0.0`` and ``::`` are instructions to the kernel ("accept on every
+    interface"), not destinations: ``http://0.0.0.0:8799/`` fails or silently
+    means something else depending on the browser. Printing it hands the user a
+    URL that cannot work and makes them go find their own IP -- so a wildcard
+    bind is expanded into the concrete addresses it is actually reachable at.
+
+    LAN address first, because binding a wildcard is what someone does when
+    they intend to reach the server from another machine; loopback is kept as
+    the always-works fallback for whoever is sitting at this one.
+
+    Args:
+        host: The host the server binds to.
+
+    Returns:
+        Concrete hosts, most useful first. A non-wildcard host is returned
+        unchanged, since it is already the answer.
+    """
+    if not is_wildcard_host(host):
+        return [host]
+    found: list[str] = []
+    for candidate in (_primary_outbound_address(), *_hostname_addresses()):
+        if candidate and candidate not in found:
+            found.append(candidate)
+    if _LOOPBACK not in found:
+        found.append(_LOOPBACK)
+    return found
+
+
+_LOOPBACK = "127.0.0.1"
+
+
+def _primary_outbound_address() -> str | None:
+    """Return the address the default route would use, or None when offline.
+
+    Connecting a UDP socket sends no packets; it only asks the kernel which
+    local address it would source from. That answers "which of my addresses can
+    the rest of the network see" without enumerating interfaces, which the
+    standard library cannot do portably. The target is a documentation-range
+    address (RFC 5737) so this can never be mistaken for reaching out.
+    """
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("198.51.100.1", 9))
+            address = probe.getsockname()[0]
+    except OSError:
+        return None
+    return address if _is_usable_address(address) else None
+
+
+def _hostname_addresses() -> list[str]:
+    """Return this machine's IPv4 addresses by hostname lookup, best effort.
+
+    Catches interfaces the default route does not use (a second NIC, a VPN).
+    Often returns only loopback, and on some hosts nothing at all, so it
+    supplements the route probe rather than replacing it.
+    """
+    import socket
+
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except OSError:
+        return []
+    return [
+        address
+        for address in dict.fromkeys(info[4][0] for info in infos)
+        if _is_usable_address(address)
+    ]
+
+
+def _is_usable_address(address: str) -> bool:
+    """Return whether an address is worth offering as a clickable URL.
+
+    Drops loopback, link-local and unspecified addresses. Loopback is excluded
+    here rather than kept and deduplicated because hostname lookup yields the
+    distro's own alias for it -- 127.0.1.1 on Debian and Ubuntu, from
+    /etc/hosts -- which would list a second, differently-spelled loopback URL
+    that behaves identically to the one already appended. Link-local (169.254)
+    means DHCP failed and reaches nothing outside the segment.
+    """
+    import ipaddress
+
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return not (parsed.is_loopback or parsed.is_link_local or parsed.is_unspecified)
+
+
 def base_url(settings: WebSettings) -> str:
     """Return the server's base URL, bracketing IPv6 literal hosts.
 
     IPv6 literals (``::1``, ``::``) must be wrapped in ``[...]`` in a URL authority, else
     ``http://::1:8765/`` is rejected by browsers.
     """
-    host = f"[{settings.host}]" if ":" in settings.host else settings.host
-    return f"http://{host}:{settings.port}/"
+    return _url_for_host(settings.host, settings.port)
+
+
+def _url_for_host(host: str, port: int) -> str:
+    """Build one base URL, bracketing IPv6 literals for the URL authority."""
+    authority = f"[{host}]" if ":" in host else host
+    return f"http://{authority}:{port}/"
 
 
 def authenticated_url(settings: WebSettings) -> str:
@@ -213,19 +321,42 @@ def authenticated_url(settings: WebSettings) -> str:
     Opening (or printing) this URL is the token handoff: the SPA reads ``?token=`` on
     first load, stores it, and strips it from the address bar. Without this, a fresh
     browser on a non-loopback bind would 401 on every API call.
+
+    A wildcard bind resolves to its most useful concrete address, so this never
+    hands back a URL that cannot be opened.
     """
-    base = base_url(settings)
-    if settings.token:
-        # Percent-encode: an explicit --token may contain URL-reserved chars (& # +), which
-        # would otherwise be parsed as a different token. The SPA reads it via URLSearchParams,
-        # which decodes the percent-encoding back to the original.
-        return f"{base}?token={quote(settings.token, safe='')}"
-    return base
+    return authenticated_urls(settings)[0]
+
+
+def authenticated_urls(settings: WebSettings) -> list[str]:
+    """Return every entry URL this bind can be reached at, most useful first."""
+    return [
+        _authenticated(_url_for_host(host, settings.port), settings.token)
+        for host in reachable_hosts(settings.host)
+    ]
+
+
+def _authenticated(base: str, token: str | None) -> str:
+    """Append the token to one base URL when the bind requires one."""
+    if not token:
+        return base
+    # Percent-encode: an explicit --token may contain URL-reserved chars (& # +), which
+    # would otherwise be parsed as a different token. The SPA reads it via URLSearchParams,
+    # which decodes the percent-encoding back to the original.
+    return f"{base}?token={quote(token, safe='')}"
 
 
 def _open_browser_when_ready(settings: WebSettings) -> None:
-    """Open the default browser shortly after the server starts."""
-    url = authenticated_url(settings)
+    """Open the default browser shortly after the server starts.
+
+    Prefers loopback on a wildcard bind: this browser is on the machine that
+    just bound the port, and loopback is the one address a host firewall cannot
+    be blocking. The printed list still leads with the LAN address, which is
+    what someone on another machine needs.
+    """
+    urls = authenticated_urls(settings)
+    local = [item for item in urls if f"//{_LOOPBACK}:" in item]
+    url = local[0] if (local and is_wildcard_host(settings.host)) else urls[0]
 
     def _open() -> None:
         import time

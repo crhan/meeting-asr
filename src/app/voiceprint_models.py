@@ -24,6 +24,28 @@ class VoiceprintSampleRow:
     source_end_time_ms: int
     transcript_text: str
     sample_status: str = "active"
+    # The stored clip's own span. Capture truncates a long sentence to the
+    # capture limit, so this is shorter than the source interval whenever the
+    # sentence ran long. None when the query did not select these columns.
+    clip_begin_time_ms: int | None = None
+    clip_end_time_ms: int | None = None
+
+    @property
+    def embedded_duration_ms(self) -> int:
+        """Return how much audio this sample actually contributes.
+
+        The source interval measures the sentence; the embedding only ever saw
+        the clip. Counting the sentence would credit a 30s utterance with 30s
+        of reference audio after 12s was stored, which is enough to silence a
+        "too little audio" warning that is still true. Falls back to the source
+        interval when the clip span is unknown, since under-reporting to zero
+        would make every affected person look starved.
+        """
+        if self.clip_begin_time_ms is not None and self.clip_end_time_ms is not None:
+            span = self.clip_end_time_ms - self.clip_begin_time_ms
+            if span > 0:
+                return span
+        return max(0, self.source_end_time_ms - self.source_begin_time_ms)
 
 
 @dataclass(frozen=True, slots=True)

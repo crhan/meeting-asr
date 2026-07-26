@@ -89,8 +89,9 @@ def command(
         import uvicorn  # noqa: F401
 
         from app.web.server import (
-            authenticated_url,
+            authenticated_urls,
             base_url,
+            is_wildcard_host,
             resolve_token,
             run_server,
         )
@@ -116,13 +117,27 @@ def command(
         open_browser=open_browser,
         token=resolved_token,
     )
-    typer.echo(f"meeting-asr web serving at {base_url(settings)}")
+    urls = authenticated_urls(settings)
+    if is_wildcard_host(settings.host):
+        # Never print http://0.0.0.0:.../ as if it were an address: it is a bind
+        # instruction, and pasting it into a browser fails. Say what was bound,
+        # then list where it can actually be opened.
+        typer.echo(f"meeting-asr web listening on {settings.host}:{settings.port} (all interfaces)")
+    else:
+        typer.echo(f"meeting-asr web serving at {base_url(settings)}")
     if resolved_token is not None:
+        opening = (
+            "This bind requires a token. Open one of these URLs to authenticate automatically:"
+            if len(urls) > 1
+            else "This bind requires a token. Open this URL to authenticate automatically:"
+        )
+        listed = "\n".join(f"  {url}" for url in urls)
         typer.echo(
-            "This bind requires a token. Open this URL to authenticate automatically:\n"
-            f"  {authenticated_url(settings)}\n"
+            f"{opening}\n{listed}\n"
             f"Token (for API clients / manual entry): {resolved_token}"
         )
+    elif is_wildcard_host(settings.host):
+        typer.echo("Reachable at:\n" + "\n".join(f"  {url}" for url in urls))
     elif settings.is_local:
         # Loopback is shared by every local user on a multi-user host, and tokenless
         # loopback skips auth (reveal + mutating routes included). Nudge shared-host users

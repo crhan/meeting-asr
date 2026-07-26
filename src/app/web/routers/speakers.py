@@ -42,7 +42,7 @@ from app.speaker_pipeline_params import (
     DEFAULT_MATCH_MAX_SECONDS,
     DEFAULT_MATCH_PADDING_SECONDS,
     DEFAULT_MATCH_SAMPLE_COUNT,
-    DEFAULT_MATCH_THRESHOLD,
+    resolve_match_threshold,
 )
 from app.project_manager import load_manifest, project_paths
 from app.transcript_corrections import CorrectionEditOptions
@@ -445,7 +445,7 @@ async def rematch_review(
             store_dir=settings.voiceprint_store_dir,
             provider=None,
             model=None,
-            threshold=DEFAULT_MATCH_THRESHOLD,
+            threshold=resolve_match_threshold(),
             sample_count=DEFAULT_MATCH_SAMPLE_COUNT,
             max_seconds=DEFAULT_MATCH_MAX_SECONDS,
             padding_seconds=DEFAULT_MATCH_PADDING_SECONDS,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ApiError,
@@ -10,13 +10,12 @@ import {
   captureRun,
   clipUrl,
   type CaptureResult,
-  type ScoreChange,
 } from "../api/client";
 import { tr } from "../lib/i18n";
 import { useClipAudio } from "../lib/useClipAudio";
 import { JobProgress } from "../components/JobProgress";
 import { SeekBar } from "../components/SeekBar";
-import { Modal } from "../components/Modal";
+import { CaptureResultModal } from "../components/CaptureResultModal";
 
 function fmtMs(ms: number): string {
   const t = Math.round(ms / 1000);
@@ -25,6 +24,16 @@ function fmtMs(ms: number): string {
 
 export function CapturePage() {
   const { ref = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  // Arriving from the quality page's sourcing panel names one speaker: that
+  // request is "top up this person", not "capture this meeting". Honouring it
+  // is what makes the deep link land aimed instead of on a full plan the
+  // operator has to re-narrow by hand.
+  const focusSpeakerParam = searchParams.get("speaker");
+  const focusSpeakerId =
+    focusSpeakerParam !== null && /^\d+$/.test(focusSpeakerParam)
+      ? Number(focusSpeakerParam)
+      : null;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const audio = useClipAudio();
@@ -75,27 +84,48 @@ export function CapturePage() {
     };
   }, []);
 
-  // Pre-select recommended clips once the plan loads.
+  // Pre-select recommended clips once the plan loads, narrowed to the focused
+  // speaker when one was requested.
   useEffect(() => {
     if (data) {
       const rec = new Set<string>();
-      for (const sp of data.speakers)
+      for (const sp of data.speakers) {
+        if (focusSpeakerId !== null && sp.speaker_id !== focusSpeakerId) continue;
         for (const c of sp.clips) if (c.recommended) rec.add(c.rel_path);
+      }
       setSelected(rec);
     }
-  }, [data]);
+  }, [data, focusSpeakerId]);
+
+  // A focused speaker the plan does not contain means the project changed
+  // since the recommendation was computed; say so rather than silently
+  // showing an unfiltered plan the operator believes is filtered.
+  const focusMissing =
+    focusSpeakerId !== null &&
+    !!data &&
+    !data.speakers.some((sp) => sp.speaker_id === focusSpeakerId);
+
+  // Focus narrows what is shown and what the toolbar counts, but never what
+  // can be captured: the "show all" escape hatch restores the full plan.
+  const visibleSpeakers = useMemo(() => {
+    const speakers = data?.speakers ?? [];
+    if (focusSpeakerId === null || focusMissing) return speakers;
+    return speakers.filter((sp) => sp.speaker_id === focusSpeakerId);
+  }, [data, focusSpeakerId, focusMissing]);
+  const focusedName = visibleSpeakers.length === 1 ? visibleSpeakers[0].name : null;
+  const hiddenSpeakerCount = (data?.speakers.length ?? 0) - visibleSpeakers.length;
 
   const totalSelected = selected.size;
   const allClipRefs = useMemo(
-    () => (data?.speakers ?? []).flatMap((sp) => sp.clips.map((c) => c.rel_path)),
-    [data],
+    () => visibleSpeakers.flatMap((sp) => sp.clips.map((c) => c.rel_path)),
+    [visibleSpeakers],
   );
   const recommendedClipRefs = useMemo(
     () =>
-      (data?.speakers ?? []).flatMap((sp) =>
+      visibleSpeakers.flatMap((sp) =>
         sp.clips.filter((c) => c.recommended).map((c) => c.rel_path),
       ),
-    [data],
+    [visibleSpeakers],
   );
 
   const toggle = (relPath: string) =>
@@ -208,9 +238,12 @@ export function CapturePage() {
       <div className="review-head" style={{ margin: "-18px -18px 14px", borderRadius: 0 }}>
         <div>
           <h1>{tr("Capture voiceprints", "采集声纹")}</h1>
+          {/* Counts describe what is on screen. Reporting the whole plan's 5
+              speakers and 60 clips while showing one speaker's 12 reads as a
+              filter that did not take. */}
           <div className="subtle mono">
-            {ref} · {data.speakers.length} {tr("speakers", "发言人")} ·{" "}
-            {totalSelected}/{data.sample_count} {tr("clips selected", "已选片段")} ·{" "}
+            {ref} · {visibleSpeakers.length} {tr("speakers", "发言人")} ·{" "}
+            {totalSelected}/{allClipRefs.length} {tr("clips selected", "已选片段")} ·{" "}
             {tr("target", "目标")} {data.target_sample_count}
           </div>
         </div>
@@ -274,6 +307,45 @@ export function CapturePage() {
         </div>
       )}
 
+      {focusMissing && (
+        <div className="notice-box" style={{ margin: "10px 0" }}>
+          {tr(
+            `Speaker ${focusSpeakerParam} is no longer in this project's plan — the project changed since it was recommended. Showing every speaker.`,
+            `本项目的采集计划里已经没有 speaker ${focusSpeakerParam} 了——推荐生成之后项目被改过。下面显示全部说话人。`,
+          )}
+        </div>
+      )}
+
+      {focusedName && hiddenSpeakerCount > 0 && (
+        <div className="notice-box" style={{ margin: "10px 0" }}>
+          {tr(
+            `Showing ${focusedName} only, with their recommended clips pre-selected.`,
+            `只显示 ${focusedName}，并已预选其推荐片段。`,
+          )}{" "}
+          <button
+            className="btn ghost"
+            style={{ marginLeft: 8 }}
+            onClick={() => navigate(`/projects/${ref}/capture`)}
+          >
+            {tr(
+              `Show all ${hiddenSpeakerCount + 1} speakers`,
+              `显示全部 ${hiddenSpeakerCount + 1} 位说话人`,
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Nothing pre-selected is a finding, not a broken page: it means every
+          candidate came from a stretch where someone else was talking. */}
+      {allClipRefs.length > 0 && recommendedClipRefs.length === 0 && (
+        <div className="notice-box" style={{ margin: "10px 0" }}>
+          {tr(
+            "Nothing is pre-selected: every candidate here has another speaker within half a second, so capturing one would store a mixture of voices. Prefer a recording where this person speaks uninterrupted; tick a clip below only if this is the only audio you have.",
+            "一条都没预选:这里每条候选前后半秒内都有另一个人在说话,采进去存的会是混合音。优先换一场这个人独自连续说话的录音;只有在实在没有别的素材时,再手动勾选下面的片段。",
+          )}
+        </div>
+      )}
+
       <div className="capture-toolbar">
         <button className="chip" onClick={selectOnlyRecommended}>
           {tr("Recommended only", "只选推荐")}
@@ -289,7 +361,7 @@ export function CapturePage() {
         </span>
       </div>
 
-      {data.speakers.map((sp) => {
+      {visibleSpeakers.map((sp) => {
         const speakerRefs = sp.clips.map((c) => c.rel_path);
         const speakerSelected = sp.clips.filter((c) => selected.has(c.rel_path)).length;
         const speakerAllSelected = speakerSelected === sp.clips.length && sp.clips.length > 0;
@@ -348,6 +420,17 @@ export function CapturePage() {
                         {audioScore && (
                           <span className="score-badge mid" title={c.audio_reason}>
                             {tr("audio", "音频")} {audioScore}
+                          </span>
+                        )}
+                        {c.overlap_risk && (
+                          <span
+                            className="score-badge low"
+                            title={tr(
+                              "Another speaker holds the floor within half a second, so this clip stores a mixture of voices rather than one.",
+                              "前后半秒内有另一个人在说话,这段采进去存的是混合音而不是单一声音。",
+                            )}
+                          >
+                            {tr("overlap", "有他人")}
                           </span>
                         )}
                         <span className={`badge ${c.recommended ? "status-pill active" : ""}`}>
@@ -414,160 +497,5 @@ export function CapturePage() {
         />
       )}
     </div>
-  );
-}
-
-function fmtScore(s: number | null): string {
-  return s == null ? "—" : s.toFixed(3);
-}
-
-function changeClass(c: ScoreChange, current: boolean): string {
-  // For the CURRENT project a changed-best is the EXPECTED result of adding its own samples (a
-  // better candidate won), so it reads as green success -- NOT the regression-risk red that
-  // same status means for a historical reverse check. (See AGENTS.md Voiceprint Review Notes:
-  // backend is_critical is tuned for historical checks; the current view must reinterpret it.)
-  if (current && c.status === "changed-best") return "ok";
-  if (c.is_critical) return "low";
-  if (c.is_warning) return "mid";
-  if (c.status === "improved") return "ok";
-  return "";
-}
-
-function ChangeRow({ c, current = false }: { c: ScoreChange; current?: boolean }) {
-  const arrow =
-    c.delta == null ? "" : c.delta > 0 ? `▲${c.delta.toFixed(3)}` : `▼${Math.abs(c.delta).toFixed(3)}`;
-  return (
-    <div className="change-row">
-      <span className="change-label">{c.label}</span>
-      <span className="change-flow mono">
-        {c.before_name ?? "—"} {fmtScore(c.before_score)} → {c.after_name ?? "—"}{" "}
-        {fmtScore(c.after_score)}
-      </span>
-      <span className={`score-badge ${changeClass(c, current)}`}>
-        {c.status} {arrow}
-      </span>
-    </div>
-  );
-}
-
-function CaptureResultModal(props: {
-  result: CaptureResult;
-  onAccept: () => Promise<void>;
-  onRollback: () => Promise<void>;
-}) {
-  const { result, onAccept, onRollback } = props;
-  const [resolving, setResolving] = useState<"accept" | "rollback" | null>(null);
-  // current changed-best is expected success, not a regression -- exclude it from the warning.
-  // changed-best is disjoint from the other current criticals (below-threshold / lost-candidate),
-  // so subtracting its count leaves exactly the genuinely-risky current changes.
-  const currentRisky = result.current_critical - result.current_changed_best;
-  const risky = currentRisky + result.historical_critical_count;
-  const notableCurrent = result.current_changes.filter((c) => c.status !== "unchanged");
-  const resolve = async (action: "accept" | "rollback", run: () => Promise<void>) => {
-    if (resolving) return;
-    setResolving(action);
-    try {
-      await run();
-    } catch {
-      setResolving(null);
-    }
-  };
-  return (
-    <Modal
-      title={tr("Capture result", "采集结果")}
-      // No passive close: Esc / backdrop / ✕ used to silently roll back the whole
-      // capture+embed run. Force an explicit Accept-or-Rollback choice instead.
-      onClose={() => {}}
-      closeDisabled
-      footer={
-        <div className="row gap">
-          <button
-            className="btn ghost"
-            disabled={resolving !== null}
-            onClick={() => void resolve("rollback", onRollback)}
-          >
-            {resolving === "rollback"
-              ? tr("Rolling back…", "回滚中…")
-              : tr("Rollback", "回滚")}
-          </button>
-          <button
-            className="btn primary"
-            disabled={resolving !== null}
-            onClick={() => void resolve("accept", onAccept)}
-          >
-            {resolving === "accept"
-              ? tr("Accepting…", "接受中…")
-              : tr("Accept", "接受")}
-          </button>
-        </div>
-      }
-    >
-      <div className="capture-result">
-        <div>
-          {tr("Captured", "已采集")} <strong>{result.captured_count}</strong> ·{" "}
-          {tr("embedded", "已嵌入")} <strong>{result.embedded_count}</strong>
-          {result.skipped_count > 0 && (
-            <span className="subtle"> ({result.skipped_count} {tr("skipped", "跳过")})</span>
-          )}
-          {result.quality_gate_excluded_count > 0 && (
-            <span className="subtle">
-              {" "}
-              · {tr("quality gate excluded", "质量闸门已排除")}{" "}
-              <strong>{result.quality_gate_excluded_count}</strong>
-            </span>
-          )}
-        </div>
-
-        <div className="result-section">
-          <div className="result-section-head">
-            {tr("This project", "本项目")} ·{" "}
-            <span className="score-badge ok">↑{result.current_improved}</span>{" "}
-            <span className="score-badge mid">↓{result.current_declined}</span>{" "}
-            <span className="subtle">⟳{result.current_changed_best}</span>
-          </div>
-          {notableCurrent.length === 0 ? (
-            <div className="subtle">{tr("No score changes.", "分数无变化。")}</div>
-          ) : (
-            notableCurrent.map((c) => <ChangeRow key={c.speaker_id} c={c} current />)
-          )}
-        </div>
-
-        <div className="result-section">
-          <div className="result-section-head">
-            {tr("Historical regression", "历史回归")} · {result.historical_project_count}{" "}
-            {tr("projects checked", "项目检查")}
-            {result.historical_critical_count > 0 && (
-              <span className="score-badge low"> {result.historical_critical_count} {tr("critical", "严重")}</span>
-            )}
-            {result.historical_warning_count > 0 && (
-              <span className="score-badge mid"> {result.historical_warning_count} {tr("warning", "警告")}</span>
-            )}
-          </div>
-          {result.historical_projects.length === 0 ? (
-            <div className="subtle">{tr("No historical regressions.", "无历史回归。")}</div>
-          ) : (
-            result.historical_projects.map((p) => (
-              <div key={p.project_id} className="hist-project">
-                <div className="hist-project-head mono subtle">
-                  {p.title || p.project_id}
-                </div>
-                {p.risky_changes.map((c) => (
-                  <ChangeRow key={`${p.project_id}:${c.speaker_id}`} c={c} />
-                ))}
-              </div>
-            ))
-          )}
-        </div>
-
-        {risky > 0 && (
-          <div className="subtle" style={{ marginTop: 10, color: "var(--yellow)" }}>
-            {tr(
-              "Regressions detected — review before accepting.",
-              "检测到回归——接受前请复核。",
-            )}
-          </div>
-        )}
-      </div>
-    </Modal>
   );
 }

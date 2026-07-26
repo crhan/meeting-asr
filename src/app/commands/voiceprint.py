@@ -28,6 +28,7 @@ from app.completion_helpers import (
     complete_voiceprint_model,
     complete_voiceprint_provider,
 )
+from app.config import get_default_projects_dir
 from app.core.project_refs import resolve_project_ref
 from app.utils import format_ms_timestamp
 from app.voiceprint_audio import (
@@ -35,7 +36,20 @@ from app.voiceprint_audio import (
     normalize_voiceprint_samples,
 )
 from app.voiceprint_calibration import calibrate_voiceprint_thresholds
+from app.voiceprint_library_health import (
+    AVAILABILITY_FRAGILE,
+    AVAILABILITY_OK,
+    AVAILABILITY_UNUSABLE,
+    LibraryHealthReport,
+    analyze_library_health,
+)
 from app.voiceprint_playback import build_voiceprint_play_command
+from app.voiceprint_sample_sourcing import (
+    EVIDENCE_NAME,
+    SampleSourceReport,
+    find_sample_sources,
+    sample_source_payload,
+)
 from app.voiceprint_people import (
     create_voiceprint_person,
     get_voiceprint_person,
@@ -473,8 +487,7 @@ def calibrate_command(
         )
     if report.low_impostor_threshold is not None:
         typer.echo(
-            "Threshold for <=1% impostor acceptance: "
-            f"{report.low_impostor_threshold}"
+            f"Threshold for <=1% impostor acceptance: {report.low_impostor_threshold}"
         )
     typer.echo(f"Current accept threshold: {report.current_threshold}")
     for warning in report.warnings:
@@ -725,6 +738,309 @@ def normalize_command(
     typer.echo(f"Normalized: {summary.normalized_dir}")
     typer.echo(f"Processed: {summary.processed_count}")
     typer.echo(f"Skipped: {summary.skipped_count}")
+
+
+@app.command("health")
+def health_command(
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None,
+        "--projects-dir",
+        file_okay=False,
+        dir_okay=True,
+        help="Projects parent directory for the speaker-overlap check.",
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Report which library people can be matched, and what blocks the rest.
+
+    Complements `voiceprint quality`: that command checks whether a person's
+    samples agree with each other, this one checks whether they reach the
+    matching pool at all. A person with no embeddings for the active model, or
+    with every sample quarantined, reads as clean there and is reported here.
+    """
+    report = run_with_cli_errors(
+        lambda: analyze_library_health(
+            store_dir=store_dir,
+            model=model,
+            # Default to the standard projects directory rather than skipping:
+            # a health report that quietly omits the overlap check reads as a
+            # clean bill of health for samples nobody looked at.
+            projects_dir=projects_dir or get_default_projects_dir(),
+        )
+    )
+    if as_json:
+        emit_json(_library_health_payload(report))
+        return
+    _echo_library_health(report)
+
+
+@app.command("sources")
+def sources_command(
+    person: str = typer.Argument(..., help="Person public id or name."),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True
+    ),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", file_okay=False, dir_okay=True
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", autocompletion=complete_voiceprint_model
+    ),
+    limit: int = typer.Option(20, "--limit", min=1, help="Maximum sources to list."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Rank where more samples for one person can be harvested.
+
+    Answers the question `voiceprint health` raises but cannot resolve: it says
+    a person is short on audio or characterized by one recording, this says
+    which meetings hold their speech, how much is left to take, and why that
+    meeting is worth opening. Read-only; capture the clips with
+    `meeting-asr voiceprint capture <project> --speaker-id N`.
+    """
+    report = run_with_cli_errors(
+        lambda: _resolve_person_sources(
+            person,
+            projects_dir=projects_dir,
+            store_dir=store_dir,
+            model=model,
+            limit=limit,
+        )
+    )
+    if as_json:
+        emit_json(sample_source_payload(report))
+        return
+    _echo_sample_sources(report)
+
+
+def _resolve_person_sources(
+    person: str,
+    *,
+    projects_dir: Path | None,
+    store_dir: Path | None,
+    model: str | None,
+    limit: int,
+) -> SampleSourceReport:
+    """Resolve a person ref to a public id, then rank their harvest sources."""
+    row = get_voiceprint_person(person, get_voiceprint_db_path(store_dir))
+    if row is None:
+        raise ValueError(f"Voiceprint person not found: {person}")
+    return find_sample_sources(
+        row.public_id,
+        projects_dir=projects_dir,
+        store_dir=store_dir,
+        model=model,
+        limit=limit,
+    )
+
+
+def _echo_sample_sources(report: SampleSourceReport) -> None:
+    """Print ranked harvest sources with the deficits that ordered them."""
+    typer.echo(f"Person: {report.person_name} ({report.person_public_id})")
+    if report.health is not None:
+        typer.echo(
+            f"Matching now: {report.health.matching_sample_count} sample(s), "
+            f"{report.health.matching_seconds:.0f}s, "
+            f"{report.health.project_count} source project(s)"
+        )
+    if report.deficits:
+        typer.echo(f"Needs: {', '.join(report.deficits)}")
+    typer.echo(f"Scanned {report.scanned_project_count} project(s)")
+    if not report.sources:
+        typer.echo("")
+        typer.echo(
+            "No harvestable speech found. This person is only attributed in "
+            "projects already fully sampled, or not attributed anywhere -- name "
+            "them in a project review first."
+        )
+        _echo_skipped_projects(report)
+        return
+    _voiceprint_table_console().print(_sample_sources_table(report))
+    typer.echo("")
+    for source in report.sources:
+        typer.echo(
+            f"  meeting-asr voiceprint capture {source.project_id} "
+            f"--speaker-id {source.speaker_id}"
+        )
+    if report.new_project_count == 0 and report.health is not None:
+        typer.echo("")
+        typer.echo(
+            "Every source is a meeting already contributing samples. More clips "
+            "from the same recording will not fix a single-source voiceprint -- "
+            "that needs a different meeting."
+        )
+    _echo_skipped_projects(report)
+
+
+def _echo_skipped_projects(report: SampleSourceReport) -> None:
+    """Report projects the scan could not read, rather than shrinking silently."""
+    if not report.skipped:
+        return
+    typer.echo("")
+    typer.echo(f"Skipped {len(report.skipped)} project(s):")
+    for item in report.skipped:
+        typer.echo(f"  {item.project_id} ({item.reason})")
+
+
+def _sample_sources_table(report: SampleSourceReport) -> Table:
+    """Build the ranked harvest source table."""
+    table = Table(title="Where to harvest more samples")
+    table.add_column("Project", style="bold cyan", no_wrap=True)
+    table.add_column("Title")
+    table.add_column("Speaker", justify="right")
+    table.add_column("Evidence")
+    table.add_column("Available", justify="right")
+    table.add_column("Ready", justify="right")
+    table.add_column("Have", justify="right")
+    table.add_column("Why")
+    for source in report.sources:
+        style = "yellow" if source.evidence == EVIDENCE_NAME else "green"
+        have = str(source.matching_sample_count)
+        if source.quarantined_sample_count:
+            have += f" (+{source.quarantined_sample_count} quarantined)"
+        picked = sum(1 for clip in source.clips if clip.recommended)
+        ready = f"{picked}/{len(source.clips)}" if source.clips else "-"
+        table.add_row(
+            source.project_id,
+            source.title,
+            str(source.speaker_id),
+            f"[{style}]{source.evidence}[/{style}]",
+            f"{source.candidate_count} / {source.candidate_seconds:.0f}s",
+            ready,
+            have,
+            ", ".join(source.reasons) or "-",
+        )
+    return table
+
+
+def _library_health_payload(report: LibraryHealthReport) -> dict[str, object]:
+    """Return a JSON-ready library health payload."""
+    return {
+        "db_path": str(report.db_path),
+        "provider": report.provider,
+        "model": report.model,
+        "person_count": report.person_count,
+        "usable_person_count": report.usable_person_count,
+        "matching_sample_count": report.matching_sample_count,
+        "matching_seconds": round(report.matching_seconds, 1),
+        "critical_count": report.critical_count,
+        "warning_count": report.warning_count,
+        "people": [
+            {
+                "public_id": person.speaker_public_id,
+                "name": person.speaker_name,
+                "availability": person.availability,
+                "total_sample_count": person.total_sample_count,
+                "enabled_sample_count": person.enabled_sample_count,
+                "matching_sample_count": person.matching_sample_count,
+                "missing_embedding_count": person.missing_embedding_count,
+                "missing_clip_count": person.missing_clip_count,
+                "embeddable_count": person.embeddable_count,
+                "matching_seconds": person.matching_seconds,
+                "project_count": person.project_count,
+            }
+            for person in report.people
+        ],
+        "issues": [
+            {
+                "kind": issue.kind,
+                "severity": issue.severity,
+                "title": issue.title,
+                "detail": issue.detail,
+                "action": issue.action,
+                "person_public_id": issue.person_public_id,
+                "person_name": issue.person_name,
+                "context": dict(issue.context),
+            }
+            for issue in report.issues
+        ],
+        "calibration": (
+            report.calibration.to_dict() if report.calibration is not None else None
+        ),
+    }
+
+
+def _echo_library_health(report: LibraryHealthReport) -> None:
+    """Print library availability and the prioritized issue list."""
+    typer.echo(f"Database: {report.db_path}")
+    typer.echo(f"Model: {report.model}")
+    typer.echo(
+        f"People matchable: {report.usable_person_count}/{report.person_count} | "
+        f"Matching samples: {report.matching_sample_count} | "
+        f"Matching audio: {report.matching_seconds:.0f}s"
+    )
+    if not report.people:
+        typer.echo("No voiceprint samples found.")
+        return
+    _voiceprint_table_console().print(_library_health_table(report))
+    if not report.issues:
+        typer.echo("")
+        typer.echo("No blocking issues found.")
+        return
+    typer.echo("")
+    typer.echo(
+        f"Issues: {report.critical_count} critical, {report.warning_count} warning"
+    )
+    for issue in report.issues:
+        typer.echo(f"  [{issue.severity}] {issue.title}")
+        typer.echo(f"      {issue.detail}")
+        typer.echo(
+            f"      -> {_health_action_hint(issue.action, issue.person_public_id)}"
+        )
+
+
+def _health_action_hint(action: str, person_public_id: str | None = None) -> str:
+    """Return the command that resolves one issue action."""
+    if action == "embed":
+        return "meeting-asr voiceprint embed"
+    if action == "review-samples":
+        return "meeting-asr voiceprint quality --review"
+    if action == "capture":
+        # Naming the person makes the next step answerable: sources ranks the
+        # projects that actually hold their speech, instead of leaving the
+        # operator to guess which meeting to open.
+        return f"meeting-asr voiceprint sources {person_public_id or '<person>'}"
+    if action == "set-threshold":
+        return (
+            "meeting-asr voiceprint calibrate  # then: "
+            "meeting-asr config set voiceprint.match_threshold <value>"
+        )
+    return "meeting-asr voiceprint health"
+
+
+def _library_health_table(report: LibraryHealthReport) -> Table:
+    """Build the per-person availability table."""
+    table = Table(title="Voiceprint library availability")
+    table.add_column("Person ID", style="bold cyan", no_wrap=True)
+    table.add_column("Name")
+    table.add_column("Availability")
+    table.add_column("Matching", justify="right")
+    table.add_column("Audio", justify="right")
+    table.add_column("Sources", justify="right")
+    styles = {
+        AVAILABILITY_UNUSABLE: "red",
+        AVAILABILITY_FRAGILE: "yellow",
+        AVAILABILITY_OK: "green",
+    }
+    for person in report.people:
+        style = styles.get(person.availability, "white")
+        matching = f"{person.matching_sample_count}/{person.enabled_sample_count}"
+        if person.missing_embedding_count:
+            matching = f"{matching} (-{person.missing_embedding_count})"
+        table.add_row(
+            person.speaker_public_id,
+            person.speaker_name,
+            f"[{style}]{person.availability}[/{style}]",
+            matching,
+            f"{person.matching_seconds:.0f}s",
+            str(person.project_count),
+        )
+    return table
 
 
 @app.command("quality")

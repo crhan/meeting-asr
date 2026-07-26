@@ -734,6 +734,66 @@ def test_capture_pending_blocks_store_writes(
     assert resp.json()["error"] == "conflict"
 
 
+def test_quality_report_publishes_the_minimum_cluster_size(
+    client: TestClient,
+) -> None:
+    """Clients must be able to refuse an action that drops someone below it.
+
+    The library page offers to exclude contaminated samples; doing so down to
+    one or two leaves a centroid describing a single recording, which is worse
+    than the skew it fixes. Deciding that needs the threshold, and restating
+    the number in the UI would put it in two places that drift.
+    """
+    from app.voiceprint_quality import DEFAULT_MIN_CLUSTER_SIZE
+
+    resp = client.get("/api/voiceprints/quality")
+
+    assert resp.status_code == 200
+    assert resp.json()["min_cluster_size"] == DEFAULT_MIN_CLUSTER_SIZE
+
+
+def test_embed_backfill_goes_through_the_capture_guard(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backfill writes to the same store a pending capture can roll back.
+
+    Outside the registry guard it could land between a capture's snapshot and
+    its registration, and the rollback would then restore a store without the
+    new vectors -- after the job already reported how many it embedded. The
+    guard must see this write like every other one.
+    """
+    import app.web.routers.voiceprints as voiceprints
+
+    seen: dict[str, bool] = {}
+
+    def spy(fn):
+        seen["guarded"] = True
+        return fn()
+
+    embedded: dict[str, bool] = {}
+
+    def fake_embed(**kwargs):
+        embedded["ran"] = True
+
+        class Summary:
+            model = "m"
+            embedded_count = 0
+            skipped_count = 0
+
+        return Summary()
+
+    monkeypatch.setattr(voiceprints.REGISTRY, "run_store_write", spy)
+    monkeypatch.setattr(voiceprints, "embed_voiceprint_samples", fake_embed)
+
+    resp = client.post("/api/voiceprints/embed")
+    assert resp.status_code == 200
+    snapshot = _drain_job(client, resp.json()["job_id"])
+
+    assert snapshot["status"] == "done"
+    assert seen.get("guarded") is True
+    assert embedded.get("ran") is True
+
+
 def test_speaker_save_marshals_decision(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2041,3 +2101,606 @@ def test_artifact_manifest_path_escaping_project_is_refused(
 
     resp = client.get(f"/api/projects/{project_id}/artifacts/transcript_named")
     assert resp.status_code == 404
+
+
+def test_library_health_route_reports_availability(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """The health route surfaces people who cannot be matched under the active model."""
+    from app.voiceprint_embedding import resolve_voiceprint_embedding_options
+    from app.voiceprint_store import (
+        StoredVoiceprintSample,
+        get_voiceprint_db_path,
+        store_voiceprint_samples_with_rows,
+        upsert_voiceprint_embedding,
+    )
+
+    store_dir = tmp_path / "store" / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    source = store_dir / "source.mp4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"seed")
+
+    def seed(name: str, vectors: list[list[float]], embed: bool) -> None:
+        samples = []
+        for index, _vector in enumerate(vectors):
+            clip = store_dir / "clips" / name / f"c{index}.wav"
+            clip.parent.mkdir(parents=True, exist_ok=True)
+            clip.write_bytes(f"{name}{index}".encode())
+            samples.append(
+                StoredVoiceprintSample(
+                    speaker_name=name,
+                    project_id=f"p-{name}",
+                    project_path=store_dir,
+                    project_speaker_id=0,
+                    source_path=source,
+                    clip_path=clip,
+                    clip_rel_path=str(clip.relative_to(store_dir)),
+                    source_begin_time_ms=index * 10_000,
+                    source_end_time_ms=index * 10_000 + 8_000,
+                    clip_begin_time_ms=0,
+                    clip_end_time_ms=8_000,
+                    transcript_text=f"{name} {index}",
+                )
+            )
+        _db, rows = store_voiceprint_samples_with_rows(samples, db_path)
+        if embed:
+            for row, vector in zip(rows, vectors):
+                upsert_voiceprint_embedding(row.sample_id, model, vector, db_path)
+
+    seed("alice", [[1.0, 0.0], [0.98, 0.05], [0.99, -0.03]], embed=True)
+    seed("ghost", [[0.0, 1.0], [0.03, 0.97], [-0.02, 0.99]], embed=False)
+
+    resp = client.get("/api/voiceprints/health")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["person_count"] == 2
+    assert payload["usable_person_count"] == 1
+    ghost = next(p for p in payload["people"] if p["name"] == "ghost")
+    assert ghost["availability"] == "unusable"
+    assert ghost["missing_embedding_count"] == 3
+    kinds = {issue["kind"] for issue in payload["issues"]}
+    assert "missing-embeddings" in kinds
+    # Context travels as plain JSON so the bilingual UI can restate the numbers.
+    missing = next(i for i in payload["issues"] if i["kind"] == "missing-embeddings")
+    assert missing["context"]["missing_embedding_count"] == 3
+
+    backlog = client.get("/api/voiceprints/embed-backlog")
+    assert backlog.status_code == 200
+    assert backlog.json()["missing_sample_count"] == 3
+
+
+def test_library_health_route_runs_the_overlap_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The route must resolve the default projects dir, not forward a None.
+
+    ``WebSettings.projects_dir`` is None whenever the server started without an
+    explicit ``--projects-dir`` -- the common case -- and every other route
+    reaches the real directory through the same default. Forwarding that None
+    skipped the overlap check entirely and rendered "not checked" as a clean
+    library, so this test must build the server *without* a projects dir or it
+    exercises nothing.
+    """
+    import json
+
+    from app.config import get_default_projects_dir
+
+    from app.voiceprint_embedding import resolve_voiceprint_embedding_options
+    from app.voiceprint_store import (
+        StoredVoiceprintSample,
+        get_voiceprint_db_path,
+        store_voiceprint_samples_with_rows,
+        upsert_voiceprint_embedding,
+    )
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    store_dir = tmp_path / "store" / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    source = store_dir / "source.mp4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"seed")
+    samples = []
+    for index in range(3):
+        clip = store_dir / "clips" / f"c{index}.wav"
+        clip.parent.mkdir(parents=True, exist_ok=True)
+        clip.write_bytes(f"clip{index}".encode())
+        samples.append(
+            StoredVoiceprintSample(
+                speaker_name="Crowded",
+                project_id="p-crowded",
+                project_path=store_dir,
+                project_speaker_id=0,
+                source_path=source,
+                clip_path=clip,
+                clip_rel_path=str(clip.relative_to(store_dir)),
+                source_begin_time_ms=index * 60_000,
+                source_end_time_ms=index * 60_000 + 8_000,
+                clip_begin_time_ms=0,
+                clip_end_time_ms=8_000,
+                transcript_text=f"Crowded {index}",
+            )
+        )
+    _db, rows = store_voiceprint_samples_with_rows(samples, db_path)
+    for offset, row in enumerate(rows):
+        upsert_voiceprint_embedding(row.sample_id, model, [1.0, offset * 0.01], db_path)
+
+    project_dir = get_default_projects_dir() / "p-crowded"
+    (project_dir / "asr").mkdir(parents=True)
+    created_at = "2026-05-11T12:00:00+08:00"
+    (project_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": "p-crowded",
+                "title": "会议",
+                "created_at": created_at,
+                "updated_at": created_at,
+                "status": "corrected",
+                "source": {
+                    "path": "source/p-crowded.mp3",
+                    "filename": "p-crowded.mp3",
+                    "size_bytes": 1,
+                    "mtime": created_at,
+                    "meeting_time": created_at,
+                },
+                "audio": {"duration_seconds": 3600.0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    sentences = [
+        item
+        for index in range(3)
+        for item in (
+            {
+                "begin_time_ms": index * 60_000,
+                "end_time_ms": index * 60_000 + 8_000,
+                "text": "这是被采样的那个人说的一段完整发言内容。",
+                "speaker_id": 0,
+            },
+            {
+                "begin_time_ms": index * 60_000 + 8_000,
+                "end_time_ms": index * 60_000 + 14_000,
+                "text": "这是另一个人紧接着说的话，中间没有停顿。",
+                "speaker_id": 1,
+            },
+        )
+    ]
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(
+            {
+                "full_text": "".join(item["text"] for item in sentences),
+                "sentences": sentences,
+                "detected_speakers": [0, 1],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    settings = WebSettings(
+        host="127.0.0.1",
+        port=0,
+        projects_dir=None,
+        store_dir=tmp_path / "store",
+        open_browser=False,
+        token=None,
+    )
+    with TestClient(
+        create_app(settings), base_url="http://127.0.0.1:8765"
+    ) as bare_client:
+        resp = bare_client.get("/api/voiceprints/health")
+        person_ref = bare_client.get("/api/voiceprints/library").json()["people"][0][
+            "public_id"
+        ]
+        samples = bare_client.get(f"/api/voiceprints/people/{person_ref}/samples")
+
+    assert resp.status_code == 200
+    kinds = {issue["kind"] for issue in resp.json()["issues"]}
+    assert "overlapped-samples" in kinds
+    issue = next(i for i in resp.json()["issues"] if i["kind"] == "overlapped-samples")
+    assert issue["context"]["overlapped_count"] == 3
+    # The count alone leaves the operator staring at a list of identical-looking
+    # rows. The same check has to reach the individual sample.
+    assert samples.status_code == 200
+    assert [item["overlap_risk"] for item in samples.json()["samples"]] == [
+        True,
+        True,
+        True,
+    ]
+
+
+def test_sample_sources_route_ranks_harvestable_projects(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """The sources route turns "capture more" into a specific project + speaker.
+
+    Without it the quality page could only send the operator to the project
+    list, which is where the question starts, not where it is answered.
+    """
+    import json
+
+    from app.voiceprint_embedding import resolve_voiceprint_embedding_options
+    from app.voiceprint_store import (
+        StoredVoiceprintSample,
+        get_voiceprint_db_path,
+        store_voiceprint_samples_with_rows,
+        upsert_voiceprint_embedding,
+    )
+
+    store_dir = tmp_path / "store" / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    source = store_dir / "source.mp4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"seed")
+    samples = []
+    for index in range(3):
+        clip = store_dir / "clips" / f"c{index}.wav"
+        clip.parent.mkdir(parents=True, exist_ok=True)
+        clip.write_bytes(f"clip{index}".encode())
+        samples.append(
+            StoredVoiceprintSample(
+                speaker_name="Mei",
+                project_id="p-old",
+                project_path=store_dir,
+                project_speaker_id=0,
+                source_path=source,
+                clip_path=clip,
+                clip_rel_path=str(clip.relative_to(store_dir)),
+                source_begin_time_ms=index * 90_000,
+                source_end_time_ms=index * 90_000 + 5_000,
+                clip_begin_time_ms=0,
+                clip_end_time_ms=5_000,
+                transcript_text=f"Mei {index}",
+            )
+        )
+    _db, rows = store_voiceprint_samples_with_rows(samples, db_path)
+    for offset, row in enumerate(rows):
+        upsert_voiceprint_embedding(row.sample_id, model, [1.0, offset * 0.01], db_path)
+    person_id = rows[0].speaker_public_id
+
+    project_dir = tmp_path / "projects" / "p-new"
+    (project_dir / "asr").mkdir(parents=True)
+    (project_dir / "speakers").mkdir(parents=True)
+    created_at = "2026-05-11T12:00:00+08:00"
+    (project_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": "p-new",
+                "title": "季度评审",
+                "created_at": created_at,
+                "updated_at": created_at,
+                "status": "corrected",
+                "source": {
+                    "path": "source/p-new.mp3",
+                    "filename": "p-new.mp3",
+                    "size_bytes": 1,
+                    "mtime": created_at,
+                    "meeting_time": created_at,
+                },
+                "audio": {"duration_seconds": 3600.0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    sentences = [
+        {
+            "begin_time_ms": index * 20_000,
+            "end_time_ms": index * 20_000 + 8_000,
+            "text": f"这是第{index}句用于声纹采样的完整发言内容，长度足够并且信息量充分。",
+            "speaker_id": 2,
+        }
+        for index in range(10)
+    ]
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(
+            {
+                "full_text": "".join(item["text"] for item in sentences),
+                "sentences": sentences,
+                "detected_speakers": [2],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "speakers" / "speaker_map.json").write_text(
+        json.dumps({"2": "Mei"}, ensure_ascii=False), encoding="utf-8"
+    )
+    (project_dir / "speakers" / "speaker_person_map.json").write_text(
+        json.dumps({"2": person_id}, ensure_ascii=False), encoding="utf-8"
+    )
+
+    resp = client.get(f"/api/voiceprints/people/{person_id}/sources")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["person_name"] == "Mei"
+    assert "single-source" in payload["deficits"]
+    assert payload["new_project_count"] == 1
+    top = payload["sources"][0]
+    assert top["project_id"] == "p-new"
+    assert top["speaker_id"] == 2
+    assert top["evidence"] == "person-map"
+    assert "new-project" in top["reasons"]
+    assert top["candidate_count"] == 10
+    # Previews let the panel show what would be captured without navigating.
+    # Clips carry the capture plan's own rel_path identity, so the panel can
+    # capture them directly instead of sending the operator off to re-pick.
+    assert top["clips"] and top["clips"][0]["rel_path"].endswith(".wav")
+    assert any(clip["recommended"] for clip in top["clips"])
+
+    missing = client.get("/api/voiceprints/people/vpp-nope/sources")
+    assert missing.status_code == 404
+
+
+def test_match_threshold_route_round_trips_and_warns(client: TestClient) -> None:
+    """Setting the threshold persists it and reports the contracts it breaks."""
+    from app.speaker_pipeline_params import DEFAULT_MATCH_THRESHOLD
+
+    initial = client.get("/api/voiceprints/threshold")
+    assert initial.status_code == 200
+    assert initial.json()["configured"] is None
+    assert initial.json()["effective"] == DEFAULT_MATCH_THRESHOLD
+
+    lowered = client.put("/api/voiceprints/threshold", json={"threshold": 0.6})
+    assert lowered.status_code == 200
+    assert lowered.json()["configured"] == 0.6
+    assert lowered.json()["effective"] == 0.6
+    # 0.60 is at/below the strong-margin accept score, which silently kills that rule.
+    assert "strong-margin-dead" in lowered.json()["warning_kinds"]
+
+    # Clearing restores the built-in default; that is the escape hatch.
+    cleared = client.put("/api/voiceprints/threshold", json={"threshold": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["configured"] is None
+    assert cleared.json()["effective"] == DEFAULT_MATCH_THRESHOLD
+    assert cleared.json()["warning_kinds"] == []
+
+
+def test_match_threshold_route_rejects_out_of_range(client: TestClient) -> None:
+    """A score threshold outside [0, 1] is a validation error, not a stored value."""
+    resp = client.put("/api/voiceprints/threshold", json={"threshold": 1.4})
+    assert resp.status_code == 422
+    assert client.get("/api/voiceprints/threshold").json()["configured"] is None
+
+
+def test_wildcard_bind_never_hands_back_an_unopenable_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """0.0.0.0 is a bind instruction, not a destination.
+
+    Printing http://0.0.0.0:PORT/ gives the operator a URL that fails in a
+    browser and leaves them to go find their own address, which is the one
+    thing the startup banner exists to save them from.
+    """
+    import app.web.server as server
+
+    monkeypatch.setattr(server, "_primary_outbound_address", lambda: "192.168.1.50")
+    monkeypatch.setattr(server, "_hostname_addresses", lambda: [])
+
+    settings = WebSettings(
+        host="0.0.0.0",
+        port=8799,
+        projects_dir=None,
+        store_dir=None,
+        open_browser=False,
+        token="tok",
+    )
+    urls = server.authenticated_urls(settings)
+
+    assert urls == [
+        "http://192.168.1.50:8799/?token=tok",
+        "http://127.0.0.1:8799/?token=tok",
+    ]
+    # The LAN address leads: a wildcard bind is what someone does to be reached
+    # from another machine, and that is the address only this banner can tell
+    # them. The singular helper must not regress to the wildcard either.
+    assert server.authenticated_url(settings) == "http://192.168.1.50:8799/?token=tok"
+    assert not any("0.0.0.0" in url for url in urls)
+
+
+def test_wildcard_bind_still_lists_loopback_when_offline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no route out, the banner must still offer something that works."""
+    import app.web.server as server
+
+    monkeypatch.setattr(server, "_primary_outbound_address", lambda: None)
+    monkeypatch.setattr(server, "_hostname_addresses", lambda: [])
+
+    assert server.reachable_hosts("0.0.0.0") == ["127.0.0.1"]
+
+
+def test_concrete_bind_host_is_left_alone() -> None:
+    """A host that is already an address is already the answer."""
+    import app.web.server as server
+
+    assert server.reachable_hosts("192.168.14.15") == ["192.168.14.15"]
+    assert server.reachable_hosts("::1") == ["::1"]
+    assert not server.is_wildcard_host("127.0.0.1")
+
+
+def test_loopback_aliases_do_not_become_a_second_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Debian/Ubuntu map the hostname to 127.0.1.1; that is not a new address.
+
+    Listing it would print two differently-spelled loopback URLs that behave
+    identically, which reads as a meaningful choice and is not one.
+    """
+    import socket
+
+    import app.web.server as server
+
+    def fake_getaddrinfo(host, port, family=0, *args, **kwargs):
+        return [
+            (family, 0, 0, "", ("127.0.1.1", 0)),
+            (family, 0, 0, "", ("169.254.3.4", 0)),
+            (family, 0, 0, "", ("10.0.0.7", 0)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(server, "_primary_outbound_address", lambda: None)
+
+    # The distro loopback alias and the DHCP-failure address are both dropped;
+    # only the real one survives, and canonical loopback is appended once.
+    assert server.reachable_hosts("0.0.0.0") == ["10.0.0.7", "127.0.0.1"]
+    assert not server._is_usable_address("127.0.1.1")
+    assert not server._is_usable_address("169.254.3.4")
+    assert not server._is_usable_address("0.0.0.0")
+    assert not server._is_usable_address("not-an-ip")
+
+
+def test_deleted_source_project_is_not_offered_as_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sample can outlive the project it was cut from.
+
+    Clips live in the library, so the sample keeps matching -- but the review
+    page has nothing to show, and a link there lands on its "nothing to review"
+    error, which reads as a broken app rather than as a deleted recording. Both
+    the sample row and the quality report's per-project rollup are rendered as
+    links, so both have to be able to say the source is gone.
+    """
+    import json
+
+    from app.config import get_default_projects_dir
+    from app.voiceprint_embedding import resolve_voiceprint_embedding_options
+    from app.voiceprint_store import (
+        StoredVoiceprintSample,
+        get_voiceprint_db_path,
+        store_voiceprint_samples_with_rows,
+        upsert_voiceprint_embedding,
+    )
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    store_dir = tmp_path / "store" / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    source = store_dir / "source.mp4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"seed")
+    samples = []
+    for index, project_id in enumerate(("p-live", "p-deleted")):
+        clip = store_dir / "clips" / f"c{index}.wav"
+        clip.parent.mkdir(parents=True, exist_ok=True)
+        clip.write_bytes(f"clip{index}".encode())
+        samples.append(
+            StoredVoiceprintSample(
+                speaker_name="Outlived",
+                project_id=project_id,
+                project_path=store_dir,
+                project_speaker_id=0,
+                source_path=source,
+                clip_path=clip,
+                clip_rel_path=str(clip.relative_to(store_dir)),
+                source_begin_time_ms=index * 60_000,
+                source_end_time_ms=index * 60_000 + 8_000,
+                clip_begin_time_ms=0,
+                clip_end_time_ms=8_000,
+                transcript_text=f"Outlived {index}",
+            )
+        )
+    _db, rows = store_voiceprint_samples_with_rows(samples, db_path)
+    for offset, row in enumerate(rows):
+        upsert_voiceprint_embedding(row.sample_id, model, [1.0, offset * 0.01], db_path)
+
+    # Only the first project still exists on disk -- and it is deliberately given
+    # a directory name that is not its id, because ids resolve through manifests.
+    project_dir = get_default_projects_dir() / "some-other-name"
+    (project_dir / "asr").mkdir(parents=True)
+    created_at = "2026-05-11T12:00:00+08:00"
+    (project_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": "p-live",
+                "title": "会议",
+                "created_at": created_at,
+                "updated_at": created_at,
+                "status": "corrected",
+                "source": {
+                    "path": "source/p-live.mp3",
+                    "filename": "p-live.mp3",
+                    "size_bytes": 1,
+                    "mtime": created_at,
+                    "meeting_time": created_at,
+                },
+                "audio": {"duration_seconds": 3600.0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    sentences = [
+        {
+            "begin_time_ms": 0,
+            "end_time_ms": 8_000,
+            "text": "这是被采样的那个人说的一段完整发言内容。",
+            "speaker_id": 0,
+        }
+    ]
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(
+            {
+                "full_text": sentences[0]["text"],
+                "sentences": sentences,
+                "detected_speakers": [0],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    settings = WebSettings(
+        host="127.0.0.1",
+        port=0,
+        projects_dir=None,
+        store_dir=tmp_path / "store",
+        open_browser=False,
+        token=None,
+    )
+    with TestClient(
+        create_app(settings), base_url="http://127.0.0.1:8765"
+    ) as bare_client:
+        person_ref = bare_client.get("/api/voiceprints/library").json()["people"][0][
+            "public_id"
+        ]
+        samples_resp = bare_client.get(f"/api/voiceprints/people/{person_ref}/samples")
+        quality = bare_client.get("/api/voiceprints/quality")
+
+    assert samples_resp.status_code == 200
+    rendered = {
+        item["project_id"]: item["source_available"]
+        for item in samples_resp.json()["samples"]
+    }
+    assert rendered == {"p-live": True, "p-deleted": False}
+    # The gone project's sample is unchecked for overlap rather than clean, and
+    # the two facts are reported separately so the UI can say which it is.
+    unchecked = next(
+        item
+        for item in samples_resp.json()["samples"]
+        if item["project_id"] == "p-deleted"
+    )
+    assert unchecked["overlap_risk"] is None
+
+    assert quality.status_code == 200
+    person = quality.json()["people"][0]
+    assert {p["project_id"]: p["source_available"] for p in person["projects"]} == {
+        "p-live": True,
+        "p-deleted": False,
+    }
