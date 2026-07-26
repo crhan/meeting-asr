@@ -2619,9 +2619,33 @@ def test_deleted_source_project_is_not_offered_as_a_link(
     for offset, row in enumerate(rows):
         upsert_voiceprint_embedding(row.sample_id, model, [1.0, offset * 0.01], db_path)
 
-    # Only the first project still exists on disk.
-    project_dir = get_default_projects_dir() / "p-live"
+    # Only the first project still exists on disk -- and it is deliberately given
+    # a directory name that is not its id, because ids resolve through manifests.
+    project_dir = get_default_projects_dir() / "some-other-name"
     (project_dir / "asr").mkdir(parents=True)
+    created_at = "2026-05-11T12:00:00+08:00"
+    (project_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": "p-live",
+                "title": "会议",
+                "created_at": created_at,
+                "updated_at": created_at,
+                "status": "corrected",
+                "source": {
+                    "path": "source/p-live.mp3",
+                    "filename": "p-live.mp3",
+                    "size_bytes": 1,
+                    "mtime": created_at,
+                    "meeting_time": created_at,
+                },
+                "audio": {"duration_seconds": 3600.0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     sentences = [
         {
             "begin_time_ms": 0,

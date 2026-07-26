@@ -32,11 +32,47 @@ def _row(sample_id: int, *, begin_ms: int, end_ms: int, project: str) -> Voicepr
     )
 
 
-def _write_project(root: Path, project_id: str, sentences: list[dict]) -> None:
-    """Write only the transcript file the overlap check reads."""
-    asr_dir = root / project_id / "asr"
+def _write_project(
+    root: Path,
+    project_id: str,
+    sentences: list[dict],
+    *,
+    dir_name: str | None = None,
+    transcript: str = "sentences.json",
+) -> Path:
+    """Write the project files a reference resolver and the check both need.
+
+    ``project.json`` is not optional decoration: project ids are resolved by
+    scanning manifests, so a directory without one is invisible to every ref
+    resolver -- including the review route this check has to agree with.
+    """
+    project_dir = root / (dir_name or project_id)
+    asr_dir = project_dir / "asr"
     asr_dir.mkdir(parents=True)
-    (asr_dir / "sentences.json").write_text(
+    created_at = "2026-05-11T12:00:00+08:00"
+    (project_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": project_id,
+                "title": "会议",
+                "created_at": created_at,
+                "updated_at": created_at,
+                "status": "corrected",
+                "source": {
+                    "path": f"source/{project_id}.mp3",
+                    "filename": f"{project_id}.mp3",
+                    "size_bytes": 1,
+                    "mtime": created_at,
+                    "meeting_time": created_at,
+                },
+                "audio": {"duration_seconds": 3600.0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (asr_dir / transcript).write_text(
         json.dumps(
             {
                 "full_text": "".join(item["text"] for item in sentences),
@@ -47,6 +83,7 @@ def _write_project(root: Path, project_id: str, sentences: list[dict]) -> None:
         ),
         encoding="utf-8",
     )
+    return project_dir
 
 
 def test_only_the_crowded_sample_is_flagged(tmp_path: Path) -> None:
@@ -99,10 +136,14 @@ def test_unchecked_samples_are_absent_rather_than_clean(tmp_path: Path) -> None:
 def test_unreadable_transcript_does_not_fail_the_whole_check(tmp_path: Path) -> None:
     """One broken project must not take the other projects' answers down."""
     projects_dir = tmp_path / "projects"
-    (projects_dir / "p-broken" / "asr").mkdir(parents=True)
-    (projects_dir / "p-broken" / "asr" / "sentences.json").write_text(
-        "{not json", encoding="utf-8"
+    broken = _write_project(
+        projects_dir,
+        "p-broken",
+        [{"begin_time_ms": 0, "end_time_ms": 8_000, "text": "甲", "speaker_id": 0}],
     )
+    # A resolvable project whose transcript is corrupt -- not merely a directory
+    # the resolver never sees.
+    (broken / "asr" / "sentences.json").write_text("{not json", encoding="utf-8")
     _write_project(
         projects_dir,
         "p-ok",
@@ -175,3 +216,69 @@ def test_project_sources_answer_without_samples_in_hand(tmp_path: Path) -> None:
         "p-ok": True,
         "p-gone": False,
     }
+
+
+def test_a_project_whose_directory_is_not_its_id_is_still_reachable(
+    tmp_path: Path,
+) -> None:
+    """Project ids are resolved through manifests, not by joining a path.
+
+    A project created with an explicit ``--project-dir`` keeps the directory
+    name it was given while its content-addressed id lives in the manifest.
+    Probing ``projects_dir / project_id`` would call it deleted, strip a
+    working review link, and have library health demand a recapture that
+    nothing is wrong with.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project(
+        projects_dir,
+        "p-abc",
+        [{"begin_time_ms": 0, "end_time_ms": 8_000, "text": "甲", "speaker_id": 0}],
+        dir_name="my-custom-name",
+    )
+    rows = [_row(1, begin_ms=0, end_ms=8_000, project="p-abc")]
+
+    assert inspect_sample_sources(rows, projects_dir).available == {"p-abc": True}
+    assert check_project_sources(["p-abc"], projects_dir) == {"p-abc": True}
+
+
+def test_a_corrected_transcript_alone_still_opens_for_review(tmp_path: Path) -> None:
+    """Review prefers the corrected transcript, so availability must too.
+
+    Reading only the raw file would mark a fully reviewable project deleted the
+    moment its raw transcript is missing.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project(
+        projects_dir,
+        "p-corrected",
+        [
+            {"begin_time_ms": 0, "end_time_ms": 8_000, "text": "甲", "speaker_id": 0},
+            {"begin_time_ms": 8_100, "end_time_ms": 9_000, "text": "乙", "speaker_id": 1},
+        ],
+        transcript="sentences_corrected.json",
+    )
+    rows = [_row(1, begin_ms=0, end_ms=8_000, project="p-corrected")]
+
+    facts = inspect_sample_sources(rows, projects_dir)
+
+    assert facts.available == {"p-corrected": True}
+    # And the overlap answer comes from that same corrected view, which is the
+    # one whose speaker attribution a human actually confirmed.
+    assert facts.overlap == {1: True}
+
+
+def test_a_transcript_with_no_speaker_lines_cannot_be_reviewed(tmp_path: Path) -> None:
+    """Review refuses a transcript with nothing attributed to a speaker.
+
+    The file parses, so a "does it load" test would call this reachable and the
+    UI would link to a page that raises.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project(
+        projects_dir,
+        "p-empty",
+        [{"begin_time_ms": 0, "end_time_ms": 8_000, "text": "", "speaker_id": None}],
+    )
+
+    assert check_project_sources(["p-empty"], projects_dir) == {"p-empty": False}

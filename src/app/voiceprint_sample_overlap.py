@@ -24,6 +24,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.core.project_refs import list_projects
 from app.models import SentenceSegment
 from app.speaker_labeling import load_transcript_result
 from app.voiceprint_models import VoiceprintSampleRow
@@ -70,10 +71,11 @@ def inspect_sample_sources(
     by_project: dict[str, list[VoiceprintSampleRow]] = defaultdict(list)
     for row in samples:
         by_project[row.project_id].append(row)
+    dirs = _project_dirs(projects_dir)
     overlap: dict[int, bool] = {}
     available: dict[str, bool] = {}
     for project_id, rows in by_project.items():
-        segments = _project_segments(projects_dir / project_id)
+        segments = _review_segments(dirs.get(project_id))
         available[project_id] = segments is not None
         if segments is None:
             continue
@@ -129,8 +131,9 @@ def check_project_sources(
     """
     if projects_dir is None:
         return {}
+    dirs = _project_dirs(projects_dir)
     return {
-        project_id: _project_segments(projects_dir / project_id) is not None
+        project_id: _review_segments(dirs.get(project_id)) is not None
         for project_id in dict.fromkeys(project_ids)
     }
 
@@ -145,12 +148,57 @@ def _probe_segment(row: VoiceprintSampleRow) -> SentenceSegment:
     )
 
 
-def _project_segments(project_dir: Path) -> list[SentenceSegment] | None:
-    """Load a project's normalized transcript, or None when unreadable."""
-    path = project_dir / "asr" / "sentences.json"
+def _project_dirs(projects_dir: Path) -> dict[str, Path]:
+    """Map project id to directory the way a project reference is resolved.
+
+    Emphatically *not* ``projects_dir / project_id``. A project created with an
+    explicit ``--project-dir`` keeps the directory name it was given while its
+    content-addressed id lives in the manifest, and every ref resolver finds it
+    by scanning manifests instead. Probing the id as a path would report such a
+    project deleted while its review page opens perfectly well -- and here that
+    mistake is not silent: it strips a working link and tells library health to
+    warn that the person needs recapturing.
+
+    ``restrict_to_projects_dir`` matches what the web resolves refs with, so a
+    project the review route refuses to open is not advertised as reachable.
+    """
+    try:
+        listing = list_projects(projects_dir, restrict_to_projects_dir=True)
+    except OSError:
+        return {}
+    return {item.project_id: item.project_dir for item in listing.projects}
+
+
+def _review_segments(project_dir: Path | None) -> list[SentenceSegment] | None:
+    """Load the transcript a human would review, or None when there is none.
+
+    Mirrors what the speaker-review session loads, for two reasons that pull
+    the same way. Availability has to match it or the UI links to a page that
+    cannot open (and hides one that can): the corrected transcript wins when
+    present, and review needs at least one speaker-attributed line.
+
+    Overlap wants the same file for a different reason -- the question is who
+    else was talking next to this clip, and a reassignment made during review
+    is precisely the more accurate answer. Low-information lines are kept for
+    the same reason: a neighbour's "嗯嗯对" is filtered out of the transcript
+    but was still recorded into the clip, and dropping it would hide exactly
+    the crosstalk this check exists to find.
+    """
+    if project_dir is None:
+        return None
+    asr_dir = project_dir / "asr"
+    corrected = asr_dir / "sentences_corrected.json"
+    path = corrected if corrected.is_file() else asr_dir / "sentences.json"
     if not path.is_file():
         return None
     try:
-        return load_transcript_result(path).sentences
+        segments = load_transcript_result(path, include_low_information=True).sentences
     except Exception:  # noqa: BLE001 - one unreadable project must not fail the report
         return None
+    # Review refuses a transcript with no speaker-attributed line, so this is
+    # part of "can it be opened". It only gates the answer -- every segment is
+    # still returned, because a stretch of speech nobody was attributed to was
+    # recorded into the clip just the same.
+    if not any(item.speaker_id is not None and item.text.strip() for item in segments):
+        return None
+    return segments

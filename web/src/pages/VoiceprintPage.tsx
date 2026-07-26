@@ -116,10 +116,14 @@ const goneSourceLabel = () => tr("source deleted", "来源已删除");
 /** What an empty filtered list means, which is rarely just "nothing here".
  *
  *  The overlap filter is reached by deep link from the health report, so
- *  landing on a bare "no samples match" reads as a dead link. Two cases are
- *  worth naming: the flagged rows were already excluded (the work is done),
- *  and some rows could never be checked at all -- an empty overlap list must
- *  not be mistaken for a clean one when part of the library was never read. */
+ *  landing on a bare "no samples match" reads as a dead link.
+ *
+ *  Two facts can hold at once, and the unchecked one always outranks: samples
+ *  whose source project is gone were never examined yet are still feeding the
+ *  matching pool, so announcing "the contaminated ones are all excluded" while
+ *  those sit there reports an untested set as a finished job -- the exact
+ *  confusion between "not checked" and "checked and clean" that the per-row
+ *  flag exists to prevent. */
 function emptyFilterText(samples: SampleView[], filter: SampleFilter): string {
   if (filter !== "overlap") {
     return tr("No samples match the filter.", "没有符合筛选的样本。");
@@ -127,19 +131,31 @@ function emptyFilterText(samples: SampleView[], filter: SampleFilter): string {
   const excluded = samples.filter(
     (sample) => sample.overlap_risk === true && !sample.matching_enabled,
   ).length;
+  // Only unchecked samples still in the pool matter: one that is already
+  // excluded cannot pull the centroid whatever it would have turned out to be.
   const unchecked = samples.filter(
-    (sample) => sample.overlap_risk === null,
+    (sample) => sample.overlap_risk === null && sample.matching_enabled,
   ).length;
-  if (excluded > 0) {
+  const done = tr(
+    `The ${excluded} sample(s) recorded over another voice are already excluded from matching.`,
+    `录到他人的 ${excluded} 条样本都已经排除出匹配了。`,
+  );
+  if (excluded > 0 && unchecked > 0) {
     return tr(
-      `All ${excluded} sample(s) recorded over another voice are already excluded from matching, so none of them can drag this centroid.`,
-      `录到他人的 ${excluded} 条样本都已经排除出匹配了，不会再把质心往别人那边拉。`,
+      `${done} But ${unchecked} sample(s) still in the matching pool could not be checked at all -- their source project is gone -- so nothing is known about those either way.`,
+      `${done}但还有 ${unchecked} 条仍在参与匹配的样本根本没法检查——它们的来源项目已经删了——所以它们到底干不干净是未知的。`,
     );
   }
   if (unchecked > 0) {
     return tr(
-      `No sample was found recorded over another voice -- but ${unchecked} of them could not be checked, because their source project is gone.`,
-      `没有发现录到他人的样本——但其中 ${unchecked} 条根本没法检查，它们的来源项目已经删了。`,
+      `No sample was found recorded over another voice, but ${unchecked} of them could not be checked at all: their source project is gone.`,
+      `没有发现录到他人的样本，但其中 ${unchecked} 条根本没法检查：它们的来源项目已经删了。`,
+    );
+  }
+  if (excluded > 0) {
+    return tr(
+      `${done} None of them can drag this centroid any more.`,
+      `${done}不会再把质心往别人那边拉。`,
     );
   }
   return tr(
