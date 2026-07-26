@@ -2473,3 +2473,90 @@ def test_match_threshold_route_rejects_out_of_range(client: TestClient) -> None:
     resp = client.put("/api/voiceprints/threshold", json={"threshold": 1.4})
     assert resp.status_code == 422
     assert client.get("/api/voiceprints/threshold").json()["configured"] is None
+
+
+def test_wildcard_bind_never_hands_back_an_unopenable_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """0.0.0.0 is a bind instruction, not a destination.
+
+    Printing http://0.0.0.0:PORT/ gives the operator a URL that fails in a
+    browser and leaves them to go find their own address, which is the one
+    thing the startup banner exists to save them from.
+    """
+    import app.web.server as server
+
+    monkeypatch.setattr(server, "_primary_outbound_address", lambda: "192.168.1.50")
+    monkeypatch.setattr(server, "_hostname_addresses", lambda: [])
+
+    settings = WebSettings(
+        host="0.0.0.0",
+        port=8799,
+        projects_dir=None,
+        store_dir=None,
+        open_browser=False,
+        token="tok",
+    )
+    urls = server.authenticated_urls(settings)
+
+    assert urls == [
+        "http://192.168.1.50:8799/?token=tok",
+        "http://127.0.0.1:8799/?token=tok",
+    ]
+    # The LAN address leads: a wildcard bind is what someone does to be reached
+    # from another machine, and that is the address only this banner can tell
+    # them. The singular helper must not regress to the wildcard either.
+    assert server.authenticated_url(settings) == "http://192.168.1.50:8799/?token=tok"
+    assert not any("0.0.0.0" in url for url in urls)
+
+
+def test_wildcard_bind_still_lists_loopback_when_offline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no route out, the banner must still offer something that works."""
+    import app.web.server as server
+
+    monkeypatch.setattr(server, "_primary_outbound_address", lambda: None)
+    monkeypatch.setattr(server, "_hostname_addresses", lambda: [])
+
+    assert server.reachable_hosts("0.0.0.0") == ["127.0.0.1"]
+
+
+def test_concrete_bind_host_is_left_alone() -> None:
+    """A host that is already an address is already the answer."""
+    import app.web.server as server
+
+    assert server.reachable_hosts("192.168.14.15") == ["192.168.14.15"]
+    assert server.reachable_hosts("::1") == ["::1"]
+    assert not server.is_wildcard_host("127.0.0.1")
+
+
+def test_loopback_aliases_do_not_become_a_second_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Debian/Ubuntu map the hostname to 127.0.1.1; that is not a new address.
+
+    Listing it would print two differently-spelled loopback URLs that behave
+    identically, which reads as a meaningful choice and is not one.
+    """
+    import socket
+
+    import app.web.server as server
+
+    def fake_getaddrinfo(host, port, family=0, *args, **kwargs):
+        return [
+            (family, 0, 0, "", ("127.0.1.1", 0)),
+            (family, 0, 0, "", ("169.254.3.4", 0)),
+            (family, 0, 0, "", ("10.0.0.7", 0)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(server, "_primary_outbound_address", lambda: None)
+
+    # The distro loopback alias and the DHCP-failure address are both dropped;
+    # only the real one survives, and canonical loopback is appended once.
+    assert server.reachable_hosts("0.0.0.0") == ["10.0.0.7", "127.0.0.1"]
+    assert not server._is_usable_address("127.0.1.1")
+    assert not server._is_usable_address("169.254.3.4")
+    assert not server._is_usable_address("0.0.0.0")
+    assert not server._is_usable_address("not-an-ip")
