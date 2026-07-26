@@ -2560,3 +2560,123 @@ def test_loopback_aliases_do_not_become_a_second_url(
     assert not server._is_usable_address("169.254.3.4")
     assert not server._is_usable_address("0.0.0.0")
     assert not server._is_usable_address("not-an-ip")
+
+
+def test_deleted_source_project_is_not_offered_as_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sample can outlive the project it was cut from.
+
+    Clips live in the library, so the sample keeps matching -- but the review
+    page has nothing to show, and a link there lands on its "nothing to review"
+    error, which reads as a broken app rather than as a deleted recording. Both
+    the sample row and the quality report's per-project rollup are rendered as
+    links, so both have to be able to say the source is gone.
+    """
+    import json
+
+    from app.config import get_default_projects_dir
+    from app.voiceprint_embedding import resolve_voiceprint_embedding_options
+    from app.voiceprint_store import (
+        StoredVoiceprintSample,
+        get_voiceprint_db_path,
+        store_voiceprint_samples_with_rows,
+        upsert_voiceprint_embedding,
+    )
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    store_dir = tmp_path / "store" / "voiceprints"
+    db_path = get_voiceprint_db_path(store_dir)
+    _provider, model = resolve_voiceprint_embedding_options(provider=None, model=None)
+    source = store_dir / "source.mp4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"seed")
+    samples = []
+    for index, project_id in enumerate(("p-live", "p-deleted")):
+        clip = store_dir / "clips" / f"c{index}.wav"
+        clip.parent.mkdir(parents=True, exist_ok=True)
+        clip.write_bytes(f"clip{index}".encode())
+        samples.append(
+            StoredVoiceprintSample(
+                speaker_name="Outlived",
+                project_id=project_id,
+                project_path=store_dir,
+                project_speaker_id=0,
+                source_path=source,
+                clip_path=clip,
+                clip_rel_path=str(clip.relative_to(store_dir)),
+                source_begin_time_ms=index * 60_000,
+                source_end_time_ms=index * 60_000 + 8_000,
+                clip_begin_time_ms=0,
+                clip_end_time_ms=8_000,
+                transcript_text=f"Outlived {index}",
+            )
+        )
+    _db, rows = store_voiceprint_samples_with_rows(samples, db_path)
+    for offset, row in enumerate(rows):
+        upsert_voiceprint_embedding(row.sample_id, model, [1.0, offset * 0.01], db_path)
+
+    # Only the first project still exists on disk.
+    project_dir = get_default_projects_dir() / "p-live"
+    (project_dir / "asr").mkdir(parents=True)
+    sentences = [
+        {
+            "begin_time_ms": 0,
+            "end_time_ms": 8_000,
+            "text": "这是被采样的那个人说的一段完整发言内容。",
+            "speaker_id": 0,
+        }
+    ]
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(
+            {
+                "full_text": sentences[0]["text"],
+                "sentences": sentences,
+                "detected_speakers": [0],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    settings = WebSettings(
+        host="127.0.0.1",
+        port=0,
+        projects_dir=None,
+        store_dir=tmp_path / "store",
+        open_browser=False,
+        token=None,
+    )
+    with TestClient(
+        create_app(settings), base_url="http://127.0.0.1:8765"
+    ) as bare_client:
+        person_ref = bare_client.get("/api/voiceprints/library").json()["people"][0][
+            "public_id"
+        ]
+        samples_resp = bare_client.get(f"/api/voiceprints/people/{person_ref}/samples")
+        quality = bare_client.get("/api/voiceprints/quality")
+
+    assert samples_resp.status_code == 200
+    rendered = {
+        item["project_id"]: item["source_available"]
+        for item in samples_resp.json()["samples"]
+    }
+    assert rendered == {"p-live": True, "p-deleted": False}
+    # The gone project's sample is unchecked for overlap rather than clean, and
+    # the two facts are reported separately so the UI can say which it is.
+    unchecked = next(
+        item
+        for item in samples_resp.json()["samples"]
+        if item["project_id"] == "p-deleted"
+    )
+    assert unchecked["overlap_risk"] is None
+
+    assert quality.status_code == 200
+    person = quality.json()["people"][0]
+    assert {p["project_id"]: p["source_available"] for p in person["projects"]} == {
+        "p-live": True,
+        "p-deleted": False,
+    }

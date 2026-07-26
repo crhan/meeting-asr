@@ -320,6 +320,9 @@ export interface VoiceprintSample {
    *  source audio. null means the source project was unavailable and the
    *  check did not run -- which must not be rendered as "clean". */
   overlap_risk: boolean | null;
+  /** Whether the source project can still be opened for review. false means a
+   *  link there lands on the review page's "nothing to review" error. */
+  source_available: boolean | null;
 }
 
 export interface VoiceprintLibrary {
@@ -354,6 +357,8 @@ export interface QualityProject {
   critical_count: number;
   mean_score: number | null;
   min_score: number | null;
+  /** Whether this project can still be opened for review. */
+  source_available: boolean | null;
 }
 
 export interface QualityNeighbor {

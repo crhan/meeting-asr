@@ -568,6 +568,11 @@ class VoiceprintSampleOut(BaseModel):
     # the source project was unavailable and the check did not run -- clients
     # must not render that as "checked and clean".
     overlap_risk: bool | None = None
+    # Whether the source project can still be opened for review. False means
+    # linking there lands on the review page's "nothing to review" error, so
+    # clients should say the project is gone instead of offering the link.
+    # None means availability itself was not established.
+    source_available: bool | None = None
 
 
 class VoiceprintLibraryOut(BaseModel):
@@ -610,6 +615,9 @@ class QualityProjectOut(BaseModel):
     critical_count: int
     mean_score: float | None
     min_score: float | None
+    # Same meaning as on a sample row: False means this project can no longer
+    # be opened for review, so it must not be rendered as a link.
+    source_available: bool | None = None
 
 
 class QualityNeighborOut(BaseModel):

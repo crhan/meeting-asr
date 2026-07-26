@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 
 from app.voiceprint_models import VoiceprintSampleRow
-from app.voiceprint_sample_overlap import check_sample_overlap
+from app.voiceprint_sample_overlap import (
+    check_project_sources,
+    check_sample_overlap,
+    inspect_sample_sources,
+)
 
 
 def _row(sample_id: int, *, begin_ms: int, end_ms: int, project: str) -> VoiceprintSampleRow:
@@ -118,3 +122,56 @@ def test_unreadable_transcript_does_not_fail_the_whole_check(tmp_path: Path) -> 
     # instead of being reported clean.
     assert verdicts == {2: True}
     assert 1 not in verdicts
+
+
+def test_deleted_source_project_is_reported_as_gone(tmp_path: Path) -> None:
+    """A sample outlives its project, and the UI has to be able to say so.
+
+    Clips live in the library, so deleting a project leaves its samples
+    matching normally -- but the review page has nothing left to show, and
+    linking there lands on its "nothing to review" error.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project(
+        projects_dir,
+        "p-ok",
+        [{"begin_time_ms": 0, "end_time_ms": 8_000, "text": "甲", "speaker_id": 0}],
+    )
+    rows = [
+        _row(1, begin_ms=0, end_ms=8_000, project="p-ok"),
+        _row(2, begin_ms=0, end_ms=8_000, project="p-deleted"),
+    ]
+
+    facts = inspect_sample_sources(rows, projects_dir)
+
+    assert facts.available == {"p-ok": True, "p-deleted": False}
+    # The gone project's sample has no overlap verdict either -- and the two
+    # answers are carried separately so a caller can say *why* it is unchecked.
+    assert facts.overlap == {1: False}
+
+
+def test_availability_is_unknown_without_a_projects_dir(tmp_path: Path) -> None:
+    """No projects dir means nothing was established, not "everything is gone".
+
+    Reporting False here would put a "source deleted" marker on every sample in
+    the library the moment the projects directory is unavailable.
+    """
+    rows = [_row(1, begin_ms=0, end_ms=8_000, project="p-any")]
+
+    assert inspect_sample_sources(rows, None).available == {}
+    assert check_project_sources(["p-any"], None) == {}
+
+
+def test_project_sources_answer_without_samples_in_hand(tmp_path: Path) -> None:
+    """The quality report knows project ids, not sample rows."""
+    projects_dir = tmp_path / "projects"
+    _write_project(
+        projects_dir,
+        "p-ok",
+        [{"begin_time_ms": 0, "end_time_ms": 8_000, "text": "甲", "speaker_id": 0}],
+    )
+
+    assert check_project_sources(["p-ok", "p-gone", "p-ok"], projects_dir) == {
+        "p-ok": True,
+        "p-gone": False,
+    }

@@ -30,7 +30,7 @@ from app.voiceprint_calibration import (
 )
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_models import VoiceprintSampleRow, VoiceprintSpeakerRow
-from app.voiceprint_sample_overlap import check_sample_overlap
+from app.voiceprint_sample_overlap import inspect_sample_sources
 from app.voiceprint_quality import (
     DEFAULT_MIN_CLUSTER_SIZE,
     VOICEPRINT_MATCHING_SAMPLE_STATUSES,
@@ -181,8 +181,8 @@ def analyze_library_health(
         samples, embedded_ids, store_dir, list_voiceprint_speakers(db_path)
     )
     calibration = _calibration(store_dir, resolved_provider, resolved_model)
-    overlapped = _overlapped_samples(samples, embedded_ids, projects_dir)
-    issues = _issues(people, calibration, overlapped)
+    overlapped, orphaned = _source_findings(samples, embedded_ids, projects_dir)
+    issues = _issues(people, calibration, overlapped, orphaned)
     return LibraryHealthReport(
         db_path=db_path,
         provider=resolved_provider,
@@ -339,6 +339,7 @@ def _issues(
     people: tuple[PersonHealth, ...],
     calibration: VoiceprintCalibrationReport | None,
     overlapped: dict[str, int],
+    orphaned: dict[str, int],
 ) -> tuple[LibraryIssue, ...]:
     """Build the prioritized issue list."""
     issues: list[LibraryIssue] = []
@@ -348,16 +349,19 @@ def _issues(
         issues.extend(
             _overlap_issues(person, overlapped.get(person.speaker_public_id, 0))
         )
+        issues.extend(
+            _orphan_issues(person, orphaned.get(person.speaker_public_id, 0))
+        )
     return tuple(sorted(issues, key=_issue_sort_key))
 
 
-def _overlapped_samples(
+def _source_findings(
     samples: list[VoiceprintSampleRow],
     embedded_ids: set[int],
     projects_dir: Path | None,
-) -> dict[str, int]:
+) -> tuple[dict[str, int], dict[str, int]]:
     """
-    Count each person's matching samples taken from a two-people-at-once stretch.
+    Count what each person's matching samples' source projects revealed.
 
     Only samples that actually reach the matching pool are counted: a
     quarantined or unembedded sample cannot drag anyone's centroid, so
@@ -369,7 +373,8 @@ def _overlapped_samples(
         projects_dir: Projects parent directory, or None to skip the check.
 
     Returns:
-        Person public id to overlapped matching-sample count. Empty when no
+        Two person-public-id maps: overlapped matching-sample count, and
+        matching-sample count whose source project is gone. Both empty when no
         projects directory was supplied, so "not checked" never renders as
         "checked and clean".
     """
@@ -379,12 +384,17 @@ def _overlapped_samples(
         if row.sample_status in VOICEPRINT_MATCHING_SAMPLE_STATUSES
         and row.sample_id in embedded_ids
     ]
-    verdicts = check_sample_overlap(in_pool, projects_dir)
-    counts: dict[str, int] = defaultdict(int)
+    report = inspect_sample_sources(in_pool, projects_dir)
+    overlapped: dict[str, int] = defaultdict(int)
+    orphaned: dict[str, int] = defaultdict(int)
     for row in in_pool:
-        if verdicts.get(row.sample_id):
-            counts[row.speaker_public_id] += 1
-    return dict(counts)
+        if report.overlap.get(row.sample_id):
+            overlapped[row.speaker_public_id] += 1
+        # `is False` on purpose: a missing key means the check never ran at
+        # all, which must not be counted as a gone project.
+        if report.available.get(row.project_id) is False:
+            orphaned[row.speaker_public_id] += 1
+    return dict(overlapped), dict(orphaned)
 
 
 def _overlap_issues(person: PersonHealth, overlapped: int) -> list[LibraryIssue]:
@@ -413,6 +423,52 @@ def _overlap_issues(person: PersonHealth, overlapped: int) -> list[LibraryIssue]
                 "name": person.speaker_name,
                 "overlapped_count": overlapped,
                 "matching_sample_count": person.matching_sample_count,
+            },
+        )
+    ]
+
+
+def _orphan_issues(person: PersonHealth, orphaned: int) -> list[LibraryIssue]:
+    """Report matching samples whose source project no longer exists.
+
+    Clips live in the library, so these samples keep matching normally -- this
+    is not a broken person. What is gone is every way of *checking* them: they
+    cannot be heard in context, and the overlap check silently skips them, so
+    a clean bill of health for this person is partly an untested claim. When
+    the whole matching pool is orphaned that claim is entirely untested, which
+    is why the severity turns.
+    """
+    if orphaned <= 0:
+        return []
+    total = person.matching_sample_count
+    entire = orphaned >= total
+    return [
+        _person_issue(
+            person,
+            kind="orphaned-samples",
+            severity=SEVERITY_WARNING if entire else SEVERITY_INFO,
+            title=(
+                f"{person.speaker_name} has {orphaned} of {total} matching "
+                "sample(s) from a deleted project"
+            ),
+            detail=(
+                "The clips are still in the library and still match, but their "
+                "source project is gone: they cannot be reviewed in context, "
+                "and the overlap check cannot run on them, so they are counted "
+                "as clean without having been examined."
+                + (
+                    " That covers every matching sample this person has, so "
+                    "nothing about this voiceprint has actually been verified. "
+                    "Capture from a project that still exists."
+                    if entire
+                    else ""
+                )
+            ),
+            action="capture",
+            context={
+                "name": person.speaker_name,
+                "orphaned_count": orphaned,
+                "matching_sample_count": total,
             },
         )
     ]

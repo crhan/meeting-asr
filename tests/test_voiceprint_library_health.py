@@ -20,6 +20,8 @@ from app.voiceprint_library_health import (
     AVAILABILITY_OK,
     AVAILABILITY_UNUSABLE,
     SEVERITY_CRITICAL,
+    SEVERITY_INFO,
+    SEVERITY_WARNING,
     analyze_library_health,
 )
 from app.voiceprint_store import (
@@ -593,3 +595,77 @@ def test_matching_seconds_counts_the_clip_not_the_sentence(tmp_path: Path) -> No
     assert person.matching_seconds == 36.0
     # 36s still clears the healthy bar; 120s would have been claimed before.
     assert person.matching_seconds < 3 * 40.0
+
+
+def _clean_sentences(count: int) -> list[dict]:
+    """Transcript where the sampled speaker is alone at every sampled range."""
+    return [
+        {
+            "begin_time_ms": index * 60_000,
+            "end_time_ms": index * 60_000 + 8_000,
+            "text": "这是被采样的那个人说的一段完整发言内容。",
+            "speaker_id": 0,
+        }
+        for index in range(count)
+    ]
+
+
+def test_samples_from_a_deleted_project_are_reported(tmp_path: Path) -> None:
+    """A project can be deleted long after its clips entered the library.
+
+    Nothing about matching breaks -- the clips live in the store -- so both the
+    availability and the consistency checks pass such a sample in silence. What
+    is gone is the ability to check it: the overlap join has no transcript to
+    read, so the sample is counted clean without ever being examined.
+    """
+    store_dir = tmp_path / "voiceprints"
+    projects_dir = tmp_path / "projects"
+    _seed_person(
+        store_dir,
+        "Split",
+        [[1.0, 0.0], [0.98, 0.05], [0.99, -0.03]],
+        projects=("p-live", "p-gone"),
+    )
+    # Only one of the two projects still exists on disk.
+    _write_project(projects_dir, "p-live", sentences=_clean_sentences(3))
+
+    report = analyze_library_health(store_dir=store_dir, projects_dir=projects_dir)
+
+    issue = _issue(report, "orphaned-samples")
+    assert issue.context["orphaned_count"] == 1
+    assert issue.context["matching_sample_count"] == 3
+    # Some samples are still verifiable, so this is context, not a warning.
+    assert issue.severity == SEVERITY_INFO
+    assert issue.action == "capture"
+
+
+def test_a_wholly_orphaned_person_is_a_warning(tmp_path: Path) -> None:
+    """When every matching sample is orphaned, the clean record is untested.
+
+    The person still matches and still scores well against their own centroid
+    -- which is exactly the self-fulfilling agreement of a set nobody can
+    inspect. Recapturing from a project that exists is the only way out, so the
+    severity has to rise above the informational case.
+    """
+    store_dir = tmp_path / "voiceprints"
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    _seed_person(store_dir, "Orphan", [[1.0, 0.0], [0.98, 0.05], [0.99, -0.03]])
+
+    report = analyze_library_health(store_dir=store_dir, projects_dir=projects_dir)
+
+    issue = _issue(report, "orphaned-samples")
+    assert issue.context["orphaned_count"] == 3
+    assert issue.context["matching_sample_count"] == 3
+    assert issue.severity == SEVERITY_WARNING
+    assert "nothing about this voiceprint has actually been verified" in issue.detail
+
+
+def test_orphan_check_is_absent_without_a_projects_directory(tmp_path: Path) -> None:
+    """No projects dir means "not checked", not "every project is deleted"."""
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Unknown", [[1.0, 0.0], [0.98, 0.05], [0.99, -0.03]])
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    assert not [item for item in report.issues if item.kind == "orphaned-samples"]

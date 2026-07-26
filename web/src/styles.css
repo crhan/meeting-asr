@@ -388,6 +388,19 @@ table.projects tr:hover td {
 .vp-project-link:hover {
   color: var(--accent);
 }
+/* Source project deleted. Deliberately muted rather than red: the clip is
+   still in the library and still matches, so this states a fact about
+   provenance, not a defect in the sample. It is also never a link -- the
+   review page has nothing to show for a project that is gone. */
+.vp-project-gone {
+  color: var(--text-dim);
+  cursor: help;
+}
+.badge.state-gone {
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+  background: transparent;
+}
 a.badge {
   text-decoration: none;
 }
@@ -1432,6 +1445,12 @@ tr.clickable {
   color: var(--yellow);
   border-color: rgba(240, 181, 74, 0.45);
   background: var(--yellow-dim);
+}
+.vp-project-risk.gone {
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+  background: transparent;
+  cursor: help;
 }
 .vp-sample-actions {
   display: flex;

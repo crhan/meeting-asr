@@ -55,7 +55,11 @@ from app.voiceprint_quality import (
     VOICEPRINT_SAMPLE_STATUS_VERIFIED_ACTIVE,
     analyze_voiceprint_quality,
 )
-from app.voiceprint_sample_overlap import check_sample_overlap
+from app.voiceprint_sample_overlap import (
+    SampleSourceFacts,
+    check_project_sources,
+    inspect_sample_sources,
+)
 from app.voiceprint_sample_sourcing import (
     SampleSourceReport,
     find_sample_sources,
@@ -147,7 +151,7 @@ def _person_out(row: VoiceprintSpeakerRow) -> VoiceprintPersonOut:
 def _sample_out(
     index: int,
     row: VoiceprintSampleRow,
-    overlap_verdicts: dict[int, bool] | None = None,
+    sources: SampleSourceFacts | None = None,
 ) -> VoiceprintSampleOut:
     return VoiceprintSampleOut(
         index=index,
@@ -163,7 +167,10 @@ def _sample_out(
         identity_confirmed=_identity_confirmed(row.sample_status),
         matching_enabled=_matching_enabled(row.sample_status),
         clip_rel_path=row.clip_rel_path,
-        overlap_risk=(overlap_verdicts or {}).get(row.sample_id),
+        overlap_risk=None if sources is None else sources.overlap.get(row.sample_id),
+        source_available=(
+            None if sources is None else sources.available.get(row.project_id)
+        ),
     )
 
 
@@ -229,14 +236,12 @@ def get_person_samples(
     # The library health report says "this person has N contaminated samples";
     # without the per-row flag the operator lands here and every row looks the
     # same. Same check, same rule, resolved down to which row.
-    overlap_verdicts = check_sample_overlap(
+    sources = inspect_sample_sources(
         rows, settings.projects_dir or get_default_projects_dir()
     )
     return VoiceprintSamplesOut(
         person=_person_out(person),
-        samples=[
-            _sample_out(i + 1, row, overlap_verdicts) for i, row in enumerate(rows)
-        ],
+        samples=[_sample_out(i + 1, row, sources) for i, row in enumerate(rows)],
     )
 
 
@@ -600,6 +605,13 @@ def run_embed(
 def get_quality(settings: WebSettings = Depends(get_settings)) -> QualityReportOut:
     """Analyze outlier samples across the voiceprint library."""
     report = analyze_voiceprint_quality(store_dir=settings.voiceprint_store_dir)
+    # Every project id the report mentions, resolved once: the per-project
+    # rollups are rendered as links to speaker review, and a project deleted
+    # since capture would send the operator to that page's error instead.
+    available = check_project_sources(
+        (project.project_id for person in report.people for project in person.projects),
+        settings.projects_dir or get_default_projects_dir(),
+    )
     people = [
         QualityPersonOut(
             speaker_id=p.speaker_id,
@@ -620,6 +632,7 @@ def get_quality(settings: WebSettings = Depends(get_settings)) -> QualityReportO
                     critical_count=project.critical_count,
                     mean_score=project.mean_score,
                     min_score=project.min_score,
+                    source_available=available.get(project.project_id),
                 )
                 for project in p.projects
             ],

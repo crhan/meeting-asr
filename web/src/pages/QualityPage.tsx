@@ -131,6 +131,26 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
           `这些样本前后半秒内就有另一个人在说话,参考音频是混合体而不是单一声音。它会把这个人的质心往「跟他对话的那个人」拉——而那恰恰是最难区分的一对。换成他独自连续说话的片段。`,
         ),
       };
+    case "orphaned-samples": {
+      // The backend already decided the severity from these two numbers; the
+      // wording follows the same split so "3 of 3" does not read like "3 of 9".
+      const orphaned = num(c, "orphaned_count");
+      const total = num(c, "matching_sample_count");
+      const entire = orphaned >= total;
+      return {
+        title: tr(
+          issue.title,
+          `${name} 有 ${orphaned}/${total} 条参与匹配的样本来自已删除的项目`,
+        ),
+        detail: tr(
+          issue.detail,
+          "clip 仍在库中、仍参与匹配,但来源项目已经没了:没法回到转写里听上下文,重叠检查也跑不了——它们是「没查过」而被计为干净。" +
+            (entire
+              ? "而这就是这个人全部的匹配样本,也就是说这份声纹没有任何一条被真正核实过。请从还存在的项目里补采。"
+              : ""),
+        ),
+      };
+    }
     case "single-source":
       return {
         title: tr(issue.title, `${name} 只来自一次录音`),

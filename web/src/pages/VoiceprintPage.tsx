@@ -100,6 +100,54 @@ function isOverlapping(sample: SampleView): boolean {
   return sample.overlap_risk === true && sample.matching_enabled;
 }
 
+/** Why a deleted source project still matters, said once for both places that
+ *  have to say it. Clips live in the library, so nothing about matching breaks
+ *  -- what breaks is every way of checking the sample, which is why this is
+ *  worth a badge rather than silence. */
+function goneSourceTitle(): string {
+  return tr(
+    "The source project was deleted. The clip is still in the library and still matches, but it cannot be heard in context and the overlap check cannot run on it, so its clean record is untested.",
+    "来源项目已删除。clip 仍在库中、仍参与匹配，但无法回到转写里复核，重叠检查也跑不了——它「没问题」只是没查过。",
+  );
+}
+
+const goneSourceLabel = () => tr("source deleted", "来源已删除");
+
+/** What an empty filtered list means, which is rarely just "nothing here".
+ *
+ *  The overlap filter is reached by deep link from the health report, so
+ *  landing on a bare "no samples match" reads as a dead link. Two cases are
+ *  worth naming: the flagged rows were already excluded (the work is done),
+ *  and some rows could never be checked at all -- an empty overlap list must
+ *  not be mistaken for a clean one when part of the library was never read. */
+function emptyFilterText(samples: SampleView[], filter: SampleFilter): string {
+  if (filter !== "overlap") {
+    return tr("No samples match the filter.", "没有符合筛选的样本。");
+  }
+  const excluded = samples.filter(
+    (sample) => sample.overlap_risk === true && !sample.matching_enabled,
+  ).length;
+  const unchecked = samples.filter(
+    (sample) => sample.overlap_risk === null,
+  ).length;
+  if (excluded > 0) {
+    return tr(
+      `All ${excluded} sample(s) recorded over another voice are already excluded from matching, so none of them can drag this centroid.`,
+      `录到他人的 ${excluded} 条样本都已经排除出匹配了，不会再把质心往别人那边拉。`,
+    );
+  }
+  if (unchecked > 0) {
+    return tr(
+      `No sample was found recorded over another voice -- but ${unchecked} of them could not be checked, because their source project is gone.`,
+      `没有发现录到他人的样本——但其中 ${unchecked} 条根本没法检查，它们的来源项目已经删了。`,
+    );
+  }
+  return tr(
+    "No sample here was recorded over another voice.",
+    "这个人没有录到他人的样本。",
+  );
+}
+
 function sampleIssueRank(sample: SampleView): number {
   if (sample.quality?.label === "critical") return 0;
   // Ranked with the warnings rather than below them: consistency scoring
@@ -766,7 +814,7 @@ function PersonDetail(props: {
               <Link to="/projects">{tr("Open projects", "打开项目列表")}</Link>
             </>
           ) : (
-            tr("No samples match the filter.", "没有符合筛选的样本。")
+            emptyFilterText(allSamples, sampleFilter)
           )}
         </div>
       ) : (
@@ -853,17 +901,36 @@ function VoiceprintHealthPanel(props: {
         )}
         {riskyProjects.length > 0 && (
           <div className="vp-health-projects">
-            {riskyProjects.slice(0, 4).map((project) => (
-              <Link
-                key={project.project_id}
-                className="badge vp-project-risk"
-                to={`/projects/${encodeURIComponent(project.project_id)}/speakers`}
-                title={tr("Open this project's speaker review", "打开该项目的 speaker review")}
-              >
-                {project.project_id} · {project.suspicious_count} {tr("issues", "疑点")} ·{" "}
-                {project.min_score?.toFixed(2) ?? "—"}
-              </Link>
-            ))}
+            {riskyProjects.slice(0, 4).map((project) => {
+              const body = (
+                <>
+                  {project.project_id} · {project.suspicious_count} {tr("issues", "疑点")} ·{" "}
+                  {project.min_score?.toFixed(2) ?? "—"}
+                </>
+              );
+              // A project deleted after capture has nothing to link to. Keeping
+              // the link would send the operator to the review page's "nothing
+              // to review" error, which reads as a broken app rather than as
+              // the plain fact that the recording is gone.
+              return project.source_available === false ? (
+                <span
+                  key={project.project_id}
+                  className="badge vp-project-risk gone"
+                  title={goneSourceTitle()}
+                >
+                  {body} · {goneSourceLabel()}
+                </span>
+              ) : (
+                <Link
+                  key={project.project_id}
+                  className="badge vp-project-risk"
+                  to={`/projects/${encodeURIComponent(project.project_id)}/speakers`}
+                  title={tr("Open this project's speaker review", "打开该项目的 speaker review")}
+                >
+                  {body}
+                </Link>
+              );
+            })}
           </div>
         )}
       </div>
@@ -982,13 +1049,20 @@ function SampleRow(props: {
       <div className="segment-body">
         <div className="segment-meta subtle mono">
           {fmtMs(sample.begin_time_ms)} ·{" "}
-          <Link
-            className="vp-project-link"
-            to={`/projects/${encodeURIComponent(sample.project_id)}/speakers`}
-            title={tr("Open this sample's source project", "打开该样本来源项目")}
-          >
-            {sample.project_id}
-          </Link>{" "}
+          {sample.source_available === false ? (
+            <span className="vp-project-gone" title={goneSourceTitle()}>
+              {sample.project_id}{" "}
+              <span className="badge state-gone">{goneSourceLabel()}</span>
+            </span>
+          ) : (
+            <Link
+              className="vp-project-link"
+              to={`/projects/${encodeURIComponent(sample.project_id)}/speakers`}
+              title={tr("Open this sample's source project", "打开该样本来源项目")}
+            >
+              {sample.project_id}
+            </Link>
+          )}{" "}
           ·{" "}
           <span className={`score-badge ${qualityClass(sample)}`}>
             {scoreText} {qualityText}
