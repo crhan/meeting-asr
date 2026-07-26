@@ -150,6 +150,7 @@ COMMAND_ZH = {
     ("voiceprint", "people", "rename"): "按 ID 修改人员显示名称。",
     ("voiceprint", "people", "show"): "按 ID 显示人员详情。",
     ("voiceprint", "browse"): "打开声纹库浏览 TUI。",
+    ("voiceprint", "health"): "体检声纹库：覆盖度、embedding 完整性、内聚与分离度。",
     ("voiceprint", "embed"): "为声纹样本生成 embedding。",
     ("voiceprint", "show"): "显示某个说话人的声纹样本。",
     ("voiceprint", "play"): "播放某个声纹样本。",
