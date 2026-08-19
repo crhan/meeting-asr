@@ -59,7 +59,7 @@ def command(
     host: str = typer.Option(
         "127.0.0.1", "--host", help="Bind host. Non-loopback binds require a token."
     ),
-    port: int = typer.Option(8765, "--port", help="Bind port."),
+    port: int = typer.Option(8766, "--port", help="Bind port."),
     projects_dir: Path | None = typer.Option(
         None,
         "--projects-dir",

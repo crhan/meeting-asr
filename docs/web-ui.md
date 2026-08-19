@@ -9,17 +9,17 @@ speaker review、声纹库（采集 / 浏览 / 质量）、文字纠错、纠错
 # 安装（默认带 Web UI Python 依赖；脚本会构建前端）
 scripts/install-tool.sh
 # 或在 checkout 里直接跑
-uv run meeting-asr web --port 8765
+uv run meeting-asr web --port 8766
 ```
 
-浏览器会自动打开 `http://127.0.0.1:8765/`。
+浏览器会自动打开 `http://127.0.0.1:8766/`。
 
 ### 常用参数
 
 | 参数 | 说明 |
 | --- | --- |
 | `--host` | 绑定地址，默认 `127.0.0.1`（仅本机）。非 loopback 会**强制要求 token**。 |
-| `--port` | 端口，默认 `8765`。被占用时会在启动前给出明确提示。 |
+| `--port` | 端口，默认 `8766`。被占用时会在启动前给出明确提示。 |
 | `--projects-dir` | 项目父目录，默认 XDG 数据目录。 |
 | `--store-dir` | 声纹/词库 store 目录。**实验时指向一份拷贝**以保护真实声纹库。 |
 | `--token` | 非 loopback 绑定所需的 bearer token（不填则自动生成并打印一次）。 |
@@ -96,8 +96,8 @@ cookie/CSRF 面。仍不强制 HTTPS。
 
 ```bash
 # 后端
-uv run meeting-asr web --port 8765
-# 前端（dev server，代理 /api 到 8765）
+uv run meeting-asr web --port 8766
+# 前端（dev server，代理 /api 到 8766）
 cd web && npm install && npm run dev   # http://localhost:5173
 # 构建（产物落 src/app/web/static/，被 wheel 的 build-artifact 规则收录）
 cd web && npm run build
