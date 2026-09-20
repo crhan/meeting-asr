@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from app.voiceprint_library_health import (
     SEVERITY_WARNING,
     analyze_library_health,
 )
+from app.voiceprint_quality import analyze_voiceprint_quality
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
@@ -281,9 +283,7 @@ def _seed_person(
                 source_end_time_ms=index * 60_000 + duration_ms,
                 clip_begin_time_ms=0,
                 clip_end_time_ms=(
-                    duration_ms
-                    if clip_seconds is None
-                    else int(clip_seconds * 1000)
+                    duration_ms if clip_seconds is None else int(clip_seconds * 1000)
                 ),
                 transcript_text=f"{name} sample {index}",
             )
@@ -669,3 +669,158 @@ def test_orphan_check_is_absent_without_a_projects_directory(tmp_path: Path) -> 
     report = analyze_library_health(store_dir=store_dir)
 
     assert not [item for item in report.issues if item.kind == "orphaned-samples"]
+
+
+def _ray(score: float) -> list[float]:
+    """Return a unit vector whose cosine against ``[1.0, 0.0]`` is ``score``."""
+    return [score, math.sqrt(max(0.0, 1.0 - score * score))]
+
+
+def _person_issue(report, kind: str, name: str):
+    """Return one person's issue of a kind, asserting it exists."""
+    matches = [
+        item for item in report.issues if item.kind == kind and item.person_name == name
+    ]
+    assert matches, (
+        f"issue not raised: {kind} for {name} "
+        f"(got {[(i.kind, i.person_name) for i in report.issues]})"
+    )
+    return matches[0]
+
+
+def test_two_people_the_pipeline_can_swap_are_reported(tmp_path: Path) -> None:
+    """Centroids inside the accept bar of each other are a critical issue.
+
+    Neither existing view can see this. Availability is perfect -- both people
+    have three embedded, matching samples -- and each cluster is flawlessly
+    self-consistent, because consistency is measured against a person's own
+    centroid. Sitting on someone else's is invisible from inside.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [[1.0, 0.0]] * 3)
+    _seed_person(store_dir, "Alicia", [_ray(0.82)] * 3)
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    issue = _person_issue(report, "confusable-people", "Alice")
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.action == "capture"
+    assert issue.context["other_name"] == "Alicia"
+    assert issue.context["crossing_count"] == 3
+    assert issue.context["sample_count"] == 3
+    assert issue.context["best_score"] == pytest.approx(0.82, abs=1e-6)
+    assert issue.context["threshold"] == DEFAULT_MATCH_THRESHOLD
+    # Not symmetric by construction, but symmetric here: each one's samples
+    # reach the other's centroid, so both get their own actionable row.
+    assert _person_issue(report, "confusable-people", "Alicia").severity == (
+        SEVERITY_CRITICAL
+    )
+    # The premise: the per-sample consistency report sees nothing wrong.
+    quality = analyze_voiceprint_quality(store_dir=store_dir)
+    assert quality.suspicious_count == 0
+    assert quality.critical_count == 0
+
+
+def test_only_the_person_holding_the_stray_sample_is_flagged(tmp_path: Path) -> None:
+    """One sample drifting onto another centroid blames its owner, not both.
+
+    The impostor evidence is directional on purpose: Alice keeps one sample
+    that lands on Bob, while every sample of Bob's stays far from Alice. A
+    symmetric centroid-distance check would have blamed Bob too and sent the
+    operator to re-capture audio that is not the problem.
+    """
+    store_dir = tmp_path / "voiceprints"
+    # [0.6, 0.8] scores 0.80 against Bob's [0.0, 1.0] centroid; the other two
+    # score 0.0.
+    alice = _seed_person(store_dir, "Alice", [[1.0, 0.0], [1.0, 0.0], [0.6, 0.8]])
+    _seed_person(store_dir, "Bob", [[0.0, 1.0]] * 3)
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    issue = _person_issue(report, "confusable-people", "Alice")
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["crossing_count"] == 1
+    assert issue.context["sample_count"] == 3
+    # Named, not just counted: a consumer must be able to act on the row.
+    assert issue.context["crossing_sample_public_ids"] == alice[2].public_id
+    assert "1 of 3" in issue.title
+    assert not [
+        item
+        for item in report.issues
+        if item.kind == "confusable-people" and item.person_name == "Bob"
+    ]
+
+
+def test_a_pair_just_under_the_bar_warns_before_it_crosses(tmp_path: Path) -> None:
+    """Close-but-not-crossing is a warning, so the fix can precede the mistake."""
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [[1.0, 0.0]] * 3)
+    _seed_person(store_dir, "Alicia", [_ray(0.72)] * 3)
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    issue = _person_issue(report, "confusable-people", "Alice")
+    assert issue.severity == SEVERITY_WARNING
+    assert issue.context["crossing_count"] == 0
+    assert issue.action == "capture"
+    assert json.loads(json.dumps(issue.context)) == issue.context
+
+
+def test_well_separated_people_raise_nothing(tmp_path: Path) -> None:
+    """The check must stay quiet on a library that is actually fine."""
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [[1.0, 0.0]] * 3)
+    _seed_person(store_dir, "Bob", [[0.0, 1.0]] * 3)
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    assert not [item for item in report.issues if item.kind == "confusable-people"]
+
+
+def test_confusable_check_follows_the_configured_threshold(tmp_path: Path) -> None:
+    """The bar is whatever the library is running at, not the built-in default.
+
+    A pair at 0.62 is comfortably clear of the 0.75 default and silent. Once
+    the operator configures 0.60, the very same pair is a mistake the pipeline
+    can make today -- and a check frozen to the module-level constant would
+    have kept reporting the library as clean.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [[1.0, 0.0]] * 3)
+    _seed_person(store_dir, "Alicia", [_ray(0.62)] * 3)
+
+    assert not [
+        item
+        for item in analyze_library_health(store_dir=store_dir).issues
+        if item.kind == "confusable-people"
+    ]
+
+    set_config_value("voiceprint.match_threshold", "0.60")
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "Alice"
+    )
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["threshold"] == 0.60
+    assert issue.context["crossing_count"] == 3
+
+
+def test_confusable_pair_survives_the_cli_json_payload(tmp_path: Path) -> None:
+    """`voiceprint health --json` must carry the pair, not just the count."""
+    from typer.testing import CliRunner
+
+    from app.cli import app
+
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [[1.0, 0.0]] * 3)
+    _seed_person(store_dir, "Alicia", [_ray(0.82)] * 3)
+
+    result = CliRunner().invoke(
+        app, ["voiceprint", "health", "--store-dir", str(store_dir), "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    pairs = [item for item in payload["issues"] if item["kind"] == "confusable-people"]
+    assert pairs, payload["issues"]
+    assert pairs[0]["context"]["other_name"] in {"Alice", "Alicia"}

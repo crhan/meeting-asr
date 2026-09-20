@@ -159,6 +159,42 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
           "全部匹配样本来自同一个项目,声纹里同时编码了那个房间、那只麦克风和当时的状态。从另一场会议补几条样本可以提升泛化能力。",
         ),
       };
+    case "confusable-people": {
+      // The backend already turned the severity on whether a sample crosses;
+      // the wording follows the same split so the critical sentence never has
+      // to say "0 条".
+      const other = String(c.other_name ?? "");
+      const best = num(c, "best_score");
+      const bar = num(c, "threshold");
+      const crossing = num(c, "crossing_count");
+      const total = num(c, "sample_count");
+      if (crossing > 0) {
+        const entire = crossing >= total;
+        return {
+          title: tr(
+            issue.title,
+            `${name} 有 ${crossing}/${total} 条样本已经能匹配成 ${other}`,
+          ),
+          detail: tr(
+            issue.detail,
+            `拿 ${other} 的质心去打分,这个人有 ${crossing} 条样本达到了 ${bar.toFixed(2)} —— 也就是自动挂名字的那条线 —— 最高 ${best.toFixed(3)}。管线可能把这两个名字挂反。` +
+              (entire
+                ? "而这是他全部的样本,也就是说这份声纹跟对方根本分不开;去一场只有其中一个人说话的会议重新采集。"
+                : "给这个人多采一些音频,让质心落到真正能把他和对方区分开的地方;或者确认这两个库条目其实是同一个人。"),
+          ),
+        };
+      }
+      return {
+        title: tr(
+          issue.title,
+          `${name} 对 ${other} 的分数 ${best.toFixed(3)},刚好卡在 ${bar.toFixed(2)} 接受线下面`,
+        ),
+        detail: tr(
+          issue.detail,
+          `目前还没有样本越过接受阈值,但只差 ${(bar - best).toFixed(3)}:一条噪声大的采集——或者阈值再往下调一格——就会让这一对开始互相挂错名字。给这个人从另一场会议补音频,才能把差距拉开。`,
+        ),
+      };
+    }
     case "threshold-too-low":
       return {
         title: tr(

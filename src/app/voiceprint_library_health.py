@@ -10,9 +10,12 @@ modes that silently remove a person from matching altogether:
   reports as "0 suspicious" because there is nothing left to find fault with.
 
 Both render as healthy green in a sample-consistency view while the person is
-simply never matched. This module answers the prior question — *availability* —
-and joins it with the store-wide threshold calibration into one prioritized,
-actionable issue list.
+simply never matched. A third failure mode hides the same way: two people
+whose samples sit close enough to be accepted as each other are each perfectly
+self-consistent, so nothing inside either cluster looks wrong. This module
+answers the prior question — *availability*, and who can be told apart from
+whom — and joins it with the store-wide threshold calibration into one
+prioritized, actionable issue list.
 
 Read-only; nothing here mutates the store.
 """
@@ -25,6 +28,7 @@ from pathlib import Path
 
 from app.voiceprint_audio import resolve_voiceprint_sample_source
 from app.voiceprint_calibration import (
+    ConfusablePair,
     VoiceprintCalibrationReport,
     calibrate_voiceprint_thresholds,
 )
@@ -56,6 +60,14 @@ MIN_HEALTHY_MATCHING_SECONDS = 20.0
 # One recording session means one microphone, one room and one mood; scores
 # hold up there and drop on the next meeting.
 MIN_HEALTHY_PROJECT_COUNT = 2
+# How close to the accept bar a pair may sit before it is worth naming. The
+# band is measured down from the *configured* threshold rather than fixed in
+# absolute cosine, because what counts as "nearly accepted" is defined by the
+# bar in force -- a library running at 0.56 is at risk from pairs a library
+# running at 0.75 can ignore. Wider than the 0.02 the threshold suggester
+# keeps clear of the worst impostor: this advisory has to fire *before* a
+# sample crosses, not at the moment one does.
+CONFUSABLE_WARNING_MARGIN = 0.05
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,14 +356,13 @@ def _issues(
     """Build the prioritized issue list."""
     issues: list[LibraryIssue] = []
     issues.extend(_threshold_issues(calibration))
+    issues.extend(_confusable_issues(calibration))
     for person in people:
         issues.extend(_person_issues(person))
         issues.extend(
             _overlap_issues(person, overlapped.get(person.speaker_public_id, 0))
         )
-        issues.extend(
-            _orphan_issues(person, orphaned.get(person.speaker_public_id, 0))
-        )
+        issues.extend(_orphan_issues(person, orphaned.get(person.speaker_public_id, 0)))
     return tuple(sorted(issues, key=_issue_sort_key))
 
 
@@ -637,6 +648,104 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
     return issues
 
 
+def _confusable_issues(
+    calibration: VoiceprintCalibrationReport | None,
+) -> list[LibraryIssue]:
+    """Report people whose samples come too close to another person.
+
+    This is the per-pair reading of the same evidence ``threshold-too-low``
+    summarizes library-wide, and the two are deliberately both raised: they
+    offer different remedies for one fact. Moving the threshold trades these
+    wrong accepts for wrong rejects everywhere; fixing the two people named
+    here costs nothing elsewhere.
+
+    Neither the availability facts nor ``voiceprint quality`` can see this.
+    Both people can have plenty of embedded samples, and each cluster can be
+    perfectly self-consistent, precisely while they are consistent with each
+    other -- consistency is measured against a person's own centroid, so being
+    close to someone else's is invisible from inside.
+    """
+    if calibration is None:
+        return []
+    threshold = calibration.current_threshold
+    return [
+        _confusable_issue(pair, threshold)
+        for pair in calibration.neighbors
+        if pair.crossing_count > 0
+        or pair.best_score >= threshold - CONFUSABLE_WARNING_MARGIN
+    ]
+
+
+def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
+    """Build one issue for a person who risks being taken for someone else."""
+    crossing = pair.crossing_count
+    entire = crossing >= pair.sample_count
+    facts: dict[str, float | int | str] = {
+        "name": pair.person_name,
+        "other_name": pair.other_name,
+        "other_public_id": pair.other_public_id,
+        "best_score": round(pair.best_score, 3),
+        "threshold": threshold,
+        "crossing_count": crossing,
+        "sample_count": pair.sample_count,
+        # Named, not just counted, so a CLI or API consumer can act on the
+        # rows. The web sample list does not surface sample ids yet, which is
+        # why the offered action stays "capture" rather than pointing at rows
+        # the operator would then have to find by hand.
+        "crossing_sample_public_ids": ",".join(pair.crossing_sample_public_ids),
+    }
+    if crossing > 0:
+        title = (
+            f"{pair.person_name} has {crossing} of {pair.sample_count} "
+            f"sample(s) that already match {pair.other_name}"
+        )
+        detail = (
+            f"Scored against {pair.other_name}'s centroid, {crossing} of this "
+            f"person's samples reach {threshold:.2f} -- the same bar that "
+            "accepts a name automatically -- peaking at "
+            f"{pair.best_score:.3f}. The pipeline can hand either name to "
+            "either voice."
+            + (
+                " That is every sample they have, so this voiceprint cannot "
+                "be told apart from the other one at all; capture audio from "
+                "a meeting where only one of them speaks."
+                if entire
+                else " Capture more audio for this person so the centroid "
+                "moves onto what is distinctive about them, or confirm that "
+                "these two library entries are not in fact the same person."
+            )
+        )
+        return LibraryIssue(
+            kind="confusable-people",
+            severity=SEVERITY_CRITICAL,
+            title=title,
+            detail=detail,
+            action="capture",
+            person_public_id=pair.person_public_id,
+            person_name=pair.person_name,
+            context=facts,
+        )
+    return LibraryIssue(
+        kind="confusable-people",
+        severity=SEVERITY_WARNING,
+        title=(
+            f"{pair.person_name} scores {pair.best_score:.3f} against "
+            f"{pair.other_name}, just under the {threshold:.2f} bar"
+        ),
+        detail=(
+            "No sample crosses the acceptance threshold yet, but only "
+            f"{threshold - pair.best_score:.3f} separates them from it, so one "
+            "noisy capture -- or one step down in threshold -- turns this pair "
+            "into wrong automatic names. Adding audio for this person from "
+            "another meeting is what widens the gap."
+        ),
+        action="capture",
+        person_public_id=pair.person_public_id,
+        person_name=pair.person_name,
+        context=facts,
+    )
+
+
 def _threshold_issues(
     calibration: VoiceprintCalibrationReport | None,
 ) -> list[LibraryIssue]:
@@ -761,6 +870,7 @@ __all__ = [
     "AVAILABILITY_FRAGILE",
     "AVAILABILITY_OK",
     "AVAILABILITY_UNUSABLE",
+    "CONFUSABLE_WARNING_MARGIN",
     "LibraryHealthReport",
     "LibraryIssue",
     "PersonHealth",

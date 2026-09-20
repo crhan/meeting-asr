@@ -19,6 +19,7 @@ tuned automatically — the numbers are evidence for a human deciding whether
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -85,6 +86,40 @@ class ThresholdCost:
 
 
 @dataclass(frozen=True, slots=True)
+class ConfusablePair:
+    """How close one person sits to the single other person they risk.
+
+    The impostor sweep already scores every sample against every other
+    person's centroid, then keeps only the maximum -- throwing away *whose*
+    centroid it was. That discarded identity is the actionable half: a library
+    told "3 wrong-person scores clear the threshold" can only answer by moving
+    the threshold, whereas "3 of A's samples are accepted as B" points at two
+    specific people whose audio can be fixed instead.
+
+    Direction matters, so the pair is deliberately not symmetric: a stray
+    sample of A may sit on B's centroid while every sample of B stays far from
+    A's. The remedy then belongs to A alone.
+    """
+
+    person_public_id: str
+    person_name: str
+    other_public_id: str
+    other_name: str
+    # Best score any of this person's samples reaches against the other's
+    # centroid -- the same quantity the impostor distribution is built from.
+    best_score: float
+    # Of this person's samples, those already clearing the active threshold
+    # against that other centroid.
+    crossing_sample_public_ids: tuple[str, ...]
+    sample_count: int
+
+    @property
+    def crossing_count(self) -> int:
+        """Return how many samples already clear the threshold as the other."""
+        return len(self.crossing_sample_public_ids)
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceprintCalibrationReport:
     """Calibration evidence computed from the voiceprint store."""
 
@@ -107,6 +142,9 @@ class VoiceprintCalibrationReport:
     # | "overlap" | "none") so a localized UI can restate it in its own words.
     suggested_kind: str = "none"
     low_confidence: bool = False
+    # Per person, the one other person their samples come closest to, most
+    # dangerous first. Empty when fewer than two people have embeddings.
+    neighbors: tuple[ConfusablePair, ...] = ()
 
     @property
     def current_cost(self) -> ThresholdCost | None:
@@ -178,6 +216,19 @@ class VoiceprintCalibrationReport:
             "low_confidence": self.low_confidence,
             "current_cost": current.to_dict() if current else None,
             "suggested_cost": suggested.to_dict() if suggested else None,
+            "neighbors": [
+                {
+                    "person_public_id": pair.person_public_id,
+                    "person_name": pair.person_name,
+                    "other_public_id": pair.other_public_id,
+                    "other_name": pair.other_name,
+                    "best_score": pair.best_score,
+                    "crossing_count": pair.crossing_count,
+                    "crossing_sample_public_ids": list(pair.crossing_sample_public_ids),
+                    "sample_count": pair.sample_count,
+                }
+                for pair in self.neighbors
+            ],
         }
 
 
@@ -205,11 +256,15 @@ def calibrate_voiceprint_thresholds(
     rows = list_voiceprint_embeddings(resolved_model, db_path)
     vectors_by_person: dict[int, list[list[float]]] = {}
     names_by_person: dict[int, str] = {}
+    public_ids_by_person: dict[int, str] = {}
+    # Sample public ids parallel to vectors_by_person, so an impostor score can
+    # name the sample that produced it rather than just counting it.
+    sample_ids_by_person: dict[int, list[str]] = {}
     for row in rows:
-        vectors_by_person.setdefault(row.speaker_id, []).append(
-            _normalize(row.vector)
-        )
+        vectors_by_person.setdefault(row.speaker_id, []).append(_normalize(row.vector))
+        sample_ids_by_person.setdefault(row.speaker_id, []).append(row.sample_public_id)
         names_by_person[row.speaker_id] = row.speaker_name
+        public_ids_by_person[row.speaker_id] = row.speaker_public_id
     warnings: list[str] = []
     genuine_scores: list[float] = []
     impostor_scores: list[float] = []
@@ -217,16 +272,31 @@ def calibrate_voiceprint_thresholds(
         person_id: _normalize(_mean(vectors))
         for person_id, vectors in vectors_by_person.items()
     }
+    # Resolved once and reused for the report: two reads of the configured
+    # threshold could disagree, which would price the sweep against one value
+    # while reporting another.
+    threshold = resolve_match_threshold()
+    pair_best: dict[tuple[int, int], float] = {}
+    pair_crossings: dict[tuple[int, int], list[str]] = defaultdict(list)
     scored_people = 0
     for person_id, vectors in vectors_by_person.items():
-        other_centroids = [
-            centroid for key, centroid in centroids.items() if key != person_id
+        others = [
+            (key, centroid) for key, centroid in centroids.items() if key != person_id
         ]
         for index, vector in enumerate(vectors):
-            if other_centroids:
-                impostor_scores.append(
-                    max(_cosine(vector, centroid) for centroid in other_centroids)
-                )
+            if others:
+                scored = [
+                    (other_id, _cosine(vector, centroid))
+                    for other_id, centroid in others
+                ]
+                impostor_scores.append(max(score for _, score in scored))
+                sample_public_id = sample_ids_by_person[person_id][index]
+                for other_id, score in scored:
+                    key = (person_id, other_id)
+                    if score > pair_best.get(key, -1.0):
+                        pair_best[key] = score
+                    if score >= threshold:
+                        pair_crossings[key].append(sample_public_id)
             if len(vectors) >= MIN_PERSON_SAMPLES:
                 rest = vectors[:index] + vectors[index + 1 :]
                 genuine_scores.append(_cosine(vector, _normalize(_mean(rest))))
@@ -262,7 +332,7 @@ def calibrate_voiceprint_thresholds(
         eer_threshold=eer_threshold,
         eer_rate=eer_rate,
         low_impostor_threshold=_low_impostor_threshold(impostor_scores),
-        current_threshold=resolve_match_threshold(),
+        current_threshold=threshold,
         warnings=tuple(warnings),
         genuine_scores=_exported_scores(genuine_scores),
         impostor_scores=_exported_scores(impostor_scores),
@@ -270,6 +340,80 @@ def calibrate_voiceprint_thresholds(
         suggested_reason=reason,
         suggested_kind=suggested_kind,
         low_confidence=low_confidence,
+        neighbors=_confusable_pairs(
+            pair_best,
+            pair_crossings,
+            names_by_person,
+            public_ids_by_person,
+            vectors_by_person,
+        ),
+    )
+
+
+def _confusable_pairs(
+    pair_best: dict[tuple[int, int], float],
+    pair_crossings: dict[tuple[int, int], list[str]],
+    names: dict[int, str],
+    public_ids: dict[int, str],
+    vectors_by_person: dict[int, list[list[float]]],
+) -> tuple[ConfusablePair, ...]:
+    """
+    Reduce the all-pairs impostor evidence to one riskiest other per person.
+
+    Ranking prefers a pair that already crosses the threshold over one that is
+    merely close: a crossing is a mistake the pipeline can make today, while a
+    high score under the bar is only a warning sign. Only the top pair is kept
+    because the remedy -- fix this person's audio -- is the same whoever else
+    is nearby, and listing every neighbour would bury it.
+
+    Args:
+        pair_best: Best score per ordered (person, other) pair.
+        pair_crossings: Sample public ids clearing the threshold, per pair.
+        names: Person display name by speaker id.
+        public_ids: Person public id by speaker id.
+        vectors_by_person: Embedded vectors by speaker id.
+
+    Returns:
+        One pair per person that has any other person to be confused with,
+        most dangerous first.
+    """
+    riskiest: dict[int, tuple[tuple[int, float], int]] = {}
+    # Walk the pairs in a fixed order and only displace on a strictly better
+    # rank, so an exact tie between two others resolves to the same one on
+    # every run rather than to whichever row the store happened to return.
+    for person_id, other_id in sorted(
+        pair_best, key=lambda key: (key[0], names[key[1]].casefold(), key[1])
+    ):
+        rank = (
+            len(pair_crossings.get((person_id, other_id), ())),
+            pair_best[(person_id, other_id)],
+        )
+        current = riskiest.get(person_id)
+        if current is None or rank > current[0]:
+            riskiest[person_id] = (rank, other_id)
+    pairs = [
+        ConfusablePair(
+            person_public_id=public_ids[person_id],
+            person_name=names[person_id],
+            other_public_id=public_ids[other_id],
+            other_name=names[other_id],
+            best_score=pair_best[(person_id, other_id)],
+            crossing_sample_public_ids=tuple(
+                pair_crossings.get((person_id, other_id), ())
+            ),
+            sample_count=len(vectors_by_person[person_id]),
+        )
+        for person_id, (_rank, other_id) in riskiest.items()
+    ]
+    return tuple(
+        sorted(
+            pairs,
+            key=lambda item: (
+                -item.crossing_count,
+                -item.best_score,
+                item.person_name.casefold(),
+            ),
+        )
     )
 
 
@@ -457,6 +601,7 @@ def _cosine(left: list[float], right: list[float]) -> float:
 
 
 __all__ = [
+    "ConfusablePair",
     "ScoreDistribution",
     "ThresholdCost",
     "VoiceprintCalibrationReport",
