@@ -30,13 +30,17 @@ from app.presentation.tui.voiceprint_review_workflow import (
     VoiceprintReviewWorkflowSummary,
     run_voiceprint_review_workflow,
 )
+from app.voiceprint_store import (
+    VOICEPRINT_REVIEW_BACKUP_PREFIX,
+    get_voiceprint_review_backup_root,
+)
 from app.voiceprints import VoiceprintCaptureSummary, plan_voiceprint_capture
 
 DEFAULT_SAMPLE_COUNT = 3
 DEFAULT_MAX_SECONDS = 12.0
 DEFAULT_PADDING_SECONDS = 0.5
 
-_BACKUP_PREFIX = "meeting-asr-voiceprint-review-"
+_BACKUP_PREFIX = VOICEPRINT_REVIEW_BACKUP_PREFIX
 _METADATA_FILE = "transaction.json"
 _ORPHAN_MAX_AGE_SECONDS = 6 * 3600
 
@@ -269,7 +273,7 @@ class CaptureTransactionRegistry:
 
     def _load_persisted(self) -> None:
         """Restore pending transaction handles from backup metadata on process start."""
-        for backup_dir in _backup_root().glob(f"{_BACKUP_PREFIX}*"):
+        for backup_dir in _iter_backup_dirs():
             metadata_path = backup_dir / _METADATA_FILE
             if not metadata_path.is_file():
                 continue
@@ -284,11 +288,8 @@ class CaptureTransactionRegistry:
 
 def cleanup_orphan_backups() -> None:
     """Remove old backup dirs that never reached transaction registration."""
-    tmp_root = _backup_root()
-    if not tmp_root.is_dir():
-        return
     cutoff = time.time() - _ORPHAN_MAX_AGE_SECONDS
-    for child in tmp_root.glob(f"{_BACKUP_PREFIX}*"):
+    for child in _iter_backup_dirs():
         try:
             # A metadata-bearing directory is a recoverable pending transaction. Keep it so
             # the registry can restore the accept/rollback handle after restart.
@@ -302,9 +303,29 @@ def cleanup_orphan_backups() -> None:
             continue
 
 
-def _backup_root() -> Path:
-    """Return the temp root used for voiceprint rollback snapshots."""
-    return Path(tempfile.gettempdir())
+def _iter_backup_dirs() -> list[Path]:
+    """List candidate snapshot directories across every known backup root."""
+    found: list[Path] = []
+    for root in _backup_roots():
+        if not root.is_dir():
+            continue
+        found.extend(sorted(root.glob(f"{_BACKUP_PREFIX}*")))
+    return found
+
+
+def _backup_roots() -> tuple[Path, ...]:
+    """Return every root that may hold voiceprint rollback snapshots, current first.
+
+    The legacy system-temp root stays in the list so an upgrade never strands a pending
+    transaction written by an older release. It costs one glob over a directory that is
+    normally empty, and dropping it would mean the only copy of someone's pre-run store
+    becomes unreachable the moment they upgrade.
+    """
+    roots = [get_voiceprint_review_backup_root()]
+    legacy = Path(tempfile.gettempdir())
+    if legacy not in roots:
+        roots.append(legacy)
+    return tuple(roots)
 
 
 def _persist_transaction_metadata(

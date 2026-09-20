@@ -319,6 +319,26 @@ COMMANDS_META: list[dict[str, Any]] = [
         ],
     },
     {
+        "name": "project clean",
+        "group": "project",
+        "summary": (
+            "Remove recomputable intermediates under a project's tmp/; "
+            "paid embeddings and correction proposals are never touched."
+        ),
+        "args": [{"name": "project", "required": False}],
+        "supports_json": True,
+        "side_effects": ["fs-read"],
+        "conditional_side_effects": {"--apply": ["fs-write", "destructive"]},
+        "needs_sudo": False,
+        "interactive": True,
+        "exit_codes": [0, 1, 2, 130],
+        "examples": [
+            "meeting-asr project clean <project-id> --json",
+            "meeting-asr project clean <project-id> --apply --yes",
+            "meeting-asr project clean --all --apply --yes",
+        ],
+    },
+    {
         "name": "voiceprint review",
         "group": "voiceprint",
         "summary": "Review candidate samples and global voiceprint matches in a TUI.",

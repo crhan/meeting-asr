@@ -35,6 +35,7 @@ from app.presentation.cli.json_output import emit_json
 from app.presentation.cli.output import should_enable_verbose_logs
 from app.presentation.cli.progress import run_with_progress
 from app.presentation.cli.project_payloads import (
+    project_clean_payload,
     project_list_payload,
     project_status_payload,
 )
@@ -62,6 +63,7 @@ from app.completion_helpers import (
 from app.config import get_default_projects_dir, load_settings
 from app.asr_pricing import AsrCostEstimate, format_asr_cost
 from app.core.project_models import (
+    ProjectCleanSummary,
     ProjectCreateSummary,
     ProjectDeleteSummary,
     ProjectManifest,
@@ -71,6 +73,7 @@ from app.core.project_models import (
     ProjectUpdateSummary,
 )
 from app.core.project_refs import list_projects, resolve_project_ref
+from app.project_layout import clean_project_tmp
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
@@ -1023,6 +1026,55 @@ def delete(
         lambda: delete_project(resolved_project_dir, permanent=permanent)
     )
     _echo_project_deleted(summary)
+
+
+@app.command("clean")
+def clean(
+    project_dir: Path = typer.Argument(
+        Path("."), metavar="PROJECT", file_okay=False, dir_okay=True
+    ),
+    projects_dir: Optional[Path] = typer.Option(
+        None, "--projects-dir", file_okay=False, dir_okay=True, hidden=True
+    ),
+    all_projects: bool = typer.Option(
+        False, "--all", help="Clean every project under the projects directory."
+    ),
+    apply: bool = typer.Option(
+        False, "--apply", help="Delete for real. Without it this is a dry run."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Do not prompt for confirmation with --apply."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Remove recomputable intermediates under a project's tmp/ directory.
+
+    Only data that a later run rebuilds from the project source is removed --
+    probe clips, cluster clips, preview clips. Embedding vectors and correction
+    proposals are durable and live outside tmp/; a project still using the old
+    layout has them relocated before anything is deleted.
+    """
+    if all_projects:
+        targets = run_with_cli_errors(
+            lambda: [item.project_dir for item in list_projects(projects_dir).projects]
+        )
+    else:
+        targets = [
+            run_with_cli_errors(lambda: resolve_project_ref(project_dir, projects_dir))
+        ]
+    previews = [clean_project_tmp(target, apply=False) for target in targets]
+    if apply and not yes and not _confirm_project_clean(previews):
+        typer.echo("Project clean cancelled.")
+        return
+    summaries = (
+        [clean_project_tmp(preview.project_dir, apply=True) for preview in previews]
+        if apply
+        else previews
+    )
+    if as_json:
+        emit_json(project_clean_payload(summaries))
+        return
+    _echo_project_cleaned(summaries)
 
 
 @app.command("review")
@@ -3535,6 +3587,77 @@ def _confirm_project_delete(
     """
     mode = "permanently delete" if permanent else "move to trash"
     return typer.confirm(f"{mode} project '{manifest.title}' at {project_dir}?")
+
+
+def _confirm_project_clean(previews: list[ProjectCleanSummary]) -> bool:
+    """
+    Show what a clean would remove and ask whether to proceed.
+
+    Args:
+        previews: Dry-run summaries for the targeted projects.
+
+    Returns:
+        True when the caller should delete.
+    """
+    _echo_project_cleaned(previews)
+    total = sum(preview.freed_bytes for preview in previews)
+    scope = (
+        str(previews[0].project_dir)
+        if len(previews) == 1
+        else f"{len(previews)} projects"
+    )
+    return typer.confirm(
+        f"Delete recomputable intermediates ({_format_bytes(total)}) from {scope}?"
+    )
+
+
+def _echo_project_cleaned(summaries: list[ProjectCleanSummary]) -> None:
+    """
+    Print one clean report.
+
+    Args:
+        summaries: Clean summaries, dry run or applied.
+
+    Returns:
+        None.
+    """
+    total = sum(summary.freed_bytes for summary in summaries)
+    applied = all(summary.applied for summary in summaries)
+    for summary in summaries:
+        typer.echo(f"Project: {summary.project_dir}")
+        moved = "relocated out of tmp/" if summary.applied else "would relocate"
+        for path in summary.relocated:
+            typer.echo(f"  {moved}: {_project_relative(summary, path)}")
+        verb = "removed" if summary.applied else "would remove"
+        for path in summary.removed:
+            typer.echo(f"  {verb}: {_project_relative(summary, path)}")
+        for entry in summary.kept:
+            typer.echo(
+                f"  kept ({entry.reason}): {_project_relative(summary, entry.path)}"
+            )
+        if not summary.removed:
+            typer.echo("  nothing to clean")
+    typer.echo(f"{'Freed' if applied else 'Would free'}: {_format_bytes(total)}")
+    if not applied:
+        typer.echo("Dry run. Re-run with --apply to delete.")
+
+
+def _project_relative(summary: ProjectCleanSummary, path: Path) -> str:
+    """Render a cleaned path relative to its project root when possible."""
+    try:
+        return str(path.relative_to(summary.project_dir))
+    except ValueError:
+        return str(path)
+
+
+def _format_bytes(size: int) -> str:
+    """Render a byte count in the largest unit that keeps it readable."""
+    value = float(size)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024 or unit == "GiB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} GiB"
 
 
 def _echo_project_deleted(summary: ProjectDeleteSummary) -> None:

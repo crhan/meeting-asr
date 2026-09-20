@@ -130,6 +130,23 @@ meeting-asr project delete PROJECT_ID --permanent --yes
 
 默认删除会移动到 `~/.local/share/meeting-asr/trash/projects/`。Meeting-ASR 不自动清理 trash；只有 `purge`、`cleanup` 或 `delete --permanent --yes` 会物理删除。
 
+回收磁盘：
+
+```bash
+meeting-asr project clean PROJECT_ID              # dry-run，只报会删什么、能腾多少
+meeting-asr project clean PROJECT_ID --apply      # 真删，会二次确认
+meeting-asr project clean --all --apply --yes     # 所有项目，不确认
+meeting-asr project clean PROJECT_ID --json
+```
+
+`clean` 只动项目的 `tmp/`，那里放的全是能从 source 用 ffmpeg 重切回来的中间品
+（探针 wav、聚类切片、网页试听片段）。**花钱买来或人工编辑过的东西不在 `tmp/` 里**：
+embedding 向量在 `embeddings/`，校正 review 与提案在 `corrections/`，`clean` 碰不到它们。
+换句话说，`rm -rf <项目>/tmp` 也是安全的，代价只是下次跑得慢一点。
+
+0.21.0 之前这两类东西混在 `tmp/` 下。老项目不需要做任何事：任何一次读写缓存或校正产物
+都会就地把它们搬到新位置，搬迁是幂等的，不会重新调用 embedding 模型。
+
 ## 4. 转写和长任务进度
 
 推荐入口：
@@ -225,7 +242,7 @@ meeting-asr project correct edit PROJECT_ID --model qwen-plus
 
 流程：
 
-1. 生成 `tmp/corrections/review_*.md` 并打开编辑器。
+1. 生成 `corrections/review_*.md` 并打开编辑器。
 2. 你只改正文，保留锚点。
 3. CLI 用前后 diff 学习样例改动。
 4. DashScope 文本模型生成全篇 proposal。
@@ -447,6 +464,11 @@ exports/meeting_summary.md              # 会议标题和回忆索引
 exports/meeting_summary.json            # 结构化回忆索引
 asr/raw_result.json                      # DashScope 原始结果
 asr/sentences.json                       # 标准化逐句结果
+embeddings/clip_embeddings.json          # 付费买来的切片向量缓存
+embeddings/probe_embeddings.json         # 付费买来的 speaker 探针向量缓存
+corrections/review_*.md                  # 人工编辑过的纠错 review
+corrections/proposal_*.json              # LLM 生成的纠错提案
+tmp/                                     # 只放可重算中间品，随时可整个删
 ```
 
 ## 9. OSS lifecycle

@@ -10,6 +10,10 @@ This module is the single cache all of them share. Vectors are stored RAW
 (pre-normalization): per-clip consumers L2-normalize after lookup, while the
 probe path averages raw vectors before normalizing — both behaviours are
 bit-identical to the previous per-subsystem caches, so scores do not move.
+
+Every vector here was paid for at an embedding model, so the file lives outside
+the project ``tmp/`` tree; see :mod:`app.project_layout` for the split and for
+the migration that moves pre-0.21 caches out of ``tmp/voiceprint_clips/``.
 """
 
 from __future__ import annotations
@@ -19,12 +23,13 @@ import json
 from pathlib import Path
 
 from app.models import SentenceSegment
+from app.project_layout import (
+    CLIP_EMBEDDING_CACHE_RELATIVE_PATH,
+    migrate_project_layout,
+)
+from app.project_layout import clip_embedding_cache_path as _cache_path
 from app.utils import safe_write_json
 from app.voiceprint_audio import VOICEPRINT_AUDIO_PREPROCESS_VERSION
-
-CLIP_EMBEDDING_CACHE_RELATIVE_PATH = (
-    Path("tmp") / "voiceprint_clips" / "clip_embeddings.json"
-)
 
 
 def clip_embedding_cache_key(
@@ -77,7 +82,7 @@ def clip_embedding_cache_key(
 
 def clip_embedding_cache_path(project_root: Path) -> Path:
     """Return the shared project-local clip embedding cache path."""
-    return project_root / CLIP_EMBEDDING_CACHE_RELATIVE_PATH
+    return _cache_path(project_root)
 
 
 def read_clip_embedding_cache(project_root: Path) -> dict[str, list[float]]:
@@ -91,6 +96,7 @@ def read_clip_embedding_cache(project_root: Path) -> dict[str, list[float]]:
         Mapping of cache key to raw embedding vector (empty when absent or
         unreadable).
     """
+    migrate_project_layout(project_root)
     path = clip_embedding_cache_path(project_root)
     if not path.exists():
         return {}

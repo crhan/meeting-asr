@@ -80,7 +80,7 @@ def test_project_speakers_sample_match_reuses_embedding_cache(
     assert after_first > 0
     assert len(calls) == after_first
     assert (
-        project_dir / "tmp" / "voiceprint_clips" / "clip_embeddings.json"
+        project_dir / "embeddings" / "clip_embeddings.json"
     ).exists()
 
 
@@ -98,7 +98,7 @@ def test_project_speakers_sample_match_preserves_other_stage_cache_entries(
     first = runner.invoke(
         app, ["project", "speakers", "sample-match", str(project_dir), "--no-progress"]
     )
-    cache_path = project_dir / "tmp" / "voiceprint_clips" / "clip_embeddings.json"
+    cache_path = project_dir / "embeddings" / "clip_embeddings.json"
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     payload["other-stage-key"] = [0.25, 0.75]
     cache_path.write_text(json.dumps(payload), encoding="utf-8")

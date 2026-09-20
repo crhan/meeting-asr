@@ -107,10 +107,17 @@ from app.utils import ensure_directory, safe_write_json, safe_write_text
 
 PROJECT_DIRS = ("source", "audio", "asr", "speakers", "exports", "logs", "tmp")
 PROJECT_HEARTBEAT_INTERVAL_SECONDS = 30.0
+# ``embeddings/`` is durable (every vector in it was bought from an embedding
+# model) but it is a machine-written float blob of several megabytes, so it stays
+# out of Git exactly as it did while it lived under the ignored ``tmp/``. The
+# review files and proposals under ``corrections/`` are hand edits and LLM
+# output, which is precisely what optional Git tracking is for, so they are not
+# ignored.
 PROJECT_GITIGNORE = """source/
 audio/
 logs/
 tmp/
+embeddings/
 asr/raw_result.json
 *.signed-url
 """

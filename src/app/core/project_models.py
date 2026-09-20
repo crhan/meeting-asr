@@ -205,6 +205,49 @@ class ProjectDeleteSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class KeptPath:
+    """One path a clean run refused to delete, with the reason it survived.
+
+    The reason travels with the path because the three ways a path gets here are
+    not interchangeable to the reader: a name collision blocked a relocation, the
+    project redirects ``tmp/`` elsewhere via a symlink, or the deletion was
+    attempted and failed. Reporting all three as a bare "kept" would let a failed
+    deletion read like a deliberate one.
+
+    Attributes:
+        path: The path that was left in place.
+        reason: Why it was left, phrased for a terminal reader.
+    """
+
+    path: Path
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectCleanSummary:
+    """Result of clearing one project's recomputable intermediates.
+
+    Attributes:
+        project_dir: Project root that was inspected.
+        removed: Paths under ``tmp/`` that were (or, in a dry run, would be)
+            deleted. On an applied run this holds only paths that are actually
+            gone -- a removal that failed moves to ``kept``.
+        freed_bytes: Total size of ``removed``.
+        relocated: Durable artifacts moved out of ``tmp/`` before cleaning, if
+            the project still used the pre-0.21 layout.
+        kept: Paths deliberately left alone, each with its reason.
+        applied: False for a dry run.
+    """
+
+    project_dir: Path
+    removed: tuple[Path, ...]
+    freed_bytes: int
+    relocated: tuple[Path, ...] = ()
+    kept: tuple[KeptPath, ...] = ()
+    applied: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class TrashedProjectListItem:
     """One project row stored in Meeting-ASR trash."""
 

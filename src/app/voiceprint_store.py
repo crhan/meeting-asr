@@ -28,6 +28,10 @@ SCHEMA_VERSION = 3
 VOICEPRINT_STORE_DIR = "voiceprints"
 VOICEPRINT_DB_FILENAME = "voiceprints.sqlite"
 VOICEPRINT_CLIPS_DIR = "clips"
+VOICEPRINT_PENDING_REVIEW_DIR = "pending-review"
+# Shared by the writer (workflow) and the sweeper (review service): they must agree
+# on this prefix or startup recovery silently stops seeing pending transactions.
+VOICEPRINT_REVIEW_BACKUP_PREFIX = "meeting-asr-voiceprint-review-"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS voiceprint_speakers (
@@ -122,6 +126,26 @@ def get_default_voiceprint_store_dir() -> Path:
         XDG-compliant voiceprint store directory.
     """
     return get_data_dir() / VOICEPRINT_STORE_DIR
+
+
+def get_voiceprint_review_backup_root(store_dir: Path | None = None) -> Path:
+    """
+    Return the durable root for pending voiceprint-review rollback snapshots.
+
+    These snapshots are not scratch space: a pending capture transaction owns the only
+    copy of the pre-run voiceprint store, and the registry restores accept/rollback
+    handles from them after a process restart. They lived under the system temp dir
+    until 0.21.0, where a reboot wiped them and silently dropped a recoverable pending
+    transaction. Anchoring them to the store they snapshot also keeps a custom
+    ``--store-dir`` self-contained.
+
+    Args:
+        store_dir: Optional voiceprint store directory.
+
+    Returns:
+        Directory holding pending review snapshots.
+    """
+    return _resolve_store_dir(store_dir) / VOICEPRINT_PENDING_REVIEW_DIR
 
 
 def get_voiceprint_clip_dir(store_dir: Path | None = None) -> Path:

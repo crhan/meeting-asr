@@ -5,6 +5,24 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [Unreleased]
+
+### 新增
+
+- **新增 `meeting-asr project clean`,用来回收项目占的磁盘**:默认 dry-run,只报会删什么、能腾出多少;`--apply` 才真删并二次确认,`--yes` 跳过确认,`--all` 覆盖全部项目,`--json` 给机器读。它只动 `tmp/`,而 `tmp/` 现在按定义只放能用 ffmpeg 从 source 重切回来的中间品。
+
+### 变更
+
+- **不可重算的产物全部移出 `tmp/`,`tmp/` 现在整个删掉也只损失可重算的中间品**。此前 `tmp/` 里混着两类性质相反的东西:一类是探针 wav、聚类切片这类删了会自动重建的中间品,另一类是花钱调 embedding 模型买来的向量缓存、LLM 生成的校正提案、以及人手工编辑过的 review 文件。后者放在一个叫 `tmp` 的目录下,结果就是这个目录既不敢删、又只会一直涨(实测一份真实数据目录里 `tmp/` 攒到 8.9G wav + 171M json,其中 145M 是付费向量)。现在向量缓存在 `embeddings/clip_embeddings.json` 与 `embeddings/probe_embeddings.json`,校正 review 与提案在已有语义的 `corrections/` 下(`applied.json`/`asr_hotwords.json` 本来就在那)。判据写进 `src/app/project_layout.py`,它是项目内相对路径的唯一真源。
+- **老项目自动就地迁移,不需要跑任何命令,也不会重新调用 embedding 模型**。任何一次读写缓存或校正产物都会触发 `migrate_project_layout()`:幂等、同盘 rename;两份都存在时按 key 求并集(key 是嵌入参数的哈希,同 key 必同值,合并既不会丢也不会串);遇到重名冲突一律原地保留、绝不覆盖。已经写进 `project.json` 与 proposal JSON 的 `tmp/corrections/...` 相对路径不做改写,读取时由 `resolve_recorded_project_path()` 回落到新位置,所以迁移没有「改到一半崩了」的中间态。
+- **`project git-init` 写的 `.gitignore` 增加 `embeddings/`**:向量此前在被忽略的 `tmp/` 下,不进 git 的行为保持不变;`corrections/` 下的 review 与提案是人工编辑和 LLM 产物,正是可选 Git 跟踪想要的东西,因此不忽略——对已 `git-init` 的项目,这批文件会开始出现在 `git status` 里。
+
+### 修复
+
+- **`project clean --apply` 遇到符号链接的 `tmp/` 会拒绝往下删**(codex review P1):把 scratch 重定向到另一块盘时 `<项目>/tmp` 会是个软链,而删软链删的是**链本身**;原实现却穿过去枚举并删掉了目标目录的全部子项——那块盘很可能还放着别的东西,于是这条命令会抹掉项目之外的数据,还把软链留在原地(下次再跑再抹一次)。实测可复现。现在这种情况一律报 `kept` 并说明理由,由人自己决定;迁移仍照跑,付费产物该搬走还是搬走。
+- **删不掉的东西不再被报成「已删除」**(codex review P2):此前用 `shutil.rmtree(ignore_errors=True)`,只读挂载、EACCES 这类失败被整个吞掉,而汇总照样把该目录列进 `removed`、把它的字节数算进「已释放」。现在删完会**复核路径是否真的消失**(rmtree 可能删到一半就停),没删掉的转成 `kept` 并附上失败原因,字节数同步扣回。`kept` 现在每条都带理由——「名字冲突搬不走」「tmp 是软链」「删失败」三种情况此前都渲染成一模一样的一行字,失败会被读成有意保留。JSON 里 `kept` 相应从字符串数组变成 `{path, reason}` 对象数组(`project clean` 本身尚未发布过,不构成破坏性变更)。
+- **待定声纹复核的回滚快照不再放在系统临时目录,重启不会再把「撤销」弄丢**:一笔待定的 capture 事务持有**运行前声纹库的唯一副本**,`accept`/`rollback` 靠它,进程重启后还要靠目录里的 `transaction.json` 把句柄恢复出来。此前这些快照用 `tempfile.mkdtemp()` 写在系统 `/tmp` 下,于是一次重启(或任何 tmp 清理)就会**静默**销毁它——声纹库里保留着半应用的采集结果,而撤销的那条路没了,全程无任何日志。现在快照落在它所快照的那个库旁边(`<store_dir>/pending-review/`),跟着 `--store-dir` 走,自定义库也自成一体。启动恢复仍会扫一遍旧的系统临时目录,所以升级不会让老版本写下的待定事务失联。
+
 ## [0.21.0] - 2026-09-21
 
 ### 新增
