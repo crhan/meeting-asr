@@ -60,13 +60,13 @@ MIN_HEALTHY_MATCHING_SECONDS = 20.0
 # One recording session means one microphone, one room and one mood; scores
 # hold up there and drop on the next meeting.
 MIN_HEALTHY_PROJECT_COUNT = 2
-# How close to the accept bar a pair may sit before it is worth naming. The
-# band is measured down from the *configured* threshold rather than fixed in
-# absolute cosine, because what counts as "nearly accepted" is defined by the
-# bar in force -- a library running at 0.56 is at risk from pairs a library
-# running at 0.75 can ignore. Wider than the 0.02 the threshold suggester
-# keeps clear of the worst impostor: this advisory has to fire *before* a
-# sample crosses, not at the moment one does.
+# How thin a person's win over their nearest other person may get before it
+# is worth naming. Deliberately a *margin* and not an absolute score: what
+# decides a name is which candidate ranks first, so two people at 0.82 who
+# each score 0.95 as themselves are separable and must stay silent, while two
+# at 0.40 separated by 0.01 are one noisy capture from swapping. Wider than
+# the 0.02 the threshold suggester keeps clear of the worst impostor, because
+# this advisory has to fire *before* the order reverses, not as it does.
 CONFUSABLE_WARNING_MARGIN = 0.05
 
 
@@ -664,6 +664,13 @@ def _confusable_issues(
     perfectly self-consistent, precisely while they are consistent with each
     other -- consistency is measured against a person's own centroid, so being
     close to someone else's is invisible from inside.
+
+    What is *not* reported is a merely high score against another centroid.
+    Matching ranks candidates and applies the threshold to the winner, so
+    someone who scores 0.82 as their neighbour while scoring 0.95 as
+    themselves is named correctly every time; calling that critical would send
+    the operator off to re-capture perfectly good audio. Only a thin or lost
+    lead counts -- see ``ConfusablePair``.
     """
     if calibration is None:
         return []
@@ -672,7 +679,7 @@ def _confusable_issues(
         _confusable_issue(pair, threshold)
         for pair in calibration.neighbors
         if pair.crossing_count > 0
-        or pair.best_score >= threshold - CONFUSABLE_WARNING_MARGIN
+        or (pair.min_lead is not None and pair.min_lead < CONFUSABLE_WARNING_MARGIN)
     ]
 
 
@@ -680,11 +687,13 @@ def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
     """Build one issue for a person who risks being taken for someone else."""
     crossing = pair.crossing_count
     entire = crossing >= pair.sample_count
+    lead = pair.min_lead if pair.min_lead is not None else 0.0
     facts: dict[str, float | int | str] = {
         "name": pair.person_name,
         "other_name": pair.other_name,
         "other_public_id": pair.other_public_id,
         "best_score": round(pair.best_score, 3),
+        "min_lead": round(lead, 3),
         "threshold": threshold,
         "crossing_count": crossing,
         "sample_count": pair.sample_count,
@@ -695,31 +704,52 @@ def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
         "crossing_sample_public_ids": ",".join(pair.crossing_sample_public_ids),
     }
     if crossing > 0:
-        title = (
-            f"{pair.person_name} has {crossing} of {pair.sample_count} "
-            f"sample(s) that already match {pair.other_name}"
-        )
-        detail = (
-            f"Scored against {pair.other_name}'s centroid, {crossing} of this "
-            f"person's samples reach {threshold:.2f} -- the same bar that "
-            "accepts a name automatically -- peaking at "
-            f"{pair.best_score:.3f}. The pipeline can hand either name to "
-            "either voice."
-            + (
-                " That is every sample they have, so this voiceprint cannot "
-                "be told apart from the other one at all; capture audio from "
-                "a meeting where only one of them speaks."
-                if entire
-                else " Capture more audio for this person so the centroid "
-                "moves onto what is distinctive about them, or confirm that "
-                "these two library entries are not in fact the same person."
-            )
-        )
         return LibraryIssue(
             kind="confusable-people",
             severity=SEVERITY_CRITICAL,
-            title=title,
-            detail=detail,
+            title=(
+                f"{pair.person_name} has {crossing} of {pair.sample_count} "
+                f"sample(s) the pipeline would name {pair.other_name}"
+            ),
+            detail=(
+                f"For {crossing} of this person's samples, {pair.other_name} "
+                "scores higher than the person themselves does -- measured "
+                "against their own leave-one-out centroid, so the sample is "
+                f"judged as an unseen probe would be -- and clears {threshold:.2f}, "
+                "which is enough to attach the name automatically. These are "
+                "wrong names today, not a risk."
+                + (
+                    " That covers every sample they have, so this voiceprint "
+                    "cannot be told apart from the other one at all; capture "
+                    "audio from a meeting where only one of them speaks."
+                    if entire
+                    else " Capture more audio for this person so the centroid "
+                    "moves onto what is distinctive about them, or confirm "
+                    "that these two library entries are not in fact the same "
+                    "person."
+                )
+            ),
+            action="capture",
+            person_public_id=pair.person_public_id,
+            person_name=pair.person_name,
+            context=facts,
+        )
+    if lead < 0:
+        return LibraryIssue(
+            kind="confusable-people",
+            severity=SEVERITY_WARNING,
+            title=(
+                f"{pair.person_name} ranks behind {pair.other_name} on their "
+                "own samples"
+            ),
+            detail=(
+                f"At least one sample scores higher as {pair.other_name} than "
+                "as this person, so the wrong name is already the pipeline's "
+                f"first choice -- it just falls short of the {threshold:.2f} "
+                "bar and lands in manual review instead of being attached. "
+                "Lowering the threshold would turn this into a wrong name; "
+                "capturing audio for this person is what fixes it."
+            ),
             action="capture",
             person_public_id=pair.person_public_id,
             person_name=pair.person_name,
@@ -729,15 +759,14 @@ def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
         kind="confusable-people",
         severity=SEVERITY_WARNING,
         title=(
-            f"{pair.person_name} scores {pair.best_score:.3f} against "
-            f"{pair.other_name}, just under the {threshold:.2f} bar"
+            f"{pair.person_name} beats {pair.other_name} on their own samples "
+            f"by only {lead:.3f}"
         ),
         detail=(
-            "No sample crosses the acceptance threshold yet, but only "
-            f"{threshold - pair.best_score:.3f} separates them from it, so one "
-            "noisy capture -- or one step down in threshold -- turns this pair "
-            "into wrong automatic names. Adding audio for this person from "
-            "another meeting is what widens the gap."
+            "The right name still wins, so nothing is mislabelled today, but "
+            "the two centroids are close enough that one noisy capture can "
+            "reverse the order. Adding audio for this person from another "
+            "meeting is what widens the gap."
         ),
         action="capture",
         person_public_id=pair.person_public_id,

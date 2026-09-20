@@ -99,6 +99,16 @@ class ConfusablePair:
     Direction matters, so the pair is deliberately not symmetric: a stray
     sample of A may sit on B's centroid while every sample of B stays far from
     A's. The remedy then belongs to A alone.
+
+    A high score against another centroid is *not* by itself a wrong match.
+    Matching ranks every candidate and applies the threshold to the winner
+    (``_acceptance_decision`` on ``candidates[0]``), so a sample scoring 0.82
+    as B while scoring 0.95 as itself is still named correctly. The pair
+    therefore carries the **competition**, not just the impostor score: each
+    sample's score against the other centroid is compared with its own
+    leave-one-out centroid score -- the same standing in for an unseen probe
+    that the genuine distribution uses -- and only a sample the other person
+    actually wins counts as a crossing.
     """
 
     person_public_id: str
@@ -108,8 +118,14 @@ class ConfusablePair:
     # Best score any of this person's samples reaches against the other's
     # centroid -- the same quantity the impostor distribution is built from.
     best_score: float
-    # Of this person's samples, those already clearing the active threshold
-    # against that other centroid.
+    # Thinnest win over this other person across the samples: own
+    # leave-one-out score minus the other-centroid score. Negative means the
+    # other person already ranks first for that sample. None when the person
+    # has too few samples for a leave-one-out centroid, in which case the
+    # competition cannot be judged and no crossing is claimed.
+    min_lead: float | None
+    # Of this person's samples, those the other person both wins and clears
+    # the active threshold with -- an automatic wrong name today.
     crossing_sample_public_ids: tuple[str, ...]
     sample_count: int
 
@@ -223,6 +239,7 @@ class VoiceprintCalibrationReport:
                     "other_public_id": pair.other_public_id,
                     "other_name": pair.other_name,
                     "best_score": pair.best_score,
+                    "min_lead": pair.min_lead,
                     "crossing_count": pair.crossing_count,
                     "crossing_sample_public_ids": list(pair.crossing_sample_public_ids),
                     "sample_count": pair.sample_count,
@@ -277,13 +294,20 @@ def calibrate_voiceprint_thresholds(
     # while reporting another.
     threshold = resolve_match_threshold()
     pair_best: dict[tuple[int, int], float] = {}
+    pair_leads: dict[tuple[int, int], float] = {}
     pair_crossings: dict[tuple[int, int], list[str]] = defaultdict(list)
     scored_people = 0
     for person_id, vectors in vectors_by_person.items():
         others = [
             (key, centroid) for key, centroid in centroids.items() if key != person_id
         ]
+        has_leave_one_out = len(vectors) >= MIN_PERSON_SAMPLES
         for index, vector in enumerate(vectors):
+            own: float | None = None
+            if has_leave_one_out:
+                rest = vectors[:index] + vectors[index + 1 :]
+                own = _cosine(vector, _normalize(_mean(rest)))
+                genuine_scores.append(own)
             if others:
                 scored = [
                     (other_id, _cosine(vector, centroid))
@@ -295,11 +319,20 @@ def calibrate_voiceprint_thresholds(
                     key = (person_id, other_id)
                     if score > pair_best.get(key, -1.0):
                         pair_best[key] = score
-                    if score >= threshold:
+                    if own is None:
+                        # Without a leave-one-out centroid there is nothing to
+                        # run the other person against, so the competition is
+                        # simply unknown -- claiming a swap here would be the
+                        # very over-reach this comparison exists to avoid.
+                        continue
+                    lead = own - score
+                    if lead < pair_leads.get(key, math.inf):
+                        pair_leads[key] = lead
+                    # Strictly greater: matching ranks candidates and applies
+                    # the threshold to the winner, so the other person has to
+                    # actually take first place before this is a wrong name.
+                    if score > own and score >= threshold:
                         pair_crossings[key].append(sample_public_id)
-            if len(vectors) >= MIN_PERSON_SAMPLES:
-                rest = vectors[:index] + vectors[index + 1 :]
-                genuine_scores.append(_cosine(vector, _normalize(_mean(rest))))
         if len(vectors) >= MIN_PERSON_SAMPLES:
             scored_people += 1
         else:
@@ -342,6 +375,7 @@ def calibrate_voiceprint_thresholds(
         low_confidence=low_confidence,
         neighbors=_confusable_pairs(
             pair_best,
+            pair_leads,
             pair_crossings,
             names_by_person,
             public_ids_by_person,
@@ -352,23 +386,27 @@ def calibrate_voiceprint_thresholds(
 
 def _confusable_pairs(
     pair_best: dict[tuple[int, int], float],
+    pair_leads: dict[tuple[int, int], float],
     pair_crossings: dict[tuple[int, int], list[str]],
     names: dict[int, str],
     public_ids: dict[int, str],
     vectors_by_person: dict[int, list[list[float]]],
 ) -> tuple[ConfusablePair, ...]:
     """
-    Reduce the all-pairs impostor evidence to one riskiest other per person.
+    Reduce the all-pairs evidence to the one other person each one risks.
 
-    Ranking prefers a pair that already crosses the threshold over one that is
-    merely close: a crossing is a mistake the pipeline can make today, while a
-    high score under the bar is only a warning sign. Only the top pair is kept
-    because the remedy -- fix this person's audio -- is the same whoever else
-    is nearby, and listing every neighbour would bury it.
+    Ranking is by danger, not by similarity: a pair the other person already
+    wins and gets accepted on beats one they merely score well against, and a
+    thin winning margin beats a comfortable one. Sorting by raw score instead
+    would promote people who are simply similar over people who are actually
+    swappable. Only the top pair is kept, because the remedy -- fix this
+    person's audio -- is the same whoever else is nearby.
 
     Args:
-        pair_best: Best score per ordered (person, other) pair.
-        pair_crossings: Sample public ids clearing the threshold, per pair.
+        pair_best: Best other-centroid score per ordered (person, other) pair.
+        pair_leads: Thinnest own-minus-other margin per pair, where known.
+        pair_crossings: Sample public ids the other person wins and clears the
+            threshold with, per pair.
         names: Person display name by speaker id.
         public_ids: Person public id by speaker id.
         vectors_by_person: Embedded vectors by speaker id.
@@ -377,7 +415,7 @@ def _confusable_pairs(
         One pair per person that has any other person to be confused with,
         most dangerous first.
     """
-    riskiest: dict[int, tuple[tuple[int, float], int]] = {}
+    riskiest: dict[int, tuple[tuple[int, float, float], int]] = {}
     # Walk the pairs in a fixed order and only displace on a strictly better
     # rank, so an exact tie between two others resolves to the same one on
     # every run rather than to whichever row the store happened to return.
@@ -386,6 +424,10 @@ def _confusable_pairs(
     ):
         rank = (
             len(pair_crossings.get((person_id, other_id), ())),
+            # Negated so a thinner margin ranks higher. An unknown margin
+            # sorts last rather than first: not having been able to judge the
+            # competition is not evidence of danger.
+            -pair_leads.get((person_id, other_id), math.inf),
             pair_best[(person_id, other_id)],
         )
         current = riskiest.get(person_id)
@@ -398,6 +440,7 @@ def _confusable_pairs(
             other_public_id=public_ids[other_id],
             other_name=names[other_id],
             best_score=pair_best[(person_id, other_id)],
+            min_lead=pair_leads.get((person_id, other_id)),
             crossing_sample_public_ids=tuple(
                 pair_crossings.get((person_id, other_id), ())
             ),
@@ -410,6 +453,7 @@ def _confusable_pairs(
             pairs,
             key=lambda item: (
                 -item.crossing_count,
+                item.min_lead if item.min_lead is not None else math.inf,
                 -item.best_score,
                 item.person_name.casefold(),
             ),

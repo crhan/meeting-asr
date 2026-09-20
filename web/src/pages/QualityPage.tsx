@@ -160,12 +160,13 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
         ),
       };
     case "confusable-people": {
-      // The backend already turned the severity on whether a sample crosses;
-      // the wording follows the same split so the critical sentence never has
-      // to say "0 条".
+      // Three states, same kind: the wrong name is already being attached,
+      // the wrong name already ranks first but falls short of the bar, or the
+      // right name still wins but only just. The backend picked the severity
+      // from the same numbers, so the wording follows its split exactly.
       const other = String(c.other_name ?? "");
-      const best = num(c, "best_score");
       const bar = num(c, "threshold");
+      const lead = num(c, "min_lead");
       const crossing = num(c, "crossing_count");
       const total = num(c, "sample_count");
       if (crossing > 0) {
@@ -173,25 +174,34 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
         return {
           title: tr(
             issue.title,
-            `${name} 有 ${crossing}/${total} 条样本已经能匹配成 ${other}`,
+            `${name} 有 ${crossing}/${total} 条样本会被管线判成 ${other}`,
           ),
           detail: tr(
             issue.detail,
-            `拿 ${other} 的质心去打分,这个人有 ${crossing} 条样本达到了 ${bar.toFixed(2)} —— 也就是自动挂名字的那条线 —— 最高 ${best.toFixed(3)}。管线可能把这两个名字挂反。` +
+            `这个人有 ${crossing} 条样本,${other} 的得分比他自己还高——比的是他自己的留一质心,也就是按「没见过的探针」来判——而且越过了 ${bar.toFixed(2)},足以自动挂上名字。这不是风险,是此刻就在挂错的名字。` +
               (entire
                 ? "而这是他全部的样本,也就是说这份声纹跟对方根本分不开;去一场只有其中一个人说话的会议重新采集。"
                 : "给这个人多采一些音频,让质心落到真正能把他和对方区分开的地方;或者确认这两个库条目其实是同一个人。"),
           ),
         };
       }
+      if (lead < 0) {
+        return {
+          title: tr(issue.title, `${name} 在自己的样本上排在 ${other} 后面`),
+          detail: tr(
+            issue.detail,
+            `至少有一条样本判成 ${other} 的分数比判成他自己还高,错的那个名字已经是管线的首选——只是还没够到 ${bar.toFixed(2)} 这条线,所以落进人工复核而不是被直接挂上。此时把阈值调低就会变成挂错名字;真正的修法是给这个人补采音频。`,
+          ),
+        };
+      }
       return {
         title: tr(
           issue.title,
-          `${name} 对 ${other} 的分数 ${best.toFixed(3)},刚好卡在 ${bar.toFixed(2)} 接受线下面`,
+          `${name} 在自己的样本上只比 ${other} 高 ${lead.toFixed(3)}`,
         ),
         detail: tr(
           issue.detail,
-          `目前还没有样本越过接受阈值,但只差 ${(bar - best).toFixed(3)}:一条噪声大的采集——或者阈值再往下调一格——就会让这一对开始互相挂错名字。给这个人从另一场会议补音频,才能把差距拉开。`,
+          "对的名字目前还是赢的,所以此刻没有挂错,但两个质心已经近到一条噪声大的采集就能把顺序翻过来。给这个人从另一场会议补音频,才能把差距拉开。",
         ),
       };
     }
