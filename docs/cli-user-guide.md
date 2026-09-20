@@ -258,6 +258,24 @@ meeting-asr lexicon hotwords sync --target-model fun-asr
 
 `lexicon` 管本地词库本体；`corrections/asr_hotwords.json` 是某个项目 correction 理解产出的热词；`lexicon hotwords` 是跨项目词库投影。
 
+### 多词库（按领域隔离）
+
+一台机器上如果同时有互不相干的领域（例如工作会议和家庭事务），把它们放进同一个词库会互相污染：规则筛选与热词投影**只看 `status='active'`，不看 `category`**，所以一个领域的全部词条都会作用到另一个领域的录音上。
+
+按领域拆库：
+
+```bash
+meeting-asr lexicon list --lexicon-db ~/.local/share/meeting-asr/lexicon/lexicon-work.sqlite
+meeting-asr config set lexicon.db_path ~/.local/share/meeting-asr/lexicon/lexicon-home.sqlite
+meeting-asr project run RECORDING.mp3 --lexicon-db /path/to/other-lexicon.sqlite
+```
+
+取值优先级：`--lexicon-db` > `lexicon.db_path` 配置项 > XDG 默认库。把这台机器**最常用**的那个领域设成 `lexicon.db_path`，日常命令就不用带任何参数。
+
+每个词库**各自缓存自己的 DashScope 热词表 id**（`asr_hotword_vocabularies` 表在库内），所以两个库会对应两个独立的远端词表。
+
+> ⚠️ 用 `cp` 复制出来的词库会**带着原库的热词表缓存行**，直接 `hotwords sync` 会去更新原来那个远端词表。副本必须先 `meeting-asr lexicon hotwords clear-cache --lexicon-db <副本>`，之后 sync 才会新建属于它自己的词表。
+
 ## 6. Speaker review
 
 首选入口：

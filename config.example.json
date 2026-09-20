@@ -7,6 +7,7 @@
   "oss.bucket_name": "",
   "oss.region": "",
   "oss.endpoint": "",
+  "lexicon.db_path": "",
   "voiceprint.embedding_provider": "local-speechbrain",
   "voiceprint.embedding_endpoint": ""
 }

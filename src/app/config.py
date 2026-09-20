@@ -47,6 +47,7 @@ class Settings:
     oss_region: str | None = None
     oss_endpoint: str | None = None
     ui_editor: str | None = None
+    lexicon_db_path: str | None = None
     voiceprint_provider: str | None = None
     voiceprint_match_threshold: float | None = None
     config_path: Path | None = None
@@ -95,6 +96,11 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "correction_polish_auto_accept",
         "MEETING_ASR_POLISH_AUTO_ACCEPT",
         default="false",
+    ),
+    ConfigKey(
+        "lexicon.db_path",
+        "lexicon_db_path",
+        "MEETING_ASR_LEXICON_DB",
     ),
     ConfigKey(
         "oss.access_key_id", "oss_access_key_id", "OSS_ACCESS_KEY_ID", secret=True
@@ -315,6 +321,7 @@ def load_settings(
         dashscope_asr_vocabulary_id=_read_value(
             values, "dashscope.asr_vocabulary_id", required=False
         ),
+        lexicon_db_path=_read_value(values, "lexicon.db_path", required=False),
         correction_polish_auto_accept=_read_bool_value(
             values, "correction.polish_auto_accept"
         ),
@@ -348,6 +355,26 @@ def get_configured_editor(path: Path | None = None) -> str | None:
     """
     values = load_config_values(path)
     return _read_value(values, "ui.editor", required=False)
+
+
+def get_configured_lexicon_db_path(path: Path | None = None) -> Path | None:
+    """
+    Return the configured lexicon database path without requiring cloud credentials.
+
+    Lets one machine keep domain-separated lexicons (for example a household one and
+    a work one) and pick the default per machine instead of per command.
+
+    Args:
+        path: Optional config path override.
+
+    Returns:
+        Expanded lexicon database path, or None when unset.
+    """
+    values = load_config_values(path)
+    raw = _read_value(values, "lexicon.db_path", required=False)
+    if raw is None or not raw.strip():
+        return None
+    return Path(raw).expanduser()
 
 
 def get_configured_voiceprint_provider(path: Path | None = None) -> str | None:

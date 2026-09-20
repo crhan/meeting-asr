@@ -15,6 +15,7 @@ from app.config import (
     DEFAULT_DASHSCOPE_SUMMARY_MODEL,
     get_cache_dir,
     get_config_path,
+    get_configured_lexicon_db_path,
     get_default_projects_dir,
     load_settings,
     save_config_values,
@@ -101,6 +102,57 @@ def test_ui_editor_config_is_supported(
     assert settings.ui_editor == "code --wait"
     assert "ui.editor" in keys_result.output
     assert "ui.editor=code --wait" in show_result.output
+
+
+def test_lexicon_db_path_config_is_supported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A machine should be able to make a domain-specific lexicon the default."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _clear_runtime_env(monkeypatch)
+    home_lexicon = tmp_path / "lexicon-home.sqlite"
+    set_config_value("lexicon.db_path", str(home_lexicon))
+
+    settings = load_settings(require_dashscope=False)
+    keys_result = runner.invoke(app, ["config", "keys"])
+
+    assert settings.lexicon_db_path == str(home_lexicon)
+    assert "lexicon.db_path" in keys_result.output
+    assert get_configured_lexicon_db_path() == home_lexicon
+
+
+def test_default_lexicon_db_path_prefers_config_over_xdg(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``default_lexicon_db_path`` honors the config key and falls back to XDG."""
+    from app.lexicon_store import default_lexicon_db_path, xdg_lexicon_db_path
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    _clear_runtime_env(monkeypatch)
+
+    assert default_lexicon_db_path() == xdg_lexicon_db_path()
+
+    home_lexicon = tmp_path / "lexicon-home.sqlite"
+    set_config_value("lexicon.db_path", str(home_lexicon))
+
+    assert default_lexicon_db_path() == home_lexicon
+    assert xdg_lexicon_db_path() != home_lexicon
+
+
+def test_blank_lexicon_db_path_falls_back_to_xdg(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A blank configured path must not shadow the XDG lexicon."""
+    from app.lexicon_store import default_lexicon_db_path, xdg_lexicon_db_path
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    _clear_runtime_env(monkeypatch)
+    set_config_value("lexicon.db_path", "   ")
+
+    assert get_configured_lexicon_db_path() is None
+    assert default_lexicon_db_path() == xdg_lexicon_db_path()
 
 
 def test_model_endpoint_routes_can_be_configured(

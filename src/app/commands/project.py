@@ -698,6 +698,12 @@ def run(
         help="Use the legacy aggressive-rewrite polish prompt (pre-2026 behavior). "
         "Default is the strict downstream-summary-friendly polish.",
     ),
+    lexicon_db: Optional[Path] = typer.Option(
+        None,
+        "--lexicon-db",
+        help="Override lexicon SQLite path for local correction and ASR hotwords. "
+        "Defaults to the lexicon.db_path config key, then the XDG lexicon.",
+    ),
     speaker_stabilization: bool = typer.Option(
         True,
         "--speaker-stabilization/--no-speaker-stabilization",
@@ -786,6 +792,7 @@ def run(
             correction_model=correction_model,
             polish_concurrency=polish_concurrency,
             polish_legacy=polish_legacy,
+            lexicon_db=lexicon_db,
             speaker_stabilization=speaker_stabilization,
             speaker_resplit=speaker_resplit,
             speaker_stabilization_iterations=speaker_stabilization_iterations,

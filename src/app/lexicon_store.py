@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from app.config import get_data_dir
+from app.config import get_configured_lexicon_db_path, get_data_dir
 from app.correction_hotwords import AsrHotword, hotwords_from_terms
 from app.lexicon_models import (
     AsrVocabularyState,
@@ -84,14 +84,31 @@ CREATE TABLE IF NOT EXISTS asr_hotword_vocabularies (
 """
 
 
-def default_lexicon_db_path() -> Path:
+def xdg_lexicon_db_path() -> Path:
     """
-    Return the default XDG lexicon database path.
+    Return the built-in XDG lexicon database path, ignoring any configured override.
 
     Returns:
         SQLite database path.
     """
     return get_data_dir() / "lexicon" / "lexicon.sqlite"
+
+
+def default_lexicon_db_path() -> Path:
+    """
+    Return the default lexicon database path.
+
+    Honors the ``lexicon.db_path`` config key so a machine can make a domain-specific
+    lexicon (for example the household one) the default for every command, instead of
+    relying on each call site passing ``--lexicon-db``. Falls back to the XDG path.
+
+    Returns:
+        SQLite database path.
+    """
+    configured = get_configured_lexicon_db_path()
+    if configured is not None:
+        return configured
+    return xdg_lexicon_db_path()
 
 
 def get_lexicon_db_path(store_dir: Path | None = None) -> Path:

@@ -5,6 +5,12 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [Unreleased]
+
+### 新增
+
+- **词库支持按领域隔离**:新增 `lexicon.db_path` 配置项与 `project run --lexicon-db`,取值优先级为 `--lexicon-db` > `lexicon.db_path` > XDG 默认库。起因是同一台机器上工作与家庭两个领域的词条混在一个库里会互相污染——规则筛选与热词投影只看 `status='active'`、**不看 `category`**,于是一个领域的全部词条都作用到另一个领域的录音上(实测:一条工作同事人名的 `asr_error` 别名把家庭录音里的「通风和采光」改成了「通丰禾采光」)。此前只有 `lexicon` 子命令能用 `--lexicon-db` 指定库,而 `project run` **没有**这个选项(其 `--store-dir` 是声纹库目录,不是词典),导致转写主链路无论如何都只能用默认库、拆库方案落不了地。现在可以把常用领域设成 `lexicon.db_path`,日常命令不带参数即可,偶尔跑另一个领域再用 `--lexicon-db` 覆盖。每个库各自缓存自己的 DashScope 热词表 id,因此两个库对应两个独立远端词表;`cp` 出来的副本需先 `lexicon hotwords clear-cache` 再 sync,否则会去更新原库的远端词表。
+
 ## [0.20.0] - 2026-07-26
 
 ### 新增
