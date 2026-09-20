@@ -142,11 +142,25 @@ class ConfusablePair:
     # accepted on -- an automatic wrong name today.
     crossing_sample_public_ids: tuple[str, ...]
     sample_count: int
+    # Why matching accepted those winners, straight from
+    # ``_acceptance_decision``: "threshold", "strong-margin", or both. The
+    # report has to say which, because a strong-margin acceptance happens
+    # *below* the bar and describing it as clearing the bar is simply untrue.
+    accept_reasons: tuple[str, ...] = ()
 
     @property
     def crossing_count(self) -> int:
-        """Return how many samples already clear the threshold as the other."""
+        """Return how many of this person's samples the other person takes."""
         return len(self.crossing_sample_public_ids)
+
+    @property
+    def accept_reason(self) -> str | None:
+        """Return "threshold", "strong-margin", "mixed", or None."""
+        if not self.accept_reasons:
+            return None
+        if len(self.accept_reasons) > 1:
+            return "mixed"
+        return self.accept_reasons[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +268,7 @@ class VoiceprintCalibrationReport:
                     "other_name": pair.other_name,
                     "best_score": pair.best_score,
                     "min_lead": pair.min_lead,
+                    "accept_reason": pair.accept_reason,
                     "crossing_count": pair.crossing_count,
                     "crossing_sample_public_ids": list(pair.crossing_sample_public_ids),
                     "sample_count": pair.sample_count,
@@ -460,6 +475,7 @@ def _confusable_pairs(
     }
     # owner -> other -> evidence
     crossings: dict[int, dict[int, list[str]]] = defaultdict(lambda: defaultdict(list))
+    reasons: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
     leads: dict[int, dict[int, float]] = defaultdict(dict)
     bests: dict[int, dict[int, float]] = defaultdict(dict)
     for person_id, person in people.items():
@@ -468,16 +484,22 @@ def _confusable_pairs(
             own = _known_speaker_vector(person, exclude=index)
             if own is None:
                 continue
+            # Candidate order is part of the decision, not a detail: `sorted`
+            # is stable, so an exact tie is settled by the order
+            # `_known_speaker_vectors` hands matching, which is each person's
+            # first appearance in the embedding rows. `people` is built from
+            # the same rows in the same order, so substituting the owner in
+            # place -- rather than appending them -- reproduces which name a
+            # tie actually attaches instead of inventing a different one.
             known = {
-                other_id: candidate
+                other_id: (own if other_id == person_id else candidate)
                 for other_id, candidate in full.items()
-                if other_id != person_id and candidate is not None
+                if candidate is not None
             }
-            if not known:
+            if len(known) < 2:
                 continue
-            known[person_id] = own
             candidates = _ranked_matches(probe, known, limit=3)
-            accepted, _reason = _acceptance_decision(
+            accepted, reason = _acceptance_decision(
                 candidates[0] if candidates else None, tuple(candidates), threshold
             )
             own_score, _source = _score_known_vector(probe, own)
@@ -492,12 +514,6 @@ def _confusable_pairs(
             if top_other.score > bests[person_id].get(top_other.person_id, -1.0):
                 bests[person_id][top_other.person_id] = top_other.score
             winner = candidates[0]
-            # An exact tie is broken by `sorted` stability, which here means
-            # dict insertion order -- a coin flip. Blaming someone on a coin
-            # flip is exactly the over-claim this comparison exists to avoid,
-            # so a tie is read as the owner keeping their name.
-            if winner.person_id != person_id and winner.score <= own_score:
-                continue
             # Only the candidate that actually wins is blamed. A third person
             # outscoring the owner does not make *this* other the name that
             # would be attached.
@@ -505,6 +521,7 @@ def _confusable_pairs(
                 crossings[person_id][winner.person_id].append(
                     person.sample_public_ids[index]
                 )
+                reasons[person_id][winner.person_id].add(reason or "threshold")
                 if winner.score > bests[person_id].get(winner.person_id, -1.0):
                     bests[person_id][winner.person_id] = winner.score
                 leads[person_id].setdefault(winner.person_id, own_score - winner.score)
@@ -516,6 +533,7 @@ def _confusable_pairs(
                 person,
                 people,
                 crossings.get(person_id, {}),
+                reasons.get(person_id, {}),
                 leads.get(person_id, {}),
                 bests.get(person_id, {}),
             )
@@ -539,6 +557,7 @@ def _riskiest_pair(
     person: _LibraryPerson,
     people: dict[int, _LibraryPerson],
     crossings: dict[int, list[str]],
+    reasons: dict[int, set[str]],
     leads: dict[int, float],
     bests: dict[int, float],
 ) -> ConfusablePair | None:
@@ -574,6 +593,7 @@ def _riskiest_pair(
         min_lead=leads.get(best_other),
         crossing_sample_public_ids=tuple(crossings.get(best_other, ())),
         sample_count=len(person.vectors),
+        accept_reasons=tuple(sorted(reasons.get(best_other, set()))),
     )
 
 

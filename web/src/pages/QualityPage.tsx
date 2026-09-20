@@ -171,6 +171,16 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
       const total = num(c, "sample_count");
       if (crossing > 0) {
         const entire = crossing >= total;
+        // Which rule attached the name matters: a strong-margin acceptance
+        // happens *below* the bar, and telling the user it cleared the bar
+        // would send them off to raise the threshold and watch the wrong
+        // name survive it.
+        const why =
+          c.accept_reason === "strong-margin"
+            ? `虽然没到 ${bar.toFixed(2)},但甩开第二名足够多,强边距规则照样接受`
+            : c.accept_reason === "mixed"
+              ? `其中一些越过了 ${bar.toFixed(2)},其余没到线但因为甩开第二名足够多而被强边距规则接受`
+              : `而且越过了 ${bar.toFixed(2)}`;
         return {
           title: tr(
             issue.title,
@@ -178,7 +188,7 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
           ),
           detail: tr(
             issue.detail,
-            `这个人有 ${crossing} 条样本,${other} 的得分比他自己还高——比的是他自己的留一质心,也就是按「没见过的探针」来判——而且越过了 ${bar.toFixed(2)},足以自动挂上名字。这不是风险,是此刻就在挂错的名字。` +
+            `这个人有 ${crossing} 条样本,${other} 的得分比他自己还高——比的是他自己的留一质心,也就是按「没见过的探针」来判——${why},足以自动挂上名字。这不是风险,是此刻就在挂错的名字。` +
               (entire
                 ? "而这是他全部的样本,也就是说这份声纹跟对方根本分不开;去一场只有其中一个人说话的会议重新采集。"
                 : "给这个人多采一些音频,让质心落到真正能把他和对方区分开的地方;或者确认这两个库条目其实是同一个人。"),

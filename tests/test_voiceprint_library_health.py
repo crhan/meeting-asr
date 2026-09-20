@@ -962,21 +962,64 @@ def test_only_the_winning_candidate_is_blamed(tmp_path: Path) -> None:
     assert issue.context["other_name"] == "丙"
 
 
-def test_an_exact_tie_leaves_the_name_with_its_owner(tmp_path: Path) -> None:
-    """A tie is decided by sort order, so it must not be read as a swap.
+def test_a_tie_keeps_the_name_when_its_owner_sorts_first(tmp_path: Path) -> None:
+    """An exact tie is not a coin flip -- it is decided, and decided the same way.
 
-    甲's two clustered samples score their own leave-one-out centroid and 乙's
-    centroid identically. Which one `sorted` puts first is dict insertion
-    order; blaming 乙 on that coin flip would be the same over-claim as
-    blaming an absolute score.
+    Two of AAA's samples score their own leave-one-out centroid and ZZZ's
+    centroid identically. `_ranked_matches` sorts stably over the order
+    `list_voiceprint_embeddings` returns, which is `ORDER BY speakers.name`,
+    so AAA comes first and keeps the name. Only the genuine outlier crosses.
     """
     store_dir = tmp_path / "voiceprints"
-    _seed_person(store_dir, "甲", [_arc(-30), _arc(-30), _arc(30)])
+    _seed_person(store_dir, "AAA", [_arc(-30), _arc(-30), _arc(30)])
+    _seed_person(store_dir, "ZZZ", [_arc(0)] * 3)
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "AAA"
+    )
+
+    # Only the outlier, whose 0.866 genuinely beats its own 0.500.
+    assert issue.context["crossing_count"] == 1
+
+
+def test_a_tie_is_a_wrong_name_when_the_rival_sorts_first(tmp_path: Path) -> None:
+    """The same tie, the other way round, is a real mislabel and must be said.
+
+    Identical geometry to the test above with the names swapped, so AAA now
+    sorts ahead of the owner and takes every tied sample. Production would
+    attach AAA's name to all three; reporting only the outlier -- or treating
+    a tie as the owner's win on principle -- would hide two real mislabels.
+    This is the case duplicate library entries produce.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "ZZZ", [_arc(-30), _arc(-30), _arc(30)])
+    _seed_person(store_dir, "AAA", [_arc(0)] * 3)
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "ZZZ"
+    )
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["crossing_count"] == 3
+    assert issue.context["other_name"] == "AAA"
+
+
+def test_strong_margin_acceptance_is_not_described_as_clearing_the_bar(
+    tmp_path: Path,
+) -> None:
+    """Saying a 0.707 winner "clears 0.75" would send the operator the wrong way.
+
+    They would raise the threshold and watch the wrong name survive it,
+    because the strong-margin rule -- not the bar -- is what attached it.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "甲", [_arc(-45), _arc(-45), _arc(45)])
     _seed_person(store_dir, "乙", [_arc(0)] * 3)
 
     issue = _person_issue(
         analyze_library_health(store_dir=store_dir), "confusable-people", "甲"
     )
 
-    # Only the outlier, whose 0.866 genuinely beats its own 0.500.
-    assert issue.context["crossing_count"] == 1
+    assert issue.context["accept_reason"] == "strong-margin"
+    assert "strong-margin" in issue.detail
+    assert f"clears the {DEFAULT_MATCH_THRESHOLD:.2f} bar" not in issue.detail

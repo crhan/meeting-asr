@@ -683,6 +683,28 @@ def _confusable_issues(
     ]
 
 
+def _acceptance_phrase(reason: str | None, threshold: float) -> str:
+    """Say which rule attached the name, since they are not interchangeable.
+
+    ``_acceptance_decision`` has two ways to say yes, and only one of them is
+    about the bar. A winner that stays under the threshold but runs away from
+    the runner-up is accepted all the same, and describing that as clearing
+    the threshold tells the operator something that did not happen -- they
+    would then raise the threshold and watch the wrong name survive it.
+    """
+    if reason == "strong-margin":
+        return (
+            f"it stays under {threshold:.2f}, but leads the runner-up by enough "
+            "that the strong-margin rule accepts it anyway"
+        )
+    if reason == "mixed":
+        return (
+            f"some clear the {threshold:.2f} bar, the rest stay under it and are "
+            "accepted by the strong-margin rule for leading the runner-up"
+        )
+    return f"it clears the {threshold:.2f} bar"
+
+
 def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
     """Build one issue for a person who risks being taken for someone else."""
     crossing = pair.crossing_count
@@ -702,6 +724,10 @@ def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
         # why the offered action stays "capture" rather than pointing at rows
         # the operator would then have to find by hand.
         "crossing_sample_public_ids": ",".join(pair.crossing_sample_public_ids),
+        # Which acceptance rule attached the name. A strong-margin acceptance
+        # happens *below* the bar, so a report that says "clears 0.75" about
+        # a 0.707 winner is simply false.
+        "accept_reason": pair.accept_reason or "threshold",
     }
     if crossing > 0:
         return LibraryIssue(
@@ -715,9 +741,9 @@ def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
                 f"For {crossing} of this person's samples, {pair.other_name} "
                 "scores higher than the person themselves does -- measured "
                 "against their own leave-one-out centroid, so the sample is "
-                f"judged as an unseen probe would be -- and clears {threshold:.2f}, "
-                "which is enough to attach the name automatically. These are "
-                "wrong names today, not a risk."
+                "judged as an unseen probe would be -- and matching attaches "
+                f"that name: {_acceptance_phrase(pair.accept_reason, threshold)}. "
+                "These are wrong names today, not a risk."
                 + (
                     " That covers every sample they have, so this voiceprint "
                     "cannot be told apart from the other one at all; capture "
