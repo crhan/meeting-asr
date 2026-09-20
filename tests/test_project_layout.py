@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from app import project_layout
 from app.cli import app
 from app.project_layout import (
     CLIP_EMBEDDING_CACHE_RELATIVE_PATH,
@@ -240,7 +241,7 @@ def test_clean_refuses_to_delete_unmigratable_durable_data(tmp_path: Path) -> No
 
     summary = clean_project_tmp(root, apply=True)
 
-    assert summary.kept == (legacy,)
+    assert [entry.path for entry in summary.kept] == [legacy]
     assert (legacy / "review_a.md").read_text(encoding="utf-8") == "older\n"
     assert not (root / TMP_DIR_NAME / "web_clips").exists()
 
@@ -287,3 +288,62 @@ def test_project_clean_command_respects_a_declined_confirmation(tmp_path: Path) 
     assert result.exit_code == 0
     assert "cancelled" in result.output
     assert (root / TMP_DIR_NAME / "speaker_cluster").exists()
+
+
+def test_clean_refuses_to_delete_through_a_symlinked_tmp(tmp_path: Path) -> None:
+    """A redirected tmp/ must cost the link's target nothing.
+
+    Deleting the symlink removes the LINK; walking it deletes the target's
+    children. Someone who points scratch at another disk shares that directory
+    with whatever else lives there, so traversing would erase data outside the
+    project -- and leave the symlink behind, so the next run would do it again.
+    """
+    root = tmp_path / "project"
+    root.mkdir()
+    elsewhere = tmp_path / "scratch-disk"
+    (elsewhere / "not-ours").mkdir(parents=True)
+    (elsewhere / "not-ours" / "precious.bin").write_bytes(b"0" * 64)
+    (root / TMP_DIR_NAME).symlink_to(elsewhere)
+
+    summary = clean_project_tmp(root, apply=True)
+
+    assert (elsewhere / "not-ours" / "precious.bin").read_bytes() == b"0" * 64
+    assert summary.removed == ()
+    assert summary.freed_bytes == 0
+    assert [entry.path for entry in summary.kept] == [root / TMP_DIR_NAME]
+    assert "symlink" in summary.kept[0].reason
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["raises", "silent"],
+    ids=["removal-raises", "removal-silently-leaves-the-tree"],
+)
+def test_clean_reports_a_failed_removal_as_kept_and_frees_no_bytes(
+    monkeypatch, tmp_path: Path, failure: str
+) -> None:
+    """A read-only mount or EACCES must not be reported as a successful cleanup.
+
+    The "silent" case is what ``ignore_errors=True`` actually did: rmtree returns
+    normally, the tree is still on disk, and the summary happily reported it
+    removed with every byte counted as reclaimed. So a clean return from rmtree
+    is not proof of anything -- removal has to be verified.
+    """
+    root = tmp_path / "project"
+    doomed = root / TMP_DIR_NAME / "web_clips"
+    doomed.mkdir(parents=True)
+    (doomed / "clip.wav").write_bytes(b"0" * 32)
+
+    def refuse(path, *args, **kwargs):
+        if failure == "raises":
+            raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(project_layout.shutil, "rmtree", refuse)
+
+    summary = clean_project_tmp(root, apply=True)
+
+    assert (doomed / "clip.wav").read_bytes() == b"0" * 32
+    assert summary.removed == ()
+    assert summary.freed_bytes == 0
+    assert [entry.path for entry in summary.kept] == [doomed]
+    assert "could not be removed" in summary.kept[0].reason

@@ -38,7 +38,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.core.project_models import ProjectCleanSummary
+from app.core.project_models import KeptPath, ProjectCleanSummary
 
 LOGGER = logging.getLogger(__name__)
 
@@ -266,6 +266,27 @@ def clean_project_tmp(project_root: Path, *, apply: bool) -> ProjectCleanSummary
     root = project_root.expanduser().resolve()
     migration = migrate_project_layout(root, dry_run=not apply)
     tmp_root = project_tmp_dir(root)
+    if tmp_root.is_symlink():
+        # Deleting a symlink removes the LINK. Walking it instead would delete the
+        # target's children -- someone who redirected scratch to another disk
+        # shares that directory with whatever else lives there, so this command
+        # would erase data outside the project while leaving the symlink behind.
+        # Migration above already pulled durable artifacts to safety; deleting is
+        # where we stop and hand the decision back.
+        return ProjectCleanSummary(
+            project_dir=root,
+            removed=(),
+            freed_bytes=0,
+            relocated=migration.moved + migration.merged,
+            kept=(
+                KeptPath(
+                    tmp_root,
+                    "tmp/ is a symlink; refusing to delete through it "
+                    "(remove the link yourself if the target is disposable)",
+                ),
+            ),
+            applied=apply,
+        )
     if not tmp_root.is_dir():
         return ProjectCleanSummary(
             project_dir=root,
@@ -284,10 +305,10 @@ def clean_project_tmp(project_root: Path, *, apply: bool) -> ProjectCleanSummary
     leaving = tuple(path for path in still_durable if path not in set(blocked))
     protected = blocked + leaving
     removable: list[Path] = []
-    kept: list[Path] = []
+    kept: list[KeptPath] = []
     for entry in sorted(tmp_root.iterdir()):
         if any(path == entry or path.is_relative_to(entry) for path in blocked):
-            kept.append(entry)
+            kept.append(KeptPath(entry, "still holds durable data"))
             continue
         if _is_excluded(entry, leaving) or any(
             path.is_relative_to(entry) for path in leaving
@@ -300,11 +321,19 @@ def clean_project_tmp(project_root: Path, *, apply: bool) -> ProjectCleanSummary
         removable.append(entry)
     freed = sum(_tree_size(entry, exclude=protected) for entry in removable)
     if apply:
+        survivors: list[Path] = []
         for entry in removable:
-            if entry.is_dir() and not entry.is_symlink():
-                shutil.rmtree(entry, ignore_errors=True)
-            else:
-                entry.unlink(missing_ok=True)
+            reason = _remove_entry(entry)
+            if reason is None:
+                continue
+            # The data is still on disk, so it is neither removed nor freed.
+            # ignore_errors would have reported a read-only mount or an EACCES
+            # as a successful cleanup and counted every byte as reclaimed.
+            survivors.append(entry)
+            kept.append(KeptPath(entry, reason))
+            freed -= _tree_size(entry, exclude=protected)
+        if survivors:
+            removable = [entry for entry in removable if entry not in set(survivors)]
         if not kept:
             _rmdir_if_empty(tmp_root)
     return ProjectCleanSummary(
@@ -315,6 +344,24 @@ def clean_project_tmp(project_root: Path, *, apply: bool) -> ProjectCleanSummary
         kept=tuple(kept),
         applied=apply,
     )
+
+
+def _remove_entry(entry: Path) -> str | None:
+    """Delete one tmp entry, returning why it survived, or None on success.
+
+    Deletion is verified rather than assumed: ``shutil.rmtree`` can fail partway
+    and leave a tree behind, so a clean return is not proof the path is gone.
+    """
+    try:
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink(missing_ok=True)
+    except OSError as error:
+        return f"could not be removed: {error.strerror or error}"
+    if entry.exists() or entry.is_symlink():
+        return "could not be removed: still present after deletion"
+    return None
 
 
 def _holds_content_outside(path: Path, exclude: tuple[Path, ...]) -> bool:

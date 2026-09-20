@@ -81,7 +81,9 @@ def _project_clean_payload(summary: ProjectCleanSummary) -> dict[str, Any]:
         "freed_bytes": summary.freed_bytes,
         "removed": list(summary.removed),
         "relocated": list(summary.relocated),
-        "kept": list(summary.kept),
+        "kept": [
+            {"path": entry.path, "reason": entry.reason} for entry in summary.kept
+        ],
     }
 
 

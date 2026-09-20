@@ -3631,9 +3631,9 @@ def _echo_project_cleaned(summaries: list[ProjectCleanSummary]) -> None:
         verb = "removed" if summary.applied else "would remove"
         for path in summary.removed:
             typer.echo(f"  {verb}: {_project_relative(summary, path)}")
-        for path in summary.kept:
+        for entry in summary.kept:
             typer.echo(
-                f"  kept (still holds durable data): {_project_relative(summary, path)}"
+                f"  kept ({entry.reason}): {_project_relative(summary, entry.path)}"
             )
         if not summary.removed:
             typer.echo("  nothing to clean")
