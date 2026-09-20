@@ -10,9 +10,12 @@ modes that silently remove a person from matching altogether:
   reports as "0 suspicious" because there is nothing left to find fault with.
 
 Both render as healthy green in a sample-consistency view while the person is
-simply never matched. This module answers the prior question — *availability* —
-and joins it with the store-wide threshold calibration into one prioritized,
-actionable issue list.
+simply never matched. A third failure mode hides the same way: two people
+whose samples sit close enough to be accepted as each other are each perfectly
+self-consistent, so nothing inside either cluster looks wrong. This module
+answers the prior question — *availability*, and who can be told apart from
+whom — and joins it with the store-wide threshold calibration into one
+prioritized, actionable issue list.
 
 Read-only; nothing here mutates the store.
 """
@@ -25,6 +28,7 @@ from pathlib import Path
 
 from app.voiceprint_audio import resolve_voiceprint_sample_source
 from app.voiceprint_calibration import (
+    ConfusablePair,
     VoiceprintCalibrationReport,
     calibrate_voiceprint_thresholds,
 )
@@ -56,6 +60,14 @@ MIN_HEALTHY_MATCHING_SECONDS = 20.0
 # One recording session means one microphone, one room and one mood; scores
 # hold up there and drop on the next meeting.
 MIN_HEALTHY_PROJECT_COUNT = 2
+# How thin a person's win over their nearest other person may get before it
+# is worth naming. Deliberately a *margin* and not an absolute score: what
+# decides a name is which candidate ranks first, so two people at 0.82 who
+# each score 0.95 as themselves are separable and must stay silent, while two
+# at 0.40 separated by 0.01 are one noisy capture from swapping. Wider than
+# the 0.02 the threshold suggester keeps clear of the worst impostor, because
+# this advisory has to fire *before* the order reverses, not as it does.
+CONFUSABLE_WARNING_MARGIN = 0.05
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,14 +356,13 @@ def _issues(
     """Build the prioritized issue list."""
     issues: list[LibraryIssue] = []
     issues.extend(_threshold_issues(calibration))
+    issues.extend(_confusable_issues(calibration))
     for person in people:
         issues.extend(_person_issues(person))
         issues.extend(
             _overlap_issues(person, overlapped.get(person.speaker_public_id, 0))
         )
-        issues.extend(
-            _orphan_issues(person, orphaned.get(person.speaker_public_id, 0))
-        )
+        issues.extend(_orphan_issues(person, orphaned.get(person.speaker_public_id, 0)))
     return tuple(sorted(issues, key=_issue_sort_key))
 
 
@@ -637,6 +648,192 @@ def _person_issues(person: PersonHealth) -> list[LibraryIssue]:
     return issues
 
 
+def _confusable_issues(
+    calibration: VoiceprintCalibrationReport | None,
+) -> list[LibraryIssue]:
+    """Report people whose samples come too close to another person.
+
+    This is the per-pair reading of the same evidence ``threshold-too-low``
+    summarizes library-wide, and the two are deliberately both raised: they
+    offer different remedies for one fact. Moving the threshold trades these
+    wrong accepts for wrong rejects everywhere; fixing the two people named
+    here costs nothing elsewhere.
+
+    Neither the availability facts nor ``voiceprint quality`` can see this.
+    Both people can have plenty of embedded samples, and each cluster can be
+    perfectly self-consistent, precisely while they are consistent with each
+    other -- consistency is measured against a person's own centroid, so being
+    close to someone else's is invisible from inside.
+
+    What is *not* reported is a merely high score against another centroid.
+    Matching ranks candidates and applies the threshold to the winner, so
+    someone who scores 0.82 as their neighbour while scoring 0.95 as
+    themselves is named correctly every time; calling that critical would send
+    the operator off to re-capture perfectly good audio. Only a thin or lost
+    lead counts -- see ``ConfusablePair``.
+    """
+    if calibration is None:
+        return []
+    threshold = calibration.current_threshold
+    return [
+        _confusable_issue(pair, threshold)
+        for pair in calibration.neighbors
+        if pair.crossing_count > 0
+        or pair.outranked_count > 0
+        or (pair.min_lead is not None and pair.min_lead < CONFUSABLE_WARNING_MARGIN)
+    ]
+
+
+def _acceptance_phrase(reason: str | None, threshold: float) -> str:
+    """Say which rule attached the name, since they are not interchangeable.
+
+    ``_acceptance_decision`` has two ways to say yes, and only one of them is
+    about the bar. A winner that stays under the threshold but runs away from
+    the runner-up is accepted all the same, and describing that as clearing
+    the threshold tells the operator something that did not happen -- they
+    would then raise the threshold and watch the wrong name survive it.
+    """
+    if reason == "strong-margin":
+        return (
+            f"it stays under {threshold:.2f}, but leads the runner-up by enough "
+            "that the strong-margin rule accepts it anyway"
+        )
+    if reason == "mixed":
+        return (
+            f"some clear the {threshold:.2f} bar, the rest stay under it and are "
+            "accepted by the strong-margin rule for leading the runner-up"
+        )
+    return f"it clears the {threshold:.2f} bar"
+
+
+def _tie_phrase(pair: ConfusablePair) -> str:
+    """Name the tie case, because its remedy is a different one.
+
+    Winning first place at an identical score is not the other person sounding
+    more like the probe -- it is library name order breaking a draw. Two
+    entries that draw on every sample are almost always one person entered
+    twice, and telling the operator to capture more audio for "both" of them
+    would be advice for a problem they do not have.
+    """
+    if pair.tied_win_count <= 0:
+        return ""
+    if pair.tied_win_count >= pair.crossing_count:
+        return (
+            " Every one of those is an exact draw, decided only by which name "
+            "sorts first -- which is what one person entered into the library "
+            "twice looks like. Check that before capturing anything."
+        )
+    return (
+        f" {pair.tied_win_count} of them are exact draws, decided only by "
+        "which name sorts first rather than by sounding more alike."
+    )
+
+
+def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
+    """Build one issue for a person who risks being taken for someone else."""
+    crossing = pair.crossing_count
+    entire = crossing >= pair.sample_count
+    lead = pair.min_lead if pair.min_lead is not None else 0.0
+    facts: dict[str, float | int | str] = {
+        "name": pair.person_name,
+        "other_name": pair.other_name,
+        "other_public_id": pair.other_public_id,
+        "best_score": round(pair.best_score, 3),
+        "min_lead": round(lead, 3),
+        # Recorded during the replay, not derivable from min_lead: a tie ranks
+        # the rival first at a lead of exactly 0.000.
+        "outranked_count": pair.outranked_count,
+        "tied_win_count": pair.tied_win_count,
+        "threshold": threshold,
+        "crossing_count": crossing,
+        "sample_count": pair.sample_count,
+        # Named, not just counted, so a CLI or API consumer can act on the
+        # rows. The web sample list does not surface sample ids yet, which is
+        # why the offered action stays "capture" rather than pointing at rows
+        # the operator would then have to find by hand.
+        "crossing_sample_public_ids": ",".join(pair.crossing_sample_public_ids),
+        # Which acceptance rule attached the name. A strong-margin acceptance
+        # happens *below* the bar, so a report that says "clears 0.75" about
+        # a 0.707 winner is simply false.
+        "accept_reason": pair.accept_reason or "threshold",
+    }
+    if crossing > 0:
+        return LibraryIssue(
+            kind="confusable-people",
+            severity=SEVERITY_CRITICAL,
+            title=(
+                f"{pair.person_name} has {crossing} of {pair.sample_count} "
+                f"sample(s) the pipeline would name {pair.other_name}"
+            ),
+            detail=(
+                f"For {crossing} of this person's samples, matching ranks "
+                f"{pair.other_name} ahead of the person themselves -- measured "
+                "against their own leave-one-out centroid, so the sample is "
+                "judged as an unseen probe would be -- and attaches that "
+                f"name: {_acceptance_phrase(pair.accept_reason, threshold)}. "
+                "These are wrong names today, not a risk."
+                + _tie_phrase(pair)
+                + (
+                    " That covers every sample they have, so this voiceprint "
+                    "cannot be told apart from the other one at all; capture "
+                    "audio from a meeting where only one of them speaks."
+                    if entire
+                    else " Capture more audio for this person so the centroid "
+                    "moves onto what is distinctive about them, or confirm "
+                    "that these two library entries are not in fact the same "
+                    "person."
+                )
+            ),
+            action="capture",
+            person_public_id=pair.person_public_id,
+            person_name=pair.person_name,
+            context=facts,
+        )
+    # Who ranked first is read from the replay, never inferred from the lead:
+    # on an exact tie the lead is 0.000 while the rival is still ahead, and
+    # falling through to the sentence below would announce that the right name
+    # is winning when it is not.
+    if pair.outranked_count > 0:
+        return LibraryIssue(
+            kind="confusable-people",
+            severity=SEVERITY_WARNING,
+            title=(
+                f"{pair.person_name} ranks behind {pair.other_name} on "
+                f"{pair.outranked_count} of {pair.sample_count} sample(s)"
+            ),
+            detail=(
+                f"On those samples {pair.other_name} is already the pipeline's "
+                "first choice, so the right name is not winning -- it is only "
+                f"that the score falls short of the {threshold:.2f} bar, so the "
+                "sample lands in manual review instead of being given the wrong "
+                "name outright. Lowering the threshold would turn this into a "
+                "wrong name; capturing audio for this person is what fixes it."
+            ),
+            action="capture",
+            person_public_id=pair.person_public_id,
+            person_name=pair.person_name,
+            context=facts,
+        )
+    return LibraryIssue(
+        kind="confusable-people",
+        severity=SEVERITY_WARNING,
+        title=(
+            f"{pair.person_name} beats {pair.other_name} on their own samples "
+            f"by only {lead:.3f}"
+        ),
+        detail=(
+            "The right name still wins, so nothing is mislabelled today, but "
+            "the two centroids are close enough that one noisy capture can "
+            "reverse the order. Adding audio for this person from another "
+            "meeting is what widens the gap."
+        ),
+        action="capture",
+        person_public_id=pair.person_public_id,
+        person_name=pair.person_name,
+        context=facts,
+    )
+
+
 def _threshold_issues(
     calibration: VoiceprintCalibrationReport | None,
 ) -> list[LibraryIssue]:
@@ -761,6 +958,7 @@ __all__ = [
     "AVAILABILITY_FRAGILE",
     "AVAILABILITY_OK",
     "AVAILABILITY_UNUSABLE",
+    "CONFUSABLE_WARNING_MARGIN",
     "LibraryHealthReport",
     "LibraryIssue",
     "PersonHealth",

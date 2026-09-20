@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -13,17 +14,20 @@ from app.speaker_pipeline_params import (
     match_threshold_coupling_kinds,
     resolve_match_threshold,
 )
-from app.voiceprint_calibration import calibrate_voiceprint_thresholds
+from app.voiceprint_calibration import ConfusablePair, calibrate_voiceprint_thresholds
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_library_health import (
     AVAILABILITY_FRAGILE,
     AVAILABILITY_OK,
     AVAILABILITY_UNUSABLE,
+    CONFUSABLE_WARNING_MARGIN,
     SEVERITY_CRITICAL,
     SEVERITY_INFO,
     SEVERITY_WARNING,
+    _confusable_issue,
     analyze_library_health,
 )
+from app.voiceprint_quality import analyze_voiceprint_quality
 from app.voiceprint_store import (
     StoredVoiceprintSample,
     get_voiceprint_db_path,
@@ -281,9 +285,7 @@ def _seed_person(
                 source_end_time_ms=index * 60_000 + duration_ms,
                 clip_begin_time_ms=0,
                 clip_end_time_ms=(
-                    duration_ms
-                    if clip_seconds is None
-                    else int(clip_seconds * 1000)
+                    duration_ms if clip_seconds is None else int(clip_seconds * 1000)
                 ),
                 transcript_text=f"{name} sample {index}",
             )
@@ -669,3 +671,501 @@ def test_orphan_check_is_absent_without_a_projects_directory(tmp_path: Path) -> 
     report = analyze_library_health(store_dir=store_dir)
 
     assert not [item for item in report.issues if item.kind == "orphaned-samples"]
+
+
+def _ray(score: float) -> list[float]:
+    """Return a unit vector whose cosine against ``[1.0, 0.0]`` is ``score``."""
+    return [score, math.sqrt(max(0.0, 1.0 - score * score))]
+
+
+def _arc(degrees: float, norm: float = 1.0) -> list[float]:
+    """Return the vector at ``degrees`` from the x axis, length ``norm``.
+
+    Angles make the competition legible: the cosine between two samples is
+    just the cosine of the angle between them, so a cluster's spread and its
+    distance to a neighbour can be read straight off the numbers. ``norm`` is
+    for the cases that turn on how much a sample pulls its centroid, which
+    stored embeddings do differ in.
+    """
+    radians = math.radians(degrees)
+    return [norm * math.cos(radians), norm * math.sin(radians)]
+
+
+def _person_issue(report, kind: str, name: str):
+    """Return one person's issue of a kind, asserting it exists."""
+    matches = [
+        item for item in report.issues if item.kind == kind and item.person_name == name
+    ]
+    assert matches, (
+        f"issue not raised: {kind} for {name} "
+        f"(got {[(i.kind, i.person_name) for i in report.issues]})"
+    )
+    return matches[0]
+
+
+def test_a_pair_the_pipeline_actually_swaps_is_critical(tmp_path: Path) -> None:
+    """A wrong name is claimed only when the other person wins the ranking.
+
+    Alice's cluster is wide (two samples at -30 degrees, one at +30) and Bob
+    sits tightly in the middle of it. For that outlying +30 sample, Bob's
+    centroid beats Alice's own leave-one-out centroid -- the stand-in for an
+    unseen probe -- and clears the bar, so matching would attach Bob's name.
+
+    Neither existing view sees it: availability is perfect for both, and Bob's
+    cluster is flawlessly self-consistent.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [_arc(-30), _arc(-30), _arc(30)])
+    _seed_person(store_dir, "Bob", [_arc(0)] * 3)
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    issue = _person_issue(report, "confusable-people", "Alice")
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.action == "capture"
+    assert issue.context["other_name"] == "Bob"
+    # Only the outlier: the two samples at -30 tie against their own
+    # leave-one-out centroid, and a tie is not a win.
+    assert issue.context["crossing_count"] == 1
+    assert issue.context["sample_count"] == 3
+    assert "1 of 3" in issue.title
+    # The premise: the per-sample consistency report sees nothing wrong.
+    quality = analyze_voiceprint_quality(store_dir=store_dir)
+    assert quality.people and quality.suspicious_count == 0
+    # Bob still wins his own samples, but by 0.018 -- warned, not blamed.
+    bob = _person_issue(report, "confusable-people", "Bob")
+    assert bob.severity == SEVERITY_WARNING
+    assert bob.context["crossing_count"] == 0
+
+
+def test_similar_but_separable_people_are_not_reported(tmp_path: Path) -> None:
+    """A high score against another centroid is not by itself a wrong match.
+
+    Both clusters are internally identical, so every sample scores 1.0 against
+    its own leave-one-out centroid and 0.82 against the other person's. The
+    absolute 0.82 is far above the 0.75 bar, but matching ranks candidates and
+    accepts the winner, so these probes always land on themselves. Reporting
+    them would send the operator off to re-capture perfectly good audio.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [[1.0, 0.0]] * 3)
+    _seed_person(store_dir, "Alicia", [_ray(0.82)] * 3)
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    assert not [item for item in report.issues if item.kind == "confusable-people"]
+
+
+def test_only_the_person_holding_the_stray_sample_is_flagged(tmp_path: Path) -> None:
+    """A lost lead blames its owner, not the person they drifted onto.
+
+    The evidence is directional on purpose: Alice keeps one sample that Bob
+    wins, while every sample of Bob's is still comfortably his own. A
+    symmetric centroid-distance check would have blamed Bob too and sent the
+    operator to re-capture audio that is not the problem.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [_arc(-40), _arc(-40), _arc(40)])
+    _seed_person(store_dir, "Bob", [_arc(90)] * 3)
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    issue = _person_issue(report, "confusable-people", "Alice")
+    assert issue.context["other_name"] == "Bob"
+    assert issue.context["min_lead"] < 0
+    assert not [
+        item
+        for item in report.issues
+        if item.kind == "confusable-people" and item.person_name == "Bob"
+    ]
+
+
+def test_a_thin_win_warns_before_the_order_reverses(tmp_path: Path) -> None:
+    """Winning by a hair is a warning, so the fix can precede the mistake."""
+    store_dir = tmp_path / "voiceprints"
+    # Alice's outlier beats Bob on its own leave-one-out centroid by 0.030.
+    _seed_person(store_dir, "Alice", [_arc(-22), _arc(-22), _arc(22)])
+    _seed_person(store_dir, "Bob", [_arc(68.4)] * 3)
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    issue = _person_issue(report, "confusable-people", "Alice")
+    assert issue.severity == SEVERITY_WARNING
+    assert issue.context["crossing_count"] == 0
+    assert 0 < issue.context["min_lead"] < CONFUSABLE_WARNING_MARGIN
+    assert "by only" in issue.title
+    # Bob wins his own samples by 0.759 and stays out of the queue.
+    assert not [
+        item
+        for item in report.issues
+        if item.kind == "confusable-people" and item.person_name == "Bob"
+    ]
+    assert json.loads(json.dumps(issue.context)) == issue.context
+
+
+def test_well_separated_people_raise_nothing(tmp_path: Path) -> None:
+    """The check must stay quiet on a library that is actually fine."""
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [[1.0, 0.0]] * 3)
+    _seed_person(store_dir, "Bob", [[0.0, 1.0]] * 3)
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    assert not [item for item in report.issues if item.kind == "confusable-people"]
+
+
+def test_confusable_check_follows_the_configured_threshold(tmp_path: Path) -> None:
+    """Whether a lost lead is a wrong *name* depends on the library's own bar.
+
+    Bob already outranks Alice on her outlying sample, but at 0.64 he falls
+    short of the 0.75 default, so matching leaves it for manual review --
+    a warning, not a wrong name. Configure 0.60 and the very same evidence
+    becomes an automatic wrong name. A check frozen to the module-level
+    constant would keep reporting the library as clean.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [_arc(-50), _arc(-50), _arc(50)])
+    _seed_person(store_dir, "Bob", [_arc(0)] * 3)
+
+    warned = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "Alice"
+    )
+    assert warned.severity == SEVERITY_WARNING
+    assert warned.context["crossing_count"] == 0
+    assert warned.context["min_lead"] < 0
+    assert warned.context["threshold"] == DEFAULT_MATCH_THRESHOLD
+
+    set_config_value("voiceprint.match_threshold", "0.60")
+
+    escalated = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "Alice"
+    )
+    assert escalated.severity == SEVERITY_CRITICAL
+    assert escalated.context["threshold"] == 0.60
+    assert escalated.context["crossing_count"] == 1
+
+
+def test_a_single_sample_person_claims_no_swap(tmp_path: Path) -> None:
+    """Without a leave-one-out centroid the competition cannot be judged.
+
+    One sample is its own centroid, so "does the other person win" has no
+    honest answer. Claiming a wrong name from that would be a guess; the
+    person is still visible through `fragile-cluster`, so nothing goes
+    silently clean.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [_arc(0)])
+    _seed_person(store_dir, "Bob", [_arc(2)] * 3)
+
+    report = analyze_library_health(store_dir=store_dir)
+
+    assert not [
+        item
+        for item in report.issues
+        if item.kind == "confusable-people" and item.person_name == "Alice"
+    ]
+    assert _person_issue(report, "fragile-cluster", "Alice")
+
+
+def test_confusable_pair_survives_the_cli_json_payload(tmp_path: Path) -> None:
+    """`voiceprint health --json` must carry the pair, not just the count."""
+    from typer.testing import CliRunner
+
+    from app.cli import app
+
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "Alice", [_arc(-30), _arc(-30), _arc(30)])
+    _seed_person(store_dir, "Bob", [_arc(0)] * 3)
+
+    result = CliRunner().invoke(
+        app, ["voiceprint", "health", "--store-dir", str(store_dir), "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    pairs = [item for item in payload["issues"] if item["kind"] == "confusable-people"]
+    assert pairs, payload["issues"]
+    assert pairs[0]["context"]["other_name"] in {"Alice", "Bob"}
+
+
+def test_strong_margin_acceptance_counts_as_a_wrong_name(tmp_path: Path) -> None:
+    """A sub-threshold winner that runs away with it is still a wrong name.
+
+    甲's outlier scores 0.707 as 乙 -- below the 0.75 bar -- but 0.0 as itself,
+    so 乙 leads the runner-up by more than STRONG_MARGIN_ACCEPT_MARGIN and
+    `_acceptance_decision` attaches the name anyway. Testing `score >=
+    threshold` alone would report this as "lands in manual review", which is
+    the opposite of what happens.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "甲", [_arc(-45), _arc(-45), _arc(45)])
+    _seed_person(store_dir, "乙", [_arc(0)] * 3)
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "甲"
+    )
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["crossing_count"] == 1
+    # The winning score is *under* the acceptance threshold: only the
+    # strong-margin rule makes this a wrong name.
+    assert issue.context["best_score"] < DEFAULT_MATCH_THRESHOLD
+    assert issue.context["best_score"] == pytest.approx(0.707, abs=1e-3)
+
+
+def test_a_project_centroid_can_be_what_takes_the_name(tmp_path: Path) -> None:
+    """Candidates are scored the way production scores them, per project.
+
+    乙 recorded in two very different sessions, so their whole-person centroid
+    sits between the two and scores 甲's outlier only 0.34. Production does
+    not use that number: `_score_known_vector` takes the best of the
+    whole-person centroid and each stable per-project centroid, and 乙's first
+    session sits almost exactly on the outlier. Scoring whole-person centroids
+    only would report a warning here and miss the wrong name entirely.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "甲", [_arc(-55), _arc(-55), _arc(55)])
+    _seed_person(
+        store_dir,
+        "乙",
+        [_arc(50), _arc(50), _arc(200), _arc(200)],
+        projects=("p1", "p1", "p2", "p2"),
+    )
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "甲"
+    )
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["other_name"] == "乙"
+    assert issue.context["crossing_count"] == 1
+    # ~0.996 from the p1 centroid, not the ~0.34 the whole-person centroid
+    # would have produced.
+    assert issue.context["best_score"] > 0.9
+
+
+def test_only_the_winning_candidate_is_blamed(tmp_path: Path) -> None:
+    """Beating the owner is not enough -- the name attached is the top one.
+
+    甲's outlier is outscored by both 乙 and 丙, and both clear the threshold,
+    but production names it 丙. Recording every candidate that beats the owner
+    would let the report claim 乙's name is being attached when it never is.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "甲", [_arc(-45), _arc(-45), _arc(45)])
+    _seed_person(store_dir, "乙", [_arc(20)] * 3)
+    _seed_person(store_dir, "丙", [_arc(35)] * 3)
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "甲"
+    )
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["crossing_count"] == 1
+    assert issue.context["other_name"] == "丙"
+
+
+def test_a_tie_keeps_the_name_when_its_owner_sorts_first(tmp_path: Path) -> None:
+    """An exact tie is not a coin flip -- it is decided, and decided the same way.
+
+    Two of AAA's samples score their own leave-one-out centroid and ZZZ's
+    centroid identically. `_ranked_matches` sorts stably over the order
+    `list_voiceprint_embeddings` returns, which is `ORDER BY speakers.name`,
+    so AAA comes first and keeps the name. Only the genuine outlier crosses.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "AAA", [_arc(-30), _arc(-30), _arc(30)])
+    _seed_person(store_dir, "ZZZ", [_arc(0)] * 3)
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "AAA"
+    )
+
+    # Only the outlier, whose 0.866 genuinely beats its own 0.500.
+    assert issue.context["crossing_count"] == 1
+
+
+def test_a_tie_is_a_wrong_name_when_the_rival_sorts_first(tmp_path: Path) -> None:
+    """The same tie, the other way round, is a real mislabel and must be said.
+
+    Identical geometry to the test above with the names swapped, so AAA now
+    sorts ahead of the owner and takes every tied sample. Production would
+    attach AAA's name to all three; reporting only the outlier -- or treating
+    a tie as the owner's win on principle -- would hide two real mislabels.
+    This is the case duplicate library entries produce.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "ZZZ", [_arc(-30), _arc(-30), _arc(30)])
+    _seed_person(store_dir, "AAA", [_arc(0)] * 3)
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "ZZZ"
+    )
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["crossing_count"] == 3
+    assert issue.context["other_name"] == "AAA"
+
+
+def test_centroids_weight_samples_by_their_stored_norm(tmp_path: Path) -> None:
+    """Averaging must happen on raw vectors, the way matching does it.
+
+    Embeddings are stored exactly as the model produced them and their norms
+    genuinely differ -- 1.48x between the smallest and largest on the
+    reference library -- so a longer vector pulls the centroid further.
+    `_known_speaker_vectors` averages raw and normalizes the result; scaling
+    each sample to unit length first re-weights the average and can aim the
+    centroid somewhere production never puts it.
+
+    BBB is built to make that gap visible: one sample of norm 10 at 0 degrees
+    and one of norm 1 at 80 degrees. Averaged raw, the centroid lands at 5.5
+    degrees; averaged after normalizing, at 40 degrees. AAA's first sample
+    (own score 0.900) is taken by BBB at 0.995 under the real weighting and
+    keeps its own name at 0.766 under the wrong one.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "AAA", [_arc(0), _arc(25.8)])
+    _seed_person(store_dir, "BBB", [_arc(0, norm=10.0), _arc(80)])
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "AAA"
+    )
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["other_name"] == "BBB"
+    # Both samples, not just the one BBB wins either way.
+    assert issue.context["crossing_count"] == 2
+    # 0.995 comes from the raw-weighted centroid; pre-normalizing would cap
+    # the best score at 0.969.
+    assert issue.context["best_score"] == pytest.approx(0.995, abs=1e-3)
+
+
+def test_a_tie_below_the_bar_still_says_the_rival_ranks_first() -> None:
+    """A tie leaves the lead at 0.000 while the rival is nonetheless ahead.
+
+    Duplicate library entries produce exactly equal scores, and the stable
+    production ordering then puts whichever name sorts first in front. When
+    that tied score is under the acceptance cutoff nothing is attached, so
+    there is no crossing -- but the owner is not winning either. Reading the
+    winner off ``min_lead`` would see 0.000 and announce that the right name
+    still wins, which is the one thing that is not true here.
+
+    Built directly rather than through a store: an exact float tie needs
+    bit-identical centroids, and seeding two people to collide that precisely
+    would test the arithmetic of the fixture rather than this branch.
+    """
+    pair = ConfusablePair(
+        person_public_id="vpp-owner",
+        person_name="ZZZ",
+        other_public_id="vpp-rival",
+        other_name="AAA",
+        best_score=0.42,
+        min_lead=0.0,
+        crossing_sample_public_ids=(),
+        sample_count=3,
+        outranked_count=2,
+    )
+
+    issue = _confusable_issue(pair, DEFAULT_MATCH_THRESHOLD)
+
+    assert issue.severity == SEVERITY_WARNING
+    assert issue.context["crossing_count"] == 0
+    assert issue.context["outranked_count"] == 2
+    assert "ranks behind" in issue.title
+    assert "the right name is not winning" in issue.detail
+    # The fallback wording must not be the one that fires here.
+    assert "still wins" not in issue.detail
+
+
+def test_a_tie_that_is_accepted_is_not_called_a_higher_score() -> None:
+    """Winning a draw on name order is a different fault from scoring higher.
+
+    Two entries that draw on every sample are almost always one person
+    entered twice; telling the operator to go capture more audio for "both of
+    them" would be advice for a problem they do not have.
+    """
+    pair = ConfusablePair(
+        person_public_id="vpp-owner",
+        person_name="ZZZ",
+        other_public_id="vpp-rival",
+        other_name="AAA",
+        best_score=0.93,
+        min_lead=0.0,
+        crossing_sample_public_ids=("vps-1", "vps-2"),
+        sample_count=2,
+        outranked_count=2,
+        tied_win_count=2,
+        accept_reasons=("threshold",),
+    )
+
+    issue = _confusable_issue(pair, DEFAULT_MATCH_THRESHOLD)
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert "scores higher" not in issue.detail
+    assert "ranks AAA ahead" in issue.detail
+    assert "exact draw" in issue.detail
+    assert "entered into the library twice" in issue.detail
+
+
+def test_a_score_win_is_not_described_as_a_draw() -> None:
+    """The draw wording must stay off a crossing that was won on score."""
+    pair = ConfusablePair(
+        person_public_id="vpp-owner",
+        person_name="ZZZ",
+        other_public_id="vpp-rival",
+        other_name="AAA",
+        best_score=0.93,
+        min_lead=-0.2,
+        crossing_sample_public_ids=("vps-1",),
+        sample_count=3,
+        outranked_count=1,
+        tied_win_count=0,
+        accept_reasons=("threshold",),
+    )
+
+    issue = _confusable_issue(pair, DEFAULT_MATCH_THRESHOLD)
+
+    assert "draw" not in issue.detail
+    assert "ranks AAA ahead" in issue.detail
+
+
+def test_a_genuine_narrow_win_still_reads_as_a_win() -> None:
+    """The fallback stays reachable: nobody outranked, so the owner does win."""
+    pair = ConfusablePair(
+        person_public_id="vpp-owner",
+        person_name="ZZZ",
+        other_public_id="vpp-rival",
+        other_name="AAA",
+        best_score=0.42,
+        min_lead=0.02,
+        crossing_sample_public_ids=(),
+        sample_count=3,
+        outranked_count=0,
+    )
+
+    issue = _confusable_issue(pair, DEFAULT_MATCH_THRESHOLD)
+
+    assert issue.severity == SEVERITY_WARNING
+    assert "beats" in issue.title
+    assert "The right name still wins" in issue.detail
+
+
+def test_strong_margin_acceptance_is_not_described_as_clearing_the_bar(
+    tmp_path: Path,
+) -> None:
+    """Saying a 0.707 winner "clears 0.75" would send the operator the wrong way.
+
+    They would raise the threshold and watch the wrong name survive it,
+    because the strong-margin rule -- not the bar -- is what attached it.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "甲", [_arc(-45), _arc(-45), _arc(45)])
+    _seed_person(store_dir, "乙", [_arc(0)] * 3)
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "甲"
+    )
+
+    assert issue.context["accept_reason"] == "strong-margin"
+    assert "strong-margin" in issue.detail
+    assert f"clears the {DEFAULT_MATCH_THRESHOLD:.2f} bar" not in issue.detail

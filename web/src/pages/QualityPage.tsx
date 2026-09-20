@@ -159,6 +159,81 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
           "全部匹配样本来自同一个项目,声纹里同时编码了那个房间、那只麦克风和当时的状态。从另一场会议补几条样本可以提升泛化能力。",
         ),
       };
+    case "confusable-people": {
+      // Three states, same kind: the wrong name is already being attached,
+      // the wrong name already ranks first but falls short of the bar, or the
+      // right name still wins but only just. The backend picked the severity
+      // from the same numbers, so the wording follows its split exactly.
+      const other = String(c.other_name ?? "");
+      const bar = num(c, "threshold");
+      const lead = num(c, "min_lead");
+      const crossing = num(c, "crossing_count");
+      const total = num(c, "sample_count");
+      if (crossing > 0) {
+        const entire = crossing >= total;
+        // Which rule attached the name matters: a strong-margin acceptance
+        // happens *below* the bar, and telling the user it cleared the bar
+        // would send them off to raise the threshold and watch the wrong
+        // name survive it.
+        const why =
+          c.accept_reason === "strong-margin"
+            ? `虽然没到 ${bar.toFixed(2)},但甩开第二名足够多,强边距规则照样接受`
+            : c.accept_reason === "mixed"
+              ? `其中一些越过了 ${bar.toFixed(2)},其余没到线但因为甩开第二名足够多而被强边距规则接受`
+              : `而且越过了 ${bar.toFixed(2)}`;
+        // Winning at an identical score is name order breaking a draw, not
+        // the other person sounding more alike -- and a draw on every sample
+        // is usually one person entered into the library twice, which is a
+        // different fix from "go capture more audio".
+        const tied = num(c, "tied_win_count");
+        const tie =
+          tied <= 0
+            ? ""
+            : tied >= crossing
+              ? "而且这些全都是完全同分,先后只由名字序决定——这正是同一个人在库里被录了两遍的样子,先确认这一点再去采集。"
+              : `其中 ${tied} 条是完全同分,先后只由名字序决定,并不是对方更像。`;
+        return {
+          title: tr(
+            issue.title,
+            `${name} 有 ${crossing}/${total} 条样本会被管线判成 ${other}`,
+          ),
+          detail: tr(
+            issue.detail,
+            `这个人有 ${crossing} 条样本,管线把 ${other} 排在他自己前面——比的是他自己的留一质心,也就是按「没见过的探针」来判——${why},足以自动挂上名字。这不是风险,是此刻就在挂错的名字。` +
+              tie +
+              (entire
+                ? "而这是他全部的样本,也就是说这份声纹跟对方根本分不开;去一场只有其中一个人说话的会议重新采集。"
+                : "给这个人多采一些音频,让质心落到真正能把他和对方区分开的地方;或者确认这两个库条目其实是同一个人。"),
+          ),
+        };
+      }
+      // Who ranked first comes from the backend's replay, not from the sign
+      // of the lead: an exact tie ranks the rival first at a lead of 0.000,
+      // and the branch below would then claim the right name is winning.
+      const outranked = num(c, "outranked_count");
+      if (outranked > 0) {
+        return {
+          title: tr(
+            issue.title,
+            `${name} 有 ${outranked}/${total} 条样本排在 ${other} 后面`,
+          ),
+          detail: tr(
+            issue.detail,
+            `这些样本上 ${other} 已经是管线的首选,也就是说对的名字并没有赢——只是分数还没够到 ${bar.toFixed(2)} 这条线,所以落进人工复核而不是被直接挂上错名。此时把阈值调低就会变成挂错名字;真正的修法是给这个人补采音频。`,
+          ),
+        };
+      }
+      return {
+        title: tr(
+          issue.title,
+          `${name} 在自己的样本上只比 ${other} 高 ${lead.toFixed(3)}`,
+        ),
+        detail: tr(
+          issue.detail,
+          "对的名字目前还是赢的,所以此刻没有挂错,但两个质心已经近到一条噪声大的采集就能把顺序翻过来。给这个人从另一场会议补音频,才能把差距拉开。",
+        ),
+      };
+    }
     case "threshold-too-low":
       return {
         title: tr(

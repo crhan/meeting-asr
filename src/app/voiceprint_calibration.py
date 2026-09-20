@@ -19,9 +19,17 @@ tuned automatically — the numbers are evidence for a human deciding whether
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.speaker_matching import (
+    _KnownProjectVector,
+    _KnownSpeakerVector,
+    _acceptance_decision,
+    _ranked_matches,
+    _score_known_vector,
+)
 from app.speaker_pipeline_params import resolve_match_threshold
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_store import get_voiceprint_db_path, list_voiceprint_embeddings
@@ -85,6 +93,88 @@ class ThresholdCost:
 
 
 @dataclass(frozen=True, slots=True)
+class ConfusablePair:
+    """How close one person sits to the single other person they risk.
+
+    The impostor sweep already scores every sample against every other
+    person's centroid, then keeps only the maximum -- throwing away *whose*
+    centroid it was. That discarded identity is the actionable half: a library
+    told "3 wrong-person scores clear the threshold" can only answer by moving
+    the threshold, whereas "3 of A's samples are accepted as B" points at two
+    specific people whose audio can be fixed instead.
+
+    Direction matters, so the pair is deliberately not symmetric: a stray
+    sample of A may sit on B's centroid while every sample of B stays far from
+    A's. The remedy then belongs to A alone.
+
+    A high score against another centroid is *not* by itself a wrong match.
+    Matching ranks every candidate and applies the acceptance rule to the
+    winner, so a sample scoring 0.82 as B while scoring 0.95 as itself is
+    still named correctly. The pair therefore carries the **competition**, and
+    that competition is replayed through the production decision path rather
+    than re-derived: the same project-aware candidate scoring, the same
+    ranking, and the same acceptance rule -- which also attaches a
+    sub-threshold winner that runs away from the runner-up. See
+    :func:`_confusable_pairs`.
+
+    Unlike the genuine/impostor distributions, which stay a deliberately
+    simple threshold-rule model over whole-person centroids, this is meant to
+    predict the decision itself. The two therefore need not agree, and
+    ``threshold-too-low`` counting more wrong-person scores than there are
+    crossings here is expected.
+    """
+
+    person_public_id: str
+    person_name: str
+    other_public_id: str
+    other_name: str
+    # Best score any of this person's samples reaches against the other, as
+    # matching would score them -- so possibly from one of the other's
+    # per-project centroids rather than their whole-person centroid.
+    best_score: float
+    # Thinnest win over this other person across the samples: own score minus
+    # theirs, both from the production scorer. Negative means the other person
+    # already ranks first for that sample. None when the person has too few
+    # samples to stand in for an unseen probe, in which case the competition
+    # cannot be judged and no crossing is claimed.
+    min_lead: float | None
+    # Of this person's samples, those this other person actually wins and is
+    # accepted on -- an automatic wrong name today.
+    crossing_sample_public_ids: tuple[str, ...]
+    sample_count: int
+    # How many of this person's samples this other person ranked first on,
+    # accepted or not. Recorded during the replay rather than deduced from
+    # ``min_lead``: an exact tie leaves the lead at 0.0 while the rival is
+    # still ahead, so the numbers alone cannot say who came first.
+    outranked_count: int = 0
+    # Of the crossings, how many the other person won at an *identical*
+    # score, where first place is settled by library name order rather than
+    # by sounding more like the probe. Duplicate entries for one person
+    # produce exactly this, and calling it "scores higher" would describe a
+    # different problem than the one to fix.
+    tied_win_count: int = 0
+    # Why matching accepted those winners, straight from
+    # ``_acceptance_decision``: "threshold", "strong-margin", or both. The
+    # report has to say which, because a strong-margin acceptance happens
+    # *below* the bar and describing it as clearing the bar is simply untrue.
+    accept_reasons: tuple[str, ...] = ()
+
+    @property
+    def crossing_count(self) -> int:
+        """Return how many of this person's samples the other person takes."""
+        return len(self.crossing_sample_public_ids)
+
+    @property
+    def accept_reason(self) -> str | None:
+        """Return "threshold", "strong-margin", "mixed", or None."""
+        if not self.accept_reasons:
+            return None
+        if len(self.accept_reasons) > 1:
+            return "mixed"
+        return self.accept_reasons[0]
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceprintCalibrationReport:
     """Calibration evidence computed from the voiceprint store."""
 
@@ -107,6 +197,9 @@ class VoiceprintCalibrationReport:
     # | "overlap" | "none") so a localized UI can restate it in its own words.
     suggested_kind: str = "none"
     low_confidence: bool = False
+    # Per person, the one other person their samples come closest to, most
+    # dangerous first. Empty when fewer than two people have embeddings.
+    neighbors: tuple[ConfusablePair, ...] = ()
 
     @property
     def current_cost(self) -> ThresholdCost | None:
@@ -178,6 +271,23 @@ class VoiceprintCalibrationReport:
             "low_confidence": self.low_confidence,
             "current_cost": current.to_dict() if current else None,
             "suggested_cost": suggested.to_dict() if suggested else None,
+            "neighbors": [
+                {
+                    "person_public_id": pair.person_public_id,
+                    "person_name": pair.person_name,
+                    "other_public_id": pair.other_public_id,
+                    "other_name": pair.other_name,
+                    "best_score": pair.best_score,
+                    "min_lead": pair.min_lead,
+                    "outranked_count": pair.outranked_count,
+                    "tied_win_count": pair.tied_win_count,
+                    "accept_reason": pair.accept_reason,
+                    "crossing_count": pair.crossing_count,
+                    "crossing_sample_public_ids": list(pair.crossing_sample_public_ids),
+                    "sample_count": pair.sample_count,
+                }
+                for pair in self.neighbors
+            ],
         }
 
 
@@ -203,13 +313,16 @@ def calibrate_voiceprint_thresholds(
     )
     db_path = get_voiceprint_db_path(store_dir)
     rows = list_voiceprint_embeddings(resolved_model, db_path)
-    vectors_by_person: dict[int, list[list[float]]] = {}
-    names_by_person: dict[int, str] = {}
-    for row in rows:
-        vectors_by_person.setdefault(row.speaker_id, []).append(
-            _normalize(row.vector)
-        )
-        names_by_person[row.speaker_id] = row.speaker_name
+    people = _library_people(rows)
+    # The genuine/impostor sweep works on unit samples, as it always has: it
+    # is a distribution over sample-to-centroid cosines, not a replay of a
+    # decision, and re-weighting it by vector norm would move the suggested
+    # threshold for reasons that have nothing to do with this change.
+    vectors_by_person = {
+        person.person_id: [_normalize(vector) for vector in person.vectors]
+        for person in people.values()
+    }
+    names_by_person = {person.person_id: person.name for person in people.values()}
     warnings: list[str] = []
     genuine_scores: list[float] = []
     impostor_scores: list[float] = []
@@ -217,6 +330,10 @@ def calibrate_voiceprint_thresholds(
         person_id: _normalize(_mean(vectors))
         for person_id, vectors in vectors_by_person.items()
     }
+    # Resolved once and reused for the report: two reads of the configured
+    # threshold could disagree, which would price the sweep against one value
+    # while reporting another.
+    threshold = resolve_match_threshold()
     scored_people = 0
     for person_id, vectors in vectors_by_person.items():
         other_centroids = [
@@ -262,7 +379,7 @@ def calibrate_voiceprint_thresholds(
         eer_threshold=eer_threshold,
         eer_rate=eer_rate,
         low_impostor_threshold=_low_impostor_threshold(impostor_scores),
-        current_threshold=resolve_match_threshold(),
+        current_threshold=threshold,
         warnings=tuple(warnings),
         genuine_scores=_exported_scores(genuine_scores),
         impostor_scores=_exported_scores(impostor_scores),
@@ -270,6 +387,267 @@ def calibrate_voiceprint_thresholds(
         suggested_reason=reason,
         suggested_kind=suggested_kind,
         low_confidence=low_confidence,
+        neighbors=_confusable_pairs(people, threshold),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _LibraryPerson:
+    """One person's embedded samples, kept with the facts matching needs."""
+
+    person_id: int
+    name: str
+    public_id: str
+    vectors: list[list[float]]
+    sample_public_ids: list[str]
+    project_ids: list[str]
+
+
+def _library_people(rows: list) -> dict[int, _LibraryPerson]:
+    """
+    Group embedding rows into per-person sample sets, vectors kept raw.
+
+    Raw on purpose: embeddings are stored exactly as the model produced them,
+    and their norms genuinely differ (1.48x between the smallest and largest
+    on the reference library). ``_known_speaker_vectors`` averages those raw
+    vectors and normalizes only the resulting centroid, so a longer vector
+    pulls the centroid further -- pre-normalizing each sample would silently
+    re-weight the average and can point the centroid somewhere production
+    never puts it. Callers that want unit vectors normalize at the stage
+    production normalizes.
+    """
+    people: dict[int, _LibraryPerson] = {}
+    for row in rows:
+        person = people.get(row.speaker_id)
+        if person is None:
+            person = _LibraryPerson(
+                person_id=row.speaker_id,
+                name=row.speaker_name,
+                public_id=row.speaker_public_id,
+                vectors=[],
+                sample_public_ids=[],
+                project_ids=[],
+            )
+            people[row.speaker_id] = person
+        person.vectors.append(list(row.vector))
+        person.sample_public_ids.append(row.sample_public_id)
+        person.project_ids.append(row.project_id)
+    return people
+
+
+def _known_speaker_vector(
+    person: _LibraryPerson, *, exclude: int | None = None
+) -> _KnownSpeakerVector | None:
+    """
+    Build the candidate data matching would hold for this person.
+
+    Mirrors ``_known_speaker_vectors``: a whole-person centroid plus one
+    centroid per source project, because ``_score_known_vector`` scores a
+    probe against the best of them. Rebuilding only the whole-person centroid
+    would score a probe against something production never uses on its own.
+
+    Args:
+        person: The person's embedded samples.
+        exclude: Index of a sample to leave out, so it can play an unseen
+            probe against the library the rest of it forms.
+
+    Returns:
+        Candidate data, or None when nothing is left to build it from.
+    """
+    kept = [index for index in range(len(person.vectors)) if index != exclude]
+    if not kept:
+        return None
+    by_project: dict[str, list[list[float]]] = defaultdict(list)
+    for index in kept:
+        by_project[person.project_ids[index]].append(person.vectors[index])
+    return _KnownSpeakerVector(
+        person.person_id,
+        person.name,
+        _normalize(_mean([person.vectors[index] for index in kept])),
+        person.public_id,
+        tuple(
+            _KnownProjectVector(project_id, _normalize(_mean(vectors)), len(vectors))
+            for project_id, vectors in sorted(by_project.items())
+        ),
+        len(kept),
+        len(by_project),
+    )
+
+
+def _confusable_pairs(
+    people: dict[int, _LibraryPerson], threshold: float
+) -> tuple[ConfusablePair, ...]:
+    """
+    Replay matching on each sample and report who it would be named.
+
+    Every sample is run through the *production* decision path rather than a
+    re-derived approximation of it: ``_ranked_matches`` over the same
+    project-aware candidate data, then ``_acceptance_decision`` on the winner
+    -- which also accepts a sub-threshold winner that leads the runner-up by
+    ``STRONG_MARGIN_ACCEPT_MARGIN``. Re-deriving any part of that invites the
+    report to claim wrong names matching would not make, and to miss ones it
+    would.
+
+    The sample under test is excluded from its own person's candidate data,
+    which is the same leave-one-out standing-in-for-an-unseen-probe the
+    genuine distribution uses. A person with a single sample has nothing left
+    to stand for them, so their competition is simply not judged.
+
+    Args:
+        people: Embedded samples grouped by person.
+        threshold: Acceptance threshold in force.
+
+    Returns:
+        One pair per person whose samples reach another person at all, most
+        dangerous first.
+    """
+    full = {
+        person_id: _known_speaker_vector(person) for person_id, person in people.items()
+    }
+    # owner -> other -> evidence
+    crossings: dict[int, dict[int, list[str]]] = defaultdict(lambda: defaultdict(list))
+    reasons: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
+    outranked: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    tied_wins: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    leads: dict[int, dict[int, float]] = defaultdict(dict)
+    bests: dict[int, dict[int, float]] = defaultdict(dict)
+    for person_id, person in people.items():
+        for index in range(len(person.vectors)):
+            # Production's probe is `_normalize(_mean_vector(clip vectors))`:
+            # normalized at the probe stage, so the score is a real cosine
+            # comparable to the threshold. One stored sample standing in for
+            # it gets normalized the same way -- and only here, never before
+            # it is averaged into a centroid.
+            probe = _normalize(person.vectors[index])
+            own = _known_speaker_vector(person, exclude=index)
+            if own is None:
+                continue
+            # Candidate order is part of the decision, not a detail: `sorted`
+            # is stable, so an exact tie is settled by the order
+            # `_known_speaker_vectors` hands matching, which is each person's
+            # first appearance in the embedding rows. `people` is built from
+            # the same rows in the same order, so substituting the owner in
+            # place -- rather than appending them -- reproduces which name a
+            # tie actually attaches instead of inventing a different one.
+            known = {
+                other_id: (own if other_id == person_id else candidate)
+                for other_id, candidate in full.items()
+                if candidate is not None
+            }
+            if len(known) < 2:
+                continue
+            candidates = _ranked_matches(probe, known, limit=3)
+            accepted, reason = _acceptance_decision(
+                candidates[0] if candidates else None, tuple(candidates), threshold
+            )
+            own_score, _source = _score_known_vector(probe, own)
+            top_other = next(
+                (item for item in candidates if item.person_id != person_id), None
+            )
+            if top_other is None:
+                continue
+            lead = own_score - top_other.score
+            if lead < leads[person_id].get(top_other.person_id, math.inf):
+                leads[person_id][top_other.person_id] = lead
+            if top_other.score > bests[person_id].get(top_other.person_id, -1.0):
+                bests[person_id][top_other.person_id] = top_other.score
+            winner = candidates[0]
+            # Who came first is recorded, not inferred from the numbers later.
+            # On an exact tie the lead is 0.0 while the rival is nonetheless
+            # ranked ahead, so a reader deducing the winner from the lead
+            # would announce that the right name is still winning when it is
+            # not -- it merely was not accepted.
+            if winner.person_id != person_id:
+                outranked[person_id][winner.person_id] += 1
+            # Only the candidate that actually wins is blamed. A third person
+            # outscoring the owner does not make *this* other the name that
+            # would be attached.
+            if accepted and winner.person_id != person_id:
+                crossings[person_id][winner.person_id].append(
+                    person.sample_public_ids[index]
+                )
+                reasons[person_id][winner.person_id].add(reason or "threshold")
+                if winner.score == own_score:
+                    tied_wins[person_id][winner.person_id] += 1
+                if winner.score > bests[person_id].get(winner.person_id, -1.0):
+                    bests[person_id][winner.person_id] = winner.score
+                leads[person_id].setdefault(winner.person_id, own_score - winner.score)
+    pairs = [
+        pair
+        for person_id, person in people.items()
+        if (
+            pair := _riskiest_pair(
+                person,
+                people,
+                crossings.get(person_id, {}),
+                reasons.get(person_id, {}),
+                outranked.get(person_id, {}),
+                tied_wins.get(person_id, {}),
+                leads.get(person_id, {}),
+                bests.get(person_id, {}),
+            )
+        )
+        is not None
+    ]
+    return tuple(
+        sorted(
+            pairs,
+            key=lambda item: (
+                -item.crossing_count,
+                item.min_lead if item.min_lead is not None else math.inf,
+                -item.best_score,
+                item.person_name.casefold(),
+            ),
+        )
+    )
+
+
+def _riskiest_pair(
+    person: _LibraryPerson,
+    people: dict[int, _LibraryPerson],
+    crossings: dict[int, list[str]],
+    reasons: dict[int, set[str]],
+    outranked: dict[int, int],
+    tied_wins: dict[int, int],
+    leads: dict[int, float],
+    bests: dict[int, float],
+) -> ConfusablePair | None:
+    """
+    Pick the one other person this person is most at risk from.
+
+    Ranking is by danger, not by similarity: someone who already takes the
+    name beats someone merely scored well against, and a thin win beats a
+    comfortable one. Only the top pair is kept, because the remedy -- fix this
+    person's audio -- is the same whoever else is nearby.
+    """
+    if not bests:
+        return None
+    # A fixed walk order with strict displacement keeps an exact tie resolving
+    # to the same person on every run, rather than to whichever row the store
+    # happened to return first.
+    ordered = sorted(bests, key=lambda other: (people[other].name.casefold(), other))
+    best_other = max(
+        ordered,
+        key=lambda other: (
+            len(crossings.get(other, ())),
+            outranked.get(other, 0),
+            -leads.get(other, math.inf),
+            bests[other],
+        ),
+    )
+    other = people[best_other]
+    return ConfusablePair(
+        person_public_id=person.public_id,
+        person_name=person.name,
+        other_public_id=other.public_id,
+        other_name=other.name,
+        best_score=bests[best_other],
+        min_lead=leads.get(best_other),
+        crossing_sample_public_ids=tuple(crossings.get(best_other, ())),
+        sample_count=len(person.vectors),
+        outranked_count=outranked.get(best_other, 0),
+        tied_win_count=tied_wins.get(best_other, 0),
+        accept_reasons=tuple(sorted(reasons.get(best_other, set()))),
     )
 
 
@@ -457,6 +835,7 @@ def _cosine(left: list[float], right: list[float]) -> float:
 
 
 __all__ = [
+    "ConfusablePair",
     "ScoreDistribution",
     "ThresholdCost",
     "VoiceprintCalibrationReport",
