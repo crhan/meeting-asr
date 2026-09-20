@@ -435,9 +435,7 @@ def _proposal_option(view: ProjectShowView, state: dict) -> str:
     # Manifests written before the review artifacts left tmp/ recorded
     # "tmp/corrections/proposal_x.json"; resolve through the layout fallback so
     # the suggested command still points at a file that exists.
-    path = resolve_recorded_project_path(
-        view.project_dir, str(value)
-    ).expanduser()
+    path = resolve_recorded_project_path(view.project_dir, str(value)).expanduser()
     return f" --proposal {shlex.quote(str(path))}"
 
 

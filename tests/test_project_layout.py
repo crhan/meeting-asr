@@ -168,16 +168,44 @@ def test_recorded_path_prefers_the_file_that_is_actually_there(tmp_path: Path) -
     assert resolve_recorded_project_path(root, "tmp/corrections/review_a.md") == legacy
 
 
-def test_clean_dry_run_measures_without_deleting(tmp_path: Path) -> None:
-    """The default is a measurement, not a deletion."""
+def test_clean_dry_run_writes_nothing_at_all(tmp_path: Path) -> None:
+    """The default is a measurement: it may not even perform the migration.
+
+    A preview that quietly relocates a few hundred megabytes of paid vectors is
+    not a preview, so the dry run plans the move instead of doing it.
+    """
     root = _legacy_project(tmp_path)
+    before = {
+        path: path.stat().st_mtime_ns
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
 
     summary = clean_project_tmp(root, apply=False)
 
     assert summary.applied is False
+    assert (root / LEGACY_CLIP_EMBEDDING_CACHE_RELATIVE_PATH).exists()
+    assert not (root / CLIP_EMBEDDING_CACHE_RELATIVE_PATH).exists()
+    assert {
+        path: path.stat().st_mtime_ns
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    } == before
+
+
+def test_clean_dry_run_measures_only_the_recomputable_bytes(tmp_path: Path) -> None:
+    """Paid vectors sitting in the old location are not reclaimable disk.
+
+    The legacy caches are still physically under tmp/ during a dry run, so a
+    naive tree walk would advertise them as free space and then fail to deliver.
+    """
+    root = _legacy_project(tmp_path)
+
+    summary = clean_project_tmp(root, apply=False)
+
     assert summary.freed_bytes == 2048
-    assert (root / TMP_DIR_NAME / "speaker_cluster").exists()
     assert [path.name for path in summary.removed] == ["speaker_cluster"]
+    assert (root / TMP_DIR_NAME / "speaker_cluster").exists()
 
 
 def test_clean_removes_only_recomputable_data(tmp_path: Path) -> None:

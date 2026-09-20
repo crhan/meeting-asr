@@ -3625,8 +3625,9 @@ def _echo_project_cleaned(summaries: list[ProjectCleanSummary]) -> None:
     applied = all(summary.applied for summary in summaries)
     for summary in summaries:
         typer.echo(f"Project: {summary.project_dir}")
+        moved = "relocated out of tmp/" if summary.applied else "would relocate"
         for path in summary.relocated:
-            typer.echo(f"  relocated out of tmp/: {_project_relative(summary, path)}")
+            typer.echo(f"  {moved}: {_project_relative(summary, path)}")
         verb = "removed" if summary.applied else "would remove"
         for path in summary.removed:
             typer.echo(f"  {verb}: {_project_relative(summary, path)}")

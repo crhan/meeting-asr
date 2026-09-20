@@ -119,7 +119,9 @@ def correction_review_dir(project_root: Path) -> Path:
     return project_root / CORRECTION_REVIEW_RELATIVE_DIR
 
 
-def migrate_project_layout(project_root: Path) -> LayoutMigration:
+def migrate_project_layout(
+    project_root: Path, *, dry_run: bool = False
+) -> LayoutMigration:
     """
     Move durable artifacts out of ``tmp/`` into their permanent home.
 
@@ -130,9 +132,12 @@ def migrate_project_layout(project_root: Path) -> LayoutMigration:
 
     Args:
         project_root: Project root directory.
+        dry_run: Only report what would move. ``project clean`` uses this so a
+            dry run really writes nothing, instead of quietly relocating a few
+            hundred megabytes while claiming to be a preview.
 
     Returns:
-        Record of what was relocated.
+        Record of what was (or, for a dry run, would be) relocated.
     """
     legacy_root = project_tmp_dir(project_root)
     if not legacy_root.is_dir():
@@ -147,6 +152,7 @@ def migrate_project_layout(project_root: Path) -> LayoutMigration:
             moved=moved,
             merged=merged,
             blocked=blocked,
+            dry_run=dry_run,
         )
     for relative_legacy, relative_target in _LEGACY_DIR_RELOCATIONS:
         _migrate_directory(
@@ -154,8 +160,9 @@ def migrate_project_layout(project_root: Path) -> LayoutMigration:
             project_root / relative_target,
             moved=moved,
             blocked=blocked,
+            dry_run=dry_run,
         )
-    if moved or merged:
+    if (moved or merged) and not dry_run:
         LOGGER.info(
             "Relocated %d durable artifact(s) out of %s",
             len(moved) + len(merged),
@@ -257,7 +264,7 @@ def clean_project_tmp(project_root: Path, *, apply: bool) -> ProjectCleanSummary
         What was, or would be, removed.
     """
     root = project_root.expanduser().resolve()
-    migration = migrate_project_layout(root)
+    migration = migrate_project_layout(root, dry_run=not apply)
     tmp_root = project_tmp_dir(root)
     if not tmp_root.is_dir():
         return ProjectCleanSummary(
@@ -268,23 +275,38 @@ def clean_project_tmp(project_root: Path, *, apply: bool) -> ProjectCleanSummary
             kept=(),
             applied=apply,
         )
-    protected = durable_paths_under_tmp(root)
+    # Durable data still physically under tmp/ falls in two buckets: what a
+    # collision blocked from moving (stays for good, must never be deleted) and,
+    # on a dry run, what --apply would relocate. Neither may be counted as freed
+    # space, or the preview would advertise paid vectors as reclaimable disk.
+    blocked = tuple(migration.blocked)
+    still_durable = durable_paths_under_tmp(root)
+    leaving = tuple(path for path in still_durable if path not in set(blocked))
+    protected = blocked + leaving
     removable: list[Path] = []
     kept: list[Path] = []
     for entry in sorted(tmp_root.iterdir()):
-        if any(item == entry or item.is_relative_to(entry) for item in protected):
+        if any(path == entry or path.is_relative_to(entry) for path in blocked):
             kept.append(entry)
             continue
+        if _is_excluded(entry, leaving) or any(
+            path.is_relative_to(entry) for path in leaving
+        ):
+            if not _holds_content_outside(entry, protected):
+                # Everything in here is on its way to a durable directory, so
+                # the entry disappears with the migration rather than being
+                # deleted. An entry that also holds clips stays removable.
+                continue
         removable.append(entry)
-    freed = sum(_tree_size(entry) for entry in removable)
+    freed = sum(_tree_size(entry, exclude=protected) for entry in removable)
     if apply:
         for entry in removable:
             if entry.is_dir() and not entry.is_symlink():
                 shutil.rmtree(entry, ignore_errors=True)
             else:
                 entry.unlink(missing_ok=True)
-        if not kept and not any(tmp_root.iterdir()):
-            tmp_root.rmdir()
+        if not kept:
+            _rmdir_if_empty(tmp_root)
     return ProjectCleanSummary(
         project_dir=root,
         removed=tuple(removable),
@@ -295,11 +317,28 @@ def clean_project_tmp(project_root: Path, *, apply: bool) -> ProjectCleanSummary
     )
 
 
-def _tree_size(path: Path) -> int:
+def _holds_content_outside(path: Path, exclude: tuple[Path, ...]) -> bool:
+    """Return whether a tree holds anything not covered by ``exclude``."""
+    if path.is_symlink() or path.is_file():
+        return not _is_excluded(path, exclude)
+    return any(
+        (child.is_file() or child.is_symlink()) and not _is_excluded(child, exclude)
+        for child in path.rglob("*")
+    )
+
+
+def _is_excluded(path: Path, exclude: tuple[Path, ...]) -> bool:
+    """Return whether a path sits at or below one of the excluded paths."""
+    return any(path == item or path.is_relative_to(item) for item in exclude)
+
+
+def _tree_size(path: Path, *, exclude: tuple[Path, ...] = ()) -> int:
     """Return the total byte size of a file or directory tree."""
     if path.is_symlink():
         return 0
     if path.is_file():
+        if _is_excluded(path, exclude):
+            return 0
         try:
             return path.stat().st_size
         except OSError:
@@ -307,6 +346,8 @@ def _tree_size(path: Path) -> int:
     total = 0
     for child in path.rglob("*"):
         if child.is_symlink() or not child.is_file():
+            continue
+        if _is_excluded(child, exclude):
             continue
         try:
             total += child.stat().st_size
@@ -322,11 +363,15 @@ def _migrate_cache_file(
     moved: list[Path],
     merged: list[Path],
     blocked: list[Path],
+    dry_run: bool = False,
 ) -> None:
     """Relocate one JSON vector cache, merging when both copies exist."""
     if not legacy.is_file():
         return
     if not target.exists():
+        if dry_run:
+            moved.append(target)
+            return
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             legacy.replace(target)
@@ -340,6 +385,9 @@ def _migrate_cache_file(
     union = _merged_vector_cache(target, legacy)
     if union is None:
         blocked.append(legacy)
+        return
+    if dry_run:
+        merged.append(target)
         return
     target.write_text(
         json.dumps(union, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -388,16 +436,23 @@ def _read_json_object(path: Path) -> dict[str, object] | None:
 
 
 def _migrate_directory(
-    legacy: Path, target: Path, *, moved: list[Path], blocked: list[Path]
+    legacy: Path,
+    target: Path,
+    *,
+    moved: list[Path],
+    blocked: list[Path],
+    dry_run: bool = False,
 ) -> None:
     """Relocate every entry of a legacy directory, never overwriting."""
     if not legacy.is_dir():
         return
     entries = sorted(legacy.iterdir())
     if not entries:
-        legacy.rmdir()
+        if not dry_run:
+            _rmdir_if_empty(legacy)
         return
-    target.mkdir(parents=True, exist_ok=True)
+    if not dry_run:
+        target.mkdir(parents=True, exist_ok=True)
     for entry in entries:
         destination = target / entry.name
         if destination.exists():
@@ -406,6 +461,9 @@ def _migrate_directory(
             )
             blocked.append(entry)
             continue
+        if dry_run:
+            moved.append(destination)
+            continue
         try:
             shutil.move(str(entry), str(destination))
         except OSError:
@@ -413,7 +471,7 @@ def _migrate_directory(
             blocked.append(entry)
             continue
         moved.append(destination)
-    if not any(legacy.iterdir()):
+    if not dry_run and not any(legacy.iterdir()):
         legacy.rmdir()
 
 

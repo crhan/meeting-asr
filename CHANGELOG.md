@@ -5,6 +5,18 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [Unreleased]
+
+### 新增
+
+- **新增 `meeting-asr project clean`,用来回收项目占的磁盘**:默认 dry-run,只报会删什么、能腾出多少;`--apply` 才真删并二次确认,`--yes` 跳过确认,`--all` 覆盖全部项目,`--json` 给机器读。它只动 `tmp/`,而 `tmp/` 现在按定义只放能用 ffmpeg 从 source 重切回来的中间品。
+
+### 变更
+
+- **不可重算的产物全部移出 `tmp/`,`tmp/` 现在整个删掉也只损失可重算的中间品**。此前 `tmp/` 里混着两类性质相反的东西:一类是探针 wav、聚类切片这类删了会自动重建的中间品,另一类是花钱调 embedding 模型买来的向量缓存、LLM 生成的校正提案、以及人手工编辑过的 review 文件。后者放在一个叫 `tmp` 的目录下,结果就是这个目录既不敢删、又只会一直涨(实测一份真实数据目录里 `tmp/` 攒到 8.9G wav + 171M json,其中 145M 是付费向量)。现在向量缓存在 `embeddings/clip_embeddings.json` 与 `embeddings/probe_embeddings.json`,校正 review 与提案在已有语义的 `corrections/` 下(`applied.json`/`asr_hotwords.json` 本来就在那)。判据写进 `src/app/project_layout.py`,它是项目内相对路径的唯一真源。
+- **老项目自动就地迁移,不需要跑任何命令,也不会重新调用 embedding 模型**。任何一次读写缓存或校正产物都会触发 `migrate_project_layout()`:幂等、同盘 rename;两份都存在时按 key 求并集(key 是嵌入参数的哈希,同 key 必同值,合并既不会丢也不会串);遇到重名冲突一律原地保留、绝不覆盖。已经写进 `project.json` 与 proposal JSON 的 `tmp/corrections/...` 相对路径不做改写,读取时由 `resolve_recorded_project_path()` 回落到新位置,所以迁移没有「改到一半崩了」的中间态。
+- **`project git-init` 写的 `.gitignore` 增加 `embeddings/`**:向量此前在被忽略的 `tmp/` 下,不进 git 的行为保持不变;`corrections/` 下的 review 与提案是人工编辑和 LLM 产物,正是可选 Git 跟踪想要的东西,因此不忽略——对已 `git-init` 的项目,这批文件会开始出现在 `git status` 里。
+
 ## [0.21.0] - 2026-09-21
 
 ### 新增

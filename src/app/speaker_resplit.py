@@ -225,7 +225,7 @@ def analyze_project_resplit(
     The analysis itself is pure — it never changes project identity, outputs,
     sentences, speaker maps, or the voiceprint store. It does reuse the shared on-disk
     embedding cache: by default a cache miss extracts probe clips and persists the
-    refreshed ``clip_embeddings.json`` under the project ``tmp/`` (so a subsequent apply
+    refreshed ``embeddings/clip_embeddings.json`` in the project (so a subsequent apply
     is fast). Pass ``read_only=True`` for a preview that must touch nothing in the
     project: the warm cache is still read, but probe-clip extraction and the cache write
     are redirected to a scratch dir that is discarded.
