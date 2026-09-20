@@ -17,6 +17,10 @@
 - **老项目自动就地迁移,不需要跑任何命令,也不会重新调用 embedding 模型**。任何一次读写缓存或校正产物都会触发 `migrate_project_layout()`:幂等、同盘 rename;两份都存在时按 key 求并集(key 是嵌入参数的哈希,同 key 必同值,合并既不会丢也不会串);遇到重名冲突一律原地保留、绝不覆盖。已经写进 `project.json` 与 proposal JSON 的 `tmp/corrections/...` 相对路径不做改写,读取时由 `resolve_recorded_project_path()` 回落到新位置,所以迁移没有「改到一半崩了」的中间态。
 - **`project git-init` 写的 `.gitignore` 增加 `embeddings/`**:向量此前在被忽略的 `tmp/` 下,不进 git 的行为保持不变;`corrections/` 下的 review 与提案是人工编辑和 LLM 产物,正是可选 Git 跟踪想要的东西,因此不忽略——对已 `git-init` 的项目,这批文件会开始出现在 `git status` 里。
 
+### 修复
+
+- **待定声纹复核的回滚快照不再放在系统临时目录,重启不会再把「撤销」弄丢**:一笔待定的 capture 事务持有**运行前声纹库的唯一副本**,`accept`/`rollback` 靠它,进程重启后还要靠目录里的 `transaction.json` 把句柄恢复出来。此前这些快照用 `tempfile.mkdtemp()` 写在系统 `/tmp` 下,于是一次重启(或任何 tmp 清理)就会**静默**销毁它——声纹库里保留着半应用的采集结果,而撤销的那条路没了,全程无任何日志。现在快照落在它所快照的那个库旁边(`<store_dir>/pending-review/`),跟着 `--store-dir` 走,自定义库也自成一体。启动恢复仍会扫一遍旧的系统临时目录,所以升级不会让老版本写下的待定事务失联。
+
 ## [0.21.0] - 2026-09-21
 
 ### 新增

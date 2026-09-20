@@ -83,6 +83,7 @@
 - **迁移是「访问即搬」不是一次性命令**，`migrate_project_layout()` 挂在每个 accessor 上（`read_clip_embedding_cache` / `_probe_cache_path` / `_review_dir`）。它幂等、同盘 rename、**两份都在时按 key 求并集**（key 是嵌入参数哈希，同 key 必同值，合并不会串），**搬不动就原地留着并记成 `blocked`，绝不覆盖**。别改成「要用户手动跑一次迁移」——没跑的那段时间里缓存会被判 miss，等于烧钱。
 - **已经写进 manifest / proposal JSON 的相对路径不会被改写**，靠 `resolve_recorded_project_path()` 读时回落（先试记录的原路径，不存在再试搬迁后的）。代价是这层 legacy 映射要长期留着；收益是迁移不用改任何 JSON，也就没有「改到一半崩了」的中间态。
 - **`project clean` 是这条规则的兑现，不是一个普通的删除命令。** 它先跑迁移再删 `tmp/`，`durable_paths_under_tmp()` 判定还留在 `tmp/` 下的 durable 数据一律跳过并打印 `kept`。默认 dry-run，`--apply` 才删且要确认。**谁要让它直接 `rmtree(tmp)` 省事，就把这个护栏拆了。**
+- **同一条规则也管声纹库那边:待定复核快照不准放系统 `/tmp`。** 一笔待定 capture 事务持有运行前声纹库的**唯一**副本,`_load_persisted()` 还要靠快照目录里的 `transaction.json` 在进程重启后恢复 accept/rollback 句柄——放 `tempfile.gettempdir()` 下,一次重启就静默丢掉一笔可恢复事务,且不留任何日志。现在真源是 `voiceprint_store.get_voiceprint_review_backup_root()`(`<store_dir>/pending-review/`),写入方与清扫方共用 `VOICEPRINT_REVIEW_BACKUP_PREFIX`,**别再在两处各写一份前缀字面量**。`_backup_roots()` 里那条遗留的系统临时目录是升级用的,删掉会让老版本写下的待定事务失联。注意启动恢复只认**默认** store(web server 走的正是这条,`server.py` 恒传 `store_dir=None`);自定义 `--store-dir` 的快照跨进程恢复不了,CLI/TUI 路径在单进程内完成所以不受影响。
 
 ## Worktree / Merge Notes
 

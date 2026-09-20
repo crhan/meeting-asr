@@ -21,7 +21,9 @@ from app.voiceprint_quality import (
     analyze_voiceprint_quality,
 )
 from app.voiceprint_store import (
+    VOICEPRINT_REVIEW_BACKUP_PREFIX,
     get_voiceprint_db_path,
+    get_voiceprint_review_backup_root,
     list_voiceprint_samples,
     update_voiceprint_sample_status,
 )
@@ -539,7 +541,13 @@ def _begin_transaction(
     selected_clip_rel_paths: frozenset[str],
 ) -> VoiceprintReviewTransaction:
     """Create rollback snapshots before mutating the voiceprint store."""
-    backup_dir = Path(tempfile.mkdtemp(prefix="meeting-asr-voiceprint-review-"))
+    # Not tempfile.gettempdir(): this snapshot is the only copy of the pre-run store
+    # while the transaction is pending, and a reboot clearing /tmp used to drop it.
+    backup_root = get_voiceprint_review_backup_root(planned.store_dir)
+    backup_root.mkdir(parents=True, exist_ok=True)
+    backup_dir = Path(
+        tempfile.mkdtemp(prefix=VOICEPRINT_REVIEW_BACKUP_PREFIX, dir=backup_root)
+    )
     project_root = project_dir.expanduser().resolve()
     return VoiceprintReviewTransaction(
         backup_dir=backup_dir,
