@@ -6,7 +6,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.core.project_models import ProjectListItem, ProjectManifest, ProjectPaths
+from app.core.project_models import (
+    ProjectCleanSummary,
+    ProjectListItem,
+    ProjectManifest,
+    ProjectPaths,
+)
 from app.core.project_workflow import (
     load_project_workflow_summary,
     project_workflow_summary,
@@ -47,6 +52,36 @@ def project_list_payload(
         "projects_dir": projects_dir,
         "count": len(projects),
         "projects": [_project_item_payload(project) for project in projects],
+    }
+
+
+def project_clean_payload(summaries: list[ProjectCleanSummary]) -> dict[str, Any]:
+    """
+    Build the JSON payload for ``meeting-asr project clean``.
+
+    Args:
+        summaries: One summary per cleaned project.
+
+    Returns:
+        Stable JSON-ready clean report.
+    """
+    return {
+        "applied": all(summary.applied for summary in summaries),
+        "project_count": len(summaries),
+        "freed_bytes": sum(summary.freed_bytes for summary in summaries),
+        "projects": [_project_clean_payload(summary) for summary in summaries],
+    }
+
+
+def _project_clean_payload(summary: ProjectCleanSummary) -> dict[str, Any]:
+    """Build one project row for the clean payload."""
+    return {
+        "project": summary.project_dir,
+        "applied": summary.applied,
+        "freed_bytes": summary.freed_bytes,
+        "removed": list(summary.removed),
+        "relocated": list(summary.relocated),
+        "kept": list(summary.kept),
     }
 
 

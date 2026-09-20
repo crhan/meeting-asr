@@ -10,6 +10,12 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from app.cli import app
+from app.project_layout import (
+    CLIP_EMBEDDING_CACHE_RELATIVE_PATH,
+    LEGACY_CLIP_EMBEDDING_CACHE_RELATIVE_PATH,
+    LEGACY_PROBE_EMBEDDING_CACHE_RELATIVE_PATH,
+    PROBE_EMBEDDING_CACHE_RELATIVE_PATH,
+)
 from app.project_manager import create_project
 from app.speaker_matching import (
     _KnownProjectVector,
@@ -324,7 +330,86 @@ def test_project_speakers_match_reuses_project_probe_embedding_cache(
     assert second.exit_code == 0
     assert after_first > 0
     assert len(calls) == after_first
-    assert (project_dir / "tmp" / "voiceprint_match" / "probe_embeddings.json").exists()
+    assert (project_dir / "embeddings" / "probe_embeddings.json").exists()
+
+
+def test_project_speakers_match_reuses_pre_migration_embedding_caches(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A project still using the old tmp/ layout must not pay to embed again.
+
+    The caches moved out of ``tmp/`` so the directory could be deleted safely.
+    That is only worth doing if the move itself never costs an embedding call,
+    so this drives a real match run, puts both caches back where an older
+    release wrote them, and asserts the next run embeds nothing.
+    """
+    project_dir = _sample_project(tmp_path)
+    store_dir = tmp_path / "voiceprints"
+    calls: list[Path] = []
+    _write_named_speaker_inputs(project_dir)
+    _patch_audio_embedding(monkeypatch, calls=calls)
+    runner.invoke(
+        app,
+        [
+            "voiceprint",
+            "capture",
+            str(project_dir),
+            "--sample-count",
+            "1",
+            "--store-dir",
+            str(store_dir),
+        ],
+    )
+    runner.invoke(app, ["voiceprint", "embed", "--store-dir", str(store_dir)])
+    warm = runner.invoke(
+        app,
+        [
+            "project",
+            "speakers",
+            "match",
+            str(project_dir),
+            "--store-dir",
+            str(store_dir),
+        ],
+    )
+    after_warm = len(calls)
+
+    for new_relative, legacy_relative in (
+        (
+            PROBE_EMBEDDING_CACHE_RELATIVE_PATH,
+            LEGACY_PROBE_EMBEDDING_CACHE_RELATIVE_PATH,
+        ),
+        (
+            CLIP_EMBEDDING_CACHE_RELATIVE_PATH,
+            LEGACY_CLIP_EMBEDDING_CACHE_RELATIVE_PATH,
+        ),
+    ):
+        new_path = project_dir / new_relative
+        if not new_path.exists():
+            continue
+        legacy_path = project_dir / legacy_relative
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        new_path.replace(legacy_path)
+
+    migrated = runner.invoke(
+        app,
+        [
+            "project",
+            "speakers",
+            "match",
+            str(project_dir),
+            "--store-dir",
+            str(store_dir),
+        ],
+    )
+
+    assert warm.exit_code == 0
+    assert migrated.exit_code == 0
+    assert after_warm > 0
+    assert len(calls) == after_warm
+    assert (project_dir / "embeddings" / "probe_embeddings.json").exists()
+    assert not (project_dir / LEGACY_PROBE_EMBEDDING_CACHE_RELATIVE_PATH).exists()
 
 
 def test_project_speakers_match_prefers_quality_probe_segments(
@@ -392,9 +477,7 @@ def test_ranked_matches_uses_stable_project_centroid() -> None:
             "vpp-0000000000000007",
             (
                 _KnownProjectVector("old", [0.60, 0.80], 3),
-                _KnownProjectVector(
-                    "current", [0.92, math.sqrt(1 - 0.92**2)], 2
-                ),
+                _KnownProjectVector("current", [0.92, math.sqrt(1 - 0.92**2)], 2),
             ),
             5,
             2,

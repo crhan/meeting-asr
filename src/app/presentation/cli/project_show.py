@@ -29,6 +29,11 @@ from app.presentation.cli.speaker_match_table import (
     speaker_match_rows,
 )
 from app.postprocess import speaker_id_to_label
+from app.project_layout import (
+    correction_review_dir,
+    migrate_project_layout,
+    resolve_recorded_project_path,
+)
 from app.speaker_labeling import load_project_ignored_speakers
 from app.speaker_match_status import (
     MATCH_STATUS_CROSSTALK,
@@ -427,9 +432,12 @@ def _proposal_option(view: ProjectShowView, state: dict) -> str:
     value = state.get("proposal_json")
     if not value:
         return ""
-    path = Path(str(value)).expanduser()
-    if not path.is_absolute():
-        path = view.project_dir / path
+    # Manifests written before the review artifacts left tmp/ recorded
+    # "tmp/corrections/proposal_x.json"; resolve through the layout fallback so
+    # the suggested command still points at a file that exists.
+    path = resolve_recorded_project_path(
+        view.project_dir, str(value)
+    ).expanduser()
     return f" --proposal {shlex.quote(str(path))}"
 
 
@@ -443,7 +451,8 @@ def _polish_state(view: ProjectShowView) -> dict | None:
 
 def _latest_polish_proposal_state(project_dir: Path) -> dict | None:
     """Infer pending polish state from old proposal artifacts."""
-    proposal_dir = project_dir / "tmp" / "corrections"
+    migrate_project_layout(project_dir)
+    proposal_dir = correction_review_dir(project_dir)
     proposals = sorted(proposal_dir.glob("proposal_*.json"))
     for path in reversed(proposals):
         try:

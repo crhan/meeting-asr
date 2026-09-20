@@ -60,6 +60,11 @@ from app.lexicon_store import (
     record_lexicon_contexts,
 )
 from app.models import SentenceSegment, TranscriptResult
+from app.project_layout import (
+    CORRECTION_DIR_NAME,
+    correction_review_dir,
+    migrate_project_layout,
+)
 from app.postprocess import (
     detect_speaker_ids,
     render_plain_text,
@@ -78,7 +83,7 @@ ANCHOR_RE = re.compile(r"^<!-- meeting-asr: (?P<fields>.+) -->$")
 TIMESTAMP_LINE_RE = re.compile(r"^\[[^\]]+\]\s*(?P<label>.*?):\s*(?P<text>.*)$")
 WORD_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
 ASCII_TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_+.#-]*")
-REVIEW_DIR = "corrections"
+REVIEW_DIR = CORRECTION_DIR_NAME
 # Drives how many sentences ship to DashScope in one polish batch.
 # See https://github.com/crhan/meeting-asr/issues/4 for the planned
 # throughput retune; do not change this without coordinating with the
@@ -542,6 +547,18 @@ def _proposal_summary(
     )
 
 
+def _review_dir(paths: ProjectPaths) -> Path:
+    """Return the correction review directory, relocating pre-0.21 artifacts.
+
+    Review files, proposals and polish sidecars are LLM output or hand edits, so
+    they live in the durable ``corrections/`` directory rather than under
+    ``tmp/``; :func:`migrate_project_layout` moves an older project's copies on
+    first use. See :mod:`app.project_layout`.
+    """
+    migrate_project_layout(paths.root)
+    return correction_review_dir(paths.root)
+
+
 def _write_review_file(
     paths: ProjectPaths,
     manifest: ProjectManifest,
@@ -549,7 +566,7 @@ def _write_review_file(
     speaker_mapping: dict[int, str],
 ) -> Path:
     """Create the editor review file with stable sentence anchors."""
-    review_dir = paths.root / "tmp" / REVIEW_DIR
+    review_dir = _review_dir(paths)
     review_dir.mkdir(parents=True, exist_ok=True)
     review_path = review_dir / f"review_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
     safe_write_text(review_path, _render_review_file(manifest, result, speaker_mapping))
@@ -680,7 +697,7 @@ def _write_inline_review_file(
     sample_changes: list[CorrectionChange],
 ) -> Path:
     """Write a compact review file for TUI correction samples."""
-    review_dir = paths.root / "tmp" / REVIEW_DIR
+    review_dir = _review_dir(paths)
     review_dir.mkdir(parents=True, exist_ok=True)
     review_path = (
         review_dir / f"review_tui_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
@@ -713,7 +730,7 @@ def _write_polish_review_file(
     speaker_mapping: dict[int, str],
 ) -> Path:
     """Write the source snapshot used by an automatic polish proposal."""
-    review_dir = paths.root / "tmp" / REVIEW_DIR
+    review_dir = _review_dir(paths)
     review_dir.mkdir(parents=True, exist_ok=True)
     review_path = (
         review_dir / f"review_polish_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
@@ -756,9 +773,7 @@ def _write_lexicon_review_file(
 def _lexicon_review_path(paths: ProjectPaths) -> Path:
     """Return the trace path for one automatic local lexicon pass."""
     return (
-        paths.root
-        / "tmp"
-        / REVIEW_DIR
+        _review_dir(paths)
         / f"review_lexicon_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
     )
 
@@ -1599,7 +1614,7 @@ def _write_strict_polish_sidecar(
     total_batches: int,
 ) -> None:
     """Persist per-candidate decisions for offline 4-dimension analysis."""
-    sidecar_dir = paths.root / "tmp" / REVIEW_DIR
+    sidecar_dir = _review_dir(paths)
     sidecar_dir.mkdir(parents=True, exist_ok=True)
     safe_model = model.replace("/", "_")
     payload = {

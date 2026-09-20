@@ -205,6 +205,30 @@ class ProjectDeleteSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class ProjectCleanSummary:
+    """Result of clearing one project's recomputable intermediates.
+
+    Attributes:
+        project_dir: Project root that was inspected.
+        removed: Paths under ``tmp/`` that were (or, in a dry run, would be)
+            deleted.
+        freed_bytes: Total size of ``removed``.
+        relocated: Durable artifacts moved out of ``tmp/`` before cleaning, if
+            the project still used the pre-0.21 layout.
+        kept: Paths under ``tmp/`` deliberately left alone because they still
+            hold durable data that could not be relocated.
+        applied: False for a dry run.
+    """
+
+    project_dir: Path
+    removed: tuple[Path, ...]
+    freed_bytes: int
+    relocated: tuple[Path, ...] = ()
+    kept: tuple[Path, ...] = ()
+    applied: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class TrashedProjectListItem:
     """One project row stored in Meeting-ASR trash."""
 

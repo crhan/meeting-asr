@@ -92,7 +92,7 @@ def test_project_correct_edit_no_open_only_creates_review_file(tmp_path: Path) -
     result = runner.invoke(
         app, ["project", "correct", "edit", str(project_dir), "--no-open"]
     )
-    review_files = list((project_dir / "tmp" / "corrections").glob("review_*.md"))
+    review_files = list((project_dir / "corrections").glob("review_*.md"))
 
     assert result.exit_code == 0
     assert "Changed sentences: 0" in result.output
@@ -124,7 +124,7 @@ def test_project_correct_edit_can_leave_proposal_pending(tmp_path: Path) -> None
     assert result.exit_code == 0
     assert "Vocabulary correction proposal ready." in result.output
     assert "Correction proposal left pending." in result.output
-    assert list((project_dir / "tmp" / "corrections").glob("proposal_*.json"))
+    assert list((project_dir / "corrections").glob("proposal_*.json"))
     assert not (project_dir / "asr" / "sentences_corrected.json").exists()
 
 
@@ -172,7 +172,7 @@ def test_project_correct_edit_can_use_existing_review_file(tmp_path: Path) -> No
     """Existing edited review files should be reusable for proposal generation."""
     project_dir = _sample_project(tmp_path)
     runner.invoke(app, ["project", "correct", "edit", str(project_dir), "--no-open"])
-    review_file = next((project_dir / "tmp" / "corrections").glob("review_*.md"))
+    review_file = next((project_dir / "corrections").glob("review_*.md"))
     review_file.write_text(
         review_file.read_text(encoding="utf-8").replace("阿克米", "Acme"),
         encoding="utf-8",
@@ -459,7 +459,7 @@ def test_project_correct_polish_command_wires_progress_reporter(
             CliProgressEvent("Generating transcript polish proposal | batches 0/1")
         )
         return CorrectionEditSummary(
-            review_path=project_dir / "tmp" / "corrections" / "review_polish_test.md",
+            review_path=project_dir / "corrections" / "review_polish_test.md",
             proposal_path=None,
             proposal_diff_path=None,
             proposal_json_path=None,
@@ -700,7 +700,7 @@ def test_project_correct_polish_strict_surfaces_total_failure(
     assert f"project_id={manifest.project_id}" in result.output
     assert f"meeting-asr project correct polish {manifest.project_id}" in result.output
     proposal_files = sorted(
-        (project_dir / "tmp" / "corrections").glob("proposal_*.json")
+        (project_dir / "corrections").glob("proposal_*.json")
     )
     assert proposal_files == []
 
@@ -781,11 +781,11 @@ def test_project_correct_polish_strict_guard_rejects_protected_word_deletion(
     assert result.exit_code == 0
     # Guard nuked the only proposed change → no proposal file; sidecar still records the rejection.
     proposal_files = sorted(
-        (project_dir / "tmp" / "corrections").glob("proposal_*.json")
+        (project_dir / "corrections").glob("proposal_*.json")
     )
     assert proposal_files == []
     sidecars = sorted(
-        (project_dir / "tmp" / "corrections").glob("polish_strict_meta_*.json")
+        (project_dir / "corrections").glob("polish_strict_meta_*.json")
     )
     sidecar = json.loads(sidecars[-1].read_text(encoding="utf-8"))
     decisions = [
@@ -998,7 +998,7 @@ def test_project_correct_polish_proposal_markdown_groups_by_change_type(
     )
     runner.invoke(app, ["project", "correct", "polish", str(project_dir)], input="n\n")
 
-    proposal_md = sorted((project_dir / "tmp" / "corrections").glob("proposal_*.md"))[
+    proposal_md = sorted((project_dir / "corrections").glob("proposal_*.md"))[
         -1
     ].read_text(encoding="utf-8")
     assert "Proposed Changes (grouped by change_type)" in proposal_md
@@ -1280,7 +1280,7 @@ def _latest_proposal(project_dir: Path) -> dict:
     Accepting archives the proposal to ``*.json.accepted`` (it is no longer pending),
     so post-accept assertions must look at both names.
     """
-    proposal_dir = project_dir / "tmp" / "corrections"
+    proposal_dir = project_dir / "corrections"
     proposal_path = sorted(
         list(proposal_dir.glob("proposal_*.json"))
         + list(proposal_dir.glob("proposal_*.json.accepted"))

@@ -20,9 +20,17 @@ from app.correction_types import (
 )
 from app.models import SentenceSegment, TranscriptResult
 from app.postprocess import speaker_id_to_label
+from app.project_layout import (
+    CORRECTION_DIR_NAME,
+    correction_review_dir,
+    migrate_project_layout,
+    resolve_recorded_project_path,
+)
 from app.utils import safe_write_json, safe_write_text
 
-REVIEW_DIR = "corrections"
+#: Kept for backward compatibility with callers that imported the directory
+#: name; the authoritative location now comes from :mod:`app.project_layout`.
+REVIEW_DIR = CORRECTION_DIR_NAME
 
 
 def write_correction_proposal_files(
@@ -60,7 +68,8 @@ def write_correction_proposal_files(
     Returns:
         Written proposal record.
     """
-    proposal_dir = paths.root / "tmp" / REVIEW_DIR
+    migrate_project_layout(paths.root)
+    proposal_dir = correction_review_dir(paths.root)
     proposal_dir.mkdir(parents=True, exist_ok=True)
     stem = f"proposal_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     diff_path = _write_diff(
@@ -455,7 +464,8 @@ def _resolve_json(
     """Resolve an explicit or latest (optionally archived) proposal JSON path."""
     if proposal_path is not None:
         return proposal_path.expanduser().resolve()
-    proposal_dir = paths.root / "tmp" / REVIEW_DIR
+    migrate_project_layout(paths.root)
+    proposal_dir = correction_review_dir(paths.root)
     proposals = sorted(proposal_dir.glob("proposal_*.json"))
     if not proposals and include_archived:
         proposals = sorted(
@@ -527,9 +537,13 @@ def _understanding_row(payload: dict) -> CorrectionUnderstanding:
 
 
 def _project_path(project_root: Path, value: object) -> Path:
-    """Resolve a project-relative path from JSON."""
-    path = Path(str(value or ""))
-    return path if path.is_absolute() else project_root / path
+    """Resolve a project-relative path from JSON.
+
+    Proposals written before the review artifacts left ``tmp/`` recorded paths
+    such as ``tmp/corrections/review_x.md``; the resolver falls back to the
+    relocated location so those records keep opening.
+    """
+    return resolve_recorded_project_path(project_root, value)
 
 
 def _relative_path(project_root: Path, path: Path) -> Path:

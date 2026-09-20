@@ -15,6 +15,7 @@ from app.core.progress import CliProgressReporter, emit_progress
 from app.infra.ffmpeg import extract_audio_clip
 from app.models import SentenceSegment
 from app.postprocess import speaker_id_to_label
+from app.project_layout import migrate_project_layout, probe_embedding_cache_path
 from app.project_manager import (
     ProjectManifest,
     ensure_project_dirs,
@@ -768,8 +769,13 @@ def _probe_cache_key(
 
 
 def _probe_cache_path(project_root: Path) -> Path:
-    """Return the project-local probe embedding cache path."""
-    return project_root / "tmp" / "voiceprint_match" / "probe_embeddings.json"
+    """Return the project-local probe embedding cache path.
+
+    Probe vectors are bought from an embedding model, so the cache lives outside
+    the recomputable ``tmp/`` tree; see :mod:`app.project_layout`.
+    """
+    migrate_project_layout(project_root)
+    return probe_embedding_cache_path(project_root)
 
 
 def _read_probe_cache(project_root: Path, cache_key: str) -> list[float] | None:

@@ -1147,7 +1147,7 @@ def test_project_run_generates_default_transcript_polish_proposal(
         calls["model"] = correction_model
         calls["polish_concurrency"] = polish_concurrency
         calls["polish_legacy"] = polish_legacy
-        proposal_dir = project_dir / "tmp" / "corrections"
+        proposal_dir = project_dir / "corrections"
         proposal_dir.mkdir(parents=True, exist_ok=True)
         review_path = proposal_dir / "review_polish_test.md"
         proposal_path = proposal_dir / "proposal_test.md"
@@ -1210,7 +1210,7 @@ def test_project_run_generates_default_transcript_polish_proposal(
     assert manifest.runtime["polish"]["proposed_changes"] == 1
     assert (
         manifest.runtime["polish"]["proposal_diff"]
-        == "tmp/corrections/proposal_test.diff"
+        == "corrections/proposal_test.diff"
     )
     assert "Transcript polish" in result.output
     assert "proposal ready (1 change(s))" in result.output
@@ -1262,7 +1262,7 @@ def test_project_run_auto_accepts_polish_when_configured(
         progress=None,
         lexicon_db=None,
     ):
-        proposal_dir = project_dir / "tmp" / "corrections"
+        proposal_dir = project_dir / "corrections"
         proposal_dir.mkdir(parents=True, exist_ok=True)
         review_path = proposal_dir / "review_polish_test.md"
         proposal_path = proposal_dir / "proposal_test.md"
