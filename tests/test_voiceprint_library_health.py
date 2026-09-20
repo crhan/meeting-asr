@@ -883,3 +883,100 @@ def test_confusable_pair_survives_the_cli_json_payload(tmp_path: Path) -> None:
     pairs = [item for item in payload["issues"] if item["kind"] == "confusable-people"]
     assert pairs, payload["issues"]
     assert pairs[0]["context"]["other_name"] in {"Alice", "Bob"}
+
+
+def test_strong_margin_acceptance_counts_as_a_wrong_name(tmp_path: Path) -> None:
+    """A sub-threshold winner that runs away with it is still a wrong name.
+
+    甲's outlier scores 0.707 as 乙 -- below the 0.75 bar -- but 0.0 as itself,
+    so 乙 leads the runner-up by more than STRONG_MARGIN_ACCEPT_MARGIN and
+    `_acceptance_decision` attaches the name anyway. Testing `score >=
+    threshold` alone would report this as "lands in manual review", which is
+    the opposite of what happens.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "甲", [_arc(-45), _arc(-45), _arc(45)])
+    _seed_person(store_dir, "乙", [_arc(0)] * 3)
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "甲"
+    )
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["crossing_count"] == 1
+    # The winning score is *under* the acceptance threshold: only the
+    # strong-margin rule makes this a wrong name.
+    assert issue.context["best_score"] < DEFAULT_MATCH_THRESHOLD
+    assert issue.context["best_score"] == pytest.approx(0.707, abs=1e-3)
+
+
+def test_a_project_centroid_can_be_what_takes_the_name(tmp_path: Path) -> None:
+    """Candidates are scored the way production scores them, per project.
+
+    乙 recorded in two very different sessions, so their whole-person centroid
+    sits between the two and scores 甲's outlier only 0.34. Production does
+    not use that number: `_score_known_vector` takes the best of the
+    whole-person centroid and each stable per-project centroid, and 乙's first
+    session sits almost exactly on the outlier. Scoring whole-person centroids
+    only would report a warning here and miss the wrong name entirely.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "甲", [_arc(-55), _arc(-55), _arc(55)])
+    _seed_person(
+        store_dir,
+        "乙",
+        [_arc(50), _arc(50), _arc(200), _arc(200)],
+        projects=("p1", "p1", "p2", "p2"),
+    )
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "甲"
+    )
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["other_name"] == "乙"
+    assert issue.context["crossing_count"] == 1
+    # ~0.996 from the p1 centroid, not the ~0.34 the whole-person centroid
+    # would have produced.
+    assert issue.context["best_score"] > 0.9
+
+
+def test_only_the_winning_candidate_is_blamed(tmp_path: Path) -> None:
+    """Beating the owner is not enough -- the name attached is the top one.
+
+    甲's outlier is outscored by both 乙 and 丙, and both clear the threshold,
+    but production names it 丙. Recording every candidate that beats the owner
+    would let the report claim 乙's name is being attached when it never is.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "甲", [_arc(-45), _arc(-45), _arc(45)])
+    _seed_person(store_dir, "乙", [_arc(20)] * 3)
+    _seed_person(store_dir, "丙", [_arc(35)] * 3)
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "甲"
+    )
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["crossing_count"] == 1
+    assert issue.context["other_name"] == "丙"
+
+
+def test_an_exact_tie_leaves_the_name_with_its_owner(tmp_path: Path) -> None:
+    """A tie is decided by sort order, so it must not be read as a swap.
+
+    甲's two clustered samples score their own leave-one-out centroid and 乙's
+    centroid identically. Which one `sorted` puts first is dict insertion
+    order; blaming 乙 on that coin flip would be the same over-claim as
+    blaming an absolute score.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "甲", [_arc(-30), _arc(-30), _arc(30)])
+    _seed_person(store_dir, "乙", [_arc(0)] * 3)
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "甲"
+    )
+
+    # Only the outlier, whose 0.866 genuinely beats its own 0.500.
+    assert issue.context["crossing_count"] == 1
