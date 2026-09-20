@@ -679,6 +679,7 @@ def _confusable_issues(
         _confusable_issue(pair, threshold)
         for pair in calibration.neighbors
         if pair.crossing_count > 0
+        or pair.outranked_count > 0
         or (pair.min_lead is not None and pair.min_lead < CONFUSABLE_WARNING_MARGIN)
     ]
 
@@ -716,6 +717,9 @@ def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
         "other_public_id": pair.other_public_id,
         "best_score": round(pair.best_score, 3),
         "min_lead": round(lead, 3),
+        # Recorded during the replay, not derivable from min_lead: a tie ranks
+        # the rival first at a lead of exactly 0.000.
+        "outranked_count": pair.outranked_count,
         "threshold": threshold,
         "crossing_count": crossing,
         "sample_count": pair.sample_count,
@@ -760,21 +764,25 @@ def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
             person_name=pair.person_name,
             context=facts,
         )
-    if lead < 0:
+    # Who ranked first is read from the replay, never inferred from the lead:
+    # on an exact tie the lead is 0.000 while the rival is still ahead, and
+    # falling through to the sentence below would announce that the right name
+    # is winning when it is not.
+    if pair.outranked_count > 0:
         return LibraryIssue(
             kind="confusable-people",
             severity=SEVERITY_WARNING,
             title=(
-                f"{pair.person_name} ranks behind {pair.other_name} on their "
-                "own samples"
+                f"{pair.person_name} ranks behind {pair.other_name} on "
+                f"{pair.outranked_count} of {pair.sample_count} sample(s)"
             ),
             detail=(
-                f"At least one sample scores higher as {pair.other_name} than "
-                "as this person, so the wrong name is already the pipeline's "
-                f"first choice -- it just falls short of the {threshold:.2f} "
-                "bar and lands in manual review instead of being attached. "
-                "Lowering the threshold would turn this into a wrong name; "
-                "capturing audio for this person is what fixes it."
+                f"On those samples {pair.other_name} is already the pipeline's "
+                "first choice, so the right name is not winning -- it is only "
+                f"that the score falls short of the {threshold:.2f} bar, so the "
+                "sample lands in manual review instead of being given the wrong "
+                "name outright. Lowering the threshold would turn this into a "
+                "wrong name; capturing audio for this person is what fixes it."
             ),
             action="capture",
             person_public_id=pair.person_public_id,

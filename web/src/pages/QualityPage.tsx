@@ -195,12 +195,19 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
           ),
         };
       }
-      if (lead < 0) {
+      // Who ranked first comes from the backend's replay, not from the sign
+      // of the lead: an exact tie ranks the rival first at a lead of 0.000,
+      // and the branch below would then claim the right name is winning.
+      const outranked = num(c, "outranked_count");
+      if (outranked > 0) {
         return {
-          title: tr(issue.title, `${name} 在自己的样本上排在 ${other} 后面`),
+          title: tr(
+            issue.title,
+            `${name} 有 ${outranked}/${total} 条样本排在 ${other} 后面`,
+          ),
           detail: tr(
             issue.detail,
-            `至少有一条样本判成 ${other} 的分数比判成他自己还高,错的那个名字已经是管线的首选——只是还没够到 ${bar.toFixed(2)} 这条线,所以落进人工复核而不是被直接挂上。此时把阈值调低就会变成挂错名字;真正的修法是给这个人补采音频。`,
+            `这些样本上 ${other} 已经是管线的首选,也就是说对的名字并没有赢——只是分数还没够到 ${bar.toFixed(2)} 这条线,所以落进人工复核而不是被直接挂上错名。此时把阈值调低就会变成挂错名字;真正的修法是给这个人补采音频。`,
           ),
         };
       }

@@ -14,7 +14,7 @@ from app.speaker_pipeline_params import (
     match_threshold_coupling_kinds,
     resolve_match_threshold,
 )
-from app.voiceprint_calibration import calibrate_voiceprint_thresholds
+from app.voiceprint_calibration import ConfusablePair, calibrate_voiceprint_thresholds
 from app.voiceprint_embedding import resolve_voiceprint_embedding_options
 from app.voiceprint_library_health import (
     AVAILABILITY_FRAGILE,
@@ -24,6 +24,7 @@ from app.voiceprint_library_health import (
     SEVERITY_CRITICAL,
     SEVERITY_INFO,
     SEVERITY_WARNING,
+    _confusable_issue,
     analyze_library_health,
 )
 from app.voiceprint_quality import analyze_voiceprint_quality
@@ -1002,6 +1003,64 @@ def test_a_tie_is_a_wrong_name_when_the_rival_sorts_first(tmp_path: Path) -> Non
     assert issue.severity == SEVERITY_CRITICAL
     assert issue.context["crossing_count"] == 3
     assert issue.context["other_name"] == "AAA"
+
+
+def test_a_tie_below_the_bar_still_says_the_rival_ranks_first() -> None:
+    """A tie leaves the lead at 0.000 while the rival is nonetheless ahead.
+
+    Duplicate library entries produce exactly equal scores, and the stable
+    production ordering then puts whichever name sorts first in front. When
+    that tied score is under the acceptance cutoff nothing is attached, so
+    there is no crossing -- but the owner is not winning either. Reading the
+    winner off ``min_lead`` would see 0.000 and announce that the right name
+    still wins, which is the one thing that is not true here.
+
+    Built directly rather than through a store: an exact float tie needs
+    bit-identical centroids, and seeding two people to collide that precisely
+    would test the arithmetic of the fixture rather than this branch.
+    """
+    pair = ConfusablePair(
+        person_public_id="vpp-owner",
+        person_name="ZZZ",
+        other_public_id="vpp-rival",
+        other_name="AAA",
+        best_score=0.42,
+        min_lead=0.0,
+        crossing_sample_public_ids=(),
+        sample_count=3,
+        outranked_count=2,
+    )
+
+    issue = _confusable_issue(pair, DEFAULT_MATCH_THRESHOLD)
+
+    assert issue.severity == SEVERITY_WARNING
+    assert issue.context["crossing_count"] == 0
+    assert issue.context["outranked_count"] == 2
+    assert "ranks behind" in issue.title
+    assert "the right name is not winning" in issue.detail
+    # The fallback wording must not be the one that fires here.
+    assert "still wins" not in issue.detail
+
+
+def test_a_genuine_narrow_win_still_reads_as_a_win() -> None:
+    """The fallback stays reachable: nobody outranked, so the owner does win."""
+    pair = ConfusablePair(
+        person_public_id="vpp-owner",
+        person_name="ZZZ",
+        other_public_id="vpp-rival",
+        other_name="AAA",
+        best_score=0.42,
+        min_lead=0.02,
+        crossing_sample_public_ids=(),
+        sample_count=3,
+        outranked_count=0,
+    )
+
+    issue = _confusable_issue(pair, DEFAULT_MATCH_THRESHOLD)
+
+    assert issue.severity == SEVERITY_WARNING
+    assert "beats" in issue.title
+    assert "The right name still wins" in issue.detail
 
 
 def test_strong_margin_acceptance_is_not_described_as_clearing_the_bar(

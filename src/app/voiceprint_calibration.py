@@ -142,6 +142,11 @@ class ConfusablePair:
     # accepted on -- an automatic wrong name today.
     crossing_sample_public_ids: tuple[str, ...]
     sample_count: int
+    # How many of this person's samples this other person ranked first on,
+    # accepted or not. Recorded during the replay rather than deduced from
+    # ``min_lead``: an exact tie leaves the lead at 0.0 while the rival is
+    # still ahead, so the numbers alone cannot say who came first.
+    outranked_count: int = 0
     # Why matching accepted those winners, straight from
     # ``_acceptance_decision``: "threshold", "strong-margin", or both. The
     # report has to say which, because a strong-margin acceptance happens
@@ -268,6 +273,7 @@ class VoiceprintCalibrationReport:
                     "other_name": pair.other_name,
                     "best_score": pair.best_score,
                     "min_lead": pair.min_lead,
+                    "outranked_count": pair.outranked_count,
                     "accept_reason": pair.accept_reason,
                     "crossing_count": pair.crossing_count,
                     "crossing_sample_public_ids": list(pair.crossing_sample_public_ids),
@@ -476,6 +482,7 @@ def _confusable_pairs(
     # owner -> other -> evidence
     crossings: dict[int, dict[int, list[str]]] = defaultdict(lambda: defaultdict(list))
     reasons: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
+    outranked: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
     leads: dict[int, dict[int, float]] = defaultdict(dict)
     bests: dict[int, dict[int, float]] = defaultdict(dict)
     for person_id, person in people.items():
@@ -514,6 +521,13 @@ def _confusable_pairs(
             if top_other.score > bests[person_id].get(top_other.person_id, -1.0):
                 bests[person_id][top_other.person_id] = top_other.score
             winner = candidates[0]
+            # Who came first is recorded, not inferred from the numbers later.
+            # On an exact tie the lead is 0.0 while the rival is nonetheless
+            # ranked ahead, so a reader deducing the winner from the lead
+            # would announce that the right name is still winning when it is
+            # not -- it merely was not accepted.
+            if winner.person_id != person_id:
+                outranked[person_id][winner.person_id] += 1
             # Only the candidate that actually wins is blamed. A third person
             # outscoring the owner does not make *this* other the name that
             # would be attached.
@@ -534,6 +548,7 @@ def _confusable_pairs(
                 people,
                 crossings.get(person_id, {}),
                 reasons.get(person_id, {}),
+                outranked.get(person_id, {}),
                 leads.get(person_id, {}),
                 bests.get(person_id, {}),
             )
@@ -558,6 +573,7 @@ def _riskiest_pair(
     people: dict[int, _LibraryPerson],
     crossings: dict[int, list[str]],
     reasons: dict[int, set[str]],
+    outranked: dict[int, int],
     leads: dict[int, float],
     bests: dict[int, float],
 ) -> ConfusablePair | None:
@@ -579,6 +595,7 @@ def _riskiest_pair(
         ordered,
         key=lambda other: (
             len(crossings.get(other, ())),
+            outranked.get(other, 0),
             -leads.get(other, math.inf),
             bests[other],
         ),
@@ -593,6 +610,7 @@ def _riskiest_pair(
         min_lead=leads.get(best_other),
         crossing_sample_public_ids=tuple(crossings.get(best_other, ())),
         sample_count=len(person.vectors),
+        outranked_count=outranked.get(best_other, 0),
         accept_reasons=tuple(sorted(reasons.get(best_other, set()))),
     )
 
