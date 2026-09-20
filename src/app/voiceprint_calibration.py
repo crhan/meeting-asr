@@ -147,6 +147,12 @@ class ConfusablePair:
     # ``min_lead``: an exact tie leaves the lead at 0.0 while the rival is
     # still ahead, so the numbers alone cannot say who came first.
     outranked_count: int = 0
+    # Of the crossings, how many the other person won at an *identical*
+    # score, where first place is settled by library name order rather than
+    # by sounding more like the probe. Duplicate entries for one person
+    # produce exactly this, and calling it "scores higher" would describe a
+    # different problem than the one to fix.
+    tied_win_count: int = 0
     # Why matching accepted those winners, straight from
     # ``_acceptance_decision``: "threshold", "strong-margin", or both. The
     # report has to say which, because a strong-margin acceptance happens
@@ -274,6 +280,7 @@ class VoiceprintCalibrationReport:
                     "best_score": pair.best_score,
                     "min_lead": pair.min_lead,
                     "outranked_count": pair.outranked_count,
+                    "tied_win_count": pair.tied_win_count,
                     "accept_reason": pair.accept_reason,
                     "crossing_count": pair.crossing_count,
                     "crossing_sample_public_ids": list(pair.crossing_sample_public_ids),
@@ -307,7 +314,14 @@ def calibrate_voiceprint_thresholds(
     db_path = get_voiceprint_db_path(store_dir)
     rows = list_voiceprint_embeddings(resolved_model, db_path)
     people = _library_people(rows)
-    vectors_by_person = {person.person_id: person.vectors for person in people.values()}
+    # The genuine/impostor sweep works on unit samples, as it always has: it
+    # is a distribution over sample-to-centroid cosines, not a replay of a
+    # decision, and re-weighting it by vector norm would move the suggested
+    # threshold for reasons that have nothing to do with this change.
+    vectors_by_person = {
+        person.person_id: [_normalize(vector) for vector in person.vectors]
+        for person in people.values()
+    }
     names_by_person = {person.person_id: person.name for person in people.values()}
     warnings: list[str] = []
     genuine_scores: list[float] = []
@@ -390,7 +404,18 @@ class _LibraryPerson:
 
 
 def _library_people(rows: list) -> dict[int, _LibraryPerson]:
-    """Group embedding rows into per-person sample sets."""
+    """
+    Group embedding rows into per-person sample sets, vectors kept raw.
+
+    Raw on purpose: embeddings are stored exactly as the model produced them,
+    and their norms genuinely differ (1.48x between the smallest and largest
+    on the reference library). ``_known_speaker_vectors`` averages those raw
+    vectors and normalizes only the resulting centroid, so a longer vector
+    pulls the centroid further -- pre-normalizing each sample would silently
+    re-weight the average and can point the centroid somewhere production
+    never puts it. Callers that want unit vectors normalize at the stage
+    production normalizes.
+    """
     people: dict[int, _LibraryPerson] = {}
     for row in rows:
         person = people.get(row.speaker_id)
@@ -404,7 +429,7 @@ def _library_people(rows: list) -> dict[int, _LibraryPerson]:
                 project_ids=[],
             )
             people[row.speaker_id] = person
-        person.vectors.append(_normalize(row.vector))
+        person.vectors.append(list(row.vector))
         person.sample_public_ids.append(row.sample_public_id)
         person.project_ids.append(row.project_id)
     return people
@@ -483,11 +508,17 @@ def _confusable_pairs(
     crossings: dict[int, dict[int, list[str]]] = defaultdict(lambda: defaultdict(list))
     reasons: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
     outranked: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    tied_wins: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
     leads: dict[int, dict[int, float]] = defaultdict(dict)
     bests: dict[int, dict[int, float]] = defaultdict(dict)
     for person_id, person in people.items():
         for index in range(len(person.vectors)):
-            probe = person.vectors[index]
+            # Production's probe is `_normalize(_mean_vector(clip vectors))`:
+            # normalized at the probe stage, so the score is a real cosine
+            # comparable to the threshold. One stored sample standing in for
+            # it gets normalized the same way -- and only here, never before
+            # it is averaged into a centroid.
+            probe = _normalize(person.vectors[index])
             own = _known_speaker_vector(person, exclude=index)
             if own is None:
                 continue
@@ -536,6 +567,8 @@ def _confusable_pairs(
                     person.sample_public_ids[index]
                 )
                 reasons[person_id][winner.person_id].add(reason or "threshold")
+                if winner.score == own_score:
+                    tied_wins[person_id][winner.person_id] += 1
                 if winner.score > bests[person_id].get(winner.person_id, -1.0):
                     bests[person_id][winner.person_id] = winner.score
                 leads[person_id].setdefault(winner.person_id, own_score - winner.score)
@@ -549,6 +582,7 @@ def _confusable_pairs(
                 crossings.get(person_id, {}),
                 reasons.get(person_id, {}),
                 outranked.get(person_id, {}),
+                tied_wins.get(person_id, {}),
                 leads.get(person_id, {}),
                 bests.get(person_id, {}),
             )
@@ -574,6 +608,7 @@ def _riskiest_pair(
     crossings: dict[int, list[str]],
     reasons: dict[int, set[str]],
     outranked: dict[int, int],
+    tied_wins: dict[int, int],
     leads: dict[int, float],
     bests: dict[int, float],
 ) -> ConfusablePair | None:
@@ -611,6 +646,7 @@ def _riskiest_pair(
         crossing_sample_public_ids=tuple(crossings.get(best_other, ())),
         sample_count=len(person.vectors),
         outranked_count=outranked.get(best_other, 0),
+        tied_win_count=tied_wins.get(best_other, 0),
         accept_reasons=tuple(sorted(reasons.get(best_other, set()))),
     )
 

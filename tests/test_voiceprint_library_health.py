@@ -678,15 +678,17 @@ def _ray(score: float) -> list[float]:
     return [score, math.sqrt(max(0.0, 1.0 - score * score))]
 
 
-def _arc(degrees: float) -> list[float]:
-    """Return the unit vector at ``degrees`` from the x axis.
+def _arc(degrees: float, norm: float = 1.0) -> list[float]:
+    """Return the vector at ``degrees`` from the x axis, length ``norm``.
 
     Angles make the competition legible: the cosine between two samples is
     just the cosine of the angle between them, so a cluster's spread and its
-    distance to a neighbour can be read straight off the numbers.
+    distance to a neighbour can be read straight off the numbers. ``norm`` is
+    for the cases that turn on how much a sample pulls its centroid, which
+    stored embeddings do differ in.
     """
     radians = math.radians(degrees)
-    return [math.cos(radians), math.sin(radians)]
+    return [norm * math.cos(radians), norm * math.sin(radians)]
 
 
 def _person_issue(report, kind: str, name: str):
@@ -1005,6 +1007,39 @@ def test_a_tie_is_a_wrong_name_when_the_rival_sorts_first(tmp_path: Path) -> Non
     assert issue.context["other_name"] == "AAA"
 
 
+def test_centroids_weight_samples_by_their_stored_norm(tmp_path: Path) -> None:
+    """Averaging must happen on raw vectors, the way matching does it.
+
+    Embeddings are stored exactly as the model produced them and their norms
+    genuinely differ -- 1.48x between the smallest and largest on the
+    reference library -- so a longer vector pulls the centroid further.
+    `_known_speaker_vectors` averages raw and normalizes the result; scaling
+    each sample to unit length first re-weights the average and can aim the
+    centroid somewhere production never puts it.
+
+    BBB is built to make that gap visible: one sample of norm 10 at 0 degrees
+    and one of norm 1 at 80 degrees. Averaged raw, the centroid lands at 5.5
+    degrees; averaged after normalizing, at 40 degrees. AAA's first sample
+    (own score 0.900) is taken by BBB at 0.995 under the real weighting and
+    keeps its own name at 0.766 under the wrong one.
+    """
+    store_dir = tmp_path / "voiceprints"
+    _seed_person(store_dir, "AAA", [_arc(0), _arc(25.8)])
+    _seed_person(store_dir, "BBB", [_arc(0, norm=10.0), _arc(80)])
+
+    issue = _person_issue(
+        analyze_library_health(store_dir=store_dir), "confusable-people", "AAA"
+    )
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert issue.context["other_name"] == "BBB"
+    # Both samples, not just the one BBB wins either way.
+    assert issue.context["crossing_count"] == 2
+    # 0.995 comes from the raw-weighted centroid; pre-normalizing would cap
+    # the best score at 0.969.
+    assert issue.context["best_score"] == pytest.approx(0.995, abs=1e-3)
+
+
 def test_a_tie_below_the_bar_still_says_the_rival_ranks_first() -> None:
     """A tie leaves the lead at 0.000 while the rival is nonetheless ahead.
 
@@ -1040,6 +1075,58 @@ def test_a_tie_below_the_bar_still_says_the_rival_ranks_first() -> None:
     assert "the right name is not winning" in issue.detail
     # The fallback wording must not be the one that fires here.
     assert "still wins" not in issue.detail
+
+
+def test_a_tie_that_is_accepted_is_not_called_a_higher_score() -> None:
+    """Winning a draw on name order is a different fault from scoring higher.
+
+    Two entries that draw on every sample are almost always one person
+    entered twice; telling the operator to go capture more audio for "both of
+    them" would be advice for a problem they do not have.
+    """
+    pair = ConfusablePair(
+        person_public_id="vpp-owner",
+        person_name="ZZZ",
+        other_public_id="vpp-rival",
+        other_name="AAA",
+        best_score=0.93,
+        min_lead=0.0,
+        crossing_sample_public_ids=("vps-1", "vps-2"),
+        sample_count=2,
+        outranked_count=2,
+        tied_win_count=2,
+        accept_reasons=("threshold",),
+    )
+
+    issue = _confusable_issue(pair, DEFAULT_MATCH_THRESHOLD)
+
+    assert issue.severity == SEVERITY_CRITICAL
+    assert "scores higher" not in issue.detail
+    assert "ranks AAA ahead" in issue.detail
+    assert "exact draw" in issue.detail
+    assert "entered into the library twice" in issue.detail
+
+
+def test_a_score_win_is_not_described_as_a_draw() -> None:
+    """The draw wording must stay off a crossing that was won on score."""
+    pair = ConfusablePair(
+        person_public_id="vpp-owner",
+        person_name="ZZZ",
+        other_public_id="vpp-rival",
+        other_name="AAA",
+        best_score=0.93,
+        min_lead=-0.2,
+        crossing_sample_public_ids=("vps-1",),
+        sample_count=3,
+        outranked_count=1,
+        tied_win_count=0,
+        accept_reasons=("threshold",),
+    )
+
+    issue = _confusable_issue(pair, DEFAULT_MATCH_THRESHOLD)
+
+    assert "draw" not in issue.detail
+    assert "ranks AAA ahead" in issue.detail
 
 
 def test_a_genuine_narrow_win_still_reads_as_a_win() -> None:

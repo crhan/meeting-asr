@@ -181,6 +181,17 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
             : c.accept_reason === "mixed"
               ? `其中一些越过了 ${bar.toFixed(2)},其余没到线但因为甩开第二名足够多而被强边距规则接受`
               : `而且越过了 ${bar.toFixed(2)}`;
+        // Winning at an identical score is name order breaking a draw, not
+        // the other person sounding more alike -- and a draw on every sample
+        // is usually one person entered into the library twice, which is a
+        // different fix from "go capture more audio".
+        const tied = num(c, "tied_win_count");
+        const tie =
+          tied <= 0
+            ? ""
+            : tied >= crossing
+              ? "而且这些全都是完全同分,先后只由名字序决定——这正是同一个人在库里被录了两遍的样子,先确认这一点再去采集。"
+              : `其中 ${tied} 条是完全同分,先后只由名字序决定,并不是对方更像。`;
         return {
           title: tr(
             issue.title,
@@ -188,7 +199,8 @@ function issueText(issue: LibraryIssue): { title: string; detail: string } {
           ),
           detail: tr(
             issue.detail,
-            `这个人有 ${crossing} 条样本,${other} 的得分比他自己还高——比的是他自己的留一质心,也就是按「没见过的探针」来判——${why},足以自动挂上名字。这不是风险,是此刻就在挂错的名字。` +
+            `这个人有 ${crossing} 条样本,管线把 ${other} 排在他自己前面——比的是他自己的留一质心,也就是按「没见过的探针」来判——${why},足以自动挂上名字。这不是风险,是此刻就在挂错的名字。` +
+              tie +
               (entire
                 ? "而这是他全部的样本,也就是说这份声纹跟对方根本分不开;去一场只有其中一个人说话的会议重新采集。"
                 : "给这个人多采一些音频,让质心落到真正能把他和对方区分开的地方;或者确认这两个库条目其实是同一个人。"),

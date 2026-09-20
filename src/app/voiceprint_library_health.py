@@ -706,6 +706,29 @@ def _acceptance_phrase(reason: str | None, threshold: float) -> str:
     return f"it clears the {threshold:.2f} bar"
 
 
+def _tie_phrase(pair: ConfusablePair) -> str:
+    """Name the tie case, because its remedy is a different one.
+
+    Winning first place at an identical score is not the other person sounding
+    more like the probe -- it is library name order breaking a draw. Two
+    entries that draw on every sample are almost always one person entered
+    twice, and telling the operator to capture more audio for "both" of them
+    would be advice for a problem they do not have.
+    """
+    if pair.tied_win_count <= 0:
+        return ""
+    if pair.tied_win_count >= pair.crossing_count:
+        return (
+            " Every one of those is an exact draw, decided only by which name "
+            "sorts first -- which is what one person entered into the library "
+            "twice looks like. Check that before capturing anything."
+        )
+    return (
+        f" {pair.tied_win_count} of them are exact draws, decided only by "
+        "which name sorts first rather than by sounding more alike."
+    )
+
+
 def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
     """Build one issue for a person who risks being taken for someone else."""
     crossing = pair.crossing_count
@@ -720,6 +743,7 @@ def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
         # Recorded during the replay, not derivable from min_lead: a tie ranks
         # the rival first at a lead of exactly 0.000.
         "outranked_count": pair.outranked_count,
+        "tied_win_count": pair.tied_win_count,
         "threshold": threshold,
         "crossing_count": crossing,
         "sample_count": pair.sample_count,
@@ -742,12 +766,13 @@ def _confusable_issue(pair: ConfusablePair, threshold: float) -> LibraryIssue:
                 f"sample(s) the pipeline would name {pair.other_name}"
             ),
             detail=(
-                f"For {crossing} of this person's samples, {pair.other_name} "
-                "scores higher than the person themselves does -- measured "
+                f"For {crossing} of this person's samples, matching ranks "
+                f"{pair.other_name} ahead of the person themselves -- measured "
                 "against their own leave-one-out centroid, so the sample is "
-                "judged as an unseen probe would be -- and matching attaches "
-                f"that name: {_acceptance_phrase(pair.accept_reason, threshold)}. "
+                "judged as an unseen probe would be -- and attaches that "
+                f"name: {_acceptance_phrase(pair.accept_reason, threshold)}. "
                 "These are wrong names today, not a risk."
+                + _tie_phrase(pair)
                 + (
                     " That covers every sample they have, so this voiceprint "
                     "cannot be told apart from the other one at all; capture "
