@@ -33,6 +33,7 @@ import torchaudio
 from torch import nn
 
 from app.config import get_cache_dir
+from app.infra.torch_runtime import configure_torch_threads
 
 CAMPP_MODEL_ID = "iic/speech_campplus_sv_zh-cn_16k-common"
 CAMPP_CHECKPOINT_FILENAME = "campplus_cn_common.bin"
@@ -146,6 +147,7 @@ def _load_model() -> "CAMPPlus":
     with _MODEL_LOCK:
         if _MODEL is not None:
             return _MODEL
+        configure_torch_threads()
         checkpoint = ensure_checkpoint()
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
         model = CAMPPlus(feat_dim=CAMPP_FEAT_DIM, embedding_size=CAMPP_EMBEDDING_SIZE)

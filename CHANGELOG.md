@@ -5,6 +5,14 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [Unreleased]
+
+### 修复
+
+- **说话人 resplit 不再把本 track 自己的声音「提拔」成库里的别人**:promote 判据原来只比两个库向量——子群质心对某库内人的分,减去对本 track **已指派人的库向量**的分。已指派人的库向量是跨场次锚点,可能很弱(样本少、别的房间/手机),于是同一个人的一个子群对它只有 ~0.5,对某个同条件录进来的薄的单场库条目却能到 0.66,从库的角度看就是「混进来一个人」。用留一法把这个子群跟**本 track 其余句子的质心**比,它们相似 0.91~0.93——就是 track 自己的声音。现在 promotion 还要赢过本 track 的留一质心至少 `promote_track_lead_margin`(默认 0.05),不过线的判为 `below-track-lead`,不动。回归到全部有 resplit 产物的历史项目(17 个 promotion、可复算的 12 个新建说话人):事后被人工改名的 7 个假新建全部拦下(对本 track 的领先都在 −0.20 到 −0.34),保留的 3 个真新建全部放行(+0.11 到 +0.25),中间是宽空档。`speaker_resplit.json` 与 `project speakers resplit` 预览新增 `track_score` / `track_lead`。未指派的 track 早就以自身质心为参照(所以从没出过这种假阳性),这次是把已指派的 track 拉到同一口径。
+- **簇数已达到 `--speaker-count` 时跳过 resplit**:它自述是「救 under-split」,但此前无条件跑——请求了 6 人、也出了 6 簇,仍把每个 track 的每句非低信息句都嵌一遍(173 分钟 / 2,912 句的项目上是 2 小时 16 分),而这种情形下按定义没有 under-split 可救,产出只可能是误拆。现在 `project run` / `project speakers rerun` 在 diarization 产出的 track 数(按 `asr/raw_result.json` 的原始 speaker id 计,归一化会滤掉纯填充词的 track、前一轮又可能 mint 过新 id,两者都不能拿来数)≥ manifest 里记录的 `speaker_count_hint` 时跳过这一阶段并说明原因;`project speakers resplit` 预览会提示「run 会在这里跳过」,`--apply` 是用户明确要求的,不受此闸门约束。没传 `--speaker-count` 的项目行为不变。
+- **本地声纹模型改为默认单线程推理,修掉线程过订阅**:CAM++ / ECAPA 是嵌入几秒音频的小模型,torch 却默认把 intra-op 线程池开到全部核数。在一台 8 核、常驻负载 ~7 的机器上实测同一条 8.9 秒 clip:8 线程 5.0~7.4 秒,4 线程 0.5 秒,2 线程 0.18 秒,1 线程 0.25 秒——OpenMP 全核 spin-wait 互相拖,慢 25~30 倍;而批量嵌入的调用方本来就用 4 个 worker 的线程池并发,等于 32 个线程抢 8 核。一场 3,087 次嵌入的稳定化因此跑了 3 小时 21 分,按修复后的单条成本约 18 分钟。现在模型首次加载时把 torch intra-op 线程数设为 1,并发来自线程池;新增配置键 `voiceprint.torch_threads`(env `MEETING_ASR_VOICEPRINT_TORCH_THREADS`)给确实需要更多线程的机器。
+
 ## [0.23.0] - 2026-09-21
 
 ### 新增

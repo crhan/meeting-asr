@@ -169,6 +169,7 @@ from app.speaker_resplit import (
     DEFAULT_PROMOTE_CENTROID_THRESHOLD,
     DEFAULT_PROMOTE_LEAD_MARGIN,
     DEFAULT_RESIDUE_MATCH_FLOOR,
+    CandidatePerson,
     ResplitParams,
     TrackResplitPlan,
     analyze_project_resplit,
@@ -187,6 +188,7 @@ from app.speaker_stabilization import (
     DEFAULT_STABILIZATION_SAMPLE_WORKERS,
     SpeakerStabilizationSummary,
     apply_project_resplit,
+    resplit_skip_reason,
     stabilize_project_speakers,
 )
 from app.speaker_review import (
@@ -717,7 +719,8 @@ def run(
         "--speaker-resplit/--no-speaker-resplit",
         help="Rescue under-split tracks: mint new speakers for confident library "
         "people without a track and gather out-of-library outliers into a review "
-        "bucket. Runs once before stabilization.",
+        "bucket. Runs once before stabilization; skipped automatically when the "
+        "diarized track count already meets --speaker-count.",
     ),
     speaker_stabilization_iterations: int = typer.Option(
         DEFAULT_STABILIZATION_ITERATIONS,
@@ -2793,7 +2796,8 @@ def speakers_rerun(
     speaker_resplit: bool = typer.Option(
         True,
         "--speaker-resplit/--no-speaker-resplit",
-        help="Rescue under-split tracks during stabilization.",
+        help="Rescue under-split tracks during stabilization; skipped automatically "
+        "when the diarized track count already meets the project's --speaker-count.",
     ),
     speaker_stabilization_iterations: int = typer.Option(
         DEFAULT_STABILIZATION_ITERATIONS,
@@ -2886,6 +2890,8 @@ def speakers_rerun(
             f"minted {stabilization_summary.minted_speaker_count} speaker(s), "
             f"reassigned {stabilization_summary.reassignment_count} sentence(s)."
         )
+        if stabilization_summary.resplit_skipped_reason:
+            typer.echo(f"Re-split skipped: {stabilization_summary.resplit_skipped_reason}")
     typer.echo("Speaker outputs rebuilt from raw ASR.")
 
 
@@ -3348,10 +3354,16 @@ def speakers_resplit(
             read_only=True,  # preview must not write probe clips or the cache to the project
         )
     )
+    skip_reason = resplit_skip_reason(resolved_project_dir)
     if json_output:
-        emit_json(resplit_plan_payload(plan))
+        payload = resplit_plan_payload(plan)
+        payload["run_skip_reason"] = skip_reason
+        emit_json(payload)
         return
     _echo_resplit_plan(plan)
+    if skip_reason:
+        typer.echo("")
+        typer.echo(f"Note: `project run` skips this phase here ({skip_reason}).")
 
 
 @speakers_app.command("compare-srt")
@@ -3740,6 +3752,7 @@ def _echo_resplit_plan(plan: TrackResplitPlan) -> None:
         "Thresholds: "
         f"promote>={plan.params.promote_centroid_threshold:.2f} "
         f"lead>={plan.params.promote_lead_margin:.2f} "
+        f"track-lead>={plan.params.promote_track_lead_margin:.2f} "
         f"residue<{plan.params.residue_match_floor:.2f} "
         f"min-sentences={plan.params.min_group_sentences} "
         f"min-seconds={plan.params.min_group_seconds:.0f}"
@@ -3762,7 +3775,7 @@ def _echo_resplit_plan(plan: TrackResplitPlan) -> None:
             f"  {speaker_id_to_label(candidate.source_speaker_id)} -> {candidate.name} "
             f"[{target}]: {len(candidate.sentences)} sentences, "
             f"{candidate.total_seconds:.1f}s, centroid={candidate.centroid_score:.3f}, "
-            f"lead={candidate.lead:+.3f}"
+            f"lead={candidate.lead:+.3f}{_track_lead_text(candidate)}"
         )
         for sentence in candidate.sentences[:3]:
             typer.echo(f"      - {sentence.text[:56]}")
@@ -3801,8 +3814,16 @@ def _echo_resplit_plan(plan: TrackResplitPlan) -> None:
                 f"  {speaker_id_to_label(candidate.source_speaker_id)} ~ "
                 f"{candidate.name}: {len(candidate.sentences)} sentences, "
                 f"{candidate.total_seconds:.1f}s, centroid={candidate.centroid_score:.3f}, "
-                f"lead={candidate.lead:+.3f} ({candidate.decision})"
+                f"lead={candidate.lead:+.3f}{_track_lead_text(candidate)} "
+                f"({candidate.decision})"
             )
+
+
+def _track_lead_text(candidate: CandidatePerson) -> str:
+    """Format a candidate's lead over its own track for the re-split preview."""
+    if candidate.track_lead is None:
+        return ""
+    return f", track-lead={candidate.track_lead:+.3f}"
 
 
 def _echo_sample_match_summary(summary: SpeakerSampleMatchSummary) -> None:

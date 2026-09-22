@@ -165,6 +165,83 @@ def test_promotion_decision_gates() -> None:
     # The dominant guard fires first: a group that IS the track's primary speaker is
     # never promoted, even with otherwise-passing scores.
     assert _promotion_decision(group, 0.80, 0.30, 16.0, True, params) == "dominant"
+    # Passing the library gates is not enough: the group must also lead the rest of
+    # its own track. A missing track reference (group == whole track) skips the gate.
+    assert (
+        _promotion_decision(group, 0.80, 0.30, 16.0, False, params, track_lead=-0.2)
+        == "below-track-lead"
+    )
+    assert (
+        _promotion_decision(group, 0.80, 0.30, 16.0, False, params, track_lead=0.2)
+        == "promote"
+    )
+    assert (
+        _promotion_decision(group, 0.80, 0.30, 16.0, False, params, track_lead=None)
+        == "promote"
+    )
+
+
+def test_candidate_persons_keeps_group_that_still_sounds_like_its_own_track() -> None:
+    """A weak library anchor must not turn the track's own speaker into an intruder.
+
+    Shape of the real incident: the track is person 1, but person 1's *library* vector
+    is a weak cross-session anchor, so a sub-group of the same voice scores only ~0.68
+    against it while scoring ~0.89 against a thin library entry (person 2) recorded
+    under similar conditions. Judged against the library alone that is a textbook
+    promotion (centroid 0.89, lead 0.22). Against the rest of its own track the group
+    scores 0.90, so it is the track's own voice and must stay put.
+    """
+    own_voice = A
+    drifted = _unit([0.9, 0.44, 0.0, 0.0])  # cos(drifted, A) = 0.9
+    weak_anchor = _unit([0.75, 0.0, 0.66, 0.0])  # person 1's library vector
+    thin_entry = _unit([0.6, 0.8, 0.0, 0.0])  # cos(drifted, thin_entry) ~= 0.89
+    known = {
+        1: _KnownSpeakerVector(1, "person-1", weak_anchor, "vpp-a"),
+        2: _KnownSpeakerVector(2, "person-2", thin_entry, "vpp-b"),
+    }
+    main = [_clip(own_voice, sid=i, begin=i * 9000, end=i * 9000 + 9000) for i in range(6)]
+    drift = [
+        _clip(drifted, sid=100 + i, begin=i * 9000, end=i * 9000 + 9000) for i in range(3)
+    ]
+    params = ResplitParams(min_group_sentences=2, min_group_seconds=6.0)
+
+    candidates, residual = _candidate_persons(
+        speaker_id=1,
+        clips=main + drift,
+        assigned=known[1],
+        known=known,
+        existing_speaker_for_person={},
+        params=params,
+    )
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.person_id == 2
+    assert candidate.centroid_score > 0.62 and candidate.lead > 0.10  # library gates pass
+    assert candidate.track_score is not None and candidate.track_score > 0.85
+    assert candidate.track_lead is not None and candidate.track_lead < 0.05
+    assert candidate.decision == "below-track-lead"
+    assert len(residual) == 9  # nothing leaves the track
+
+
+def test_candidate_persons_track_lead_still_promotes_real_intruder() -> None:
+    """A genuine intruder is unlike the rest of its track, so the new gate lets it through
+    and the plan payload carries the track evidence for the audit."""
+    known = {1: _person(1, A, "vpp-a"), 2: _person(2, B, "vpp-b")}
+    main = [_clip(A, sid=i, begin=i * 9000, end=i * 9000 + 9000) for i in range(6)]
+    intruder = [_clip(B, sid=50 + i, begin=i * 9000, end=i * 9000 + 9000) for i in range(3)]
+
+    candidates, _residual = _candidate_persons(
+        1, main + intruder, known[1], known, {}, ResplitParams(min_group_sentences=2)
+    )
+
+    candidate = candidates[0]
+    assert candidate.decision == "promote"
+    assert candidate.track_score is not None and candidate.track_score < 0.05
+    assert candidate.track_lead is not None and candidate.track_lead > 0.9
+    payload = sr._candidate_payload(candidate)
+    assert payload["track_score"] == candidate.track_score
+    assert payload["track_lead"] == candidate.track_lead
 
 
 def test_candidate_persons_promotes_other_library_person() -> None:

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.progress import CliProgressReporter, emit_progress
+from app.postprocess import raw_speaker_ids
 from app.sentence_reassignment import (
     SentenceReassignmentApplyResult,
     apply_project_sentence_reassignments,
@@ -30,7 +32,7 @@ from app.speaker_sample_matching import (
     SpeakerSampleMatchSummary,
     match_project_speaker_samples,
 )
-from app.project_manager import apply_project_speakers, project_paths
+from app.project_manager import apply_project_speakers, load_manifest, project_paths
 from app.speaker_pipeline_params import (
     CLUSTER_MERGE_THRESHOLD,
     CLUSTER_SAME_SPEAKER_THRESHOLD,
@@ -70,6 +72,8 @@ class SpeakerStabilizationSummary:
     resplit_plan: TrackResplitPlan | None = None
     minted_speaker_count: int = 0
     resplit_match_summary: SpeakerMatchSummary | None = None
+    # Why the re-split phase did not run at all (``None`` when it ran or was disabled).
+    resplit_skipped_reason: str | None = None
 
     @property
     def reassignment_count(self) -> int:
@@ -129,7 +133,12 @@ def stabilize_project_speakers(
     resplit_plan: TrackResplitPlan | None = None
     minted_count = 0
     resplit_match_summary: SpeakerMatchSummary | None = None
+    resplit_skipped_reason: str | None = None
     if resplit:
+        resplit_skipped_reason = resplit_skip_reason(project_dir)
+    if resplit and resplit_skipped_reason is not None:
+        emit_progress(progress, f"Re-split skipped: {resplit_skipped_reason}")
+    elif resplit:
         resplit_plan, minted_count, resplit_match_summary = _apply_resplit_phase(
             project_dir,
             store_dir=store_dir,
@@ -205,7 +214,62 @@ def stabilize_project_speakers(
             total=total,
         )
     return SpeakerStabilizationSummary(
-        tuple(results), resplit_plan, minted_count, resplit_match_summary
+        tuple(results),
+        resplit_plan,
+        minted_count,
+        resplit_match_summary,
+        resplit_skipped_reason,
+    )
+
+
+def resplit_skip_reason(project_dir: Path) -> str | None:
+    """Return why the automatic re-split phase should not run on this project.
+
+    Re-split exists to rescue *under-split* diarization. When the run asked the ASR
+    for ``--speaker-count N`` and the diarizer already produced at least N tracks,
+    there is by definition no under-split to rescue, while the analysis still costs
+    one embedding per non-trivial sentence and — on a large library of thin
+    single-session entries — is where false new speakers come from. The explicit
+    ``project speakers resplit --apply`` path is not gated by this.
+
+    The track count is read from ``asr/raw_result.json``, not ``sentences.json``:
+    normalization drops filler-only tracks (so the normalized file can under-count
+    what diarization produced) and an earlier re-split/stabilization pass may have
+    minted ids into it (over-counting). Only when the raw result is missing does the
+    normalized transcript stand in.
+    """
+    paths = project_paths(project_dir)
+    try:
+        manifest = load_manifest(paths.root)
+        detected_count = _diarized_track_count(paths.asr_dir)
+    except OSError, ValueError:
+        # No manifest / transcript to judge by: let the phase itself decide (it
+        # will surface the real error if the project is genuinely unreadable).
+        return None
+    return _resplit_skip_reason(manifest.asr.get("speaker_count_hint"), detected_count)
+
+
+def _diarized_track_count(asr_dir: Path) -> int:
+    """Count the tracks diarization produced, preferring the raw ASR result."""
+    raw_path = asr_dir / "raw_result.json"
+    if raw_path.exists():
+        return len(raw_speaker_ids(json.loads(raw_path.read_text(encoding="utf-8"))))
+    return len(
+        load_transcript_result(
+            asr_dir / "sentences.json", include_low_information=True
+        ).detected_speakers
+    )
+
+
+def _resplit_skip_reason(speaker_count_hint: object, detected_count: int) -> str | None:
+    """Pure gate: skip when the diarized track count already meets the requested count."""
+    if not isinstance(speaker_count_hint, int) or isinstance(speaker_count_hint, bool):
+        return None
+    if speaker_count_hint < 1 or detected_count < speaker_count_hint:
+        return None
+    return (
+        f"{detected_count} speaker track(s) already meet --speaker-count "
+        f"{speaker_count_hint}; nothing is under-split"
     )
 
 
@@ -540,5 +604,6 @@ __all__ = [
     "SpeakerStabilizationIteration",
     "SpeakerStabilizationSummary",
     "apply_project_resplit",
+    "resplit_skip_reason",
     "stabilize_project_speakers",
 ]

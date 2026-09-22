@@ -185,6 +185,35 @@ def detect_speaker_ids(result: TranscriptResult) -> list[int]:
     return sorted(speakers)
 
 
+def raw_speaker_ids(raw_json: dict[str, Any]) -> list[int]:
+    """
+    Return every speaker id the diarizer emitted, before any normalization.
+
+    ``parse_transcription_result`` drops filler-only tracks, so the normalized
+    ``sentences.json`` can carry fewer tracks than the ASR actually produced.
+    Callers that need "how many tracks did diarization split into" (for example
+    the re-split gate comparing against ``--speaker-count``) must read this
+    instead of the normalized speaker list.
+
+    Args:
+        raw_json: Downloaded transcription result JSON.
+
+    Returns:
+        Sorted distinct speaker ids from the raw sentence payloads.
+    """
+    parsed = (
+        _segment_from_payload(item, idx)
+        for idx, item in enumerate(_find_sentence_payloads(raw_json))
+    )
+    return sorted(
+        {
+            item.speaker_id
+            for item in parsed
+            if item is not None and item.speaker_id is not None
+        }
+    )
+
+
 def filter_filler_speakers(sentences: list[SentenceSegment]) -> list[SentenceSegment]:
     """
     Remove diarized speakers that contain only filler utterances.

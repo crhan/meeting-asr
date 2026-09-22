@@ -50,6 +50,7 @@ class Settings:
     lexicon_db_path: str | None = None
     voiceprint_provider: str | None = None
     voiceprint_match_threshold: float | None = None
+    voiceprint_torch_threads: int | None = None
     config_path: Path | None = None
 
 
@@ -124,6 +125,11 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "voiceprint.match_threshold",
         "voiceprint_match_threshold",
         "MEETING_ASR_VOICEPRINT_MATCH_THRESHOLD",
+    ),
+    ConfigKey(
+        "voiceprint.torch_threads",
+        "voiceprint_torch_threads",
+        "MEETING_ASR_VOICEPRINT_TORCH_THREADS",
     ),
 )
 
@@ -339,6 +345,9 @@ def load_settings(
         voiceprint_match_threshold=_read_threshold_value(
             values, "voiceprint.match_threshold"
         ),
+        voiceprint_torch_threads=_read_positive_int_value(
+            values, "voiceprint.torch_threads"
+        ),
         config_path=get_config_path(),
     )
 
@@ -403,6 +412,20 @@ def get_configured_match_threshold(path: Path | None = None) -> float | None:
     """
     values = load_config_values(path)
     return _read_threshold_value(values, "voiceprint.match_threshold")
+
+
+def get_configured_torch_threads(path: Path | None = None) -> int | None:
+    """
+    Return the configured intra-op thread count for local embedding models.
+
+    Args:
+        path: Optional config path override.
+
+    Returns:
+        Positive thread count, or None when unset.
+    """
+    values = load_config_values(path)
+    return _read_positive_int_value(values, "voiceprint.torch_threads")
 
 
 def visible_config_items(
@@ -510,6 +533,22 @@ def _read_threshold_value(config_values: dict[str, str], key: str) -> float | No
         raise ValueError(
             f"Config value {key} must be between 0 and 1, got {parsed}"
         )
+    return parsed
+
+
+def _read_positive_int_value(config_values: dict[str, str], key: str) -> int | None:
+    """Read and validate one positive integer config value."""
+    value = _read_value(config_values, key, required=False)
+    if value is None:
+        return None
+    try:
+        parsed = int(value.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Config value {key} must be an integer, got {value!r}"
+        ) from exc
+    if parsed < 1:
+        raise ValueError(f"Config value {key} must be at least 1, got {parsed}")
     return parsed
 
 

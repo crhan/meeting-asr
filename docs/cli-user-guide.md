@@ -438,6 +438,14 @@ meeting-asr config set voiceprint.provider local-speechbrain
 
 注意：`--threshold` 等匹配阈值按分数分布调；CAM++ 的同人分数整体高于 speechbrain（异人分数相近），默认 0.75 阈值仍适用，拿不准用 `voiceprint calibrate` 核对。
 
+本地模型推理默认只用 1 个 torch 线程（批量嵌入靠线程池并发，不靠单次推理多线程）。在一台负载不轻的多核机器上，torch 默认吃满全部核心会让单条 clip 慢 20 倍以上；只有独占的机器才值得调大：
+
+```bash
+meeting-asr config set voiceprint.torch_threads 2
+```
+
+说话人稳定化前的 resplit（under-split 救援）在转写出的 track 数已经达到 `--speaker-count` 时会自动跳过——此时没有 under-split 可救，跑了只会误拆。要在这种项目上强制预览或应用，用 `project speakers resplit PROJECT_ID [--apply]`。
+
 ## 8. 最终文件
 
 查看：

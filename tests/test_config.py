@@ -286,3 +286,29 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "MEETING_ASR_EDITOR",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+def test_voiceprint_torch_threads_can_be_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The local embedding thread budget is a positive integer config key."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _clear_runtime_env(monkeypatch)
+    from app.config import get_configured_torch_threads
+
+    assert get_configured_torch_threads() is None
+    set_config_value("voiceprint.torch_threads", "2")
+
+    settings = load_settings(require_dashscope=False)
+    keys_result = runner.invoke(app, ["config", "keys"])
+
+    assert settings.voiceprint_torch_threads == 2
+    assert get_configured_torch_threads() == 2
+    assert "voiceprint.torch_threads" in keys_result.output
+
+    set_config_value("voiceprint.torch_threads", "0")
+    with pytest.raises(ValueError, match="at least 1"):
+        get_configured_torch_threads()
+    set_config_value("voiceprint.torch_threads", "two")
+    with pytest.raises(ValueError, match="must be an integer"):
+        get_configured_torch_threads()
