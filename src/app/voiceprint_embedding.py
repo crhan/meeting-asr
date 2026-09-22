@@ -319,6 +319,9 @@ def _load_speechbrain_classifier() -> Any:
     with _SPEECHBRAIN_CLASSIFIER_LOCK:
         if _SPEECHBRAIN_CLASSIFIER is not None:
             return _SPEECHBRAIN_CLASSIFIER
+        from app.infra.torch_runtime import configure_torch_threads
+
+        configure_torch_threads()
         with suppress_noisy_dependency_info_logs():
             try:
                 from speechbrain.inference.speaker import EncoderClassifier
