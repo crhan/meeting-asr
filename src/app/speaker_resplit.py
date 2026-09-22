@@ -34,6 +34,16 @@ Design notes (these are the corrections that make the approach sound):
    unreliable, so residue must form a *coherent* cluster (high-threshold connected
    components) — scattered low-score singletons (usually just the dominant speaker
    in poor audio) never qualify.
+4. **A promotion must also beat the track's own voice.** Anchoring on the library is
+   necessary but not sufficient: the assigned person's *library* vector is a
+   cross-session anchor and can be weak (few samples, other rooms/phones), so a
+   sub-group of the track's own speaker scores poorly against it while scoring
+   0.6+ against some thin single-session library entry recorded under similar
+   conditions. Judged only against the library, that sub-group looks like an
+   intruder. It is not: it still resembles the *rest of this track* far more than
+   the candidate person. Every promotion therefore also has to lead the
+   leave-group-out centroid of its source track (``track_score`` /
+   ``track_lead``); a group that still sounds like its own track stays put.
 
 The engine reuses the embedding/clustering primitives already built for cluster
 quality diagnostics and the library-vector loading from speaker matching, so it
@@ -86,6 +96,11 @@ RESPLIT_PADDING_SECONDS = 0.5
 DEFAULT_CANDIDATE_FLOOR = 0.50  # per-sentence library score to count as evidence
 DEFAULT_PROMOTE_CENTROID_THRESHOLD = 0.62  # group centroid vs candidate library vector
 DEFAULT_PROMOTE_LEAD_MARGIN = 0.10  # centroid must beat the track's own identity by this
+# The group centroid must also beat the leave-group-out centroid of its own track (the
+# in-session voice, not the cross-session library anchor) by this much. Historical
+# promotions split cleanly on this axis: every confirmed false new-speaker scored
+# 0.20-0.34 *below* its own track, every confirmed real one 0.11+ above it.
+DEFAULT_PROMOTE_TRACK_LEAD_MARGIN = 0.05
 DEFAULT_RESIDUE_MATCH_FLOOR = 0.40  # below this to *every* library person => unmatched
 DEFAULT_RESIDUE_CLUSTER_THRESHOLD = 0.62  # connected-component edge among residue clips
 DEFAULT_MERGE_THRESHOLD = 0.62  # residue cluster centroid vs another speaker => suggest
@@ -108,6 +123,7 @@ class ResplitParams:
     candidate_floor: float = DEFAULT_CANDIDATE_FLOOR
     promote_centroid_threshold: float = DEFAULT_PROMOTE_CENTROID_THRESHOLD
     promote_lead_margin: float = DEFAULT_PROMOTE_LEAD_MARGIN
+    promote_track_lead_margin: float = DEFAULT_PROMOTE_TRACK_LEAD_MARGIN
     residue_match_floor: float = DEFAULT_RESIDUE_MATCH_FLOOR
     residue_cluster_threshold: float = DEFAULT_RESIDUE_CLUSTER_THRESHOLD
     merge_threshold: float = DEFAULT_MERGE_THRESHOLD
@@ -146,8 +162,14 @@ class CandidatePerson:
     lead: float
     total_seconds: float
     existing_speaker_id: int | None
-    decision: str  # "promote" | "dominant" | "below-centroid" | "below-lead" | "too-few"
+    decision: str  # "promote" | "dominant" | "below-centroid" | "below-lead" |
+    #                "below-track-lead" | "too-few"
     sentences: tuple[ResplitSentence, ...]
+    # Similarity of the group centroid to the leave-group-out centroid of its own
+    # track, and the candidate's lead over it. ``None`` when the group is the whole
+    # track (nothing left to compare against).
+    track_score: float | None = None
+    track_lead: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,7 +375,7 @@ def _candidate_persons(
     """
     assigned_public = assigned.person_public_id if assigned else None
     source_vector = assigned.vector if assigned else _track_centroid(clips)
-    by_person: dict[int, list[SpeakerClusterClip]] = defaultdict(list)
+    by_person: dict[int, list[int]] = defaultdict(list)
     claimed: set[int] = set()
     for clip_index, clip in enumerate(clips):
         ranked = _ranked_matches(clip.vector, known, limit=1)
@@ -364,21 +386,30 @@ def _candidate_persons(
             continue
         if best.score < params.candidate_floor:
             continue
-        by_person[best.person_id].append(clip)
+        by_person[best.person_id].append(clip_index)
         claimed.add(clip_index)
 
     candidates: list[CandidatePerson] = []
-    for person_id, group in by_person.items():
+    for person_id, group_indices in by_person.items():
         person = known[person_id]
+        group = [clips[index] for index in group_indices]
         centroid = _normalize(_mean_vector([clip.vector for clip in group]))
         centroid_score = _cosine(centroid, person.vector)
         assigned_score = _cosine(centroid, assigned.vector) if assigned else 0.0
         source_score = _cosine(centroid, source_vector) if source_vector else assigned_score
         lead = centroid_score - source_score
+        track_score = _leave_group_out_track_score(centroid, clips, set(group_indices))
+        track_lead = None if track_score is None else centroid_score - track_score
         total_seconds = sum(_clip_duration_ms(clip) for clip in group) / 1000
         is_dominant = _is_dominant_group(len(group), len(clips), params)
         decision = _promotion_decision(
-            group, centroid_score, lead, total_seconds, is_dominant, params
+            group,
+            centroid_score,
+            lead,
+            total_seconds,
+            is_dominant,
+            params,
+            track_lead=track_lead,
         )
         candidates.append(
             CandidatePerson(
@@ -394,6 +425,8 @@ def _candidate_persons(
                 existing_speaker_for_person.get(person.person_public_id),
                 decision,
                 tuple(_to_resplit_sentence(clip) for clip in group),
+                track_score,
+                track_lead,
             )
         )
 
@@ -406,6 +439,23 @@ def _candidate_persons(
         clip for clip_index, clip in enumerate(clips) if clip_index not in promoted_indices
     ]
     return candidates, residual
+
+
+def _leave_group_out_track_score(
+    centroid: list[float], clips: list[SpeakerClusterClip], group_indices: set[int]
+) -> float | None:
+    """Score a group centroid against the centroid of the rest of its own track.
+
+    This is the in-session reference for "does this group sound like the track it
+    came from": the remaining clips were recorded in the same room on the same device
+    minutes apart, so they anchor the track's voice far better than the assigned
+    person's cross-session library vector. Returns ``None`` when the group is the
+    whole track.
+    """
+    rest = [clip.vector for index, clip in enumerate(clips) if index not in group_indices]
+    if not rest:
+        return None
+    return _cosine(centroid, _normalize(_mean_vector(rest)))
 
 
 def _is_dominant_group(group_size: int, track_clip_count: int, params: ResplitParams) -> bool:
@@ -425,8 +475,15 @@ def _promotion_decision(
     total_seconds: float,
     is_dominant: bool,
     params: ResplitParams,
+    *,
+    track_lead: float | None = None,
 ) -> str:
-    """Classify one candidate person group against the promotion gates."""
+    """Classify one candidate person group against the promotion gates.
+
+    ``track_lead`` is the candidate's lead over the leave-group-out centroid of the
+    group's own track; ``None`` (no other clips to compare against) skips that gate,
+    which the dominant guard already covers.
+    """
     if is_dominant:
         # The group is the track's own dominant voice (reachable when the run gate is
         # relaxed and `assigned` is None, so the source identity is not excluded up
@@ -439,6 +496,11 @@ def _promotion_decision(
         return "below-centroid"
     if lead < params.promote_lead_margin:
         return "below-lead"
+    if track_lead is not None and track_lead < params.promote_track_lead_margin:
+        # The group still sounds more like the rest of its own track than like the
+        # candidate person: it is the track's own speaker drifting toward a thin
+        # library entry, not an intruder.
+        return "below-track-lead"
     return "promote"
 
 
@@ -635,6 +697,7 @@ def resplit_plan_payload(plan: TrackResplitPlan) -> dict[str, object]:
             "candidate_floor": plan.params.candidate_floor,
             "promote_centroid_threshold": plan.params.promote_centroid_threshold,
             "promote_lead_margin": plan.params.promote_lead_margin,
+            "promote_track_lead_margin": plan.params.promote_track_lead_margin,
             "residue_match_floor": plan.params.residue_match_floor,
             "residue_cluster_threshold": plan.params.residue_cluster_threshold,
             "merge_threshold": plan.params.merge_threshold,
@@ -660,6 +723,8 @@ def _candidate_payload(candidate: CandidatePerson) -> dict[str, object]:
         "assigned_score": candidate.assigned_score,
         "source_score": candidate.source_score,
         "lead": candidate.lead,
+        "track_score": candidate.track_score,
+        "track_lead": candidate.track_lead,
         "total_seconds": candidate.total_seconds,
         "existing_speaker_id": candidate.existing_speaker_id,
         "decision": candidate.decision,
