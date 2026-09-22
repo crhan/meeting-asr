@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.progress import CliProgressReporter, emit_progress
+from app.postprocess import raw_speaker_ids
 from app.sentence_reassignment import (
     SentenceReassignmentApplyResult,
     apply_project_sentence_reassignments,
@@ -224,23 +226,39 @@ def resplit_skip_reason(project_dir: Path) -> str | None:
     """Return why the automatic re-split phase should not run on this project.
 
     Re-split exists to rescue *under-split* diarization. When the run asked the ASR
-    for ``--speaker-count N`` and the transcript already carries at least N speaker
-    tracks, there is by definition no under-split to rescue, while the analysis
-    still costs one embedding per non-trivial sentence and — on a large library of
-    thin single-session entries — is where false new speakers come from. The
-    explicit ``project speakers resplit --apply`` path is not gated by this.
+    for ``--speaker-count N`` and the diarizer already produced at least N tracks,
+    there is by definition no under-split to rescue, while the analysis still costs
+    one embedding per non-trivial sentence and — on a large library of thin
+    single-session entries — is where false new speakers come from. The explicit
+    ``project speakers resplit --apply`` path is not gated by this.
+
+    The track count is read from ``asr/raw_result.json``, not ``sentences.json``:
+    normalization drops filler-only tracks (so the normalized file can under-count
+    what diarization produced) and an earlier re-split/stabilization pass may have
+    minted ids into it (over-counting). Only when the raw result is missing does the
+    normalized transcript stand in.
     """
     paths = project_paths(project_dir)
     try:
         manifest = load_manifest(paths.root)
-        detected = load_transcript_result(
-            paths.asr_dir / "sentences.json", include_low_information=True
-        ).detected_speakers
-    except (OSError, ValueError):
+        detected_count = _diarized_track_count(paths.asr_dir)
+    except OSError, ValueError:
         # No manifest / transcript to judge by: let the phase itself decide (it
         # will surface the real error if the project is genuinely unreadable).
         return None
-    return _resplit_skip_reason(manifest.asr.get("speaker_count_hint"), len(detected))
+    return _resplit_skip_reason(manifest.asr.get("speaker_count_hint"), detected_count)
+
+
+def _diarized_track_count(asr_dir: Path) -> int:
+    """Count the tracks diarization produced, preferring the raw ASR result."""
+    raw_path = asr_dir / "raw_result.json"
+    if raw_path.exists():
+        return len(raw_speaker_ids(json.loads(raw_path.read_text(encoding="utf-8"))))
+    return len(
+        load_transcript_result(
+            asr_dir / "sentences.json", include_low_information=True
+        ).detected_speakers
+    )
 
 
 def _resplit_skip_reason(speaker_count_hint: object, detected_count: int) -> str | None:

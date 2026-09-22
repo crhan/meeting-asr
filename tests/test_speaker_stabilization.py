@@ -398,6 +398,63 @@ def test_resplit_skip_reason_requires_hint_and_enough_tracks() -> None:
     assert _resplit_skip_reason(4, 6) is not None  # over-split is not re-split's problem
 
 
+def test_resplit_skip_reason_counts_raw_diarized_tracks(tmp_path: Path) -> None:
+    """The gate compares --speaker-count against what the diarizer produced, not
+    against the normalized transcript: a filler-only track is dropped from
+    sentences.json but still counts as a diarized track, and ids minted by an earlier
+    pass into sentences.json must not count."""
+    import json
+
+    project_dir = tmp_path / "project"
+    (project_dir / "asr").mkdir(parents=True)
+    (project_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": "p-test",
+                "title": "t",
+                "created_at": "2026-01-01T00:00:00+08:00",
+                "updated_at": "2026-01-01T00:00:00+08:00",
+                "status": "transcribed",
+                "source": {
+                    "path": "source/a.mp3",
+                    "filename": "a.mp3",
+                    "size_bytes": 1,
+                    "mtime": "2026-01-01T00:00:00+08:00",
+                },
+                "asr": {"speaker_count_hint": 3},
+            }
+        ),
+        encoding="utf-8",
+    )
+    raw = {
+        "transcripts": [
+            {"text": "一句正常的话在这里", "begin_time": 0, "end_time": 3000, "speaker_id": 0},
+            {"text": "另一句正常的话", "begin_time": 3000, "end_time": 6000, "speaker_id": 1},
+            {"text": "嗯", "begin_time": 6000, "end_time": 6400, "speaker_id": 2},
+        ]
+    }
+    (project_dir / "asr" / "raw_result.json").write_text(json.dumps(raw), encoding="utf-8")
+    # Normalized transcript: the filler track 2 is gone and an earlier pass minted 7.
+    (project_dir / "asr" / "sentences.json").write_text(
+        json.dumps(
+            {
+                "sentences": [
+                    {"begin_time_ms": 0, "end_time_ms": 3000, "text": "a", "speaker_id": 0},
+                    {"begin_time_ms": 3000, "end_time_ms": 6000, "text": "b", "speaker_id": 7},
+                ],
+                "detected_speakers": [0, 7],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert resplit_skip_reason(project_dir) is not None  # raw: 3 tracks >= hint 3
+
+    (project_dir / "asr" / "raw_result.json").unlink()
+    assert resplit_skip_reason(project_dir) is None  # fallback: normalized 2 < 3
+
+
 def test_resplit_skip_reason_tolerates_missing_project(tmp_path: Path) -> None:
     """An unreadable project does not gate; the phase itself reports the real error."""
     assert resplit_skip_reason(tmp_path / "missing") is None
