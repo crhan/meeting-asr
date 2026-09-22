@@ -3186,6 +3186,7 @@ def test_project_speakers_rerun_resets_matches_applies_and_stabilizes(
             minted_speaker_count=1,
             reassignment_count=2,
             final_match_summary=None,
+            resplit_skipped_reason=None,
         )
 
     monkeypatch.setattr(

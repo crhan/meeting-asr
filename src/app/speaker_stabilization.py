@@ -30,7 +30,7 @@ from app.speaker_sample_matching import (
     SpeakerSampleMatchSummary,
     match_project_speaker_samples,
 )
-from app.project_manager import apply_project_speakers, project_paths
+from app.project_manager import apply_project_speakers, load_manifest, project_paths
 from app.speaker_pipeline_params import (
     CLUSTER_MERGE_THRESHOLD,
     CLUSTER_SAME_SPEAKER_THRESHOLD,
@@ -70,6 +70,8 @@ class SpeakerStabilizationSummary:
     resplit_plan: TrackResplitPlan | None = None
     minted_speaker_count: int = 0
     resplit_match_summary: SpeakerMatchSummary | None = None
+    # Why the re-split phase did not run at all (``None`` when it ran or was disabled).
+    resplit_skipped_reason: str | None = None
 
     @property
     def reassignment_count(self) -> int:
@@ -129,7 +131,12 @@ def stabilize_project_speakers(
     resplit_plan: TrackResplitPlan | None = None
     minted_count = 0
     resplit_match_summary: SpeakerMatchSummary | None = None
+    resplit_skipped_reason: str | None = None
     if resplit:
+        resplit_skipped_reason = resplit_skip_reason(project_dir)
+    if resplit and resplit_skipped_reason is not None:
+        emit_progress(progress, f"Re-split skipped: {resplit_skipped_reason}")
+    elif resplit:
         resplit_plan, minted_count, resplit_match_summary = _apply_resplit_phase(
             project_dir,
             store_dir=store_dir,
@@ -205,7 +212,46 @@ def stabilize_project_speakers(
             total=total,
         )
     return SpeakerStabilizationSummary(
-        tuple(results), resplit_plan, minted_count, resplit_match_summary
+        tuple(results),
+        resplit_plan,
+        minted_count,
+        resplit_match_summary,
+        resplit_skipped_reason,
+    )
+
+
+def resplit_skip_reason(project_dir: Path) -> str | None:
+    """Return why the automatic re-split phase should not run on this project.
+
+    Re-split exists to rescue *under-split* diarization. When the run asked the ASR
+    for ``--speaker-count N`` and the transcript already carries at least N speaker
+    tracks, there is by definition no under-split to rescue, while the analysis
+    still costs one embedding per non-trivial sentence and — on a large library of
+    thin single-session entries — is where false new speakers come from. The
+    explicit ``project speakers resplit --apply`` path is not gated by this.
+    """
+    paths = project_paths(project_dir)
+    try:
+        manifest = load_manifest(paths.root)
+        detected = load_transcript_result(
+            paths.asr_dir / "sentences.json", include_low_information=True
+        ).detected_speakers
+    except (OSError, ValueError):
+        # No manifest / transcript to judge by: let the phase itself decide (it
+        # will surface the real error if the project is genuinely unreadable).
+        return None
+    return _resplit_skip_reason(manifest.asr.get("speaker_count_hint"), len(detected))
+
+
+def _resplit_skip_reason(speaker_count_hint: object, detected_count: int) -> str | None:
+    """Pure gate: skip when the diarized track count already meets the requested count."""
+    if not isinstance(speaker_count_hint, int) or isinstance(speaker_count_hint, bool):
+        return None
+    if speaker_count_hint < 1 or detected_count < speaker_count_hint:
+        return None
+    return (
+        f"{detected_count} speaker track(s) already meet --speaker-count "
+        f"{speaker_count_hint}; nothing is under-split"
     )
 
 
@@ -540,5 +586,6 @@ __all__ = [
     "SpeakerStabilizationIteration",
     "SpeakerStabilizationSummary",
     "apply_project_resplit",
+    "resplit_skip_reason",
     "stabilize_project_speakers",
 ]

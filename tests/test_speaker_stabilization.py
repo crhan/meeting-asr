@@ -20,7 +20,9 @@ from app.speaker_sample_matching import (
 from app.speaker_stabilization import (
     SpeakerStabilizationIteration,
     SpeakerStabilizationSummary,
+    _resplit_skip_reason,
     _sentence_reassignments,
+    resplit_skip_reason,
     stabilize_project_speakers,
 )
 
@@ -382,3 +384,75 @@ def _match_summary(project_dir: Path) -> SpeakerMatchSummary:
             )
         ],
     )
+
+
+def test_resplit_skip_reason_requires_hint_and_enough_tracks() -> None:
+    """Re-split is skipped only when a requested speaker count is already met."""
+    assert _resplit_skip_reason(None, 6) is None  # no --speaker-count => nothing to compare
+    assert _resplit_skip_reason(6, 5) is None  # fewer tracks than requested: under-split
+    assert _resplit_skip_reason("6", 6) is None  # malformed hint never gates
+    assert _resplit_skip_reason(True, 1) is None
+    assert _resplit_skip_reason(0, 3) is None
+    reason = _resplit_skip_reason(6, 6)
+    assert reason is not None and "6" in reason
+    assert _resplit_skip_reason(4, 6) is not None  # over-split is not re-split's problem
+
+
+def test_resplit_skip_reason_tolerates_missing_project(tmp_path: Path) -> None:
+    """An unreadable project does not gate; the phase itself reports the real error."""
+    assert resplit_skip_reason(tmp_path / "missing") is None
+
+
+def test_stabilize_project_speakers_skips_resplit_when_count_is_met(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """With the requested speaker count already met, the (embedding-heavy) re-split
+    phase must not run at all and the summary must say why."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    def fail_resplit(*args, **kwargs):
+        raise AssertionError("re-split phase must be skipped")
+
+    monkeypatch.setattr("app.speaker_stabilization._apply_resplit_phase", fail_resplit)
+    monkeypatch.setattr(
+        "app.speaker_stabilization.resplit_skip_reason",
+        lambda project_dir_arg: "6 speaker track(s) already meet --speaker-count 6",
+    )
+    monkeypatch.setattr(
+        "app.speaker_stabilization._refresh_diagnostics",
+        lambda *a, **k: (
+            _cluster_summary(status="ok", nearest_speaker_id=None),
+            _sample_summary("identity-ok", None),
+        ),
+    )
+
+    summary = stabilize_project_speakers(
+        project_dir, store_dir=None, model=None, iterations=1, sample_workers=1
+    )
+
+    assert summary.resplit_skipped_reason is not None
+    assert summary.minted_speaker_count == 0
+    assert summary.resplit_plan is None
+    assert len(summary.iterations) == 1  # the iterative passes still run
+
+
+def test_stabilize_project_speakers_runs_resplit_when_not_skipped(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Without a skip reason the re-split phase runs exactly as before."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    calls: list[str] = []
+    monkeypatch.setattr("app.speaker_stabilization.resplit_skip_reason", lambda _p: None)
+    monkeypatch.setattr(
+        "app.speaker_stabilization._apply_resplit_phase",
+        lambda *a, **k: (calls.append("resplit"), None, 0, None)[1:],
+    )
+
+    summary = stabilize_project_speakers(
+        project_dir, store_dir=None, model=None, iterations=0, sample_workers=1
+    )
+
+    assert calls == ["resplit"]
+    assert summary.resplit_skipped_reason is None
